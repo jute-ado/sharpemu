@@ -1205,6 +1205,51 @@ public static class AgcExports
     }
 
     [SysAbiExport(
+        Nid = "q88lQ+GP5Yk",
+        ExportName = "sceAgcDcbDrawIndex",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DcbDrawIndex(CpuContext ctx)
+    {
+        var commandBufferAddress = ctx[CpuRegister.Rdi];
+        var indexCount = (uint)ctx[CpuRegister.Rsi];
+        var indexAddress = ctx[CpuRegister.Rdx];
+        var modifier = (uint)ctx[CpuRegister.Rcx];
+
+        if (commandBufferAddress == 0 || modifier != 0x4000_0000)
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        if (!TryAllocateCommandDwords(ctx, commandBufferAddress, 5, out var baseCommand) ||
+            !TryWriteUInt32(ctx, baseCommand, Pm4(3, ItIndexBase, 0)) ||
+            !TryWriteUInt32(ctx, baseCommand + 4, (uint)indexAddress) ||
+            !TryWriteUInt32(ctx, baseCommand + 8, (uint)(indexAddress >> 32)) ||
+            !TryWriteUInt32(ctx, baseCommand + 12, Pm4(2, ItIndexBufferSize, 0)) ||
+            !TryWriteUInt32(ctx, baseCommand + 16, indexCount))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        if (!TryAllocateCommandDwords(ctx, commandBufferAddress, 5, out var drawCommand) ||
+            !TryWriteUInt32(ctx, drawCommand, Pm4(5, ItDrawIndex2, 0)) ||
+            !TryWriteUInt32(ctx, drawCommand + 4, indexCount) ||
+            !TryWriteUInt32(ctx, drawCommand + 8, 0) ||
+            !TryWriteUInt32(ctx, drawCommand + 12, 0) ||
+            !TryWriteUInt32(ctx, drawCommand + 16, 0))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        TraceAgc(
+            $"agc.dcb_draw_index buf=0x{commandBufferAddress:X16} " +
+            $"base=0x{baseCommand:X16} draw=0x{drawCommand:X16} " +
+            $"count={indexCount} index=0x{indexAddress:X16}");
+
+        return ReturnPointer(ctx, drawCommand);
+    }
+
+    [SysAbiExport(
         Nid = "Yw0jKSqop+E",
         ExportName = "sceAgcDcbDrawIndexAuto",
         Target = Generation.Gen5,
@@ -2004,6 +2049,88 @@ public static class AgcExports
 
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+    Nid = "uJziRsODk1c",
+    ExportName = "sceAgcDriverGetResourceRegistrationMaxNameLength",
+    Target = Generation.Gen5,
+    LibraryName = "libSceAgc")]
+    public static int DriverGetResourceRegistrationMaxNameLength(CpuContext ctx)
+    {
+        var outAddress = ctx[CpuRegister.Rdi];
+
+        if (outAddress == 0)
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        if (!TryWriteUInt32(ctx, outAddress, 256))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        TraceAgc($"agc.driver_get_resource_registration_max_name_length out=0x{outAddress:X16} value=256");
+        return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    private const uint DefaultAgcOwner = 1;
+    [SysAbiExport(
+        Nid = "F0ZXt5q0ZTA",
+        ExportName = "sceAgcDriverGetDefaultOwner",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DriverGetDefaultOwner(CpuContext ctx)
+    {
+        var ownerAddress = ctx[CpuRegister.Rdi];
+
+        if (ownerAddress == 0)
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        if (!TryWriteUInt32(ctx, ownerAddress, DefaultAgcOwner))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        TraceAgc($"agc.driver_get_default_owner out=0x{ownerAddress:X16} owner={DefaultAgcOwner}");
+        return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
+    Nid = "W5z4eZrjEas",
+    ExportName = "sceAgcDriverRegisterResource",
+    Target = Generation.Gen5,
+    LibraryName = "libSceAgc")]
+    public static int DriverRegisterResource(CpuContext ctx)
+    {
+        var resourceAddress = ctx[CpuRegister.Rdi];
+        var owner = (uint)ctx[CpuRegister.Rsi];
+        var nameAddress = ctx[CpuRegister.Rdx];
+        var type = (uint)ctx[CpuRegister.R8];
+        var flags = (uint)ctx[CpuRegister.R9];
+
+        TraceAgc(
+            $"agc.driver_register_resource resource=0x{resourceAddress:X16} owner={owner} " +
+            $"name=0x{nameAddress:X16} type={type} flags={flags}");
+
+        return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
+    Nid = "-KRzWekV120",
+    ExportName = "sceAgcDriverUnknown_KRzWekV120",
+    Target = Generation.Gen5,
+    LibraryName = "libSceAgc")]
+    public static int DriverUnknownKRzWekV120(CpuContext ctx)
+    {
+        TraceAgc(
+            $"agc.driver_unknown_krz rdi=0x{ctx[CpuRegister.Rdi]:X16} " +
+            $"rsi=0x{ctx[CpuRegister.Rsi]:X16} rdx=0x{ctx[CpuRegister.Rdx]:X16} " +
+            $"rcx=0x{ctx[CpuRegister.Rcx]:X16} r8=0x{ctx[CpuRegister.R8]:X16} r9=0x{ctx[CpuRegister.R9]:X16}");
+
+        return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
     [SysAbiExport(
