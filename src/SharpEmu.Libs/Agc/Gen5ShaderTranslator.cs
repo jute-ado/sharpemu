@@ -276,7 +276,7 @@ internal static class Gen5ShaderTranslator
         return true;
     }
 
-    private static bool TryDecodeProgram(
+    internal static bool TryDecodeProgram(
         CpuContext ctx,
         ulong address,
         out Gen5ShaderProgram program,

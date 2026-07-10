@@ -18,5 +18,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <PackageVersion Include="Silk.NET.Windowing" Version="2.23.0" />
     <!-- Transitive of Avalonia.Desktop; pinned to fix GHSA-xrw6-gwf8-vvr9 -->
     <PackageVersion Include="Tmds.DBus.Protocol" Version="0.21.3" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.13.0" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.0.2" />
   </ItemGroup>
 </Project>
