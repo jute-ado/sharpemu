@@ -557,6 +557,7 @@ internal static class Gen5ShaderTranslator
             0x2E => "SLshl1AddU32",
             0x2F => "SLshl2AddU32",
             0x30 => "SLshl3AddU32",
+            0x2C => "SAbsdiffI32",
             0x31 => "SLshl4AddU32",
             0x32 => "SPackLlB32B16",
             0x33 => "SPackLhB32B16",
@@ -594,6 +595,8 @@ internal static class Gen5ShaderTranslator
             0x0D => "SBitcmp1B32",
             0x0E => "SBitcmp0B64",
             0x0F => "SBitcmp1B64",
+            0x12 => "SCmpEqU64",
+            0x13 => "SCmpLgU64",
             _ => string.Empty,
         };
 
@@ -610,6 +613,7 @@ internal static class Gen5ShaderTranslator
             0x00 => "SNop",
             0x01 => "SEndpgm",
             0x02 => "SBranch",
+            0x03 => "SWakeup",
             0x04 => "SCbranchScc0",
             0x05 => "SCbranchScc1",
             0x06 => "SCbranchVccz",
@@ -618,9 +622,12 @@ internal static class Gen5ShaderTranslator
             0x09 => "SCbranchExecnz",
             0x0A => "SBarrier",
             0x0C => "SWaitcnt",
+            0x0D => "SSethalt",
+            0x0E => "SSleep",
             0x10 => "SSendmsg",
             0x16 => "STtraceData",
             0x20 => "SInstPrefetch",
+            0x21 => "SClause",
             _ => string.Empty,
         };
 
@@ -635,6 +642,7 @@ internal static class Gen5ShaderTranslator
         name = opcode switch
         {
             0x00 => "SMovkI32",
+            0x02 => "SCmovkI32",
             0x03 => "SCmpkEqI32",
             0x04 => "SCmpkLgI32",
             0x05 => "SCmpkGtI32",
@@ -694,7 +702,11 @@ internal static class Gen5ShaderTranslator
             0x36 => "VCosF32",
             0x37 => "VNotB32",
             0x38 => "VBfrevB32",
+            0x39 => "VFfbhU32",
             0x3A => "VFfblB32",
+            0x3B => "VFfbhI32",
+            0x3F => "VFrexpExpI32F32",
+            0x40 => "VFrexpMantF32",
             0x42 => "VMovreldB32",
             0x43 => "VMovrelsB32",
             0x44 => "VMovrelsdB32",
@@ -718,7 +730,7 @@ internal static class Gen5ShaderTranslator
         }
 
         var src0 = word & 0x1FF;
-        sizeDwords = opcode is 0x20 or 0x21 || src0 is 0xF9 or 0xFA or 0xFF ? 2u : 1u;
+        sizeDwords = opcode is 0x20 or 0x21 or 0x2C or 0x2D || src0 is 0xF9 or 0xFA or 0xFF ? 2u : 1u;
         error = string.Empty;
         name = opcode switch
         {
@@ -727,7 +739,10 @@ internal static class Gen5ShaderTranslator
             0x03 => "VAddF32",
             0x04 => "VSubF32",
             0x05 => "VSubrevF32",
+            0x07 => "VMulLegacyF32",
             0x08 => "VMulF32",
+            0x09 => "VMulI32I24",
+            0x0A => "VMulHiI32I24",
             0x0B => "VMulU32U24",
             0x0C => "VMulHiU32U24",
             0x0F => "VMinF32",
@@ -745,6 +760,7 @@ internal static class Gen5ShaderTranslator
             0x1B => "VAndB32",
             0x1C => "VOrB32",
             0x1D => "VXorB32",
+            0x1E => "VXnorB32",
             0x1F => "VMacF32",
             0x20 => "VMadMkF32",
             0x21 => "VMadAkF32",
@@ -757,7 +773,11 @@ internal static class Gen5ShaderTranslator
             0x28 => "VAddcU32",
             0x29 => "VSubbU32",
             0x2A => "VSubbrevU32",
-            0x2B => "VLdexpF32",
+            // 0x2B is v_fmac_f32 on GFX10 (v_ldexp_f32 exists only as VOP3 0x362);
+            // verified against llvm-mc gfx1013/gfx1030 encodings.
+            0x2B => "VFmacF32",
+            0x2C => "VFmamkF32",
+            0x2D => "VFmaakF32",
             0x2F => "VCvtPkrtzF16F32",
             0x30 => "VCvtPkU16U32",
             0x31 => "VCvtPkI16I32",
@@ -856,6 +876,9 @@ internal static class Gen5ShaderTranslator
         name = isVop3B
             ? opcode switch
             {
+                0x16D => "VDivScaleF32",
+                0x176 => "VMadU64U32",
+                0x177 => "VMadI64I32",
                 0x30F => "VAddCoU32",
                 0x310 => "VSubCoU32",
                 0x319 => "VSubrevCoU32",
@@ -872,6 +895,7 @@ internal static class Gen5ShaderTranslator
             0x11F => "VMacF32",
             0x12F => "VCvtPkrtzF16F32",
             0x141 => "VMadF32",
+            0x142 => "VMadI32I24",
             0x143 => "VMadU32U24",
             0x144 => "VCubeidF32",
             0x145 => "VCubescF32",
@@ -879,6 +903,11 @@ internal static class Gen5ShaderTranslator
             0x147 => "VCubemaF32",
             0x14A => "VBfiB32",
             0x14B => "VFmaF32",
+            0x14C => "VFmaF64",
+            0x14D => "VLerpU8",
+            0x14E => "VAlignbitB32",
+            0x14F => "VAlignbyteB32",
+            0x150 => "VMullitF32",
             0x151 => "VMin3F32",
             0x152 => "VMin3I32",
             0x153 => "VMin3U32",
@@ -893,19 +922,43 @@ internal static class Gen5ShaderTranslator
             0x15C => "VSadU16",
             0x15D => "VSadU32",
             0x15E => "VCvtPkU8F32",
+            0x15F => "VDivFixupF32",
             0x148 => "VBfeU32",
+            0x149 => "VBfeI32",
+            0x164 => "VAddF64",
+            0x165 => "VMulF64",
+            0x166 => "VMinF64",
+            0x167 => "VMaxF64",
             0x169 => "VMulLoU32",
             0x16A => "VMulHiU32",
             0x16B => "VMulLoI32",
-            0x360 => "VMadU32U16",
-            0x361 => "VMulLoU32",
+            0x16C => "VMulHiI32",
+            0x16F => "VDivFmasF32",
+            0x171 => "VMsadU8",
+            0x340 => "VMadU16",
+            0x344 => "VPermB32",
+            0x345 => "VXadU32",
+            0x34B => "VFmaF16",
+            0x35E => "VMadI16",
+            // 0x360/0x361 are v_readlane_b32/v_writelane_b32 on GFX10
+            // (verified against llvm-mc); v_mad_u32_u16 is 0x373.
+            0x360 => "VReadlaneB32",
+            0x361 => "VWritelaneB32",
             0x362 => "VLdexpF32",
+            0x364 => "VBcntU32B32",
+            0x365 => "VMbcntLoU32B32",
+            0x366 => "VMbcntHiU32B32",
+            0x368 => "VCvtPknormI16F32",
+            0x369 => "VCvtPknormU16F32",
+            0x36A => "VCvtPkU16U32",
+            0x36B => "VCvtPkI16I32",
             0x346 => "VLshlAddU32",
             0x347 => "VAddLshlU32",
             0x36D => "VAdd3U32",
             0x36F => "VLshlOrU32",
             0x371 => "VAndOrB32",
             0x372 => "VOr3U32",
+            0x373 => "VMadU32U16",
             0x377 => "VPermlane16B32",
             0x378 => "VPermlanex16B32",
             _ => $"Vop3Raw{opcode:X3}",
@@ -941,14 +994,31 @@ internal static class Gen5ShaderTranslator
         error = string.Empty;
         name = opcode switch
         {
+            0x00 => "DsAddU32",
+            0x01 => "DsSubU32",
+            0x05 => "DsMinI32",
+            0x08 => "DsMaxU32",
+            0x09 => "DsAndB32",
+            0x0A => "DsOrB32",
+            0x0B => "DsXorB32",
             0x0D => "DsWriteB32",
             0x0E => "DsWrite2B32",
             0x0F => "DsWrite2St64B32",
+            0x1E => "DsWriteB8",
+            0x1F => "DsWriteB16",
+            0x20 => "DsAddRtnU32",
             0x35 => "DsSwizzleB32",
             0x36 => "DsReadB32",
             0x37 => "DsRead2B32",
             0x38 => "DsRead2St64B32",
+            0x39 => "DsReadI8",
+            0x3A => "DsReadU8",
+            0x3B => "DsReadI16",
+            0x3C => "DsReadU16",
             0x4D => "DsWriteB64",
+            0x76 => "DsReadB64",
+            0xB2 => "DsPermuteB32",
+            0xB3 => "DsBpermuteB32",
             _ => string.Empty,
         };
 
@@ -1011,15 +1081,33 @@ internal static class Gen5ShaderTranslator
             0x01 => "BufferLoadFormatXy",
             0x02 => "BufferLoadFormatXyz",
             0x03 => "BufferLoadFormatXyzw",
+            0x04 => "BufferStoreFormatX",
+            0x05 => "BufferStoreFormatXy",
+            0x06 => "BufferStoreFormatXyz",
+            0x07 => "BufferStoreFormatXyzw",
+            0x08 => "BufferLoadUbyte",
+            0x09 => "BufferLoadSbyte",
+            0x0A => "BufferLoadUshort",
+            0x0B => "BufferLoadSshort",
             0x0C => "BufferLoadDword",
             0x0D => "BufferLoadDwordx2",
             0x0E => "BufferLoadDwordx4",
             0x0F => "BufferLoadDwordx3",
+            0x18 => "BufferStoreByte",
+            0x1A => "BufferStoreShort",
             0x1C => "BufferStoreDword",
             0x1D => "BufferStoreDwordx2",
             0x1E => "BufferStoreDwordx4",
             0x1F => "BufferStoreDwordx3",
+            0x30 => "BufferAtomicSwap",
+            0x31 => "BufferAtomicCmpswap",
             0x32 => "BufferAtomicAdd",
+            0x33 => "BufferAtomicSub",
+            0x35 => "BufferAtomicSmin",
+            0x38 => "BufferAtomicUmax",
+            0x39 => "BufferAtomicAnd",
+            0x3A => "BufferAtomicOr",
+            0x3B => "BufferAtomicXor",
             _ => $"MubufRaw{opcode:X2}",
         };
         sizeDwords = (extra >> 24) == 0xFF ? 3u : 2u;
@@ -1037,16 +1125,35 @@ internal static class Gen5ShaderTranslator
         var opcode = (word >> 18) & 0x7F;
         sizeDwords = 2;
         error = string.Empty;
-        name = segment == 0x2
-            ? opcode switch
-            {
-                0x0C => "GlobalLoadDword",
-                0x0D => "GlobalLoadDwordx2",
-                0x0E => "GlobalLoadDwordx4",
-                0x0F => "GlobalLoadDwordx3",
-                _ => string.Empty,
-            }
-            : string.Empty;
+        var prefix = segment switch
+        {
+            0x0 => "Flat",
+            0x1 => "Scratch",
+            0x2 => "Global",
+            _ => string.Empty,
+        };
+        var operation = opcode switch
+        {
+            0x08 => "LoadUbyte",
+            0x09 => "LoadSbyte",
+            0x0A => "LoadUshort",
+            0x0B => "LoadSshort",
+            0x0C => "LoadDword",
+            0x0D => "LoadDwordx2",
+            0x0E => "LoadDwordx4",
+            0x0F => "LoadDwordx3",
+            0x18 => "StoreByte",
+            0x1A => "StoreShort",
+            0x1C => "StoreDword",
+            0x1D => "StoreDwordx2",
+            0x1E => "StoreDwordx4",
+            0x1F => "StoreDwordx3",
+            0x30 => "AtomicSwap",
+            0x31 => "AtomicCmpswap",
+            0x32 => "AtomicAdd",
+            _ => string.Empty,
+        };
+        name = prefix.Length == 0 || operation.Length == 0 ? string.Empty : prefix + operation;
 
         return FinishDecode(
             name,
@@ -1096,6 +1203,8 @@ internal static class Gen5ShaderTranslator
             0x0A => "SBufferLoadDwordx4",
             0x0B => "SBufferLoadDwordx8",
             0x0C => "SBufferLoadDwordx16",
+            0x20 => "SDcacheInv",
+            0x24 => "SMemtime",
             _ => string.Empty,
         };
 
@@ -1117,9 +1226,11 @@ internal static class Gen5ShaderTranslator
             0x10 => "ImageAtomicCmpswap",
             0x1C => "ImageAtomicDec",
             0x20 => "ImageSample",
+            0x22 => "ImageSampleD",
             0x24 => "ImageSampleL",
             0x25 => "ImageSampleB",
             0x27 => "ImageSampleLz",
+            0x28 => "ImageSampleC",
             0x2F => "ImageSampleCLz",
             0x30 => "ImageSampleO",
             0x34 => "ImageSampleLO",
@@ -1379,7 +1490,7 @@ internal static class Gen5ShaderTranslator
                         Gen5Operand.Source(word & 0x1FF, literal),
                         Gen5Operand.Vector((word >> 9) & 0xFF),
                     ];
-                    if (opcode == "VMadMkF32" && literal.HasValue)
+                    if (opcode is "VMadMkF32" or "VFmamkF32" && literal.HasValue)
                     {
                         sources =
                         [
@@ -1388,7 +1499,7 @@ internal static class Gen5ShaderTranslator
                             sources[1],
                         ];
                     }
-                    else if (opcode == "VMadAkF32" && literal.HasValue)
+                    else if (opcode is "VMadAkF32" or "VFmaakF32" && literal.HasValue)
                     {
                         sources =
                         [

@@ -19,4 +19,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Corpus\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

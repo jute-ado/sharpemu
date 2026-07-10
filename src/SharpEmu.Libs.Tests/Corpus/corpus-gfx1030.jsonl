@@ -1,0 +1,379 @@
+{"family": "img-exp", "asm": "image_sample v[0:3], v[4:5], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080f80f004008200", "disasm": "image_sample v[0:3], v[4:5], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_sample_l v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080f90f004008200", "disasm": "image_sample_l v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_sample_lz v[0:3], v[4:5], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080f9cf004008200", "disasm": "image_sample_lz v[0:3], v[4:5], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_sample_b v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080f94f004008200", "disasm": "image_sample_b v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_sample_c v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080fa0f004008200", "disasm": "image_sample_c v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_sample_c_lz v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080fbcf004008200", "disasm": "image_sample_c_lz v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_sample_d v[0:3], v[4:9], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080f88f004008200", "disasm": "image_sample_d v[0:3], v[4:9], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_sample_o v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080fc0f004008200", "disasm": "image_sample_o v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_gather4 v[0:3], v[4:5], s[8:15], s[16:19] dmask:0x1 dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080100f104008200", "disasm": "image_gather4 v[0:3], v[4:5], s[8:15], s[16:19] dmask:0x1 dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_gather4_c v[0:3], v[4:6], s[8:15], s[16:19] dmask:0x1 dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080120f104008200", "disasm": "image_gather4_c v[0:3], v[4:6], s[8:15], s[16:19] dmask:0x1 dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_gather4_lz v[0:3], v[4:5], s[8:15], s[16:19] dmask:0x1 dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "08011cf104008200", "disasm": "image_gather4_lz v[0:3], v[4:5], s[8:15], s[16:19] dmask:0x1 dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_load v[0:3], v[4:5], s[8:15] dmask:0xf dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080f00f004000200", "disasm": "image_load v[0:3], v[4:5], s[8:15] dmask:0xf dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_load_mip v[0:3], v[4:6], s[8:15] dmask:0xf dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080f04f004000200", "disasm": "image_load_mip v[0:3], v[4:6], s[8:15] dmask:0xf dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_store v[0:3], v[4:5], s[8:15] dmask:0xf dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080f20f004000200", "disasm": "image_store v[0:3], v[4:5], s[8:15] dmask:0xf dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_store_mip v[0:3], v[4:6], s[8:15] dmask:0xf dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080f24f004000200", "disasm": "image_store_mip v[0:3], v[4:6], s[8:15] dmask:0xf dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_get_resinfo v[0:3], v4, s[8:15] dmask:0xf dim:SQ_RSRC_IMG_2D", "target": "gfx1030", "status": "ok", "hex": "080f38f004000200", "disasm": "image_get_resinfo v[0:3], v4, s[8:15] dmask:0xf dim:SQ_RSRC_IMG_2D"}
+{"family": "img-exp", "asm": "image_sample v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_3D", "target": "gfx1030", "status": "ok", "hex": "100f80f004008200", "disasm": "image_sample v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_3D"}
+{"family": "img-exp", "asm": "image_sample v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_CUBE", "target": "gfx1030", "status": "ok", "hex": "180f80f004008200", "disasm": "image_sample v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_CUBE"}
+{"family": "img-exp", "asm": "image_sample v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D_ARRAY", "target": "gfx1030", "status": "ok", "hex": "280f80f004008200", "disasm": "image_sample v[0:3], v[4:6], s[8:15], s[16:19] dmask:0xf dim:SQ_RSRC_IMG_2D_ARRAY"}
+{"family": "img-exp", "asm": "exp mrt0 v0, v1, v2, v3 done vm", "target": "gfx1030", "status": "ok", "hex": "0f1800f800010203", "disasm": "exp mrt0 v0, v1, v2, v3 done vm"}
+{"family": "img-exp", "asm": "exp mrt0 v0, v1, off, off compr done vm", "target": "gfx1030", "status": "asm-error", "error": "/var/folders/qn/vfcrj9fs2n7b9nzyd7t2w0h40000gn/T/tmpxiw97b6t/case.s:1:33: error: invalid operand for instruction"}
+{"family": "img-exp", "asm": "exp mrt1 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "1f0000f800010203", "disasm": "exp mrt1 v0, v1, v2, v3"}
+{"family": "img-exp", "asm": "exp pos0 v0, v1, v2, v3 done", "target": "gfx1030", "status": "ok", "hex": "cf0800f800010203", "disasm": "exp pos0 v0, v1, v2, v3 done"}
+{"family": "img-exp", "asm": "exp param0 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "0f0200f800010203", "disasm": "exp param0 v0, v1, v2, v3"}
+{"family": "img-exp", "asm": "exp param1 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "1f0200f800010203", "disasm": "exp param1 v0, v1, v2, v3"}
+{"family": "img-exp", "asm": "v_interp_p1_f32 v0, v1, attr0.x", "target": "gfx1030", "status": "ok", "hex": "010000c8", "disasm": "v_interp_p1_f32_e32 v0, v1, attr0.x"}
+{"family": "img-exp", "asm": "v_interp_p2_f32 v0, v1, attr0.x", "target": "gfx1030", "status": "ok", "hex": "010001c8", "disasm": "v_interp_p2_f32_e32 v0, v1, attr0.x"}
+{"family": "img-exp", "asm": "v_interp_mov_f32 v0, p0, attr0.x", "target": "gfx1030", "status": "ok", "hex": "020002c8", "disasm": "v_interp_mov_f32_e32 v0, p0, attr0.x"}
+{"family": "img-exp", "asm": "v_interp_p1_f32 v0, v1, attr1.y", "target": "gfx1030", "status": "ok", "hex": "010500c8", "disasm": "v_interp_p1_f32_e32 v0, v1, attr1.y"}
+{"family": "img-exp", "asm": "v_interp_p2_f32 v0, v1, attr1.w", "target": "gfx1030", "status": "ok", "hex": "010701c8", "disasm": "v_interp_p2_f32_e32 v0, v1, attr1.w"}
+{"family": "mem", "asm": "s_load_dword s0, s[4:5], 0x0", "target": "gfx1030", "status": "ok", "hex": "020000f4000000fa", "disasm": "s_load_dword s0, s[4:5], null"}
+{"family": "mem", "asm": "s_load_dwordx2 s[0:1], s[4:5], 0x10", "target": "gfx1030", "status": "ok", "hex": "020004f4100000fa", "disasm": "s_load_dwordx2 s[0:1], s[4:5], 0x10"}
+{"family": "mem", "asm": "s_load_dwordx4 s[0:3], s[4:5], 0x20", "target": "gfx1030", "status": "ok", "hex": "020008f4200000fa", "disasm": "s_load_dwordx4 s[0:3], s[4:5], 0x20"}
+{"family": "mem", "asm": "s_load_dwordx8 s[0:7], s[8:9], 0x0", "target": "gfx1030", "status": "ok", "hex": "04000cf4000000fa", "disasm": "s_load_dwordx8 s[0:7], s[8:9], null"}
+{"family": "mem", "asm": "s_load_dwordx16 s[0:15], s[16:17], 0x0", "target": "gfx1030", "status": "ok", "hex": "080010f4000000fa", "disasm": "s_load_dwordx16 s[0:15], s[16:17], null"}
+{"family": "mem", "asm": "s_buffer_load_dword s0, s[4:7], 0x0", "target": "gfx1030", "status": "ok", "hex": "020020f4000000fa", "disasm": "s_buffer_load_dword s0, s[4:7], null"}
+{"family": "mem", "asm": "s_buffer_load_dwordx2 s[0:1], s[4:7], 0x0", "target": "gfx1030", "status": "ok", "hex": "020024f4000000fa", "disasm": "s_buffer_load_dwordx2 s[0:1], s[4:7], null"}
+{"family": "mem", "asm": "s_buffer_load_dwordx4 s[0:3], s[4:7], 0x0", "target": "gfx1030", "status": "ok", "hex": "020028f4000000fa", "disasm": "s_buffer_load_dwordx4 s[0:3], s[4:7], null"}
+{"family": "mem", "asm": "s_memtime s[0:1]", "target": "gfx1030", "status": "ok", "hex": "000090f400000000", "disasm": "s_memtime s[0:1]"}
+{"family": "mem", "asm": "s_dcache_inv", "target": "gfx1030", "status": "ok", "hex": "000080f400000000", "disasm": "s_dcache_inv"}
+{"family": "mem", "asm": "buffer_load_dword v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001030e001000180", "disasm": "buffer_load_dword v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_load_dwordx2 v[0:1], v2, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001034e002000180", "disasm": "buffer_load_dwordx2 v[0:1], v2, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_load_dwordx3 v[0:2], v3, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "00103ce003000180", "disasm": "buffer_load_dwordx3 v[0:2], v3, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_load_dwordx4 v[0:3], v4, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001038e004000180", "disasm": "buffer_load_dwordx4 v[0:3], v4, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_load_ubyte v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001020e001000180", "disasm": "buffer_load_ubyte v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_load_sbyte v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001024e001000180", "disasm": "buffer_load_sbyte v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_load_ushort v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001028e001000180", "disasm": "buffer_load_ushort v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_load_sshort v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "00102ce001000180", "disasm": "buffer_load_sshort v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_load_format_x v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001000e001000180", "disasm": "buffer_load_format_x v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_load_format_xy v[0:1], v2, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001004e002000180", "disasm": "buffer_load_format_xy v[0:1], v2, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_load_format_xyz v[0:2], v3, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001008e003000180", "disasm": "buffer_load_format_xyz v[0:2], v3, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_load_format_xyzw v[0:3], v4, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "00100ce004000180", "disasm": "buffer_load_format_xyzw v[0:3], v4, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_store_dword v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001070e001000180", "disasm": "buffer_store_dword v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_store_dwordx2 v[0:1], v2, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001074e002000180", "disasm": "buffer_store_dwordx2 v[0:1], v2, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_store_dwordx4 v[0:3], v4, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001078e004000180", "disasm": "buffer_store_dwordx4 v[0:3], v4, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_store_byte v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001060e001000180", "disasm": "buffer_store_byte v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_store_short v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001068e001000180", "disasm": "buffer_store_short v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_store_format_x v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "001010e001000180", "disasm": "buffer_store_format_x v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_store_format_xyzw v[0:3], v4, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "00101ce004000180", "disasm": "buffer_store_format_xyzw v[0:3], v4, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_atomic_add v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "0010c8e001000180", "disasm": "buffer_atomic_add v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_atomic_sub v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "0010cce001000180", "disasm": "buffer_atomic_sub v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_atomic_smin v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "0010d4e001000180", "disasm": "buffer_atomic_smin v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_atomic_umax v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "0010e0e001000180", "disasm": "buffer_atomic_umax v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_atomic_and v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "0010e4e001000180", "disasm": "buffer_atomic_and v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_atomic_or v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "0010e8e001000180", "disasm": "buffer_atomic_or v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_atomic_xor v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "0010ece001000180", "disasm": "buffer_atomic_xor v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_atomic_swap v0, v1, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "0010c0e001000180", "disasm": "buffer_atomic_swap v0, v1, s[4:7], 0 offen"}
+{"family": "mem", "asm": "buffer_atomic_cmpswap v[0:1], v2, s[4:7], 0 offen", "target": "gfx1030", "status": "ok", "hex": "0010c4e002000180", "disasm": "buffer_atomic_cmpswap v[0:1], v2, s[4:7], 0 offen"}
+{"family": "mem", "asm": "tbuffer_load_format_x v0, v1, s[4:7], 0 format:[BUF_FMT_32_FLOAT] offen", "target": "gfx1030", "status": "ok", "hex": "0010b0e801000180", "disasm": "tbuffer_load_format_x v0, v1, s[4:7], 0 format:[BUF_FMT_32_FLOAT] offen"}
+{"family": "mem", "asm": "tbuffer_load_format_xyzw v[0:3], v4, s[4:7], 0 format:[BUF_FMT_32_32_32_32_FLOAT] offen", "target": "gfx1030", "status": "ok", "hex": "00106bea04000180", "disasm": "tbuffer_load_format_xyzw v[0:3], v4, s[4:7], 0 format:[BUF_FMT_32_32_32_32_FLOAT] offen"}
+{"family": "mem", "asm": "tbuffer_store_format_x v0, v1, s[4:7], 0 format:[BUF_FMT_32_FLOAT] offen", "target": "gfx1030", "status": "ok", "hex": "0010b4e801000180", "disasm": "tbuffer_store_format_x v0, v1, s[4:7], 0 format:[BUF_FMT_32_FLOAT] offen"}
+{"family": "mem", "asm": "tbuffer_store_format_xyzw v[0:3], v4, s[4:7], 0 format:[BUF_FMT_32_32_32_32_FLOAT] offen", "target": "gfx1030", "status": "ok", "hex": "00106fea04000180", "disasm": "tbuffer_store_format_xyzw v[0:3], v4, s[4:7], 0 format:[BUF_FMT_32_32_32_32_FLOAT] offen"}
+{"family": "mem", "asm": "ds_read_b32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0000d8d801000000", "disasm": "ds_read_b32 v0, v1"}
+{"family": "mem", "asm": "ds_read_b64 v[0:1], v2", "target": "gfx1030", "status": "ok", "hex": "0000d8d902000000", "disasm": "ds_read_b64 v[0:1], v2"}
+{"family": "mem", "asm": "ds_read2_b32 v[0:1], v2 offset0:0 offset1:1", "target": "gfx1030", "status": "ok", "hex": "0001dcd802000000", "disasm": "ds_read2_b32 v[0:1], v2 offset1:1"}
+{"family": "mem", "asm": "ds_read2st64_b32 v[0:1], v2 offset0:0 offset1:1", "target": "gfx1030", "status": "ok", "hex": "0001e0d802000000", "disasm": "ds_read2st64_b32 v[0:1], v2 offset1:1"}
+{"family": "mem", "asm": "ds_read_u8 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0000e8d801000000", "disasm": "ds_read_u8 v0, v1"}
+{"family": "mem", "asm": "ds_read_i8 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0000e4d801000000", "disasm": "ds_read_i8 v0, v1"}
+{"family": "mem", "asm": "ds_read_u16 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0000f0d801000000", "disasm": "ds_read_u16 v0, v1"}
+{"family": "mem", "asm": "ds_read_i16 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0000ecd801000000", "disasm": "ds_read_i16 v0, v1"}
+{"family": "mem", "asm": "ds_write_b32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "000034d800010000", "disasm": "ds_write_b32 v0, v1"}
+{"family": "mem", "asm": "ds_write_b64 v0, v[1:2]", "target": "gfx1030", "status": "ok", "hex": "000034d900010000", "disasm": "ds_write_b64 v0, v[1:2]"}
+{"family": "mem", "asm": "ds_write2_b32 v0, v1, v2 offset0:0 offset1:1", "target": "gfx1030", "status": "ok", "hex": "000138d800010200", "disasm": "ds_write2_b32 v0, v1, v2 offset1:1"}
+{"family": "mem", "asm": "ds_write2st64_b32 v0, v1, v2 offset0:0 offset1:1", "target": "gfx1030", "status": "ok", "hex": "00013cd800010200", "disasm": "ds_write2st64_b32 v0, v1, v2 offset1:1"}
+{"family": "mem", "asm": "ds_write_b8 v0, v1", "target": "gfx1030", "status": "ok", "hex": "000078d800010000", "disasm": "ds_write_b8 v0, v1"}
+{"family": "mem", "asm": "ds_write_b16 v0, v1", "target": "gfx1030", "status": "ok", "hex": "00007cd800010000", "disasm": "ds_write_b16 v0, v1"}
+{"family": "mem", "asm": "ds_add_u32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "000000d800010000", "disasm": "ds_add_u32 v0, v1"}
+{"family": "mem", "asm": "ds_sub_u32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "000004d800010000", "disasm": "ds_sub_u32 v0, v1"}
+{"family": "mem", "asm": "ds_min_i32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "000014d800010000", "disasm": "ds_min_i32 v0, v1"}
+{"family": "mem", "asm": "ds_max_u32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "000020d800010000", "disasm": "ds_max_u32 v0, v1"}
+{"family": "mem", "asm": "ds_and_b32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "000024d800010000", "disasm": "ds_and_b32 v0, v1"}
+{"family": "mem", "asm": "ds_or_b32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "000028d800010000", "disasm": "ds_or_b32 v0, v1"}
+{"family": "mem", "asm": "ds_xor_b32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "00002cd800010000", "disasm": "ds_xor_b32 v0, v1"}
+{"family": "mem", "asm": "ds_add_rtn_u32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "000080d801020000", "disasm": "ds_add_rtn_u32 v0, v1, v2"}
+{"family": "mem", "asm": "ds_swizzle_b32 v0, v1 offset:0x8000", "target": "gfx1030", "status": "ok", "hex": "0080d4d801000000", "disasm": "ds_swizzle_b32 v0, v1 offset:swizzle(QUAD_PERM,0,0,0,0)"}
+{"family": "mem", "asm": "ds_bpermute_b32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0000ccda01020000", "disasm": "ds_bpermute_b32 v0, v1, v2"}
+{"family": "mem", "asm": "ds_permute_b32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0000c8da01020000", "disasm": "ds_permute_b32 v0, v1, v2"}
+{"family": "mem", "asm": "flat_load_dword v0, v[1:2]", "target": "gfx1030", "status": "ok", "hex": "000030dc01007d00", "disasm": "flat_load_dword v0, v[1:2]"}
+{"family": "mem", "asm": "flat_load_dwordx2 v[0:1], v[2:3]", "target": "gfx1030", "status": "ok", "hex": "000034dc02007d00", "disasm": "flat_load_dwordx2 v[0:1], v[2:3]"}
+{"family": "mem", "asm": "flat_load_dwordx4 v[0:3], v[4:5]", "target": "gfx1030", "status": "ok", "hex": "000038dc04007d00", "disasm": "flat_load_dwordx4 v[0:3], v[4:5]"}
+{"family": "mem", "asm": "flat_load_ubyte v0, v[1:2]", "target": "gfx1030", "status": "ok", "hex": "000020dc01007d00", "disasm": "flat_load_ubyte v0, v[1:2]"}
+{"family": "mem", "asm": "flat_load_ushort v0, v[1:2]", "target": "gfx1030", "status": "ok", "hex": "000028dc01007d00", "disasm": "flat_load_ushort v0, v[1:2]"}
+{"family": "mem", "asm": "flat_store_dword v[0:1], v2", "target": "gfx1030", "status": "ok", "hex": "000070dc00027d00", "disasm": "flat_store_dword v[0:1], v2"}
+{"family": "mem", "asm": "flat_store_dwordx2 v[0:1], v[2:3]", "target": "gfx1030", "status": "ok", "hex": "000074dc00027d00", "disasm": "flat_store_dwordx2 v[0:1], v[2:3]"}
+{"family": "mem", "asm": "flat_store_dwordx4 v[0:1], v[2:5]", "target": "gfx1030", "status": "ok", "hex": "000078dc00027d00", "disasm": "flat_store_dwordx4 v[0:1], v[2:5]"}
+{"family": "mem", "asm": "flat_atomic_add v0, v[1:2], v3 glc", "target": "gfx1030", "status": "ok", "hex": "0000c9dc01037d00", "disasm": "flat_atomic_add v0, v[1:2], v3 glc"}
+{"family": "mem", "asm": "flat_atomic_cmpswap v0, v[1:2], v[3:4] glc", "target": "gfx1030", "status": "ok", "hex": "0000c5dc01037d00", "disasm": "flat_atomic_cmpswap v0, v[1:2], v[3:4] glc"}
+{"family": "mem", "asm": "global_load_dword v0, v[1:2], off", "target": "gfx1030", "status": "ok", "hex": "008030dc01007d00", "disasm": "global_load_dword v0, v[1:2], off"}
+{"family": "mem", "asm": "global_load_dwordx2 v[0:1], v[2:3], off", "target": "gfx1030", "status": "ok", "hex": "008034dc02007d00", "disasm": "global_load_dwordx2 v[0:1], v[2:3], off"}
+{"family": "mem", "asm": "global_load_dwordx4 v[0:3], v[4:5], off", "target": "gfx1030", "status": "ok", "hex": "008038dc04007d00", "disasm": "global_load_dwordx4 v[0:3], v[4:5], off"}
+{"family": "mem", "asm": "global_load_ubyte v0, v[1:2], off", "target": "gfx1030", "status": "ok", "hex": "008020dc01007d00", "disasm": "global_load_ubyte v0, v[1:2], off"}
+{"family": "mem", "asm": "global_store_dword v[0:1], v2, off", "target": "gfx1030", "status": "ok", "hex": "008070dc00027d00", "disasm": "global_store_dword v[0:1], v2, off"}
+{"family": "mem", "asm": "global_store_dwordx2 v[0:1], v[2:3], off", "target": "gfx1030", "status": "ok", "hex": "008074dc00027d00", "disasm": "global_store_dwordx2 v[0:1], v[2:3], off"}
+{"family": "mem", "asm": "global_store_dwordx4 v[0:1], v[2:5], off", "target": "gfx1030", "status": "ok", "hex": "008078dc00027d00", "disasm": "global_store_dwordx4 v[0:1], v[2:5], off"}
+{"family": "mem", "asm": "global_atomic_add v0, v[1:2], v3, off glc", "target": "gfx1030", "status": "ok", "hex": "0080c9dc01037d00", "disasm": "global_atomic_add v0, v[1:2], v3, off glc"}
+{"family": "mem", "asm": "scratch_load_dword v0, v1, off", "target": "gfx1030", "status": "ok", "hex": "004030dc01007d00", "disasm": "scratch_load_dword v0, v1, off"}
+{"family": "mem", "asm": "scratch_store_dword v0, v1, off", "target": "gfx1030", "status": "ok", "hex": "004070dc00017d00", "disasm": "scratch_store_dword v0, v1, off"}
+{"family": "sop", "asm": "s_mov_b32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "010380be", "disasm": "s_mov_b32 s0, s1"}
+{"family": "sop", "asm": "s_mov_b32 s0, 0x1234", "target": "gfx1030", "status": "ok", "hex": "ff0380be34120000", "disasm": "s_mov_b32 s0, 0x1234"}
+{"family": "sop", "asm": "s_mov_b64 s[0:1], s[2:3]", "target": "gfx1030", "status": "ok", "hex": "020480be", "disasm": "s_mov_b64 s[0:1], s[2:3]"}
+{"family": "sop", "asm": "s_not_b32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "010780be", "disasm": "s_not_b32 s0, s1"}
+{"family": "sop", "asm": "s_not_b64 s[0:1], s[2:3]", "target": "gfx1030", "status": "ok", "hex": "020880be", "disasm": "s_not_b64 s[0:1], s[2:3]"}
+{"family": "sop", "asm": "s_brev_b32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "010b80be", "disasm": "s_brev_b32 s0, s1"}
+{"family": "sop", "asm": "s_bcnt1_i32_b32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "010f80be", "disasm": "s_bcnt1_i32_b32 s0, s1"}
+{"family": "sop", "asm": "s_ff1_i32_b32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "011380be", "disasm": "s_ff1_i32_b32 s0, s1"}
+{"family": "sop", "asm": "s_bitset1_b32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "011d80be", "disasm": "s_bitset1_b32 s0, s1"}
+{"family": "sop", "asm": "s_getpc_b64 s[0:1]", "target": "gfx1030", "status": "ok", "hex": "001f80be", "disasm": "s_getpc_b64 s[0:1]"}
+{"family": "sop", "asm": "s_and_saveexec_b64 s[0:1], s[2:3]", "target": "gfx1030", "status": "ok", "hex": "022480be", "disasm": "s_and_saveexec_b64 s[0:1], s[2:3]"}
+{"family": "sop", "asm": "s_or_saveexec_b64 s[0:1], s[2:3]", "target": "gfx1030", "status": "ok", "hex": "022580be", "disasm": "s_or_saveexec_b64 s[0:1], s[2:3]"}
+{"family": "sop", "asm": "s_xor_saveexec_b64 s[0:1], s[2:3]", "target": "gfx1030", "status": "ok", "hex": "022680be", "disasm": "s_xor_saveexec_b64 s[0:1], s[2:3]"}
+{"family": "sop", "asm": "s_andn2_saveexec_b64 s[0:1], s[2:3]", "target": "gfx1030", "status": "ok", "hex": "022780be", "disasm": "s_andn2_saveexec_b64 s[0:1], s[2:3]"}
+{"family": "sop", "asm": "s_add_u32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020080", "disasm": "s_add_u32 s0, s1, s2"}
+{"family": "sop", "asm": "s_sub_u32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01028080", "disasm": "s_sub_u32 s0, s1, s2"}
+{"family": "sop", "asm": "s_add_i32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020081", "disasm": "s_add_i32 s0, s1, s2"}
+{"family": "sop", "asm": "s_sub_i32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01028081", "disasm": "s_sub_i32 s0, s1, s2"}
+{"family": "sop", "asm": "s_addc_u32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020082", "disasm": "s_addc_u32 s0, s1, s2"}
+{"family": "sop", "asm": "s_subb_u32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01028082", "disasm": "s_subb_u32 s0, s1, s2"}
+{"family": "sop", "asm": "s_min_i32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020083", "disasm": "s_min_i32 s0, s1, s2"}
+{"family": "sop", "asm": "s_min_u32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01028083", "disasm": "s_min_u32 s0, s1, s2"}
+{"family": "sop", "asm": "s_max_i32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020084", "disasm": "s_max_i32 s0, s1, s2"}
+{"family": "sop", "asm": "s_max_u32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01028084", "disasm": "s_max_u32 s0, s1, s2"}
+{"family": "sop", "asm": "s_cselect_b32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020085", "disasm": "s_cselect_b32 s0, s1, s2"}
+{"family": "sop", "asm": "s_cselect_b64 s[0:1], s[2:3], s[4:5]", "target": "gfx1030", "status": "ok", "hex": "02048085", "disasm": "s_cselect_b64 s[0:1], s[2:3], s[4:5]"}
+{"family": "sop", "asm": "s_and_b32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020087", "disasm": "s_and_b32 s0, s1, s2"}
+{"family": "sop", "asm": "s_and_b64 s[0:1], s[2:3], s[4:5]", "target": "gfx1030", "status": "ok", "hex": "02048087", "disasm": "s_and_b64 s[0:1], s[2:3], s[4:5]"}
+{"family": "sop", "asm": "s_or_b32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020088", "disasm": "s_or_b32 s0, s1, s2"}
+{"family": "sop", "asm": "s_or_b64 s[0:1], s[2:3], s[4:5]", "target": "gfx1030", "status": "ok", "hex": "02048088", "disasm": "s_or_b64 s[0:1], s[2:3], s[4:5]"}
+{"family": "sop", "asm": "s_xor_b32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020089", "disasm": "s_xor_b32 s0, s1, s2"}
+{"family": "sop", "asm": "s_xor_b64 s[0:1], s[2:3], s[4:5]", "target": "gfx1030", "status": "ok", "hex": "02048089", "disasm": "s_xor_b64 s[0:1], s[2:3], s[4:5]"}
+{"family": "sop", "asm": "s_andn2_b32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "0102008a", "disasm": "s_andn2_b32 s0, s1, s2"}
+{"family": "sop", "asm": "s_andn2_b64 s[0:1], s[2:3], s[4:5]", "target": "gfx1030", "status": "ok", "hex": "0204808a", "disasm": "s_andn2_b64 s[0:1], s[2:3], s[4:5]"}
+{"family": "sop", "asm": "s_orn2_b32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "0102008b", "disasm": "s_orn2_b32 s0, s1, s2"}
+{"family": "sop", "asm": "s_nand_b32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "0102008c", "disasm": "s_nand_b32 s0, s1, s2"}
+{"family": "sop", "asm": "s_nor_b32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "0102008d", "disasm": "s_nor_b32 s0, s1, s2"}
+{"family": "sop", "asm": "s_xnor_b32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "0102008e", "disasm": "s_xnor_b32 s0, s1, s2"}
+{"family": "sop", "asm": "s_lshl_b32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "0102008f", "disasm": "s_lshl_b32 s0, s1, s2"}
+{"family": "sop", "asm": "s_lshl_b64 s[0:1], s[2:3], s4", "target": "gfx1030", "status": "ok", "hex": "0204808f", "disasm": "s_lshl_b64 s[0:1], s[2:3], s4"}
+{"family": "sop", "asm": "s_lshr_b32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020090", "disasm": "s_lshr_b32 s0, s1, s2"}
+{"family": "sop", "asm": "s_lshr_b64 s[0:1], s[2:3], s4", "target": "gfx1030", "status": "ok", "hex": "02048090", "disasm": "s_lshr_b64 s[0:1], s[2:3], s4"}
+{"family": "sop", "asm": "s_ashr_i32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020091", "disasm": "s_ashr_i32 s0, s1, s2"}
+{"family": "sop", "asm": "s_ashr_i64 s[0:1], s[2:3], s4", "target": "gfx1030", "status": "ok", "hex": "02048091", "disasm": "s_ashr_i64 s[0:1], s[2:3], s4"}
+{"family": "sop", "asm": "s_bfm_b32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020092", "disasm": "s_bfm_b32 s0, s1, s2"}
+{"family": "sop", "asm": "s_mul_i32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020093", "disasm": "s_mul_i32 s0, s1, s2"}
+{"family": "sop", "asm": "s_bfe_u32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01028093", "disasm": "s_bfe_u32 s0, s1, s2"}
+{"family": "sop", "asm": "s_bfe_i32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020094", "disasm": "s_bfe_i32 s0, s1, s2"}
+{"family": "sop", "asm": "s_absdiff_i32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "01020096", "disasm": "s_absdiff_i32 s0, s1, s2"}
+{"family": "sop", "asm": "s_mul_hi_u32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "0102809a", "disasm": "s_mul_hi_u32 s0, s1, s2"}
+{"family": "sop", "asm": "s_mul_hi_i32 s0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "0102009b", "disasm": "s_mul_hi_i32 s0, s1, s2"}
+{"family": "sop", "asm": "s_cmp_eq_i32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "000100bf", "disasm": "s_cmp_eq_i32 s0, s1"}
+{"family": "sop", "asm": "s_cmp_lg_i32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "000101bf", "disasm": "s_cmp_lg_i32 s0, s1"}
+{"family": "sop", "asm": "s_cmp_gt_i32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "000102bf", "disasm": "s_cmp_gt_i32 s0, s1"}
+{"family": "sop", "asm": "s_cmp_ge_i32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "000103bf", "disasm": "s_cmp_ge_i32 s0, s1"}
+{"family": "sop", "asm": "s_cmp_lt_i32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "000104bf", "disasm": "s_cmp_lt_i32 s0, s1"}
+{"family": "sop", "asm": "s_cmp_le_i32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "000105bf", "disasm": "s_cmp_le_i32 s0, s1"}
+{"family": "sop", "asm": "s_cmp_eq_u32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "000106bf", "disasm": "s_cmp_eq_u32 s0, s1"}
+{"family": "sop", "asm": "s_cmp_lg_u32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "000107bf", "disasm": "s_cmp_lg_u32 s0, s1"}
+{"family": "sop", "asm": "s_cmp_gt_u32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "000108bf", "disasm": "s_cmp_gt_u32 s0, s1"}
+{"family": "sop", "asm": "s_cmp_ge_u32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "000109bf", "disasm": "s_cmp_ge_u32 s0, s1"}
+{"family": "sop", "asm": "s_cmp_lt_u32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "00010abf", "disasm": "s_cmp_lt_u32 s0, s1"}
+{"family": "sop", "asm": "s_cmp_le_u32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "00010bbf", "disasm": "s_cmp_le_u32 s0, s1"}
+{"family": "sop", "asm": "s_cmp_eq_u64 s[0:1], s[2:3]", "target": "gfx1030", "status": "ok", "hex": "000212bf", "disasm": "s_cmp_eq_u64 s[0:1], s[2:3]"}
+{"family": "sop", "asm": "s_cmp_lg_u64 s[0:1], s[2:3]", "target": "gfx1030", "status": "ok", "hex": "000213bf", "disasm": "s_cmp_lg_u64 s[0:1], s[2:3]"}
+{"family": "sop", "asm": "s_bitcmp0_b32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "00010cbf", "disasm": "s_bitcmp0_b32 s0, s1"}
+{"family": "sop", "asm": "s_bitcmp1_b32 s0, s1", "target": "gfx1030", "status": "ok", "hex": "00010dbf", "disasm": "s_bitcmp1_b32 s0, s1"}
+{"family": "sop", "asm": "s_movk_i32 s0, 0x1234", "target": "gfx1030", "status": "ok", "hex": "341200b0", "disasm": "s_movk_i32 s0, 0x1234"}
+{"family": "sop", "asm": "s_cmovk_i32 s0, 0x1234", "target": "gfx1030", "status": "ok", "hex": "341200b1", "disasm": "s_cmovk_i32 s0, 0x1234"}
+{"family": "sop", "asm": "s_cmpk_eq_i32 s0, 0x1234", "target": "gfx1030", "status": "ok", "hex": "341280b1", "disasm": "s_cmpk_eq_i32 s0, 0x1234"}
+{"family": "sop", "asm": "s_cmpk_lg_i32 s0, 0x1234", "target": "gfx1030", "status": "ok", "hex": "341200b2", "disasm": "s_cmpk_lg_i32 s0, 0x1234"}
+{"family": "sop", "asm": "s_cmpk_gt_i32 s0, 0x1234", "target": "gfx1030", "status": "ok", "hex": "341280b2", "disasm": "s_cmpk_gt_i32 s0, 0x1234"}
+{"family": "sop", "asm": "s_cmpk_ge_i32 s0, 0x1234", "target": "gfx1030", "status": "ok", "hex": "341200b3", "disasm": "s_cmpk_ge_i32 s0, 0x1234"}
+{"family": "sop", "asm": "s_cmpk_lt_i32 s0, 0x1234", "target": "gfx1030", "status": "ok", "hex": "341280b3", "disasm": "s_cmpk_lt_i32 s0, 0x1234"}
+{"family": "sop", "asm": "s_cmpk_le_i32 s0, 0x1234", "target": "gfx1030", "status": "ok", "hex": "341200b4", "disasm": "s_cmpk_le_i32 s0, 0x1234"}
+{"family": "sop", "asm": "s_cmpk_eq_u32 s0, 0x1234", "target": "gfx1030", "status": "ok", "hex": "341280b4", "disasm": "s_cmpk_eq_u32 s0, 0x1234"}
+{"family": "sop", "asm": "s_addk_i32 s0, 0x1234", "target": "gfx1030", "status": "ok", "hex": "341280b7", "disasm": "s_addk_i32 s0, 0x1234"}
+{"family": "sop", "asm": "s_mulk_i32 s0, 0x1234", "target": "gfx1030", "status": "ok", "hex": "341200b8", "disasm": "s_mulk_i32 s0, 0x1234"}
+{"family": "sop", "asm": "s_nop 0", "target": "gfx1030", "status": "ok", "hex": "000080bf", "disasm": "s_nop 0"}
+{"family": "sop", "asm": "s_waitcnt 0", "target": "gfx1030", "status": "ok", "hex": "00008cbf", "disasm": "s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)"}
+{"family": "sop", "asm": "s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)", "target": "gfx1030", "status": "ok", "hex": "00008cbf", "disasm": "s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)"}
+{"family": "sop", "asm": "s_barrier", "target": "gfx1030", "status": "ok", "hex": "00008abf", "disasm": "s_barrier"}
+{"family": "sop", "asm": "s_wakeup", "target": "gfx1030", "status": "ok", "hex": "000083bf", "disasm": "s_wakeup"}
+{"family": "sop", "asm": "s_sethalt 0", "target": "gfx1030", "status": "ok", "hex": "00008dbf", "disasm": "s_sethalt 0"}
+{"family": "sop", "asm": "s_sleep 1", "target": "gfx1030", "status": "ok", "hex": "01008ebf", "disasm": "s_sleep 1"}
+{"family": "sop", "asm": "s_clause 0x1", "target": "gfx1030", "status": "ok", "hex": "0100a1bf", "disasm": "s_clause 0x1"}
+{"family": "sop", "asm": "s_branch 0", "target": "gfx1030", "status": "ok", "hex": "000082bf", "disasm": "s_branch 0"}
+{"family": "sop", "asm": "s_cbranch_scc0 0", "target": "gfx1030", "status": "ok", "hex": "000084bf", "disasm": "s_cbranch_scc0 0"}
+{"family": "sop", "asm": "s_cbranch_scc1 0", "target": "gfx1030", "status": "ok", "hex": "000085bf", "disasm": "s_cbranch_scc1 0"}
+{"family": "sop", "asm": "s_cbranch_vccz 0", "target": "gfx1030", "status": "ok", "hex": "000086bf", "disasm": "s_cbranch_vccz 0"}
+{"family": "sop", "asm": "s_cbranch_vccnz 0", "target": "gfx1030", "status": "ok", "hex": "000087bf", "disasm": "s_cbranch_vccnz 0"}
+{"family": "sop", "asm": "s_cbranch_execz 0", "target": "gfx1030", "status": "ok", "hex": "000088bf", "disasm": "s_cbranch_execz 0"}
+{"family": "sop", "asm": "s_cbranch_execnz 0", "target": "gfx1030", "status": "ok", "hex": "000089bf", "disasm": "s_cbranch_execnz 0"}
+{"family": "vop12c", "asm": "v_mov_b32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0103007e", "disasm": "v_mov_b32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_mov_b32 v0, s1", "target": "gfx1030", "status": "ok", "hex": "0102007e", "disasm": "v_mov_b32_e32 v0, s1"}
+{"family": "vop12c", "asm": "v_mov_b32 v0, 0x3f800000", "target": "gfx1030", "status": "ok", "hex": "f202007e", "disasm": "v_mov_b32_e32 v0, 1.0"}
+{"family": "vop12c", "asm": "v_cvt_f32_i32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "010b007e", "disasm": "v_cvt_f32_i32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_cvt_f32_u32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "010d007e", "disasm": "v_cvt_f32_u32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_cvt_i32_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0111007e", "disasm": "v_cvt_i32_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_cvt_u32_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "010f007e", "disasm": "v_cvt_u32_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_cvt_f16_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0115007e", "disasm": "v_cvt_f16_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_cvt_f32_f16 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0117007e", "disasm": "v_cvt_f32_f16_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_cvt_f32_ubyte0 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0123007e", "disasm": "v_cvt_f32_ubyte0_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_cvt_f32_ubyte1 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0125007e", "disasm": "v_cvt_f32_ubyte1_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_cvt_f32_ubyte2 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0127007e", "disasm": "v_cvt_f32_ubyte2_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_cvt_f32_ubyte3 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0129007e", "disasm": "v_cvt_f32_ubyte3_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_fract_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0141007e", "disasm": "v_fract_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_trunc_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0143007e", "disasm": "v_trunc_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_ceil_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0145007e", "disasm": "v_ceil_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_rndne_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0147007e", "disasm": "v_rndne_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_floor_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0149007e", "disasm": "v_floor_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_exp_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "014b007e", "disasm": "v_exp_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_log_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "014f007e", "disasm": "v_log_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_rcp_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0155007e", "disasm": "v_rcp_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_rcp_iflag_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0157007e", "disasm": "v_rcp_iflag_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_rsq_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "015d007e", "disasm": "v_rsq_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_sqrt_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0167007e", "disasm": "v_sqrt_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_sin_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "016b007e", "disasm": "v_sin_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_cos_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "016d007e", "disasm": "v_cos_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_not_b32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "016f007e", "disasm": "v_not_b32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_bfrev_b32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0171007e", "disasm": "v_bfrev_b32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_ffbh_u32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0173007e", "disasm": "v_ffbh_u32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_ffbl_b32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0175007e", "disasm": "v_ffbl_b32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_ffbh_i32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0177007e", "disasm": "v_ffbh_i32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_frexp_exp_i32_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "017f007e", "disasm": "v_frexp_exp_i32_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_frexp_mant_f32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0181007e", "disasm": "v_frexp_mant_f32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_movreld_b32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0185007e", "disasm": "v_movreld_b32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_movrels_b32 v0, v1", "target": "gfx1030", "status": "ok", "hex": "0187007e", "disasm": "v_movrels_b32_e32 v0, v1"}
+{"family": "vop12c", "asm": "v_add_f32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050006", "disasm": "v_add_f32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_sub_f32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050008", "disasm": "v_sub_f32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_subrev_f32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105000a", "disasm": "v_subrev_f32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_mul_legacy_f32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105000e", "disasm": "v_mul_legacy_f32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_mul_f32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050010", "disasm": "v_mul_f32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_mul_i32_i24 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050012", "disasm": "v_mul_i32_i24_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_mul_hi_i32_i24 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050014", "disasm": "v_mul_hi_i32_i24_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_mul_u32_u24 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050016", "disasm": "v_mul_u32_u24_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_mul_hi_u32_u24 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050018", "disasm": "v_mul_hi_u32_u24_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_min_f32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105001e", "disasm": "v_min_f32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_max_f32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050020", "disasm": "v_max_f32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_min_i32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050022", "disasm": "v_min_i32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_max_i32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050024", "disasm": "v_max_i32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_min_u32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050026", "disasm": "v_min_u32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_max_u32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050028", "disasm": "v_max_u32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_lshrrev_b32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105002c", "disasm": "v_lshrrev_b32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_ashrrev_i32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050030", "disasm": "v_ashrrev_i32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_lshlrev_b32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050034", "disasm": "v_lshlrev_b32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_and_b32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050036", "disasm": "v_and_b32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_or_b32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050038", "disasm": "v_or_b32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_xor_b32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105003a", "disasm": "v_xor_b32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_xnor_b32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105003c", "disasm": "v_xnor_b32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_mac_f32 v0, v1, v2", "target": "gfx1030", "status": "asm-error", "error": "/var/folders/qn/vfcrj9fs2n7b9nzyd7t2w0h40000gn/T/tmpxiw97b6t/case.s:1:1: error: instruction not supported on this GPU"}
+{"family": "vop12c", "asm": "v_madmk_f32 v0, v1, 0x3f800000, v2", "target": "gfx1030", "status": "asm-error", "error": "/var/folders/qn/vfcrj9fs2n7b9nzyd7t2w0h40000gn/T/tmpxiw97b6t/case.s:1:1: error: instruction not supported on this GPU"}
+{"family": "vop12c", "asm": "v_madak_f32 v0, v1, v2, 0x3f800000", "target": "gfx1030", "status": "asm-error", "error": "/var/folders/qn/vfcrj9fs2n7b9nzyd7t2w0h40000gn/T/tmpxiw97b6t/case.s:1:1: error: instruction not supported on this GPU"}
+{"family": "vop12c", "asm": "v_add_nc_u32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105004a", "disasm": "v_add_nc_u32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_sub_nc_u32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105004c", "disasm": "v_sub_nc_u32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_subrev_nc_u32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105004e", "disasm": "v_subrev_nc_u32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_fmac_f32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050056", "disasm": "v_fmac_f32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_fmamk_f32 v0, v1, 0x3f800000, v2", "target": "gfx1030", "status": "ok", "hex": "010500580000803f", "disasm": "v_fmamk_f32 v0, v1, 0x3f800000, v2"}
+{"family": "vop12c", "asm": "v_fmaak_f32 v0, v1, v2, 0x3f800000", "target": "gfx1030", "status": "ok", "hex": "0105005a0000803f", "disasm": "v_fmaak_f32 v0, v1, v2, 0x3f800000"}
+{"family": "vop12c", "asm": "v_cvt_pkrtz_f16_f32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105005e", "disasm": "v_cvt_pkrtz_f16_f32_e32 v0, v1, v2"}
+{"family": "vop12c", "asm": "v_cndmask_b32 v0, v1, v2, vcc_lo", "target": "gfx1030", "status": "ok", "hex": "01050002", "disasm": "v_cndmask_b32_e32 v0, v1, v2, vcc_lo"}
+{"family": "vop12c", "asm": "v_add_co_ci_u32 v0, vcc_lo, v1, v2, vcc_lo", "target": "gfx1030", "status": "ok", "hex": "01050050", "disasm": "v_add_co_ci_u32_e32 v0, vcc_lo, v1, v2, vcc_lo"}
+{"family": "vop12c", "asm": "v_sub_co_ci_u32 v0, vcc_lo, v1, v2, vcc_lo", "target": "gfx1030", "status": "ok", "hex": "01050052", "disasm": "v_sub_co_ci_u32_e32 v0, vcc_lo, v1, v2, vcc_lo"}
+{"family": "vop12c", "asm": "v_cmp_f_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105007c", "disasm": "v_cmp_f_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_lt_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105027c", "disasm": "v_cmp_lt_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_eq_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105047c", "disasm": "v_cmp_eq_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_le_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105067c", "disasm": "v_cmp_le_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_gt_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105087c", "disasm": "v_cmp_gt_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_lg_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050a7c", "disasm": "v_cmp_lg_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_ge_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050c7c", "disasm": "v_cmp_ge_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_o_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050e7c", "disasm": "v_cmp_o_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_u_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105107c", "disasm": "v_cmp_u_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_nge_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105127c", "disasm": "v_cmp_nge_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_nlg_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105147c", "disasm": "v_cmp_nlg_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_ngt_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105167c", "disasm": "v_cmp_ngt_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_nle_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105187c", "disasm": "v_cmp_nle_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_neq_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01051a7c", "disasm": "v_cmp_neq_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_nlt_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01051c7c", "disasm": "v_cmp_nlt_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_tru_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01051e7c", "disasm": "v_cmp_tru_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_lt_i32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105027d", "disasm": "v_cmp_lt_i32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_eq_i32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105047d", "disasm": "v_cmp_eq_i32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_le_i32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105067d", "disasm": "v_cmp_le_i32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_gt_i32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105087d", "disasm": "v_cmp_gt_i32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_ne_i32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050a7d", "disasm": "v_cmp_ne_i32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_ge_i32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01050c7d", "disasm": "v_cmp_ge_i32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_lt_u32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105827d", "disasm": "v_cmp_lt_u32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_eq_u32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105847d", "disasm": "v_cmp_eq_u32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_le_u32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105867d", "disasm": "v_cmp_le_u32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_gt_u32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105887d", "disasm": "v_cmp_gt_u32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_ne_u32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01058a7d", "disasm": "v_cmp_ne_u32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_ge_u32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "01058c7d", "disasm": "v_cmp_ge_u32_e32 vcc_lo, v1, v2"}
+{"family": "vop12c", "asm": "v_cmp_class_f32 vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "0105107d", "disasm": "v_cmp_class_f32_e32 vcc_lo, v1, v2"}
+{"family": "vop3", "asm": "v_mad_u32_u24 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000043d501050e04", "disasm": "v_mad_u32_u24 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_mad_i32_i24 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000042d501050e04", "disasm": "v_mad_i32_i24 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_cubeid_f32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000044d501050e04", "disasm": "v_cubeid_f32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_cubesc_f32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000045d501050e04", "disasm": "v_cubesc_f32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_cubetc_f32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000046d501050e04", "disasm": "v_cubetc_f32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_cubema_f32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000047d501050e04", "disasm": "v_cubema_f32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_bfe_u32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000048d501050e04", "disasm": "v_bfe_u32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_bfe_i32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000049d501050e04", "disasm": "v_bfe_i32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_bfi_b32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00004ad501050e04", "disasm": "v_bfi_b32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_fma_f32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00004bd501050e04", "disasm": "v_fma_f32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_alignbit_b32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00004ed501050e04", "disasm": "v_alignbit_b32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_alignbyte_b32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00004fd501050e04", "disasm": "v_alignbyte_b32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_min3_f32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000051d501050e04", "disasm": "v_min3_f32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_min3_i32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000052d501050e04", "disasm": "v_min3_i32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_min3_u32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000053d501050e04", "disasm": "v_min3_u32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_max3_f32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000054d501050e04", "disasm": "v_max3_f32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_max3_i32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000055d501050e04", "disasm": "v_max3_i32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_max3_u32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000056d501050e04", "disasm": "v_max3_u32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_med3_f32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000057d501050e04", "disasm": "v_med3_f32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_med3_i32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000058d501050e04", "disasm": "v_med3_i32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_med3_u32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000059d501050e04", "disasm": "v_med3_u32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_sad_u8 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00005ad501050e04", "disasm": "v_sad_u8 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_sad_hi_u8 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00005bd501050e04", "disasm": "v_sad_hi_u8 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_sad_u16 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00005cd501050e04", "disasm": "v_sad_u16 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_sad_u32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00005dd501050e04", "disasm": "v_sad_u32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_cvt_pk_u8_f32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00005ed501050e04", "disasm": "v_cvt_pk_u8_f32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_lerp_u8 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00004dd501050e04", "disasm": "v_lerp_u8 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_perm_b32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000044d701050e04", "disasm": "v_perm_b32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_xad_u32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000045d701050e04", "disasm": "v_xad_u32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_lshl_add_u32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000046d701050e04", "disasm": "v_lshl_add_u32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_add_lshl_u32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000047d701050e04", "disasm": "v_add_lshl_u32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_add3_u32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00006dd701050e04", "disasm": "v_add3_u32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_lshl_or_b32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00006fd701050e04", "disasm": "v_lshl_or_b32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_and_or_b32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000071d701050e04", "disasm": "v_and_or_b32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_or3_b32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000072d701050e04", "disasm": "v_or3_b32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_mad_u16 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000040d701050e04", "disasm": "v_mad_u16 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_mad_i16 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00005ed701050e04", "disasm": "v_mad_i16 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_fma_f16 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00004bd701050e04", "disasm": "v_fma_f16 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_div_fixup_f32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00005fd501050e04", "disasm": "v_div_fixup_f32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_div_fmas_f32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "00006fd501050e04", "disasm": "v_div_fmas_f32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_msad_u8 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000071d501050e04", "disasm": "v_msad_u8 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_mullit_f32 v0, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "000050d501050e04", "disasm": "v_mullit_f32 v0, v1, v2, v3"}
+{"family": "vop3", "asm": "v_add_f64 v[0:1], v[2:3], v[4:5]", "target": "gfx1030", "status": "ok", "hex": "000064d502090200", "disasm": "v_add_f64 v[0:1], v[2:3], v[4:5]"}
+{"family": "vop3", "asm": "v_mul_f64 v[0:1], v[2:3], v[4:5]", "target": "gfx1030", "status": "ok", "hex": "000065d502090200", "disasm": "v_mul_f64 v[0:1], v[2:3], v[4:5]"}
+{"family": "vop3", "asm": "v_min_f64 v[0:1], v[2:3], v[4:5]", "target": "gfx1030", "status": "ok", "hex": "000066d502090200", "disasm": "v_min_f64 v[0:1], v[2:3], v[4:5]"}
+{"family": "vop3", "asm": "v_max_f64 v[0:1], v[2:3], v[4:5]", "target": "gfx1030", "status": "ok", "hex": "000067d502090200", "disasm": "v_max_f64 v[0:1], v[2:3], v[4:5]"}
+{"family": "vop3", "asm": "v_fma_f64 v[0:1], v[2:3], v[4:5], v[6:7]", "target": "gfx1030", "status": "ok", "hex": "00004cd502091a04", "disasm": "v_fma_f64 v[0:1], v[2:3], v[4:5], v[6:7]"}
+{"family": "vop3", "asm": "v_mul_lo_u32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "000069d501050200", "disasm": "v_mul_lo_u32 v0, v1, v2"}
+{"family": "vop3", "asm": "v_mul_hi_u32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "00006ad501050200", "disasm": "v_mul_hi_u32 v0, v1, v2"}
+{"family": "vop3", "asm": "v_mul_hi_i32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "00006cd501050200", "disasm": "v_mul_hi_i32 v0, v1, v2"}
+{"family": "vop3", "asm": "v_add_co_u32 v0, vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "006a0fd701050200", "disasm": "v_add_co_u32 v0, vcc_lo, v1, v2"}
+{"family": "vop3", "asm": "v_sub_co_u32 v0, vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "006a10d701050200", "disasm": "v_sub_co_u32 v0, vcc_lo, v1, v2"}
+{"family": "vop3", "asm": "v_subrev_co_u32 v0, vcc_lo, v1, v2", "target": "gfx1030", "status": "ok", "hex": "006a19d701050200", "disasm": "v_subrev_co_u32 v0, vcc_lo, v1, v2"}
+{"family": "vop3", "asm": "v_div_scale_f32 v0, vcc_lo, v1, v2, v3", "target": "gfx1030", "status": "ok", "hex": "006a6dd501050e04", "disasm": "v_div_scale_f32 v0, vcc_lo, v1, v2, v3"}
+{"family": "vop3", "asm": "v_mad_u64_u32 v[0:1], vcc_lo, v2, v3, v[4:5]", "target": "gfx1030", "status": "ok", "hex": "006a76d502071204", "disasm": "v_mad_u64_u32 v[0:1], vcc_lo, v2, v3, v[4:5]"}
+{"family": "vop3", "asm": "v_mad_i64_i32 v[0:1], vcc_lo, v2, v3, v[4:5]", "target": "gfx1030", "status": "ok", "hex": "006a77d502071204", "disasm": "v_mad_i64_i32 v[0:1], vcc_lo, v2, v3, v[4:5]"}
+{"family": "vop3", "asm": "v_readlane_b32 s0, v1, s2", "target": "gfx1030", "status": "ok", "hex": "000060d701050000", "disasm": "v_readlane_b32 s0, v1, s2"}
+{"family": "vop3", "asm": "v_writelane_b32 v0, s1, s2", "target": "gfx1030", "status": "ok", "hex": "000061d701040000", "disasm": "v_writelane_b32 v0, s1, s2"}
+{"family": "vop3", "asm": "v_bcnt_u32_b32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "000064d701050200", "disasm": "v_bcnt_u32_b32 v0, v1, v2"}
+{"family": "vop3", "asm": "v_mbcnt_lo_u32_b32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "000065d701050200", "disasm": "v_mbcnt_lo_u32_b32 v0, v1, v2"}
+{"family": "vop3", "asm": "v_mbcnt_hi_u32_b32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "000066d701050200", "disasm": "v_mbcnt_hi_u32_b32 v0, v1, v2"}
+{"family": "vop3", "asm": "v_cvt_pknorm_i16_f32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "000068d701050200", "disasm": "v_cvt_pknorm_i16_f32 v0, v1, v2"}
+{"family": "vop3", "asm": "v_cvt_pknorm_u16_f32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "000069d701050200", "disasm": "v_cvt_pknorm_u16_f32 v0, v1, v2"}
+{"family": "vop3", "asm": "v_cvt_pk_u16_u32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "00006ad701050200", "disasm": "v_cvt_pk_u16_u32 v0, v1, v2"}
+{"family": "vop3", "asm": "v_cvt_pk_i16_i32 v0, v1, v2", "target": "gfx1030", "status": "ok", "hex": "00006bd701050200", "disasm": "v_cvt_pk_i16_i32 v0, v1, v2"}
+{"family": "vop3", "asm": "v_add_f32_e64 v0, -v1, |v2|", "target": "gfx1030", "status": "ok", "hex": "000203d501050220", "disasm": "v_add_f32_e64 v0, -v1, |v2|"}
+{"family": "vop3", "asm": "v_mul_f32_e64 v0, v1, v2 clamp", "target": "gfx1030", "status": "ok", "hex": "008008d501050200", "disasm": "v_mul_f32_e64 v0, v1, v2 clamp"}
+{"family": "vop3", "asm": "v_max_f32_e64 v0, v1, v2 mul:2", "target": "gfx1030", "status": "ok", "hex": "000010d501050208", "disasm": "v_max_f32_e64 v0, v1, v2 mul:2"}
+{"family": "vop3", "asm": "v_permlane16_b32 v0, v1, s2, s3", "target": "gfx1030", "status": "ok", "hex": "000077d701050c00", "disasm": "v_permlane16_b32 v0, v1, s2, s3"}
+{"family": "vop3", "asm": "v_permlanex16_b32 v0, v1, s2, s3", "target": "gfx1030", "status": "ok", "hex": "000078d701050c00", "disasm": "v_permlanex16_b32 v0, v1, s2, s3"}
