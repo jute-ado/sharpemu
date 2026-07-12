@@ -1529,7 +1529,12 @@ public static class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        var hostPath = ResolveGuestPath(guestPath);
+        if (!TryResolveGuestPath(guestPath, out var hostPath))
+        {
+            LogOpenTrace($"_open rejected unsafe path='{guestPath}' flags=0x{flags:X8}");
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
         var access = ResolveOpenAccess(flags);
         var mode = ResolveOpenMode(flags, access);
         try
@@ -1643,7 +1648,11 @@ public static class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        var hostPath = ResolveGuestPath(guestPath);
+        if (!TryResolveGuestPath(guestPath, out var hostPath))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
         var statCacheKey = GetNegativeStatCacheKey(guestPath);
         if (statCacheKey is not null && IsNegativeStatCached(statCacheKey))
         {
@@ -1704,7 +1713,12 @@ public static class KernelMemoryCompatExports
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
             }
 
-            var hostPath = ResolveGuestPath(guestPath);
+            if (!TryResolveGuestPath(guestPath, out var hostPath))
+            {
+                KernelRuntimeCompatExports.TrySetErrno(ctx, Einval);
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            }
+
             if (!TryGetAprFileSize(hostPath, out var fileSize))
             {
                 LogIoTrace("apr_resolve", guestPath, $"host='{hostPath}' index={i} count={count} result=not_found");
@@ -1774,7 +1788,11 @@ public static class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        var hostPath = ResolveGuestPath(guestPath);
+        if (!TryResolveGuestPath(guestPath, out var hostPath))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED;
+        }
+
         if (IsReadOnlyGuestMutationPath(guestPath))
         {
             LogOpenTrace($"unlink readonly path='{guestPath}' host='{hostPath}'");
@@ -1830,7 +1848,11 @@ public static class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        var hostPath = ResolveGuestPath(guestPath);
+        if (!TryResolveGuestPath(guestPath, out var hostPath))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED;
+        }
+
         if (IsReadOnlyGuestMutationPath(guestPath))
         {
             LogOpenTrace($"mkdir readonly path='{guestPath}' host='{hostPath}'");
@@ -1889,7 +1911,11 @@ public static class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        var hostPath = ResolveGuestPath(guestPath);
+        if (!TryResolveGuestPath(guestPath, out var hostPath))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED;
+        }
+
         if (IsReadOnlyGuestMutationPath(guestPath))
         {
             LogOpenTrace($"rmdir readonly path='{guestPath}' host='{hostPath}'");
@@ -4399,127 +4425,177 @@ public static class KernelMemoryCompatExports
 
     public static string ResolveGuestPath(string guestPath)
     {
+        if (TryResolveGuestPath(guestPath, out var hostPath))
+        {
+            return hostPath;
+        }
+
+        throw new UnauthorizedAccessException($"Guest path is outside the configured mounts: '{guestPath}'.");
+    }
+
+    public static bool TryResolveGuestPath(string guestPath, out string hostPath)
+    {
+        hostPath = string.Empty;
         if (string.IsNullOrWhiteSpace(guestPath))
         {
-            return guestPath;
+            return false;
         }
 
-        if (TryResolveRegisteredGuestMount(guestPath, out var mountedPath))
+        var normalizedGuestPath = guestPath.Replace('\\', '/');
+        if (TryResolveRegisteredGuestMount(normalizedGuestPath, out hostPath))
         {
-            return mountedPath;
+            return true;
         }
 
-        if (guestPath.StartsWith("/devlog/app/", StringComparison.OrdinalIgnoreCase))
+        if (TryGetMountRelativePath(normalizedGuestPath, "/devlog/app", out var relativePath) ||
+            TryGetMountRelativePath(normalizedGuestPath, "devlog/app", out relativePath))
         {
-            var relative = NormalizeMountRelativePath(guestPath["/devlog/app/".Length..]);
-            return Path.Combine(ResolveDevlogAppRoot(), relative);
+            return TryResolvePathWithinRoot(ResolveDevlogAppRoot(), relativePath, out hostPath);
         }
 
-        if (guestPath.StartsWith("devlog/app/", StringComparison.OrdinalIgnoreCase))
+        if (TryGetMountRelativePath(normalizedGuestPath, "/temp0", out relativePath))
         {
-            var relative = NormalizeMountRelativePath(guestPath["devlog/app/".Length..]);
-            return Path.Combine(ResolveDevlogAppRoot(), relative);
+            return TryResolvePathWithinRoot(ResolveTemp0Root(), relativePath, out hostPath);
         }
 
-        if (string.Equals(guestPath, "/devlog/app", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(guestPath, "devlog/app", StringComparison.OrdinalIgnoreCase))
+        if (TryGetMountRelativePath(normalizedGuestPath, "/download0", out relativePath) ||
+            TryGetMountRelativePath(normalizedGuestPath, "download0", out relativePath))
         {
-            return ResolveDevlogAppRoot();
+            return TryResolvePathWithinRoot(ResolveDownload0Root(), relativePath, out hostPath);
         }
 
-        if (guestPath.StartsWith("/temp0/", StringComparison.OrdinalIgnoreCase))
+        if (TryGetMountRelativePath(normalizedGuestPath, "/hostapp", out relativePath) ||
+            TryGetMountRelativePath(normalizedGuestPath, "hostapp", out relativePath))
         {
-            var relative = NormalizeMountRelativePath(guestPath["/temp0/".Length..]);
-            return Path.Combine(ResolveTemp0Root(), relative);
-        }
-
-        if (string.Equals(guestPath, "/temp0", StringComparison.OrdinalIgnoreCase))
-        {
-            return ResolveTemp0Root();
-        }
-
-        if (guestPath.StartsWith("/download0/", StringComparison.OrdinalIgnoreCase))
-        {
-            var relative = NormalizeMountRelativePath(guestPath["/download0/".Length..]);
-            return Path.Combine(ResolveDownload0Root(), relative);
-        }
-
-        if (guestPath.StartsWith("download0/", StringComparison.OrdinalIgnoreCase))
-        {
-            var relative = NormalizeMountRelativePath(guestPath["download0/".Length..]);
-            return Path.Combine(ResolveDownload0Root(), relative);
-        }
-
-        if (string.Equals(guestPath, "/download0", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(guestPath, "download0", StringComparison.OrdinalIgnoreCase))
-        {
-            return ResolveDownload0Root();
-        }
-
-        if (guestPath.StartsWith("/hostapp/", StringComparison.OrdinalIgnoreCase))
-        {
-            var relative = NormalizeMountRelativePath(guestPath["/hostapp/".Length..]);
-            return Path.Combine(ResolveHostappRoot(), relative);
-        }
-
-        if (guestPath.StartsWith("hostapp/", StringComparison.OrdinalIgnoreCase))
-        {
-            var relative = NormalizeMountRelativePath(guestPath["hostapp/".Length..]);
-            return Path.Combine(ResolveHostappRoot(), relative);
-        }
-
-        if (string.Equals(guestPath, "/hostapp", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(guestPath, "hostapp", StringComparison.OrdinalIgnoreCase))
-        {
-            return ResolveHostappRoot();
+            return TryResolvePathWithinRoot(ResolveHostappRoot(), relativePath, out hostPath);
         }
 
         var app0Root = ResolveApp0Root();
-        if (!string.IsNullOrWhiteSpace(app0Root))
+        if (string.IsNullOrWhiteSpace(app0Root))
         {
-            if (string.Equals(guestPath, "$", StringComparison.Ordinal) ||
-                string.Equals(guestPath, "$/", StringComparison.Ordinal) ||
-                string.Equals(guestPath, "$\\", StringComparison.Ordinal))
+            return false;
+        }
+
+        if (normalizedGuestPath is "$" or "$/")
+        {
+            return TryResolvePathWithinRoot(app0Root, string.Empty, out hostPath);
+        }
+
+        if (normalizedGuestPath.StartsWith("$/", StringComparison.Ordinal))
+        {
+            return TryResolvePathWithinRoot(app0Root, normalizedGuestPath[2..], out hostPath);
+        }
+
+        if (TryGetMountRelativePath(normalizedGuestPath, "/app0", out relativePath) ||
+            TryGetMountRelativePath(normalizedGuestPath, "app0", out relativePath))
+        {
+            return TryResolvePathWithinRoot(app0Root, relativePath, out hostPath);
+        }
+
+        if (LooksLikeHostAbsolutePath(normalizedGuestPath))
+        {
+            return false;
+        }
+
+        return TryResolvePathWithinRoot(app0Root, normalizedGuestPath, out hostPath);
+    }
+
+    private static bool TryGetMountRelativePath(
+        string guestPath,
+        string mountPoint,
+        out string relativePath)
+    {
+        relativePath = string.Empty;
+        if (string.Equals(guestPath, mountPoint, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(guestPath, mountPoint + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var prefix = mountPoint + "/";
+        if (!guestPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        relativePath = guestPath[prefix.Length..];
+        return true;
+    }
+
+    private static bool TryResolvePathWithinRoot(string hostRoot, string relativePath, out string hostPath)
+    {
+        hostPath = string.Empty;
+        try
+        {
+            var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(hostRoot));
+            var candidate = Path.GetFullPath(Path.Combine(
+                normalizedRoot,
+                NormalizeMountRelativePath(relativePath)));
+            var comparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+            var rootWithSeparator = Path.EndsInDirectorySeparator(normalizedRoot)
+                ? normalizedRoot
+                : normalizedRoot + Path.DirectorySeparatorChar;
+            if (!string.Equals(candidate, normalizedRoot, comparison) &&
+                !candidate.StartsWith(rootWithSeparator, comparison))
             {
-                return app0Root;
+                return false;
             }
 
-            if (guestPath.StartsWith("$/", StringComparison.Ordinal) ||
-                guestPath.StartsWith("$\\", StringComparison.Ordinal))
+            if (ContainsReparsePointBelowRoot(normalizedRoot, candidate))
             {
-                var relative = NormalizeMountRelativePath(guestPath[2..]);
-                return Path.Combine(app0Root, relative);
+                return false;
             }
 
-            if (string.Equals(guestPath, "/app0", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(guestPath, "app0", StringComparison.OrdinalIgnoreCase))
+            hostPath = candidate;
+            return true;
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private static bool ContainsReparsePointBelowRoot(string root, string candidate)
+    {
+        var relativePath = Path.GetRelativePath(root, candidate);
+        if (relativePath == ".")
+        {
+            return false;
+        }
+
+        var current = root;
+        foreach (var segment in relativePath.Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = Path.Combine(current, segment);
+            if (!File.Exists(current) && !Directory.Exists(current))
             {
-                return app0Root;
+                continue;
             }
 
-            if (guestPath.StartsWith("/app0/", StringComparison.OrdinalIgnoreCase))
+            try
             {
-                var relative = NormalizeMountRelativePath(guestPath["/app0/".Length..]);
-                return Path.Combine(app0Root, relative);
+                if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                {
+                    return true;
+                }
             }
-
-            if (guestPath.StartsWith("app0/", StringComparison.OrdinalIgnoreCase))
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
             {
-                var relative = NormalizeMountRelativePath(guestPath["app0/".Length..]);
-                return Path.Combine(app0Root, relative);
-            }
-
-            if (!Path.IsPathFullyQualified(guestPath) &&
-                !guestPath.StartsWith("/", StringComparison.Ordinal) &&
-                !guestPath.StartsWith("\\", StringComparison.Ordinal))
-            {
-                var relative = guestPath.Replace('/', Path.DirectorySeparatorChar);
-                return Path.Combine(app0Root, relative);
+                return true;
             }
         }
 
-        return guestPath;
+        return false;
     }
+
+    private static bool LooksLikeHostAbsolutePath(string path) =>
+        Path.IsPathRooted(path) ||
+        path.StartsWith("//", StringComparison.Ordinal) ||
+        (path.Length >= 2 && char.IsAsciiLetter(path[0]) && path[1] == ':');
 
     private static bool TryResolveRegisteredGuestMount(string guestPath, out string hostPath)
     {
