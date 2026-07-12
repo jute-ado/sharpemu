@@ -150,12 +150,6 @@ public sealed class SelfLoader : ISelfLoader
             ? TryLoadParamJson(fs, mountRoot)
             : default;
 
-        if (clearVirtualMemory)
-        {
-            virtualMemory.Clear();
-            _nextTlsModuleId = 1;
-        }
-
         var tlsModuleId = _nextTlsModuleId == 0 ? 1u : _nextTlsModuleId;
         Log.Debug($"TLS load_start clear={clearVirtualMemory} next={_nextTlsModuleId} assigned={tlsModuleId}");
 
@@ -169,6 +163,13 @@ public sealed class SelfLoader : ISelfLoader
         Console.WriteLine($"Total image size needed: 0x{totalImageSize:X} ({totalImageSize} bytes)");
         var isNextGen = elfHeader.AbiVersion == 2;
         var imageBase = DetermineRequestedImageBase(virtualMemory, totalImageSize, isNextGen, clearVirtualMemory);
+        ValidateLoadSegments(imageData, loadContext, programHeaders, imageBase);
+
+        if (clearVirtualMemory)
+        {
+            virtualMemory.Clear();
+            _nextTlsModuleId = 1;
+        }
 
         if (virtualMemory is PhysicalVirtualMemory physicalVm)
         {
@@ -363,11 +364,17 @@ public sealed class SelfLoader : ISelfLoader
             throw new InvalidDataException("Program header entry size is smaller than expected.");
         }
 
-        var tableOffset = checked(loadContext.ElfOffset + (int)elfHeader.ProgramHeaderOffset);
+        if (elfHeader.ProgramHeaderOffset > ulong.MaxValue - (ulong)loadContext.ElfOffset)
+        {
+            throw new InvalidDataException("Program header table offset overflows.");
+        }
+
+        var tableOffset64 = (ulong)loadContext.ElfOffset + elfHeader.ProgramHeaderOffset;
         EnsureRange(
             imageData.Length,
-            (ulong)tableOffset,
+            tableOffset64,
             (ulong)elfHeader.ProgramHeaderCount * elfHeader.ProgramHeaderEntrySize);
+        var tableOffset = (int)tableOffset64;
 
         var headers = GC.AllocateUninitializedArray<ProgramHeader>(elfHeader.ProgramHeaderCount);
         for (var i = 0; i < headers.Length; i++)
@@ -377,6 +384,51 @@ public sealed class SelfLoader : ISelfLoader
         }
 
         return headers;
+    }
+
+    private static void ValidateLoadSegments(
+        ReadOnlySpan<byte> imageData,
+        LoadContext loadContext,
+        IReadOnlyList<ProgramHeader> programHeaders,
+        ulong imageBase)
+    {
+        for (var index = 0; index < programHeaders.Count; index++)
+        {
+            var header = programHeaders[index];
+            if (header.HeaderType != ProgramHeaderType.Load)
+            {
+                continue;
+            }
+
+            if (header.FileSize > header.MemorySize)
+            {
+                throw new InvalidDataException("ELF segment file size cannot exceed memory size.");
+            }
+
+            if (header.VirtualAddress > ulong.MaxValue - header.MemorySize ||
+                header.VirtualAddress > ulong.MaxValue - imageBase)
+            {
+                throw new InvalidDataException("ELF segment virtual address range overflows.");
+            }
+
+            var mappedAddress = imageBase + header.VirtualAddress;
+            if (mappedAddress > ulong.MaxValue - header.MemorySize)
+            {
+                throw new InvalidDataException("Mapped ELF segment address range overflows.");
+            }
+
+            if (header.FileSize == 0)
+            {
+                continue;
+            }
+
+            var sourceOffset = ResolvePhysicalSegmentOffset(
+                imageData.Length,
+                loadContext,
+                header,
+                index);
+            EnsureRange(imageData.Length, sourceOffset, header.FileSize);
+        }
     }
 
     private static void MapLoadSegments(
@@ -1786,6 +1838,11 @@ public sealed class SelfLoader : ISelfLoader
             {
                 if (header.VirtualAddress < minAddr)
                     minAddr = header.VirtualAddress;
+
+                if (header.VirtualAddress > ulong.MaxValue - header.MemorySize)
+                {
+                    throw new InvalidDataException("ELF segment virtual address range overflows.");
+                }
 
                 var endAddr = header.VirtualAddress + header.MemorySize;
                 if (endAddr > maxAddr)
