@@ -42,10 +42,17 @@ public sealed class FakeGuestMemory : ICpuMemory
     {
         foreach (var (regionBase, regionData) in _regions)
         {
-            if (address >= regionBase && address + (ulong)length <= regionBase + (ulong)regionData.Length)
+            if (address < regionBase)
+            {
+                continue;
+            }
+
+            var regionOffset = address - regionBase;
+            if (regionOffset <= (ulong)regionData.Length &&
+                (ulong)length <= (ulong)regionData.Length - regionOffset)
             {
                 data = regionData;
-                offset = (int)(address - regionBase);
+                offset = checked((int)regionOffset);
                 return true;
             }
         }

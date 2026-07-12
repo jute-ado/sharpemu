@@ -20,7 +20,6 @@ internal static class Gen5ShaderTranslator
     {
         public object Gate { get; } = new();
         public Dictionary<ulong, Gen5ShaderProgram> Programs { get; } = new();
-        public Dictionary<ulong, Gen5ShaderMetadata?> Metadata { get; } = new();
     }
 
     private static readonly uint[] FullscreenBarycentricEs =
@@ -134,6 +133,20 @@ internal static class Gen5ShaderTranslator
             cache.Programs.TryGetValue(shaderAddress, out program);
         }
 
+        if (program is not null && !ProgramStillMatchesMemory(ctx, program))
+        {
+            lock (cache.Gate)
+            {
+                if (cache.Programs.TryGetValue(shaderAddress, out var current) &&
+                    ReferenceEquals(current, program))
+                {
+                    cache.Programs.Remove(shaderAddress);
+                }
+            }
+
+            program = null;
+        }
+
         if (program is null)
         {
             if (!TryDecodeProgram(ctx, shaderAddress, out program, out error))
@@ -143,34 +156,18 @@ internal static class Gen5ShaderTranslator
 
             lock (cache.Gate)
             {
-                cache.Programs.TryAdd(shaderAddress, program);
+                cache.Programs[shaderAddress] = program;
             }
         }
 
         Gen5ShaderMetadata? metadata = null;
-        if (shaderHeaderAddress != 0)
+        if (shaderHeaderAddress != 0 &&
+            Gen5ShaderMetadataReader.TryRead(
+                ctx,
+                shaderHeaderAddress,
+                out var decodedMetadata))
         {
-            var metadataCached = false;
-            lock (cache.Gate)
-            {
-                metadataCached = cache.Metadata.TryGetValue(shaderHeaderAddress, out metadata);
-            }
-
-            if (!metadataCached)
-            {
-                if (Gen5ShaderMetadataReader.TryRead(
-                        ctx,
-                        shaderHeaderAddress,
-                        out var decodedMetadata))
-                {
-                    metadata = decodedMetadata;
-                }
-
-                lock (cache.Gate)
-                {
-                    cache.Metadata.TryAdd(shaderHeaderAddress, metadata);
-                }
-            }
+            metadata = decodedMetadata;
         }
 
         var userData = new uint[GetUserDataDwordCount(metadata)];
@@ -185,6 +182,32 @@ internal static class Gen5ShaderTranslator
             metadata,
             computeSystemRegisters,
             userDataScalarRegisterBase);
+        return true;
+    }
+
+    private static bool ProgramStillMatchesMemory(CpuContext ctx, Gen5ShaderProgram program)
+    {
+        foreach (var instruction in program.Instructions)
+        {
+            for (var wordIndex = 0; wordIndex < instruction.Words.Count; wordIndex++)
+            {
+                var relativeAddress =
+                    (ulong)instruction.Pc +
+                    ((ulong)wordIndex * sizeof(uint));
+                if (relativeAddress > ulong.MaxValue - program.Address)
+                {
+                    return false;
+                }
+
+                var address = program.Address + relativeAddress;
+                if (!ctx.TryReadUInt32(address, out var word) ||
+                    word != instruction.Words[wordIndex])
+                {
+                    return false;
+                }
+            }
+        }
+
         return true;
     }
 
