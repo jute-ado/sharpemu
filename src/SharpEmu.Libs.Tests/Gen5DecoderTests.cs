@@ -14,6 +14,7 @@ public sealed class Gen5DecoderTests
     // Encodings assembled with llvm-mc -triple=amdgcn-amd-amdhsa -mcpu=gfx1013
     // (LLVM 22.1.8) and verified against llvm-objdump. No console-derived data.
     private const uint VAddF32_V0_V1_V2 = 0x06000501; // v_add_f32_e32 v0, v1, v2
+    private const uint VSubF32_V0_V1_V2 = 0x08000501; // v_sub_f32_e32 v0, v1, v2
     private const uint SEndpgm = 0xBF810000;          // s_endpgm
 
     [Fact]
@@ -38,6 +39,64 @@ public sealed class Gen5DecoderTests
 
         Assert.False(ok);
         Assert.NotEmpty(error);
+    }
+
+    [Fact]
+    public void InvalidatesCachedProgramWhenShaderMemoryChanges()
+    {
+        var ctx = CreateContext([VAddF32_V0_V1_V2, SEndpgm]);
+        var registers = new Dictionary<uint, uint>();
+
+        Assert.True(Gen5ShaderTranslator.TryCreateState(
+            ctx,
+            CodeAddress,
+            shaderHeaderAddress: 0,
+            registers,
+            userDataBaseRegister: 0,
+            out var firstState,
+            out var firstError), firstError);
+        Assert.Equal("VAddF32", firstState.Program.Instructions[0].Opcode);
+
+        Span<byte> replacement = stackalloc byte[sizeof(uint)];
+        BitConverter.TryWriteBytes(replacement, VSubF32_V0_V1_V2);
+        Assert.True(ctx.Memory.TryWrite(CodeAddress, replacement));
+
+        Assert.True(Gen5ShaderTranslator.TryCreateState(
+            ctx,
+            CodeAddress,
+            shaderHeaderAddress: 0,
+            registers,
+            userDataBaseRegister: 0,
+            out var secondState,
+            out var secondError), secondError);
+        Assert.Equal("VSubF32", secondState.Program.Instructions[0].Opcode);
+        Assert.NotSame(firstState.Program, secondState.Program);
+    }
+
+    [Fact]
+    public void ReusesCachedProgramWhileShaderMemoryIsUnchanged()
+    {
+        var ctx = CreateContext([VAddF32_V0_V1_V2, SEndpgm]);
+        var registers = new Dictionary<uint, uint>();
+
+        Assert.True(Gen5ShaderTranslator.TryCreateState(
+            ctx,
+            CodeAddress,
+            shaderHeaderAddress: 0,
+            registers,
+            userDataBaseRegister: 0,
+            out var firstState,
+            out var firstError), firstError);
+        Assert.True(Gen5ShaderTranslator.TryCreateState(
+            ctx,
+            CodeAddress,
+            shaderHeaderAddress: 0,
+            registers,
+            userDataBaseRegister: 0,
+            out var secondState,
+            out var secondError), secondError);
+
+        Assert.Same(firstState.Program, secondState.Program);
     }
 
     private static CpuContext CreateContext(uint[] instructionWords)
