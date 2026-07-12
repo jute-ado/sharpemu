@@ -3,9 +3,11 @@ version = 1
 [[annotations]]
 path = [
     "REUSE.toml",
+    ".gitattributes",
     "nuget.config",
     "global.json",
     "**/packages.lock.json",
+    "src/SharpEmu.Libs.Tests/Corpus/**",
     "scripts/ps5_names.txt",
     "src/SharpEmu.HLE/Aerolib/aerolib.bin",
     "_logs/**",
