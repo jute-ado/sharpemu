@@ -1,0 +1,19 @@
+* text=auto
+
+*.cs text eol=lf
+*.csproj text eol=lf
+*.props text eol=lf
+*.slnx text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+
+*.bin binary
+*.ico binary
+*.icns binary
+*.jpeg binary
+*.jpg binary
+*.png binary
+
