@@ -22,6 +22,28 @@ internal static partial class Gen5SpirvTranslator
                 return TryEmitVectorCompare(instruction, out error);
             }
 
+            if (instruction.Opcode == "VReadlaneB32")
+            {
+                if (instruction.Destinations.Count == 0 ||
+                    instruction.Destinations[0].Kind != Gen5OperandKind.ScalarRegister)
+                {
+                    error = "missing scalar destination";
+                    return false;
+                }
+
+                var lane = BitwiseAnd(
+                    GetRawSource(instruction, 1),
+                    UInt(RdnaWaveLaneCount - 1));
+                var value = _module.AddInstruction(
+                    SpirvOp.GroupNonUniformShuffle,
+                    _uintType,
+                    UInt(3),
+                    GetRawSource(instruction, 0),
+                    lane);
+                StoreS(instruction.Destinations[0].Value, value);
+                return true;
+            }
+
             if (!TryGetVectorDestination(instruction, out var destination))
             {
                 error = "missing vector destination";
@@ -32,10 +54,29 @@ internal static partial class Gen5SpirvTranslator
             switch (instruction.Opcode)
             {
                 case "VMovB32":
-                case "VReadlaneB32":
                 case "VReadfirstlaneB32":
                     result = GetRawSource(instruction, 0);
                     break;
+                case "VWritelaneB32":
+                {
+                    var lane = Load(_uintType, _subgroupInvocationIdInput);
+                    var selectedLane = BitwiseAnd(
+                        GetRawSource(instruction, 1),
+                        UInt(RdnaWaveLaneCount - 1));
+                    var selected = _module.AddInstruction(
+                        SpirvOp.IEqual,
+                        _boolType,
+                        lane,
+                        selectedLane);
+                    result = _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        selected,
+                        GetRawSource(instruction, 0),
+                        LoadV(destination));
+                    StoreV(destination, result, guardWithExec: false);
+                    return true;
+                }
                 case "VCndmaskB32":
                 {
                     var condition = instruction.Sources.Count > 2

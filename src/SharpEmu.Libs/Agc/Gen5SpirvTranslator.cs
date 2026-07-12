@@ -2422,7 +2422,14 @@ internal static partial class Gen5SpirvTranslator
 
         private bool UsesSubgroupShuffle() =>
             _state.Program.Instructions.Any(instruction =>
-                instruction.Opcode is "VPermlane16B32" or "VPermlanex16B32");
+                instruction.Opcode is
+                    "VReadlaneB32" or
+                    "VPermlane16B32" or
+                    "VPermlanex16B32");
+
+        private bool UsesLaneOperations() =>
+            _state.Program.Instructions.Any(instruction =>
+                instruction.Opcode is "VReadlaneB32" or "VWritelaneB32");
 
         private bool UsesWaveControl() =>
             _state.Program.Instructions.Any(instruction =>
@@ -2434,8 +2441,9 @@ internal static partial class Gen5SpirvTranslator
                 instruction.Destinations.Any(IsWaveMaskOperand));
 
         private bool UsesSubgroupOperations() =>
-            _stage == Gen5SpirvStage.Compute &&
-            (UsesSubgroupShuffle() || UsesWaveControl());
+            UsesLaneOperations() ||
+            (_stage == Gen5SpirvStage.Compute &&
+             (UsesSubgroupShuffle() || UsesWaveControl()));
 
         private static bool IsWaveMaskOperand(Gen5Operand operand) =>
             operand.Kind == Gen5OperandKind.ScalarRegister &&
