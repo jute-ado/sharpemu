@@ -37,12 +37,19 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            Directory.Packages.props
+            src/**/packages.lock.json
+
+      - name: Restore solution
+        run: dotnet restore SharpEmu.slnx --locked-mode
 
       - name: Test
-        run: dotnet test src/SharpEmu.Libs.Tests -c Release
+        run: dotnet test SharpEmu.slnx -c Release --no-restore
