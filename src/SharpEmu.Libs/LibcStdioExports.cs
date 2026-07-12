@@ -66,7 +66,12 @@ public static class LibcStdioExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        var hostPath = KernelMemoryCompatExports.ResolveGuestPath(guestPath);
+        if (!KernelMemoryCompatExports.TryResolveGuestPath(guestPath, out var hostPath))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED;
+        }
+
         if (fileAccess != FileAccess.Read && KernelMemoryCompatExports.IsReadOnlyGuestMutationPath(guestPath))
         {
             if (_traceStdio)
