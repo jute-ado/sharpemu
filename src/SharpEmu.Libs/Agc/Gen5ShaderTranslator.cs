@@ -894,7 +894,9 @@ internal static class Gen5ShaderTranslator
         var src0 = extra & 0x1FF;
         var src1 = (extra >> 9) & 0x1FF;
         var src2 = (extra >> 18) & 0x1FF;
-        sizeDwords = src0 == 0xFF || src1 == 0xFF || src2 == 0xFF ? 3u : 2u;
+        sizeDwords = opcode is 0x360 or 0x361
+            ? (src0 == 0xFF || src1 == 0xFF ? 3u : 2u)
+            : (src0 == 0xFF || src1 == 0xFF || src2 == 0xFF ? 3u : 2u);
         error = string.Empty;
         name = isVop3B
             ? opcode switch
@@ -1579,13 +1581,31 @@ internal static class Gen5ShaderTranslator
             case Gen5ShaderEncoding.Vop3:
             {
                 var extra = words[1];
-                sources =
-                [
-                    Gen5Operand.Source(extra & 0x1FF, literal),
-                    Gen5Operand.Source((extra >> 9) & 0x1FF, literal),
-                    Gen5Operand.Source((extra >> 18) & 0x1FF, literal),
-                ];
-                destinations = [Gen5Operand.Vector(word & 0xFF)];
+                if (opcode == "VReadlaneB32")
+                {
+                    sources =
+                    [
+                        Gen5Operand.Source(extra & 0x1FF, literal),
+                        Gen5Operand.Source((extra >> 9) & 0x1FF, literal),
+                    ];
+                    destinations = [Gen5Operand.Scalar(word & 0x7F)];
+                }
+                else
+                {
+                    sources = opcode == "VWritelaneB32"
+                        ?
+                        [
+                            Gen5Operand.Source(extra & 0x1FF, literal),
+                            Gen5Operand.Source((extra >> 9) & 0x1FF, literal),
+                        ]
+                        :
+                        [
+                            Gen5Operand.Source(extra & 0x1FF, literal),
+                            Gen5Operand.Source((extra >> 9) & 0x1FF, literal),
+                            Gen5Operand.Source((extra >> 18) & 0x1FF, literal),
+                        ];
+                    destinations = [Gen5Operand.Vector(word & 0xFF)];
+                }
                 var isVop3B = IsVop3BOpcode((word >> 16) & 0x3FF);
                 control = new Gen5Vop3Control(
                     isVop3B ? 0 : (word >> 8) & 0x7,
