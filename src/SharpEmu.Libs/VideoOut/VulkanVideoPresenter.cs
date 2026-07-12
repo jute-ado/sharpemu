@@ -953,7 +953,10 @@ internal static unsafe class VulkanVideoPresenter
         private DeviceMemory _stagingMemory;
         private ulong _stagingSize;
         private long _presentedSequence;
+        private bool _vulkanApiLoaded;
         private bool _vulkanReady;
+        private bool _vulkanDisposing;
+        private bool _vulkanDisposed;
         private bool _firstFramePresented;
         private bool _firstGuestDrawPresented;
         private bool _splashPresented;
@@ -1137,18 +1140,27 @@ internal static unsafe class VulkanVideoPresenter
 
         private void Initialize()
         {
-            WaitForRenderDocAttachIfRequested();
-            _vk = Vk.GetApi();
-            CreateInstance();
-            CreateSurface();
-            SelectPhysicalDevice();
-            CreateDevice();
-            CreateSwapchain();
-            CreateCommandResources();
-            CreateGuestDrawResources();
-            _vulkanReady = true;
-            Console.Error.WriteLine(
-                $"[LOADER][INFO] Vulkan VideoOut ready: {_extent.Width}x{_extent.Height}, format={_swapchainFormat}");
+            try
+            {
+                WaitForRenderDocAttachIfRequested();
+                _vk = Vk.GetApi();
+                _vulkanApiLoaded = true;
+                CreateInstance();
+                CreateSurface();
+                SelectPhysicalDevice();
+                CreateDevice();
+                CreateSwapchain();
+                CreateCommandResources();
+                CreateGuestDrawResources();
+                _vulkanReady = true;
+                Console.Error.WriteLine(
+                    $"[LOADER][INFO] Vulkan VideoOut ready: {_extent.Width}x{_extent.Height}, format={_swapchainFormat}");
+            }
+            catch
+            {
+                DisposeVulkan();
+                throw;
+            }
         }
 
         private static void WaitForRenderDocAttachIfRequested()
@@ -6525,78 +6537,124 @@ internal static unsafe class VulkanVideoPresenter
 
         private void DisposeVulkan()
         {
-            if (!_vulkanReady)
+            if (_vulkanDisposed || _vulkanDisposing)
             {
                 return;
             }
 
-            if (_debugUtils is not null && _debugMessenger.Handle != 0)
-            {
-                _debugUtils.DestroyDebugUtilsMessenger(_instance, _debugMessenger, null);
-            }
+            _vulkanDisposing = true;
             _vulkanReady = false;
-            _vk.DeviceWaitIdle(_device);
-            CollectCompletedGuestSubmissions(waitForOldest: false);
-            foreach (var pipeline in _computePipelines.Values)
+            try
             {
-                _vk.DestroyPipeline(_device, pipeline, null);
-            }
-            _computePipelines.Clear();
-            foreach (var pipeline in _graphicsPipelines.Values)
-            {
-                _vk.DestroyPipeline(_device, pipeline, null);
-            }
-            _graphicsPipelines.Clear();
-            foreach (var layout in _descriptorLayouts.Values)
-            {
-                _vk.DestroyPipelineLayout(_device, layout.PipelineLayout, null);
-                if (layout.DescriptorSetLayout.Handle != 0)
+                if (!_vulkanApiLoaded)
                 {
-                    _vk.DestroyDescriptorSetLayout(
-                        _device,
-                        layout.DescriptorSetLayout,
-                        null);
+                    return;
+                }
+
+                if (_device.Handle != 0)
+                {
+                    var idleResult = _vk.DeviceWaitIdle(_device);
+                    if (idleResult != Result.Success)
+                    {
+                        Console.Error.WriteLine(
+                            $"[LOADER][WARN] Vulkan device wait during cleanup returned {idleResult}.");
+                    }
+
+                    DestroyPendingGuestSubmissions();
+                    foreach (var pipeline in _computePipelines.Values)
+                    {
+                        _vk.DestroyPipeline(_device, pipeline, null);
+                    }
+                    _computePipelines.Clear();
+                    foreach (var pipeline in _graphicsPipelines.Values)
+                    {
+                        _vk.DestroyPipeline(_device, pipeline, null);
+                    }
+                    _graphicsPipelines.Clear();
+                    foreach (var layout in _descriptorLayouts.Values)
+                    {
+                        _vk.DestroyPipelineLayout(_device, layout.PipelineLayout, null);
+                        if (layout.DescriptorSetLayout.Handle != 0)
+                        {
+                            _vk.DestroyDescriptorSetLayout(
+                                _device,
+                                layout.DescriptorSetLayout,
+                                null);
+                        }
+                    }
+                    _descriptorLayouts.Clear();
+                    foreach (var sampler in _samplers.Values)
+                    {
+                        _vk.DestroySampler(_device, sampler, null);
+                    }
+                    _samplers.Clear();
+                    _shaderDigests.Clear();
+                    foreach (var allocation in _hostBufferAllocations.Values)
+                    {
+                        _vk.DestroyBuffer(_device, allocation.Buffer, null);
+                        _vk.FreeMemory(_device, allocation.Memory, null);
+                    }
+                    _hostBufferAllocations.Clear();
+                    _hostBufferPool.Clear();
+                    foreach (var guestImage in _guestImages.Values)
+                    {
+                        DestroyGuestImage(guestImage);
+                    }
+                    _guestImages.Clear();
+                    lock (_gate)
+                    {
+                        _availableGuestImages.Clear();
+                        _gpuGuestImages.Clear();
+                    }
+                    DestroySwapchainResources();
+                    _vk.DestroyDevice(_device, null);
+                    _device = default;
+                }
+
+                if (_surface.Handle != 0)
+                {
+                    _surfaceApi.DestroySurface(_instance, _surface, null);
+                    _surface = default;
+                }
+
+                if (_debugUtils is not null && _debugMessenger.Handle != 0)
+                {
+                    _debugUtils.DestroyDebugUtilsMessenger(_instance, _debugMessenger, null);
+                    _debugMessenger = default;
+                }
+
+                if (_instance.Handle != 0)
+                {
+                    _vk.DestroyInstance(_instance, null);
+                    _instance = default;
                 }
             }
-            _descriptorLayouts.Clear();
-            foreach (var sampler in _samplers.Values)
+            finally
             {
-                _vk.DestroySampler(_device, sampler, null);
+                _vulkanDisposed = true;
+                _vulkanDisposing = false;
             }
-            _samplers.Clear();
-            _shaderDigests.Clear();
-            foreach (var allocation in _hostBufferAllocations.Values)
+        }
+
+        private void DestroyPendingGuestSubmissions()
+        {
+            while (_pendingGuestSubmissions.TryDequeue(out var submission))
             {
-                _vk.DestroyBuffer(_device, allocation.Buffer, null);
-                _vk.FreeMemory(_device, allocation.Memory, null);
-            }
-            _hostBufferAllocations.Clear();
-            _hostBufferPool.Clear();
-            foreach (var guestImage in _guestImages.Values)
-            {
-                DestroyGuestImage(guestImage);
-            }
-            _guestImages.Clear();
-            lock (_gate)
-            {
-                _availableGuestImages.Clear();
-                _gpuGuestImages.Clear();
-            }
-            DestroySwapchainResources();
-            if (_device.Handle != 0)
-            {
-                _vk.DestroyDevice(_device, null);
-                _device = default;
-            }
-            if (_surface.Handle != 0)
-            {
-                _surfaceApi.DestroySurface(_instance, _surface, null);
-                _surface = default;
-            }
-            if (_instance.Handle != 0)
-            {
-                _vk.DestroyInstance(_instance, null);
-                _instance = default;
+                DestroyTranslatedDrawResources(submission.Resources);
+                var commandBuffer = submission.CommandBuffer;
+                if (_commandPool.Handle != 0 && commandBuffer.Handle != 0)
+                {
+                    _vk.FreeCommandBuffers(
+                        _device,
+                        _commandPool,
+                        1,
+                        &commandBuffer);
+                }
+
+                if (submission.Fence.Handle != 0)
+                {
+                    _vk.DestroyFence(_device, submission.Fence, null);
+                }
             }
         }
 
