@@ -3179,19 +3179,34 @@ public static class KernelMemoryCompatExports
                     continue;
                 }
 
-                if (startOut != 0 && !ctx.TryWriteUInt64(startOut, region.Address))
+                Span<byte> outputProbe = stackalloc byte[sizeof(ulong)];
+                if ((startOut != 0 && !TryReadCompat(ctx, startOut, outputProbe)) ||
+                    (endOut != 0 && !TryReadCompat(ctx, endOut, outputProbe)) ||
+                    (protectionOut != 0 &&
+                     !TryReadCompat(ctx, protectionOut, outputProbe[..sizeof(int)])))
                 {
                     return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
                 }
 
-                if (endOut != 0 && !ctx.TryWriteUInt64(endOut, region.Address + region.Length - 1))
+                if (startOut != 0 && !TryWriteUInt64Compat(ctx, startOut, region.Address))
                 {
                     return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
                 }
 
-                if (protectionOut != 0 && !ctx.TryWriteInt32(protectionOut, region.Protection))
+                if (endOut != 0 &&
+                    !TryWriteUInt64Compat(ctx, endOut, region.Address + region.Length - 1))
                 {
                     return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                }
+
+                if (protectionOut != 0)
+                {
+                    Span<byte> protection = stackalloc byte[sizeof(int)];
+                    BinaryPrimitives.WriteInt32LittleEndian(protection, region.Protection);
+                    if (!TryWriteCompat(ctx, protectionOut, protection))
+                    {
+                        return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                    }
                 }
 
                 return (int)OrbisGen2Result.ORBIS_GEN2_OK;
@@ -3451,15 +3466,11 @@ public static class KernelMemoryCompatExports
     {
         if (bufferSize != 0 && destination != 0)
         {
-            var maxWritable = (int)Math.Min((ulong)int.MaxValue, bufferSize - 1);
+            var maxWritable = (int)Math.Min((ulong)(int.MaxValue - 1), bufferSize - 1);
             var copyLength = Math.Min(maxWritable, outputBytes.Length);
-            if (copyLength > 0 && !ctx.Memory.TryWrite(destination, outputBytes[..copyLength]))
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-            }
-
-            Span<byte> nullTerminator = stackalloc byte[1];
-            if (!ctx.Memory.TryWrite(destination + (ulong)copyLength, nullTerminator))
+            var payload = new byte[copyLength + 1];
+            outputBytes[..copyLength].CopyTo(payload);
+            if (!TryWriteCompat(ctx, destination, payload))
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
             }
@@ -3492,19 +3503,15 @@ public static class KernelMemoryCompatExports
     {
         if (bufferSize != 0 && destination != 0)
         {
-            var maxWritableChars = (int)Math.Min((ulong)int.MaxValue, bufferSize - 1);
+            var maxWritableChars = (int)Math.Min(
+                (ulong)((int.MaxValue / WideCharSize) - 1),
+                bufferSize - 1);
             var copyLength = Math.Min(maxWritableChars, rendered.Length);
-            if (copyLength > 0)
-            {
-                var outputBytes = Encoding.Unicode.GetBytes(rendered[..copyLength]);
-                if (!TryWriteCompat(ctx, destination, outputBytes))
-                {
-                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-                }
-            }
-
-            Span<byte> nullTerminator = stackalloc byte[WideCharSize];
-            if (!TryWriteCompat(ctx, destination + ((ulong)copyLength * WideCharSize), nullTerminator))
+            var payload = new byte[(copyLength + 1) * WideCharSize];
+            Encoding.Unicode.GetBytes(
+                rendered.AsSpan(0, copyLength),
+                payload.AsSpan(0, copyLength * WideCharSize));
+            if (!TryWriteCompat(ctx, destination, payload))
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
             }
