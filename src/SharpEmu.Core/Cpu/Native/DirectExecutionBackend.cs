@@ -152,6 +152,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private nint _sleepAddress;
 
 	private int _tlsPatchStubOffset;
+	private readonly nint[] _tlsLoadHelpers = new nint[16];
 
 	private nint _unresolvedReturnStub;
 
@@ -1869,6 +1870,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private unsafe void CreateTlsHandler()
 	{
+		Array.Clear(_tlsLoadHelpers);
 		_tlsHandlerAddress = (nint)TryAllocateNearEntry(TlsHandlerRegionSize);
 		if (_tlsHandlerAddress == 0)
 		{
@@ -1878,26 +1880,53 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		{
 			throw new OutOfMemoryException("Failed to allocate TLS handler");
 		}
+		// A patched `mov reg, fs:[0]` preserves all registers other than its
+		// destination as well as the arithmetic flags. TlsGetValue follows the
+		// Win64 ABI and may clobber rcx, rdx, r8-r11 and flags, so keep the guest
+		// state around the host call. This also keeps comparisons live across a
+		// TLS access, which is common in compiled guest code.
 		byte* tlsHandlerAddress = (byte*)_tlsHandlerAddress;
 		int num = 0;
-		tlsHandlerAddress[num++] = 72;
-		tlsHandlerAddress[num++] = 131;
-		tlsHandlerAddress[num++] = 236;
-		tlsHandlerAddress[num++] = 40;
-		tlsHandlerAddress[num++] = 185;
+		tlsHandlerAddress[num++] = 0x9C; // pushfq
+		tlsHandlerAddress[num++] = 0x51; // push rcx
+		tlsHandlerAddress[num++] = 0x52; // push rdx
+		tlsHandlerAddress[num++] = 0x41; // push r8
+		tlsHandlerAddress[num++] = 0x50;
+		tlsHandlerAddress[num++] = 0x41; // push r9
+		tlsHandlerAddress[num++] = 0x51;
+		tlsHandlerAddress[num++] = 0x41; // push r10
+		tlsHandlerAddress[num++] = 0x52;
+		tlsHandlerAddress[num++] = 0x41; // push r11
+		tlsHandlerAddress[num++] = 0x53;
+		tlsHandlerAddress[num++] = 0x48; // sub rsp, 0x20
+		tlsHandlerAddress[num++] = 0x83;
+		tlsHandlerAddress[num++] = 0xEC;
+		tlsHandlerAddress[num++] = 0x20;
+		tlsHandlerAddress[num++] = 0xB9; // mov ecx, TLS index
 		*(uint*)(tlsHandlerAddress + num) = _guestTlsBaseTlsIndex;
 		num += 4;
-		tlsHandlerAddress[num++] = 72;
-		tlsHandlerAddress[num++] = 184;
+		tlsHandlerAddress[num++] = 0x48; // mov rax, TlsGetValue
+		tlsHandlerAddress[num++] = 0xB8;
 		*(long*)(tlsHandlerAddress + num) = _tlsGetValueAddress;
 		num += 8;
-		tlsHandlerAddress[num++] = byte.MaxValue;
-		tlsHandlerAddress[num++] = 208;
-		tlsHandlerAddress[num++] = 72;
-		tlsHandlerAddress[num++] = 131;
-		tlsHandlerAddress[num++] = 196;
-		tlsHandlerAddress[num++] = 40;
-		tlsHandlerAddress[num++] = 195;
+		tlsHandlerAddress[num++] = 0xFF; // call rax
+		tlsHandlerAddress[num++] = 0xD0;
+		tlsHandlerAddress[num++] = 0x48; // add rsp, 0x20
+		tlsHandlerAddress[num++] = 0x83;
+		tlsHandlerAddress[num++] = 0xC4;
+		tlsHandlerAddress[num++] = 0x20;
+		tlsHandlerAddress[num++] = 0x41; // pop r11
+		tlsHandlerAddress[num++] = 0x5B;
+		tlsHandlerAddress[num++] = 0x41; // pop r10
+		tlsHandlerAddress[num++] = 0x5A;
+		tlsHandlerAddress[num++] = 0x41; // pop r9
+		tlsHandlerAddress[num++] = 0x59;
+		tlsHandlerAddress[num++] = 0x41; // pop r8
+		tlsHandlerAddress[num++] = 0x58;
+		tlsHandlerAddress[num++] = 0x5A; // pop rdx
+		tlsHandlerAddress[num++] = 0x59; // pop rcx
+		tlsHandlerAddress[num++] = 0x9D; // popfq
+		tlsHandlerAddress[num++] = 0xC3; // ret
 		_tlsPatchStubOffset = (num + 15) & ~15;
 		uint num2 = default(uint);
 		if (!VirtualProtect((void*)_tlsHandlerAddress, TlsHandlerRegionSize, 32u, &num2))
@@ -2349,6 +2378,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private unsafe bool PatchTlsLoadInstruction(nint address, int instructionLength, int destinationRegister)
 	{
+		var helper = GetOrCreateTlsLoadHelper(destinationRegister);
+		if (helper == 0)
+		{
+			return false;
+		}
+
 		uint flNewProtect = default(uint);
 		if (!VirtualProtect((void*)address, (nuint)instructionLength, 64u, &flNewProtect))
 		{
@@ -2357,7 +2392,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		try
 		{
 			*(sbyte*)address = -24;
-			long num = _tlsHandlerAddress;
+			long num = helper;
 			long num2 = address + 5;
 			long num3 = num - num2;
 			if (num3 < int.MinValue || num3 > int.MaxValue)
@@ -2368,13 +2403,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 			*(int*)(address + 1) = (int)num3;
 			var offset = 5;
-			if (destinationRegister != 0)
-			{
-				*(byte*)(address + offset++) = (byte)(0x48 | (destinationRegister >= 8 ? 1 : 0));
-				*(byte*)(address + offset++) = 0x89;
-				*(byte*)(address + offset++) = (byte)(0xC0 | (destinationRegister & 7));
-			}
-
 			while (offset < instructionLength)
 			{
 				*(byte*)(address + offset++) = 0x90;
@@ -2387,6 +2415,114 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			VirtualProtect((void*)address, (nuint)instructionLength, flNewProtect, &flNewProtect);
 			FlushInstructionCache(GetCurrentProcess(), (void*)address, (nuint)instructionLength);
 		}
+	}
+
+	private unsafe nint GetOrCreateTlsLoadHelper(int destinationRegister)
+	{
+		if (destinationRegister is < 0 or >= 16 or 4)
+		{
+			return 0;
+		}
+
+		if (_tlsLoadHelpers[destinationRegister] != 0)
+		{
+			return _tlsLoadHelpers[destinationRegister];
+		}
+
+		const int helperSize = 128;
+		var helper = AllocateTlsPatchStub(helperSize);
+		if (helper == 0)
+		{
+			return 0;
+		}
+
+		var code = (byte*)helper;
+		var offset = 0;
+		EmitByte(code, ref offset, 0x9C); // pushfq
+		EmitByte(code, ref offset, 0x50); // push rax
+		EmitByte(code, ref offset, 0x51); // push rcx
+		EmitByte(code, ref offset, 0x52); // push rdx
+		EmitByte(code, ref offset, 0x41); // push r8
+		EmitByte(code, ref offset, 0x50);
+		EmitByte(code, ref offset, 0x41); // push r9
+		EmitByte(code, ref offset, 0x51);
+		EmitByte(code, ref offset, 0x41); // push r10
+		EmitByte(code, ref offset, 0x52);
+		EmitByte(code, ref offset, 0x41); // push r11
+		EmitByte(code, ref offset, 0x53);
+		EmitByte(code, ref offset, 0x48); // sub rsp, 0x28
+		EmitByte(code, ref offset, 0x83);
+		EmitByte(code, ref offset, 0xEC);
+		EmitByte(code, ref offset, 0x28);
+		EmitByte(code, ref offset, 0xB9); // mov ecx, TLS index
+		EmitUInt32(code, ref offset, _guestTlsBaseTlsIndex);
+		EmitByte(code, ref offset, 0x48); // mov rax, TlsGetValue
+		EmitByte(code, ref offset, 0xB8);
+		*(nint*)(code + offset) = _tlsGetValueAddress;
+		offset += sizeof(nint);
+		EmitByte(code, ref offset, 0xFF); // call rax
+		EmitByte(code, ref offset, 0xD0);
+		EmitByte(code, ref offset, 0x48); // add rsp, 0x28
+		EmitByte(code, ref offset, 0x83);
+		EmitByte(code, ref offset, 0xC4);
+		EmitByte(code, ref offset, 0x28);
+
+		var savedSlot = destinationRegister switch
+		{
+			0 => 48,
+			1 => 40,
+			2 => 32,
+			8 => 24,
+			9 => 16,
+			10 => 8,
+			11 => 0,
+			_ => -1,
+		};
+		if (savedSlot >= 0)
+		{
+			EmitByte(code, ref offset, 0x48); // mov [rsp+slot], rax
+			EmitByte(code, ref offset, 0x89);
+			EmitByte(code, ref offset, 0x44);
+			EmitByte(code, ref offset, 0x24);
+			EmitByte(code, ref offset, (byte)savedSlot);
+		}
+		else
+		{
+			EmitByte(
+				code,
+				ref offset,
+				(byte)(0x48 | (destinationRegister >= 8 ? 1 : 0)));
+			EmitByte(code, ref offset, 0x89); // mov destination, rax
+			EmitByte(code, ref offset, (byte)(0xC0 | (destinationRegister & 7)));
+		}
+
+		EmitByte(code, ref offset, 0x41); // pop r11
+		EmitByte(code, ref offset, 0x5B);
+		EmitByte(code, ref offset, 0x41); // pop r10
+		EmitByte(code, ref offset, 0x5A);
+		EmitByte(code, ref offset, 0x41); // pop r9
+		EmitByte(code, ref offset, 0x59);
+		EmitByte(code, ref offset, 0x41); // pop r8
+		EmitByte(code, ref offset, 0x58);
+		EmitByte(code, ref offset, 0x5A); // pop rdx
+		EmitByte(code, ref offset, 0x59); // pop rcx
+		EmitByte(code, ref offset, 0x58); // pop rax
+		EmitByte(code, ref offset, 0x9D); // popfq
+		EmitByte(code, ref offset, 0xC3); // ret
+		while (offset < helperSize)
+		{
+			EmitByte(code, ref offset, 0x90);
+		}
+
+		uint oldProtect = 0;
+		if (!VirtualProtect((void*)helper, helperSize, PAGE_EXECUTE_READ, &oldProtect))
+		{
+			return 0;
+		}
+
+		FlushInstructionCache(GetCurrentProcess(), (void*)helper, helperSize);
+		_tlsLoadHelpers[destinationRegister] = helper;
+		return helper;
 	}
 
 	private unsafe bool TryPatchTlsImmediateStoreInstruction(nint address, byte* source)
