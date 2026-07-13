@@ -558,6 +558,65 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesVectorWideBitwiseOperationsToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xD5780000u, 0x040E0501u, // v_xor3_b32 v0, v1, v2, v3
+            0xD5780004u, 0x041E0C05u, // v_xor3_b32 v4, s5, v6, v7
+            0xD6FF0008u, 0x0002190Au, // v_lshlrev_b64 v[8:9], v10, v[12:13]
+            0xD700000Eu, 0x00022410u, // v_lshrrev_b64 v[14:15], s16, v[18:19]
+            0xD7010014u, 0x00003116u, // v_ashrrev_i64 v[20:21], v22, s[24:25]
+            0xD6FF001Au, 0x000238A1u, // v_lshlrev_b64 v[26:27], 33, v[28:29]
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "VXor3B32",
+                "VXor3B32",
+                "VLshlrevB64",
+                "VLshrrevB64",
+                "VAshrrevI64",
+                "VLshlrevB64",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseXor));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftLeftLogical));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftRightLogical));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftRightArithmetic));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UConvert));
+    }
+
+    [Fact]
     public void CompilesVectorFloatUtilityOperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified

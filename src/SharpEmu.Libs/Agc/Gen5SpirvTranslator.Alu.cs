@@ -45,6 +45,12 @@ internal static partial class Gen5SpirvTranslator
             }
 
             if (instruction.Opcode is
+                "VLshlrevB64" or "VLshrrevB64" or "VAshrrevI64")
+            {
+                return TryEmitVectorShift64(instruction, out error);
+            }
+
+            if (instruction.Opcode is
                 "VMovreldB32" or "VMovrelsB32" or "VMovrelsdB32")
             {
                 return TryEmitRelativeMove(instruction, out error);
@@ -817,6 +823,13 @@ internal static partial class Gen5SpirvTranslator
                 case "VOr3B32":
                     result = BitwiseOr(
                         BitwiseOr(
+                            GetRawSource(instruction, 0),
+                            GetRawSource(instruction, 1)),
+                        GetRawSource(instruction, 2));
+                    break;
+                case "VXor3B32":
+                    result = BitwiseXor(
+                        BitwiseXor(
                             GetRawSource(instruction, 0),
                             GetRawSource(instruction, 1)),
                         GetRawSource(instruction, 2));
@@ -2335,6 +2348,38 @@ internal static partial class Gen5SpirvTranslator
 
             StoreV64(destination, result);
             StoreCarryOut(instruction, overflow);
+            return true;
+        }
+
+        private bool TryEmitVectorShift64(
+            Gen5ShaderInstruction instruction,
+            out string error)
+        {
+            error = string.Empty;
+            if (!TryGetVectorDestination(instruction, out var destination))
+            {
+                error = "missing 64-bit shift destination";
+                return false;
+            }
+
+            if (instruction.Sources.Count < 2)
+            {
+                error = "64-bit shift requires two sources";
+                return false;
+            }
+
+            var shift = _module.AddInstruction(
+                SpirvOp.UConvert,
+                _ulongType,
+                GetRawSource(instruction, 0));
+            var value = GetRawSource64(instruction, 1);
+            var result = instruction.Opcode switch
+            {
+                "VLshlrevB64" => ShiftLeftLogical64(value, shift),
+                "VLshrrevB64" => ShiftRightLogical64(value, shift),
+                _ => ShiftRightArithmetic64(value, shift),
+            };
+            StoreV64(destination, result);
             return true;
         }
 
