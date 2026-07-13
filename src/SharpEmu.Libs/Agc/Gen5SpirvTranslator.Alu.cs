@@ -1505,6 +1505,246 @@ internal static partial class Gen5SpirvTranslator
             return EmitFloatResult(instruction, value);
         }
 
+        private uint EmitDivisionFixupF64(Gen5ShaderInstruction instruction)
+        {
+            var quotient = GetDoubleSource(instruction, 0);
+            var denominator = GetDoubleSource(instruction, 1);
+            var numerator = GetDoubleSource(instruction, 2);
+            var quotientRaw = Bitcast(_ulongType, quotient);
+            var denominatorRaw = Bitcast(_ulongType, denominator);
+            var numeratorRaw = Bitcast(_ulongType, numerator);
+
+            uint U64(ulong value) => _module.Constant64(_ulongType, value);
+            uint Binary(SpirvOp operation, uint left, uint right) =>
+                _module.AddInstruction(operation, _ulongType, left, right);
+            uint Equal(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.IEqual, _boolType, left, right);
+            uint Both(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.LogicalAnd, _boolType, left, right);
+            uint Either(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.LogicalOr, _boolType, left, right);
+            uint Select(uint condition, uint whenTrue, uint whenFalse) =>
+                _module.AddInstruction(
+                    SpirvOp.Select,
+                    _ulongType,
+                    condition,
+                    whenTrue,
+                    whenFalse);
+
+            var absoluteMask = U64(0x7FFF_FFFF_FFFF_FFFFUL);
+            var signMask = U64(0x8000_0000_0000_0000UL);
+            var infinity = U64(0x7FF0_0000_0000_0000UL);
+            var quietNanBit = U64(0x0008_0000_0000_0000UL);
+            var denominatorAbs = Binary(
+                SpirvOp.BitwiseAnd,
+                denominatorRaw,
+                absoluteMask);
+            var numeratorAbs = Binary(SpirvOp.BitwiseAnd, numeratorRaw, absoluteMask);
+            var sign = Binary(
+                SpirvOp.BitwiseAnd,
+                Binary(SpirvOp.BitwiseXor, denominatorRaw, numeratorRaw),
+                signMask);
+
+            var denominatorZero = Equal(denominatorAbs, U64(0));
+            var numeratorZero = Equal(numeratorAbs, U64(0));
+            var denominatorInfinity = Equal(denominatorAbs, infinity);
+            var numeratorInfinity = Equal(numeratorAbs, infinity);
+            var denominatorNan = _module.AddInstruction(
+                SpirvOp.IsNan,
+                _boolType,
+                denominator);
+            var numeratorNan = _module.AddInstruction(
+                SpirvOp.IsNan,
+                _boolType,
+                numerator);
+
+            var denominatorExponent = ShiftRightLogical64(denominatorAbs, U64(52));
+            var numeratorExponent = ShiftRightLogical64(numeratorAbs, U64(52));
+            var underflow = _module.AddInstruction(
+                SpirvOp.ULessThan,
+                _boolType,
+                Binary(SpirvOp.IAdd, numeratorExponent, U64(1075)),
+                denominatorExponent);
+            var overflow = Equal(denominatorExponent, U64(2047));
+            var exactExtreme = Bitcast(
+                _ulongType,
+                _module.AddInstruction(
+                    SpirvOp.FDiv,
+                    _doubleType,
+                    numerator,
+                    denominator));
+
+            var value = Binary(
+                SpirvOp.BitwiseOr,
+                Binary(SpirvOp.BitwiseAnd, quotientRaw, absoluteMask),
+                sign);
+            value = Select(overflow, exactExtreme, value);
+            value = Select(underflow, exactExtreme, value);
+            value = Select(Either(denominatorInfinity, numeratorZero), sign, value);
+            value = Select(
+                Either(denominatorZero, numeratorInfinity),
+                Binary(SpirvOp.BitwiseOr, sign, infinity),
+                value);
+            value = Select(
+                Both(denominatorInfinity, numeratorInfinity),
+                U64(0xFFF8_0000_0000_0000UL),
+                value);
+            value = Select(
+                Both(denominatorZero, numeratorZero),
+                U64(0xFFF8_0000_0000_0000UL),
+                value);
+            value = Select(
+                denominatorNan,
+                Binary(SpirvOp.BitwiseOr, denominatorRaw, quietNanBit),
+                value);
+            value = Select(
+                numeratorNan,
+                Binary(SpirvOp.BitwiseOr, numeratorRaw, quietNanBit),
+                value);
+            return Bitcast(_doubleType, value);
+        }
+
+        private uint EmitDivisionScaleF64(Gen5ShaderInstruction instruction)
+        {
+            var input = GetDoubleSource(instruction, 0);
+            var denominator = GetDoubleSource(instruction, 1);
+            var numerator = GetDoubleSource(instruction, 2);
+
+            uint U64(ulong value) => _module.Constant64(_ulongType, value);
+            uint Binary(SpirvOp operation, uint left, uint right) =>
+                _module.AddInstruction(operation, _ulongType, left, right);
+            uint Equal(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.IEqual, _boolType, left, right);
+            uint Both(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.LogicalAnd, _boolType, left, right);
+            uint Either(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.LogicalOr, _boolType, left, right);
+            uint SelectDouble(uint condition, uint whenTrue, uint whenFalse) =>
+                _module.AddInstruction(
+                    SpirvOp.Select,
+                    _doubleType,
+                    condition,
+                    whenTrue,
+                    whenFalse);
+            uint SelectBool(uint condition, uint whenTrue, uint whenFalse) =>
+                _module.AddInstruction(
+                    SpirvOp.Select,
+                    _boolType,
+                    condition,
+                    whenTrue,
+                    whenFalse);
+            uint IsDenormal(uint value)
+            {
+                var absolute = Binary(
+                    SpirvOp.BitwiseAnd,
+                    Bitcast(_ulongType, value),
+                    U64(0x7FFF_FFFF_FFFF_FFFFUL));
+                return Both(
+                    Equal(
+                        Binary(
+                            SpirvOp.BitwiseAnd,
+                            absolute,
+                            U64(0x7FF0_0000_0000_0000UL)),
+                        U64(0)),
+                    _module.AddInstruction(
+                        SpirvOp.INotEqual,
+                        _boolType,
+                        absolute,
+                        U64(0)));
+            }
+
+            var denominatorAbs = Binary(
+                SpirvOp.BitwiseAnd,
+                Bitcast(_ulongType, denominator),
+                U64(0x7FFF_FFFF_FFFF_FFFFUL));
+            var numeratorAbs = Binary(
+                SpirvOp.BitwiseAnd,
+                Bitcast(_ulongType, numerator),
+                U64(0x7FFF_FFFF_FFFF_FFFFUL));
+            var denominatorZero = Equal(denominatorAbs, U64(0));
+            var numeratorZero = Equal(numeratorAbs, U64(0));
+            var eitherZero = Either(denominatorZero, numeratorZero);
+            var denominatorExponent = ShiftRightLogical64(denominatorAbs, U64(52));
+            var numeratorExponent = ShiftRightLogical64(numeratorAbs, U64(52));
+            var nearMaximum = _module.AddInstruction(
+                SpirvOp.UGreaterThanEqual,
+                _boolType,
+                numeratorExponent,
+                Binary(SpirvOp.IAdd, denominatorExponent, U64(768)));
+            var denominatorDenormal = IsDenormal(denominator);
+            var reciprocal = _module.AddInstruction(
+                SpirvOp.FDiv,
+                _doubleType,
+                Double(1),
+                denominator);
+            var quotient = _module.AddInstruction(
+                SpirvOp.FDiv,
+                _doubleType,
+                numerator,
+                denominator);
+            var reciprocalDenormal = IsDenormal(reciprocal);
+            var quotientDenormal = IsDenormal(quotient);
+            var bothResultsDenormal = Both(reciprocalDenormal, quotientDenormal);
+            var tinyNumerator = _module.AddInstruction(
+                SpirvOp.ULessThanEqual,
+                _boolType,
+                numeratorExponent,
+                U64(53));
+            var inputIsDenominator = _module.AddInstruction(
+                SpirvOp.FOrdEqual,
+                _boolType,
+                input,
+                denominator);
+            var inputIsNumerator = _module.AddInstruction(
+                SpirvOp.FOrdEqual,
+                _boolType,
+                input,
+                numerator);
+            var scaleUp = Ext(
+                53,
+                _doubleType,
+                input,
+                _module.Constant(_intType, 128));
+            var scaleDown = Ext(
+                53,
+                _doubleType,
+                input,
+                _module.Constant(_intType, unchecked((uint)-128)));
+
+            var scaled = input;
+            scaled = SelectDouble(tinyNumerator, scaleUp, scaled);
+            scaled = SelectDouble(
+                quotientDenormal,
+                SelectDouble(inputIsNumerator, scaleUp, input),
+                scaled);
+            scaled = SelectDouble(reciprocalDenormal, scaleDown, scaled);
+            scaled = SelectDouble(
+                bothResultsDenormal,
+                SelectDouble(inputIsDenominator, scaleUp, input),
+                scaled);
+            scaled = SelectDouble(denominatorDenormal, scaleUp, scaled);
+            scaled = SelectDouble(
+                nearMaximum,
+                SelectDouble(inputIsDenominator, scaleUp, input),
+                scaled);
+            scaled = SelectDouble(
+                eitherZero,
+                Bitcast(_doubleType, U64(0x7FF8_0000_0000_0000UL)),
+                scaled);
+
+            var falseValue = _module.ConstantBool(false);
+            var trueValue = _module.ConstantBool(true);
+            var scaleQuotient = falseValue;
+            scaleQuotient = SelectBool(quotientDenormal, trueValue, scaleQuotient);
+            scaleQuotient = SelectBool(reciprocalDenormal, falseValue, scaleQuotient);
+            scaleQuotient = SelectBool(bothResultsDenormal, trueValue, scaleQuotient);
+            scaleQuotient = SelectBool(denominatorDenormal, falseValue, scaleQuotient);
+            scaleQuotient = SelectBool(nearMaximum, trueValue, scaleQuotient);
+            scaleQuotient = SelectBool(eitherZero, falseValue, scaleQuotient);
+            StoreCarryOut(instruction, scaleQuotient);
+            return scaled;
+        }
+
         private uint GetFloat16Source(
             Gen5ShaderInstruction instruction,
             int sourceIndex)
@@ -1664,6 +1904,33 @@ internal static partial class Gen5SpirvTranslator
                         left,
                         GetDoubleSource(instruction, 1),
                         GetDoubleSource(instruction, 2));
+                    break;
+                case "VDivFmasF64":
+                {
+                    var fused = Ext(
+                        50,
+                        _doubleType,
+                        left,
+                        GetDoubleSource(instruction, 1),
+                        GetDoubleSource(instruction, 2));
+                    var scaled = Ext(
+                        53,
+                        _doubleType,
+                        fused,
+                        _module.Constant(_intType, 64));
+                    result = _module.AddInstruction(
+                        SpirvOp.Select,
+                        _doubleType,
+                        Load(_boolType, _vcc),
+                        scaled,
+                        fused);
+                    break;
+                }
+                case "VDivFixupF64":
+                    result = EmitDivisionFixupF64(instruction);
+                    break;
+                case "VDivScaleF64":
+                    result = EmitDivisionScaleF64(instruction);
                     break;
                 case "VMinF64":
                     result = Ext(37, _doubleType, left, GetDoubleSource(instruction, 1));

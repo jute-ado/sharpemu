@@ -1835,6 +1835,95 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesVectorFloat64DivisionCorrectionToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xD5600000u, 0x041A0902u, // v_div_fixup_f64 v[0:1], v[2:3], v[4:5], v[6:7]
+            0xD56E6A00u, 0x041A0902u, // v_div_scale_f64 v[0:1], vcc_lo, v[2:3], v[4:5], v[6:7]
+            0xD5700000u, 0x041A0902u, // v_div_fmas_f64 v[0:1], v[2:3], v[4:5], v[6:7]
+            0xD5608108u, 0x4C3A190Au, // v_div_fixup_f64 v[8:9], |v[10:11]|, -v[12:13], v[14:15] clamp mul:2
+            0xD56E0A10u, 0x045A2912u, // v_div_scale_f64 v[16:17], s10, v[18:19], v[20:21], v[22:23]
+            0xD5708118u, 0x4C7A391Au, // v_div_fmas_f64 v[24:25], |v[26:27]|, -v[28:29], v[30:31] clamp mul:2
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "VDivFixupF64", "VDivScaleF64", "VDivFmasF64",
+                "VDivFixupF64", "VDivScaleF64", "VDivFmasF64", "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.All(
+            program.Instructions.Take(6),
+            instruction => Assert.Equal(3, instruction.Sources.Count));
+
+        Assert.Equal(
+            106u,
+            Assert.IsType<Gen5Vop3Control>(program.Instructions[1].Control)
+                .ScalarDestination);
+        Assert.Equal(
+            10u,
+            Assert.IsType<Gen5Vop3Control>(program.Instructions[4].Control)
+                .ScalarDestination);
+        var modifiedFixup = Assert.IsType<Gen5Vop3Control>(
+            program.Instructions[3].Control);
+        Assert.Equal(1u, modifiedFixup.AbsoluteMask);
+        Assert.Equal(2u, modifiedFixup.NegateMask);
+        Assert.Equal(1u, modifiedFixup.OutputModifier);
+        Assert.True(modifiedFixup.Clamp);
+        var modifiedFmas = Assert.IsType<Gen5Vop3Control>(
+            program.Instructions[5].Control);
+        Assert.Equal(1u, modifiedFmas.AbsoluteMask);
+        Assert.Equal(2u, modifiedFmas.NegateMask);
+        Assert.Equal(1u, modifiedFmas.OutputModifier);
+        Assert.True(modifiedFmas.Clamp);
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvCapability(shader.Spirv, SpirvCapability.Float64));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 4));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 43));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 50));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 53));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FDiv));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IsNan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseXor));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ULessThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UGreaterThanEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ULessThanEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FOrdEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.LogicalAnd));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.LogicalOr));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Select));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Store));
+    }
+
+    [Fact]
     public void CompilesM0IndexedVectorMovesToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
