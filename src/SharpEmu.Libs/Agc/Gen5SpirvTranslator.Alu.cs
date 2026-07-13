@@ -442,6 +442,9 @@ internal static partial class Gen5SpirvTranslator
                 case "VFmaF16":
                     result = EmitFloat16Fma(instruction, destination);
                     break;
+                case "VDivFixupF16":
+                    result = EmitDivisionFixupF16(instruction, destination);
+                    break;
                 case "VMin3F16":
                 case "VMax3F16":
                 case "VMed3F16":
@@ -1286,6 +1289,95 @@ internal static partial class Gen5SpirvTranslator
                 ShiftLeftLogical(value, UInt(16)));
         }
 
+        private uint EmitDivisionFixupF16(
+            Gen5ShaderInstruction instruction,
+            uint destination)
+        {
+            var quotientRaw = GetFloat16RawSource(instruction, 0);
+            var denominatorRaw = GetFloat16RawSource(instruction, 1);
+            var numeratorRaw = GetFloat16RawSource(instruction, 2);
+            var denominatorAbs = BitwiseAnd(denominatorRaw, UInt(0x7FFF));
+            var numeratorAbs = BitwiseAnd(numeratorRaw, UInt(0x7FFF));
+            var sign = BitwiseAnd(
+                BitwiseXor(denominatorRaw, numeratorRaw),
+                UInt(0x8000));
+
+            uint Equal(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.IEqual, _boolType, left, right);
+            uint Both(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.LogicalAnd, _boolType, left, right);
+            uint Either(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.LogicalOr, _boolType, left, right);
+            uint Select(uint condition, uint whenTrue, uint whenFalse) =>
+                _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    condition,
+                    whenTrue,
+                    whenFalse);
+            uint IsNan(uint absolute) =>
+                _module.AddInstruction(
+                    SpirvOp.UGreaterThan,
+                    _boolType,
+                    absolute,
+                    UInt(0x7C00));
+
+            var denominatorZero = Equal(denominatorAbs, UInt(0));
+            var numeratorZero = Equal(numeratorAbs, UInt(0));
+            var denominatorInfinity = Equal(denominatorAbs, UInt(0x7C00));
+            var numeratorInfinity = Equal(numeratorAbs, UInt(0x7C00));
+            var denominatorNan = IsNan(denominatorAbs);
+            var numeratorNan = IsNan(numeratorAbs);
+
+            var value = BitwiseOr(
+                BitwiseAnd(quotientRaw, UInt(0x7FFF)),
+                sign);
+            value = Select(
+                Either(denominatorInfinity, numeratorZero),
+                sign,
+                value);
+            value = Select(
+                Either(denominatorZero, numeratorInfinity),
+                BitwiseOr(sign, UInt(0x7C00)),
+                value);
+            value = Select(
+                Both(denominatorInfinity, numeratorInfinity),
+                UInt(0xFE00),
+                value);
+            value = Select(
+                Both(denominatorZero, numeratorZero),
+                UInt(0xFE00),
+                value);
+            value = Select(
+                denominatorNan,
+                BitwiseOr(denominatorRaw, UInt(0x0200)),
+                value);
+            value = Select(
+                numeratorNan,
+                BitwiseOr(numeratorRaw, UInt(0x0200)),
+                value);
+
+            if (instruction.Control is not Gen5Vop3Control control)
+            {
+                throw new InvalidOperationException("F16 division fixup requires VOP3 control");
+            }
+
+            if (control.OutputModifier == 0 && !control.Clamp)
+            {
+                return Emit16BitResult(instruction, destination, value);
+            }
+
+            var unpacked = Ext(62, _vec2Type, value);
+            return EmitFloat16Result(
+                instruction,
+                destination,
+                _module.AddInstruction(
+                    SpirvOp.CompositeExtract,
+                    _floatType,
+                    unpacked,
+                    0));
+        }
+
         private uint EmitDivisionFixupF32(Gen5ShaderInstruction instruction)
         {
             var quotient = GetFloatSource(instruction, 0);
@@ -1771,6 +1863,39 @@ internal static partial class Gen5SpirvTranslator
 
             return ((control?.NegateMask ?? 0) & (1u << sourceIndex)) != 0
                 ? _module.AddInstruction(SpirvOp.FNegate, _floatType, value)
+                : value;
+        }
+
+        private uint GetFloat16RawSource(
+            Gen5ShaderInstruction instruction,
+            int sourceIndex)
+        {
+            var control = instruction.Control as Gen5Vop3Control;
+            uint value;
+            if (TryGetInlineFloatSource(instruction, sourceIndex, out var inline))
+            {
+                value = BitwiseAnd(PackHalf2(inline, Float(0)), UInt(0xFFFF));
+            }
+            else
+            {
+                var offset = ((control?.OpSelectMask ?? 0) & (1u << sourceIndex)) != 0
+                    ? 16u
+                    : 0u;
+                value = _module.AddInstruction(
+                    SpirvOp.BitFieldUExtract,
+                    _uintType,
+                    GetRawSource(instruction, sourceIndex),
+                    UInt(offset),
+                    UInt(16));
+            }
+
+            if (((control?.AbsoluteMask ?? 0) & (1u << sourceIndex)) != 0)
+            {
+                value = BitwiseAnd(value, UInt(0x7FFF));
+            }
+
+            return ((control?.NegateMask ?? 0) & (1u << sourceIndex)) != 0
+                ? BitwiseXor(value, UInt(0x8000))
                 : value;
         }
 
