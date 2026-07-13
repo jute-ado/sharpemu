@@ -1177,6 +1177,9 @@ internal static class Gen5ShaderTranslator
         name = isVop3B
             ? opcode switch
             {
+                0x128 => "VAddCoCiU32",
+                0x129 => "VSubCoCiU32",
+                0x12A => "VSubrevCoCiU32",
                 0x16D => "VDivScaleF32",
                 0x176 => "VMadU64U32",
                 0x177 => "VMadI64I32",
@@ -1269,7 +1272,9 @@ internal static class Gen5ShaderTranslator
     }
 
     private static bool IsVop3BOpcode(uint opcode) =>
-        opcode is 0x16D or 0x16E or 0x176 or 0x177 or 0x30F or 0x310 or 0x319;
+        opcode is 0x128 or 0x129 or 0x12A or
+            0x16D or 0x16E or 0x176 or 0x177 or
+            0x30F or 0x310 or 0x319;
 
     private static bool DecodeDs(
         uint word,

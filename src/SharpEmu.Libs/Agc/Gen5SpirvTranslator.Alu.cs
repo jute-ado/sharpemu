@@ -564,6 +564,7 @@ internal static partial class Gen5SpirvTranslator
                     result = EmitIntegerBinary(instruction, SpirvOp.IAdd);
                     break;
                 case "VAddcU32":
+                case "VAddCoCiU32":
                     result = EmitAddWithCarry(instruction);
                     break;
                 case "VSubI32":
@@ -575,9 +576,11 @@ internal static partial class Gen5SpirvTranslator
                     result = EmitIntegerBinary(instruction, SpirvOp.ISub, reverse: true);
                     break;
                 case "VSubbU32":
+                case "VSubCoCiU32":
                     result = EmitSubtractWithBorrow(instruction, reverse: false);
                     break;
                 case "VSubbrevU32":
+                case "VSubrevCoCiU32":
                     result = EmitSubtractWithBorrow(instruction, reverse: true);
                     break;
                 case "VMulLoU32":
@@ -4842,7 +4845,7 @@ internal static partial class Gen5SpirvTranslator
             var carryIn = _module.AddInstruction(
                 SpirvOp.Select,
                 _uintType,
-                Load(_boolType, _vcc),
+                GetCarryIn(instruction),
                 UInt(1),
                 UInt(0));
             var partial = IAdd(left, right);
@@ -4852,7 +4855,7 @@ internal static partial class Gen5SpirvTranslator
                 _boolType,
                 _module.AddInstruction(SpirvOp.ULessThan, _boolType, partial, left),
                 _module.AddInstruction(SpirvOp.ULessThan, _boolType, result, partial));
-            StoreWaveMask(106, carry);
+            StoreCarryOut(instruction, carry);
             return result;
         }
 
@@ -4865,7 +4868,7 @@ internal static partial class Gen5SpirvTranslator
             var borrowIn = _module.AddInstruction(
                 SpirvOp.Select,
                 _uintType,
-                Load(_boolType, _vcc),
+                GetCarryIn(instruction),
                 UInt(1),
                 UInt(0));
             var partial = _module.AddInstruction(SpirvOp.ISub, _uintType, left, right);
@@ -4883,8 +4886,25 @@ internal static partial class Gen5SpirvTranslator
                     _boolType,
                     partial,
                     borrowIn));
-            StoreWaveMask(106, borrow);
+            StoreCarryOut(instruction, borrow);
             return result;
+        }
+
+        private uint GetCarryIn(Gen5ShaderInstruction instruction)
+        {
+            if (instruction.Sources.Count >= 3)
+            {
+                var operand = instruction.Sources[2];
+                if (operand.Kind != Gen5OperandKind.ScalarRegister)
+                {
+                    throw new InvalidOperationException(
+                        "vector carry-in source is not a scalar wave mask");
+                }
+
+                return IsWaveMaskActive(LoadS64(operand.Value));
+            }
+
+            return Load(_boolType, _vcc);
         }
 
         private void StoreCarryOut(
