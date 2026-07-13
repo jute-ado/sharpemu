@@ -3516,6 +3516,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		{
 			return false;
 		}
+		if (virtualMemory is IGuestStackMemory stackMemory)
+		{
+			stackMemory.RegisterStackRange(stackBase, GuestThreadStackSize);
+		}
 		if (!TryMapGuestThreadTlsRegion(virtualMemory, out var tlsBase, out error))
 		{
 			return false;
