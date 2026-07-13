@@ -736,67 +736,79 @@ internal static class Gen5ShaderTranslator
         var src0 = word & 0x1FF;
         sizeDwords = src0 is 0xF9 or 0xFA or 0xFF ? 2u : 1u;
         error = string.Empty;
-        name = opcode switch
-        {
-            0x00 => "VNop",
-            0x01 => "VMovB32",
-            0x02 => "VReadfirstlaneB32",
-            0x03 => "VCvtI32F64",
-            0x04 => "VCvtF64I32",
-            0x05 => "VCvtF32I32",
-            0x06 => "VCvtF32U32",
-            0x07 => "VCvtU32F32",
-            0x08 => "VCvtI32F32",
-            0x0A => "VCvtF16F32",
-            0x0B => "VCvtF32F16",
-            0x0C => "VCvtRpiI32F32",
-            0x0D => "VCvtFlrI32F32",
-            0x0E => "VCvtOffF32I4",
-            0x0F => "VCvtF32F64",
-            0x10 => "VCvtF64F32",
-            0x11 => "VCvtF32Ubyte0",
-            0x12 => "VCvtF32Ubyte1",
-            0x13 => "VCvtF32Ubyte2",
-            0x14 => "VCvtF32Ubyte3",
-            0x15 => "VCvtU32F64",
-            0x16 => "VCvtF64U32",
-            0x17 => "VTruncF64",
-            0x18 => "VCeilF64",
-            0x19 => "VRndneF64",
-            0x1A => "VFloorF64",
-            0x20 => "VFractF32",
-            0x21 => "VTruncF32",
-            0x22 => "VCeilF32",
-            0x23 => "VRndneF32",
-            0x24 => "VFloorF32",
-            0x25 => "VExpF32",
-            0x27 => "VLogF32",
-            0x2A => "VRcpF32",
-            0x2B => "VRcpIflagF32",
-            0x2E => "VRsqF32",
-            0x2F => "VRcpF64",
-            0x31 => "VRsqF64",
-            0x33 => "VSqrtF32",
-            0x34 => "VSqrtF64",
-            0x35 => "VSinF32",
-            0x36 => "VCosF32",
-            0x37 => "VNotB32",
-            0x38 => "VBfrevB32",
-            0x39 => "VFfbhU32",
-            0x3A => "VFfblB32",
-            0x3B => "VFfbhI32",
-            0x3C => "VFrexpExpI32F64",
-            0x3D => "VFrexpMantF64",
-            0x3E => "VFractF64",
-            0x3F => "VFrexpExpI32F32",
-            0x40 => "VFrexpMantF32",
-            0x42 => "VMovreldB32",
-            0x43 => "VMovrelsB32",
-            0x44 => "VMovrelsdB32",
-            _ => string.Empty,
-        };
+        name = Vop1Name(opcode);
 
         return FinishDecode(name, $"unknown-vop1 op=0x{opcode:X2}", out error);
+    }
+
+    private static string Vop1Name(uint opcode) => opcode switch
+    {
+        0x00 => "VNop",
+        0x01 => "VMovB32",
+        0x02 => "VReadfirstlaneB32",
+        0x03 => "VCvtI32F64",
+        0x04 => "VCvtF64I32",
+        0x05 => "VCvtF32I32",
+        0x06 => "VCvtF32U32",
+        0x07 => "VCvtU32F32",
+        0x08 => "VCvtI32F32",
+        0x0A => "VCvtF16F32",
+        0x0B => "VCvtF32F16",
+        0x0C => "VCvtRpiI32F32",
+        0x0D => "VCvtFlrI32F32",
+        0x0E => "VCvtOffF32I4",
+        0x0F => "VCvtF32F64",
+        0x10 => "VCvtF64F32",
+        0x11 => "VCvtF32Ubyte0",
+        0x12 => "VCvtF32Ubyte1",
+        0x13 => "VCvtF32Ubyte2",
+        0x14 => "VCvtF32Ubyte3",
+        0x15 => "VCvtU32F64",
+        0x16 => "VCvtF64U32",
+        0x17 => "VTruncF64",
+        0x18 => "VCeilF64",
+        0x19 => "VRndneF64",
+        0x1A => "VFloorF64",
+        0x20 => "VFractF32",
+        0x21 => "VTruncF32",
+        0x22 => "VCeilF32",
+        0x23 => "VRndneF32",
+        0x24 => "VFloorF32",
+        0x25 => "VExpF32",
+        0x27 => "VLogF32",
+        0x2A => "VRcpF32",
+        0x2B => "VRcpIflagF32",
+        0x2E => "VRsqF32",
+        0x2F => "VRcpF64",
+        0x31 => "VRsqF64",
+        0x33 => "VSqrtF32",
+        0x34 => "VSqrtF64",
+        0x35 => "VSinF32",
+        0x36 => "VCosF32",
+        0x37 => "VNotB32",
+        0x38 => "VBfrevB32",
+        0x39 => "VFfbhU32",
+        0x3A => "VFfblB32",
+        0x3B => "VFfbhI32",
+        0x3C => "VFrexpExpI32F64",
+        0x3D => "VFrexpMantF64",
+        0x3E => "VFractF64",
+        0x3F => "VFrexpExpI32F32",
+        0x40 => "VFrexpMantF32",
+        0x42 => "VMovreldB32",
+        0x43 => "VMovrelsB32",
+        0x44 => "VMovrelsdB32",
+        _ => string.Empty,
+    };
+
+    private static string Vop3FallbackName(uint opcode)
+    {
+        var vop1Name = opcode is >= 0x180 and <= 0x27F && opcode != 0x182
+            ? Vop1Name(opcode - 0x180)
+            : string.Empty;
+        return string.IsNullOrEmpty(vop1Name)
+            ? $"Vop3Raw{opcode:X3}"
+            : vop1Name;
     }
 
     private static bool DecodeVop2(uint word, out string name, out uint sizeDwords, out string error)
@@ -1093,7 +1105,7 @@ internal static class Gen5ShaderTranslator
             0x373 => "VMadU32U16",
             0x377 => "VPermlane16B32",
             0x378 => "VPermlanex16B32",
-            _ => $"Vop3Raw{opcode:X3}",
+            _ => Vop3FallbackName(opcode),
         };
 
         return FinishDecode(name, $"unknown-vop3 op=0x{opcode:X3}", out error);
