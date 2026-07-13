@@ -1488,6 +1488,19 @@ public sealed class Gen5DecoderTests
         var fetch = GetSpirvInstruction(shader.Spirv, SpirvOp.ImageFetch);
         Assert.Equal(7u, fetch[0] >> 16);
         Assert.Equal(2u, fetch[5]);
+        var sizeQuery = GetSpirvInstruction(
+            shader.Spirv,
+            SpirvOp.ImageQuerySizeLod);
+        Assert.Equal(5u, sizeQuery[0] >> 16);
+        Assert.Equal(fetch[3], sizeQuery[3]);
+        Assert.Equal(fetch[6], sizeQuery[4]);
+        Assert.Equal(
+            2,
+            CountSpirvInstructionsWithOperand(
+                shader.Spirv,
+                SpirvOp.CompositeExtract,
+                operandIndex: 3,
+                sizeQuery[2]));
         var mipBitcast = GetSpirvInstructionWithResult(
             shader.Spirv,
             SpirvOp.Bitcast,
@@ -6475,6 +6488,37 @@ public sealed class Gen5DecoderTests
             }
 
             var wordCount = instruction >> 16;
+            if (wordCount == 0)
+            {
+                break;
+            }
+
+            offset += checked((int)wordCount * sizeof(uint));
+        }
+
+        return count;
+    }
+
+    private static int CountSpirvInstructionsWithOperand(
+        byte[] spirv,
+        SpirvOp opcode,
+        int operandIndex,
+        uint operand)
+    {
+        var count = 0;
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var instruction = BitConverter.ToUInt32(spirv, offset);
+            var wordCount = instruction >> 16;
+            if ((ushort)instruction == (ushort)opcode &&
+                wordCount > operandIndex &&
+                BitConverter.ToUInt32(
+                    spirv,
+                    offset + (operandIndex * sizeof(uint))) == operand)
+            {
+                count++;
+            }
+
             if (wordCount == 0)
             {
                 break;
