@@ -1120,8 +1120,6 @@ internal static partial class Gen5SpirvTranslator
         {
             error = string.Empty;
             if (_stage != Gen5SpirvStage.Compute ||
-                _lds == 0 ||
-                _workgroupUintPointer == 0 ||
                 instruction.Control is not Gen5DataShareControl control)
             {
                 error = "invalid LDS instruction";
@@ -1131,6 +1129,43 @@ internal static partial class Gen5SpirvTranslator
             if (control.Gds)
             {
                 error = "GDS data share is not implemented";
+                return false;
+            }
+
+            if (instruction.Opcode == "DsBpermuteB32")
+            {
+                if (instruction.Sources.Count < 2 ||
+                    instruction.Destinations.Count < 1)
+                {
+                    error = "missing DS bpermute operand";
+                    return false;
+                }
+
+                var byteIndex = LdsByteAddress(
+                    GetRawSource(instruction, 0),
+                    EffectiveDsSingleOffsetBytes(control));
+                var sourceLane = BitwiseAnd(
+                    ShiftRightLogical(byteIndex, UInt(2)),
+                    UInt(RdnaWaveLaneCount - 1));
+                var activeSource = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    Load(_boolType, _exec),
+                    GetRawSource(instruction, 1),
+                    UInt(0));
+                var value = _module.AddInstruction(
+                    SpirvOp.GroupNonUniformShuffle,
+                    _uintType,
+                    UInt(3),
+                    activeSource,
+                    sourceLane);
+                StoreV(instruction.Destinations[0].Value, value);
+                return true;
+            }
+
+            if (_lds == 0 || _workgroupUintPointer == 0)
+            {
+                error = "invalid LDS memory instruction";
                 return false;
             }
 
@@ -1189,7 +1224,7 @@ internal static partial class Gen5SpirvTranslator
                             _uintType,
                             LdsPointer(
                                 GetRawSource(instruction, 0),
-                                EffectiveDsOffsetBytes(control.Offset0)),
+                                EffectiveDsSingleOffsetBytes(control)),
                             UInt(2),
                             UInt(0x108),
                             GetRawSource(instruction, 1));
@@ -1223,7 +1258,7 @@ internal static partial class Gen5SpirvTranslator
                             _uintType,
                             LdsPointer(
                                 GetRawSource(instruction, 0),
-                                EffectiveDsOffsetBytes(control.Offset0)),
+                                EffectiveDsSingleOffsetBytes(control)),
                             UInt(2),
                             UInt(0x108),
                             UInt(0x102),
@@ -1248,7 +1283,7 @@ internal static partial class Gen5SpirvTranslator
                     var componentBits = instruction.Opcode == "DsWriteB8" ? 8u : 16u;
                     var byteAddress = LdsByteAddress(
                         GetRawSource(instruction, 0),
-                        EffectiveDsOffsetBytes(control.Offset0));
+                        EffectiveDsSingleOffsetBytes(control));
                     var pointer = LdsPointerFromByteAddress(byteAddress);
                     var bitOffset = ShiftLeftLogical(
                         BitwiseAnd(byteAddress, UInt(3)),
@@ -1273,7 +1308,7 @@ internal static partial class Gen5SpirvTranslator
 
                     var address = GetRawSource(instruction, 0);
                     StoreLds(
-                        LdsPointer(address, EffectiveDsOffsetBytes(control.Offset0)),
+                        LdsPointer(address, EffectiveDsSingleOffsetBytes(control)),
                         GetRawSource(instruction, 1));
                     return true;
                 }
@@ -1286,7 +1321,7 @@ internal static partial class Gen5SpirvTranslator
                     }
 
                     var address = GetRawSource(instruction, 0);
-                    var offset = EffectiveDsOffsetBytes(control.Offset0);
+                    var offset = EffectiveDsSingleOffsetBytes(control);
                     StoreLds(LdsPointer(address, offset), GetRawSource(instruction, 1));
                     StoreLds(
                         LdsPointer(address, offset + sizeof(uint)),
@@ -1328,7 +1363,7 @@ internal static partial class Gen5SpirvTranslator
                     var address = GetRawSource(instruction, 0);
                     var value = Load(
                         _uintType,
-                        LdsPointer(address, EffectiveDsOffsetBytes(control.Offset0)));
+                        LdsPointer(address, EffectiveDsSingleOffsetBytes(control)));
                     StoreV(instruction.Destinations[0].Value, value);
                     return true;
                 }
@@ -1342,7 +1377,7 @@ internal static partial class Gen5SpirvTranslator
                     }
 
                     var address = GetRawSource(instruction, 0);
-                    var offset = EffectiveDsOffsetBytes(control.Offset0);
+                    var offset = EffectiveDsSingleOffsetBytes(control);
                     StoreV(
                         instruction.Destinations[0].Value,
                         Load(_uintType, LdsPointer(address, offset)));
@@ -1369,7 +1404,7 @@ internal static partial class Gen5SpirvTranslator
                     var signed = instruction.Opcode.Contains('I', StringComparison.Ordinal);
                     var byteAddress = LdsByteAddress(
                         GetRawSource(instruction, 0),
-                        EffectiveDsOffsetBytes(control.Offset0));
+                        EffectiveDsSingleOffsetBytes(control));
                     var word = Load(_uintType, LdsPointerFromByteAddress(byteAddress));
                     var bitOffset = ShiftLeftLogical(
                         BitwiseAnd(byteAddress, UInt(3)),
@@ -1419,7 +1454,8 @@ internal static partial class Gen5SpirvTranslator
 
         // Regular DS offsets are bytes. The read2/write2 families instead
         // scale each offset by the element width (and ST64 adds a 64x stride).
-        private static uint EffectiveDsOffsetBytes(uint offset) => offset;
+        private static uint EffectiveDsSingleOffsetBytes(Gen5DataShareControl control) =>
+            control.Offset0 | (control.Offset1 << 8);
 
         private static uint EffectiveDsPairOffsetBytes(uint offset, bool st64) =>
             offset * (st64 ? 64u * sizeof(uint) : sizeof(uint));
@@ -2655,7 +2691,8 @@ internal static partial class Gen5SpirvTranslator
 
         private bool UsesLds() =>
             _state.Program.Instructions.Any(instruction =>
-                instruction.Control is Gen5DataShareControl);
+                instruction.Control is Gen5DataShareControl &&
+                instruction.Opcode != "DsBpermuteB32");
 
         private bool UsesSubgroupShuffle() =>
             _state.Program.Instructions.Any(instruction =>
@@ -2663,7 +2700,8 @@ internal static partial class Gen5SpirvTranslator
                     "VReadlaneB32" or
                     "VReadfirstlaneB32" or
                     "VPermlane16B32" or
-                    "VPermlanex16B32");
+                    "VPermlanex16B32" or
+                    "DsBpermuteB32");
 
         private bool UsesLaneOperations() =>
             _state.Program.Instructions.Any(instruction =>
