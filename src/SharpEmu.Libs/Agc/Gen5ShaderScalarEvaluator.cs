@@ -713,12 +713,26 @@ internal static class Gen5ShaderScalarEvaluator
             return true;
         }
 
+        if (instruction.Opcode == "SBitreplicateB64B32")
+        {
+            if (destination.Value >= ScalarRegisterCount - 1 ||
+                !TryEvaluateScalarOperand(instruction.Sources[0], registers, out var source))
+            {
+                error = $"scalar-source64 pc=0x{instruction.Pc:X} op={instruction.Opcode}";
+                return false;
+            }
+
+            WriteScalarPair(registers, destination.Value, ReplicateBits(source), ref execMask);
+            return true;
+        }
+
         if (instruction.Opcode is
             "SMovB64" or
             "SCmovB64" or
             "SWqmB64" or
             "SNotB64" or
-            "SBrevB64")
+            "SBrevB64" or
+            "SQuadmaskB64")
         {
             if (destination.Value >= ScalarRegisterCount - 1 ||
                 !TryEvaluateScalarOperand64(
@@ -748,9 +762,13 @@ internal static class Gen5ShaderScalarEvaluator
             {
                 value = ReverseBits(value);
             }
+            else if (instruction.Opcode == "SQuadmaskB64")
+            {
+                value = QuadMask(value);
+            }
 
             WriteScalarPair(registers, destination.Value, value, ref execMask);
-            if (instruction.Opcode is "SNotB64" or "SWqmB64")
+            if (instruction.Opcode is "SNotB64" or "SWqmB64" or "SQuadmaskB64")
             {
                 scalarConditionCode = value != 0;
             }
@@ -932,6 +950,7 @@ internal static class Gen5ShaderScalarEvaluator
             "SFlbitI32" or
             "SSextI32I8" or
             "SSextI32I16" or
+            "SQuadmaskB32" or
             "SBitset0B32" or
             "SBitset1B32" or
             "SAbsI32")
@@ -953,6 +972,7 @@ internal static class Gen5ShaderScalarEvaluator
                 "SFlbitI32" => SignedLeadingBitCount(left),
                 "SSextI32I8" => unchecked((uint)(int)(sbyte)left),
                 "SSextI32I16" => unchecked((uint)(int)(short)left),
+                "SQuadmaskB32" => QuadMask(left),
                 "SBitset0B32" => registers[destination.Value] & ~(1u << ((int)left & 31)),
                 "SBitset1B32" => registers[destination.Value] | (1u << ((int)left & 31)),
                 _ => unchecked((uint)Math.Abs((long)(int)left)),
@@ -962,6 +982,7 @@ internal static class Gen5ShaderScalarEvaluator
                 "SWqmB32" or
                 "SBcnt0I32B32" or
                 "SBcnt1I32B32" or
+                "SQuadmaskB32" or
                 "SAbsI32")
             {
                 scalarConditionCode = registers[destination.Value] != 0;
@@ -1889,6 +1910,45 @@ internal static class Gen5ShaderScalarEvaluator
         var groups = (value | value >> 1 | value >> 2 | value >> 3) &
             0x1111_1111_1111_1111UL;
         return groups * 15UL;
+    }
+
+    private static uint QuadMask(uint value)
+    {
+        uint result = 0;
+        for (var group = 0; group < 8; group++)
+        {
+            if ((value & (0xFu << (group * 4))) != 0)
+            {
+                result |= 1u << group;
+            }
+        }
+
+        return result;
+    }
+
+    private static ulong QuadMask(ulong value)
+    {
+        ulong result = 0;
+        for (var group = 0; group < 16; group++)
+        {
+            if ((value & (0xFUL << (group * 4))) != 0)
+            {
+                result |= 1UL << group;
+            }
+        }
+
+        return result;
+    }
+
+    private static ulong ReplicateBits(uint value)
+    {
+        ulong result = value;
+        result = (result | result << 16) & 0x0000_FFFF_0000_FFFFUL;
+        result = (result | result << 8) & 0x00FF_00FF_00FF_00FFUL;
+        result = (result | result << 4) & 0x0F0F_0F0F_0F0F_0F0FUL;
+        result = (result | result << 2) & 0x3333_3333_3333_3333UL;
+        result = (result | result << 1) & 0x5555_5555_5555_5555UL;
+        return result | result << 1;
     }
 
     private static uint SignedLeadingBitCount(uint value)
