@@ -905,6 +905,59 @@ public sealed class Gen5DecoderTests
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Select));
     }
 
+    [Fact]
+    public void UsesRdna2Vop3OpcodesAndCanonicalBitwiseNames()
+    {
+        // LLVM 18 gfx1030 rejects the three reserved encodings below. The
+        // canonical bitwise encodings were assembled and verified with LLVM.
+        var ctx = CreateContext(
+        [
+            0xD51F0000u, 0x040A0301u, // reserved (legacy v_mac_f32 encoding)
+            0xD5410000u, 0x040A0301u, // reserved (legacy v_mad_f32 encoding)
+            0xD56B0000u, 0x040A0301u, // reserved (legacy v_mul_lo_i32 encoding)
+            0xD76F0007u, 0x042A1308u, // v_lshl_or_b32 v7, v8, v9, v10
+            0xD772000Bu, 0x043A1B0Cu, // v_or3_b32 v11, v12, v13, v14
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            ["Vop3Raw11F", "Vop3Raw141", "Vop3Raw16B", "VLshlOrB32", "VOr3B32", "SEndpgm"],
+            program.Instructions.Select(instruction => instruction.Opcode));
+
+        // Reserved instructions remain decodable for diagnostics, but only
+        // the supported RDNA2 instructions are submitted to the translator.
+        var supportedProgram = program with
+        {
+            Instructions = program.Instructions.Skip(3).ToArray(),
+        };
+        var state = new Gen5ShaderState(supportedProgram, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftLeftLogical));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseOr));
+    }
+
     private static bool ContainsSpirvCapability(
         byte[] spirv,
         SpirvCapability capability)
