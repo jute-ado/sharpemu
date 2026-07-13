@@ -1132,26 +1132,24 @@ internal static partial class Gen5SpirvTranslator
                 return false;
             }
 
-            if (instruction.Opcode == "DsBpermuteB32")
+            if (instruction.Opcode is "DsBpermuteB32" or "DsSwizzleB32")
             {
-                if (instruction.Sources.Count < 2 ||
+                var sourceIndex = instruction.Opcode == "DsBpermuteB32" ? 1 : 0;
+                if (instruction.Sources.Count <= sourceIndex ||
                     instruction.Destinations.Count < 1)
                 {
-                    error = "missing DS bpermute operand";
+                    error = "missing DS lane operation operand";
                     return false;
                 }
 
-                var byteIndex = LdsByteAddress(
-                    GetRawSource(instruction, 0),
-                    EffectiveDsSingleOffsetBytes(control));
-                var sourceLane = BitwiseAnd(
-                    ShiftRightLogical(byteIndex, UInt(2)),
-                    UInt(RdnaWaveLaneCount - 1));
+                var sourceLane = instruction.Opcode == "DsBpermuteB32"
+                    ? EmitDsBpermuteSourceLane(instruction, control)
+                    : EmitDsSwizzleSourceLane(control);
                 var activeSource = _module.AddInstruction(
                     SpirvOp.Select,
                     _uintType,
                     Load(_boolType, _exec),
-                    GetRawSource(instruction, 1),
+                    GetRawSource(instruction, sourceIndex),
                     UInt(0));
                 var value = _module.AddInstruction(
                     SpirvOp.GroupNonUniformShuffle,
@@ -1450,6 +1448,73 @@ internal static partial class Gen5SpirvTranslator
                     error = $"unsupported LDS opcode {instruction.Opcode}";
                     return false;
             }
+        }
+
+        private uint EmitDsBpermuteSourceLane(
+            Gen5ShaderInstruction instruction,
+            Gen5DataShareControl control)
+        {
+            var byteIndex = LdsByteAddress(
+                GetRawSource(instruction, 0),
+                EffectiveDsSingleOffsetBytes(control));
+            return BitwiseAnd(
+                ShiftRightLogical(byteIndex, UInt(2)),
+                UInt(RdnaWaveLaneCount - 1));
+        }
+
+        private uint EmitDsSwizzleSourceLane(Gen5DataShareControl control)
+        {
+            var offset = EffectiveDsSingleOffsetBytes(control);
+            var lane = BitwiseAnd(
+                Load(_uintType, _subgroupInvocationIdInput),
+                UInt(RdnaWaveLaneCount - 1));
+            if (offset >= 0xE000)
+            {
+                var mask = offset & 0x1F;
+                var reversedLane = ShiftRightLogical(
+                    _module.AddInstruction(SpirvOp.BitReverse, _uintType, lane),
+                    UInt(27));
+                var compactedLane = ShiftRightLogical(
+                    reversedLane,
+                    UInt((uint)System.Numerics.BitOperations.PopCount(mask)));
+                return BitwiseOr(compactedLane, BitwiseAnd(lane, UInt(mask)));
+            }
+
+            if (offset >= 0xC000)
+            {
+                var mask = offset & 0x1F;
+                var rotate = (offset >> 5) & 0x1F;
+                var rotatedLane = (offset & 0x400) == 0
+                    ? IAdd(lane, UInt(rotate))
+                    : _module.AddInstruction(
+                        SpirvOp.ISub,
+                        _uintType,
+                        lane,
+                        UInt(rotate));
+                return BitwiseOr(
+                    BitwiseAnd(lane, UInt(mask)),
+                    BitwiseAnd(
+                        rotatedLane,
+                        UInt((RdnaWaveLaneCount - 1) & ~mask)));
+            }
+
+            if ((offset & 0x8000) != 0)
+            {
+                var localLane = BitwiseAnd(lane, UInt(3));
+                var selector = BitwiseAnd(
+                    ShiftRightLogical(
+                        UInt(offset),
+                        ShiftLeftLogical(localLane, UInt(1))),
+                    UInt(3));
+                return BitwiseOr(BitwiseAnd(lane, UInt(~3u)), selector);
+            }
+
+            var andMask = offset & 0x1F;
+            var orMask = (offset >> 5) & 0x1F;
+            var xorMask = (offset >> 10) & 0x1F;
+            return BitwiseXor(
+                BitwiseOr(BitwiseAnd(lane, UInt(andMask)), UInt(orMask)),
+                UInt(xorMask));
         }
 
         // Regular DS offsets are bytes. The read2/write2 families instead
@@ -2692,7 +2757,7 @@ internal static partial class Gen5SpirvTranslator
         private bool UsesLds() =>
             _state.Program.Instructions.Any(instruction =>
                 instruction.Control is Gen5DataShareControl &&
-                instruction.Opcode != "DsBpermuteB32");
+                instruction.Opcode is not ("DsBpermuteB32" or "DsSwizzleB32"));
 
         private bool UsesSubgroupShuffle() =>
             _state.Program.Instructions.Any(instruction =>
@@ -2701,7 +2766,8 @@ internal static partial class Gen5SpirvTranslator
                     "VReadfirstlaneB32" or
                     "VPermlane16B32" or
                     "VPermlanex16B32" or
-                    "DsBpermuteB32");
+                    "DsBpermuteB32" or
+                    "DsSwizzleB32");
 
         private bool UsesLaneOperations() =>
             _state.Program.Instructions.Any(instruction =>
