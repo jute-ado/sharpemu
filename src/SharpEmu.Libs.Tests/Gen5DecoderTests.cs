@@ -2330,6 +2330,60 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesPackedNormalizedConversionsWithDefinedNaNsToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xD7680000u, 0x00020501u, // v_cvt_pknorm_i16_f32 v0, v1, v2
+            0xD7690003u, 0x00020B04u, // v_cvt_pknorm_u16_f32 v3, v4, v5
+            0xD712000Cu, 0x00021D0Du, // v_cvt_pknorm_i16_f16 v12, v13, v14
+            0xD713000Fu, 0x00022310u, // v_cvt_pknorm_u16_f16 v15, v16, v17
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "VCvtPknormI16F32",
+                "VCvtPknormU16F32",
+                "VCvtPknormI16F16",
+                "VCvtPknormU16F16",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.Equal(8, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IsNan));
+        Assert.Equal(12, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Select));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 56));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 57));
+    }
+
+    [Fact]
     public void CompilesVectorFloat16UnaryOperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
