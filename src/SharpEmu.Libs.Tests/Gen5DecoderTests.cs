@@ -763,6 +763,87 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesVectorFloat64ComparisonsToSpirv()
+    {
+        // The compact opcode blocks and E64 examples were verified with
+        // LLVM 18 llvm-mc for gfx1030. Opcode 0x3f is unsupported on GFX10.
+        var compactOpcodes = Enumerable
+            .Range(0x20, 0x10)
+            .Concat(Enumerable.Range(0x30, 0x0F))
+            .Select(opcode => (uint)opcode)
+            .ToArray();
+        var instructionWords = compactOpcodes
+            .Select(opcode => 0x7C000000u | (opcode << 17) | (2u << 9) | 0x100u)
+            .Concat(
+            [
+                0xD4220108u, 0x20021508u, // v_cmp_eq_f64 s8, -|v[8:9]|, v[10:11]
+                0xD438007Eu, 0x00021D0Cu, // v_cmpx_u_f64 v[12:13], v[14:15]
+                SEndpgm,
+            ])
+            .ToArray();
+        var ctx = CreateContext(instructionWords);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "VCmpFF64", "VCmpLtF64", "VCmpEqF64", "VCmpLeF64",
+                "VCmpGtF64", "VCmpLgF64", "VCmpGeF64", "VCmpOF64",
+                "VCmpUF64", "VCmpNgeF64", "VCmpNlgF64", "VCmpNgtF64",
+                "VCmpNleF64", "VCmpNeqF64", "VCmpNltF64", "VCmpTruF64",
+                "VCmpxFF64", "VCmpxLtF64", "VCmpxEqF64", "VCmpxLeF64",
+                "VCmpxGtF64", "VCmpxLgF64", "VCmpxGeF64", "VCmpxOF64",
+                "VCmpxUF64", "VCmpxNgeF64", "VCmpxNlgF64", "VCmpxNgtF64",
+                "VCmpxNleF64", "VCmpxNeqF64", "VCmpxNltF64",
+                "VCmpEqF64", "VCmpxUF64", "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            [.. Enumerable.Repeat(106u, 16), .. Enumerable.Repeat(126u, 15), 8u, 126u],
+            program.Instructions
+                .Take(33)
+                .Select(instruction => Assert.Single(instruction.Destinations).Value));
+        Assert.All(
+            program.Instructions.Take(33),
+            instruction => Assert.Equal(
+                Gen5OperandKind.ScalarRegister,
+                Assert.Single(instruction.Destinations).Kind));
+
+        var modifiedControl = Assert.IsType<Gen5Vop3Control>(program.Instructions[31].Control);
+        Assert.Equal(1u, modifiedControl.AbsoluteMask);
+        Assert.Equal(1u, modifiedControl.NegateMask);
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvCapability(shader.Spirv, SpirvCapability.Float64));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FOrdLessThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FUnordEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IsNan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FNegate));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.LogicalAnd));
+    }
+
+    [Fact]
     public void CompilesExtendedVop1EncodingsToSpirv()
     {
         // E64 encodings assembled with LLVM 18 llvm-mc for gfx1030 and
@@ -1366,6 +1447,7 @@ public sealed class Gen5DecoderTests
             0xD5220000u, 0x040A0301u, // reserved (compact v_bcnt_u32_b32 encoding)
             0xD5300000u, 0x040A0301u, // reserved (compact v_cvt_pk_u16_u32 encoding)
             0xD5310000u, 0x040A0301u, // reserved (compact v_cvt_pk_i16_i32 encoding)
+            0xD43F007Eu, 0x00020500u, // reserved (v_cmpx_t_f64 encoding)
             0xD5410000u, 0x040A0301u, // reserved (legacy v_mad_f32 encoding)
             0xD56B0000u, 0x040A0301u, // reserved (legacy v_mul_lo_i32 encoding)
             0xD76F0007u, 0x042A1308u, // v_lshl_or_b32 v7, v8, v9, v10
@@ -1382,8 +1464,8 @@ public sealed class Gen5DecoderTests
         Assert.Equal(
             [
                 "Vop3Raw102", "Vop3Raw11F", "Vop3Raw122", "Vop3Raw130",
-                "Vop3Raw131", "Vop3Raw141", "Vop3Raw16B", "VLshlOrB32",
-                "VOr3B32", "SEndpgm",
+                "Vop3Raw131", "Vop3Raw03F", "Vop3Raw141", "Vop3Raw16B",
+                "VLshlOrB32", "VOr3B32", "SEndpgm",
             ],
             program.Instructions.Select(instruction => instruction.Opcode));
 
@@ -1391,7 +1473,7 @@ public sealed class Gen5DecoderTests
         // the supported RDNA2 instructions are submitted to the translator.
         var supportedProgram = program with
         {
-            Instructions = program.Instructions.Skip(7).ToArray(),
+            Instructions = program.Instructions.Skip(8).ToArray(),
         };
         var state = new Gen5ShaderState(supportedProgram, [], Metadata: null);
         Assert.True(
