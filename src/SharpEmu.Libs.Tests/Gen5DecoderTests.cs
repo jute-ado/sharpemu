@@ -2671,6 +2671,111 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesScratchAtomic32OperationsToPrivateSpirv()
+    {
+        // Scratch is private to an invocation, so its atomics lower to guarded
+        // read-modify-write operations without cross-invocation SPIR-V atomics.
+        var ctx = CreateContext(
+        [
+            0xDCC14000u, 0x287F0800u, // scratch_atomic_swap v40, v0, v8 glc
+            0xDCC54000u, 0x297F0A00u, // scratch_atomic_cmpswap v41, v0, v[10:11] glc
+            0xDCC94000u, 0x2A7F0C00u, // scratch_atomic_add v42, v0, v12 glc
+            0xDCCD4000u, 0x2B7F0E00u, // scratch_atomic_sub v43, v0, v14 glc
+            0xDCD54000u, 0x2C7F1000u, // scratch_atomic_smin v44, v0, v16 glc
+            0xDCD94000u, 0x2D7F1200u, // scratch_atomic_umin v45, v0, v18 glc
+            0xDCDD4000u, 0x2E7F1400u, // scratch_atomic_smax v46, v0, v20 glc
+            0xDCE14000u, 0x2F7F1600u, // scratch_atomic_umax v47, v0, v22 glc
+            0xDCE54000u, 0x307F1800u, // scratch_atomic_and v48, v0, v24 glc
+            0xDCE94000u, 0x317F1A00u, // scratch_atomic_or v49, v0, v26 glc
+            0xDCED4000u, 0x327F1C00u, // scratch_atomic_xor v50, v0, v28 glc
+            0xDCF14000u, 0x337F1E00u, // scratch_atomic_inc v51, v0, v30 glc
+            0xDCF54000u, 0x347F2000u, // scratch_atomic_dec v52, v0, v32 glc
+            0xDCC84000u, 0x357F2200u, // scratch_atomic_add v0, v34
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "ScratchAtomicSwap",
+                "ScratchAtomicCmpswap",
+                "ScratchAtomicAdd",
+                "ScratchAtomicSub",
+                "ScratchAtomicSmin",
+                "ScratchAtomicUmin",
+                "ScratchAtomicSmax",
+                "ScratchAtomicUmax",
+                "ScratchAtomicAnd",
+                "ScratchAtomicOr",
+                "ScratchAtomicXor",
+                "ScratchAtomicInc",
+                "ScratchAtomicDec",
+                "ScratchAtomicAdd",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            [1u, 2u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u],
+            program.Instructions.Take(14).Select(instruction =>
+                Assert.IsType<Gen5GlobalMemoryControl>(instruction.Control).DwordCount));
+        Assert.Equal(
+            Enumerable.Range(40, 13).Select(value => (uint)value),
+            program.Instructions.Take(13)
+                .Select(instruction => Assert.Single(instruction.Destinations).Value));
+        Assert.Empty(program.Instructions[13].Destinations);
+        Assert.All(
+            program.Instructions.Take(13),
+            instruction => Assert.True(
+                Assert.IsType<Gen5GlobalMemoryControl>(instruction.Control).Glc));
+        Assert.False(
+            Assert.IsType<Gen5GlobalMemoryControl>(program.Instructions[13].Control).Glc);
+        Assert.Equal(
+            [8u, 10u, 12u, 14u, 16u, 18u, 20u, 22u, 24u, 26u, 28u, 30u, 32u, 34u],
+            program.Instructions.Take(14).Select(instruction =>
+                Assert.IsType<Gen5GlobalMemoryControl>(instruction.Control).VectorData));
+        Assert.Equal(
+            [3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+            program.Instructions.Take(14).Select(instruction => instruction.Sources.Count));
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.Empty(evaluation.GlobalMemoryBindings);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.False(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicExchange));
+        Assert.False(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicCompareExchange));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SLessThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ULessThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SGreaterThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UGreaterThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseAnd));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseOr));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseXor));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UGreaterThanEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.LogicalOr));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 4096));
+    }
+
+    [Fact]
     public void RejectsUnsupportedFlatMemoryInsteadOfCompilingNoOp()
     {
         var ctx = CreateContext(

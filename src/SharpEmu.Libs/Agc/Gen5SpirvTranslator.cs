@@ -2147,6 +2147,25 @@ internal static partial class Gen5SpirvTranslator
                 dynamicOffset,
                 UInt(unchecked((uint)control.OffsetBytes)));
 
+            if (instruction.Opcode.StartsWith(
+                    "ScratchAtomic",
+                    StringComparison.Ordinal))
+            {
+                var original = LoadScratchDword(byteAddress);
+                StoreScratchDword(
+                    byteAddress,
+                    EmitScratchAtomic32(
+                        instruction.Opcode,
+                        original,
+                        control.VectorData));
+                if (control.Glc)
+                {
+                    StoreV(control.VectorDestination, original);
+                }
+
+                return true;
+            }
+
             if (instruction.Opcode is
                 "ScratchLoadUbyteD16" or "ScratchLoadUbyteD16Hi" or
                 "ScratchLoadSbyteD16" or "ScratchLoadSbyteD16Hi" or
@@ -2238,6 +2257,75 @@ internal static partial class Gen5SpirvTranslator
             error = $"unsupported scratch-memory opcode {instruction.Opcode}";
             return false;
         }
+
+        private uint EmitScratchAtomic32(
+            string opcode,
+            uint original,
+            uint vectorData)
+        {
+            var operation = opcode["ScratchAtomic".Length..];
+            var data = LoadV(vectorData);
+            return operation switch
+            {
+                "Swap" => data,
+                "Cmpswap" => _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    _module.AddInstruction(
+                        SpirvOp.IEqual,
+                        _boolType,
+                        original,
+                        LoadV(vectorData + 1)),
+                    data,
+                    original),
+                "Add" => IAdd(original, data),
+                "Sub" => _module.AddInstruction(
+                    SpirvOp.ISub,
+                    _uintType,
+                    original,
+                    data),
+                "Smin" => SelectScratchAtomicMinMax(
+                    SpirvOp.SLessThan,
+                    original,
+                    data),
+                "Umin" => SelectScratchAtomicMinMax(
+                    SpirvOp.ULessThan,
+                    original,
+                    data),
+                "Smax" => SelectScratchAtomicMinMax(
+                    SpirvOp.SGreaterThan,
+                    original,
+                    data),
+                "Umax" => SelectScratchAtomicMinMax(
+                    SpirvOp.UGreaterThan,
+                    original,
+                    data),
+                "And" => BitwiseAnd(original, data),
+                "Or" => BitwiseOr(original, data),
+                "Xor" => BitwiseXor(original, data),
+                "Inc" or "Dec" => EmitAtomicIncDecDesiredValue(
+                    operation == "Inc",
+                    vectorData,
+                    original),
+                _ => throw new InvalidOperationException(
+                    $"unsupported scratch-memory atomic {opcode}"),
+            };
+        }
+
+        private uint SelectScratchAtomicMinMax(
+            SpirvOp comparison,
+            uint original,
+            uint data) =>
+            _module.AddInstruction(
+                SpirvOp.Select,
+                _uintType,
+                _module.AddInstruction(
+                    comparison,
+                    _boolType,
+                    data,
+                    original),
+                data,
+                original);
 
         private uint LoadScratchSubword(
             uint byteAddress,
