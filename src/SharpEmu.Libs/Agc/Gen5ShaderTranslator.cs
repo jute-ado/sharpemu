@@ -795,6 +795,7 @@ internal static class Gen5ShaderTranslator
         0x3E => "VFractF64",
         0x3F => "VFrexpExpI32F32",
         0x40 => "VFrexpMantF32",
+        0x41 => "VClrexcp",
         0x42 => "VMovreldB32",
         0x43 => "VMovrelsB32",
         0x44 => "VMovrelsdB32",
@@ -803,7 +804,8 @@ internal static class Gen5ShaderTranslator
 
     private static string Vop3FallbackName(uint opcode)
     {
-        var vop1Name = opcode is >= 0x180 and <= 0x27F && opcode != 0x182
+        var vop1Name = opcode is >= 0x180 and <= 0x27F &&
+            opcode is not (0x182 or 0x1C1)
             ? Vop1Name(opcode - 0x180)
             : string.Empty;
         return string.IsNullOrEmpty(vop1Name)
@@ -1580,9 +1582,17 @@ internal static class Gen5ShaderTranslator
                     sources = [Gen5Operand.Source(word & 0x1FF, literal)];
                 }
 
-                destinations = opcode == "VReadfirstlaneB32"
-                    ? [Gen5Operand.Scalar((word >> 17) & 0x7F)]
-                    : [Gen5Operand.Vector((word >> 17) & 0xFF)];
+                if (opcode == "VClrexcp")
+                {
+                    sources = [];
+                    destinations = [];
+                }
+                else
+                {
+                    destinations = opcode == "VReadfirstlaneB32"
+                        ? [Gen5Operand.Scalar((word >> 17) & 0x7F)]
+                        : [Gen5Operand.Vector((word >> 17) & 0xFF)];
+                }
                 break;
             case Gen5ShaderEncoding.Vop2:
                 if (isDpp)
