@@ -838,6 +838,70 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesLdsBackwardPermuteToSubgroupShuffle()
+    {
+        // Encoding assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump. The offset deliberately exercises both DS offset
+        // bytes; only address bits [6:2] select the source wave lane.
+        var ctx = CreateContext(
+        [
+            0xDACC01FCu, 0x03000504u, // ds_bpermute_b32 v3, v4, v5 offset:508
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        var instruction = Assert.Single(program.Instructions, instruction =>
+            instruction.Opcode == "DsBpermuteB32");
+        Assert.Equal(
+            [Gen5Operand.Vector(4), Gen5Operand.Vector(5)],
+            instruction.Sources);
+        Assert.Equal(Gen5Operand.Vector(3), Assert.Single(instruction.Destinations));
+        var control = Assert.IsType<Gen5DataShareControl>(instruction.Control);
+        Assert.Equal(0xFCu, control.Offset0);
+        Assert.Equal(0x01u, control.Offset1);
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvCapability(
+            shader.Spirv,
+            SpirvCapability.GroupNonUniformShuffle));
+        Assert.True(ContainsSpirvOpcode(
+            shader.Spirv,
+            (ushort)SpirvOp.GroupNonUniformShuffle));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IAdd));
+        Assert.True(ContainsSpirvOpcode(
+            shader.Spirv,
+            (ushort)SpirvOp.ShiftRightLogical));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseAnd));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Select));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 508));
+        Assert.False(ContainsSpirvVariable(
+            shader.Spirv,
+            SpirvStorageClass.Workgroup));
+    }
+
+    [Fact]
     public void CompilesLdsAtomic32OperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
@@ -3543,6 +3607,57 @@ public sealed class Gen5DecoderTests
             if ((ushort)instruction == (ushort)SpirvOp.Capability &&
                 wordCount >= 2 &&
                 BitConverter.ToUInt32(spirv, offset + sizeof(uint)) == (uint)capability)
+            {
+                return true;
+            }
+
+            if (wordCount == 0)
+            {
+                return false;
+            }
+
+            offset += checked((int)wordCount * sizeof(uint));
+        }
+
+        return false;
+    }
+
+    private static bool ContainsSpirvConstant(byte[] spirv, uint value)
+    {
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var instruction = BitConverter.ToUInt32(spirv, offset);
+            var wordCount = instruction >> 16;
+            if ((ushort)instruction == (ushort)SpirvOp.Constant &&
+                wordCount == 4 &&
+                BitConverter.ToUInt32(spirv, offset + (3 * sizeof(uint))) == value)
+            {
+                return true;
+            }
+
+            if (wordCount == 0)
+            {
+                return false;
+            }
+
+            offset += checked((int)wordCount * sizeof(uint));
+        }
+
+        return false;
+    }
+
+    private static bool ContainsSpirvVariable(
+        byte[] spirv,
+        SpirvStorageClass storageClass)
+    {
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var instruction = BitConverter.ToUInt32(spirv, offset);
+            var wordCount = instruction >> 16;
+            if ((ushort)instruction == (ushort)SpirvOp.Variable &&
+                wordCount >= 4 &&
+                BitConverter.ToUInt32(spirv, offset + (3 * sizeof(uint))) ==
+                    (uint)storageClass)
             {
                 return true;
             }
