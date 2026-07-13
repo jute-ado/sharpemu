@@ -613,6 +613,7 @@ internal static partial class Gen5SpirvTranslator
                     result = EmitSubtractWithBorrow(instruction, reverse: true);
                     break;
                 case "VMulLoU32":
+                case "VMulLoI32":
                 case "VMulU32U24":
                     result = EmitIntegerBinary(instruction, SpirvOp.IMul);
                     break;
