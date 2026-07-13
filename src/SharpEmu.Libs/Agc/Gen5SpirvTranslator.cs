@@ -3530,14 +3530,13 @@ internal static partial class Gen5SpirvTranslator
 
                 var hasBias = gatherSuffix == "B";
                 var hasLod = gatherSuffix == "L";
-                var isZeroLod = gatherSuffix == "Lz";
                 if (gatherSuffix is not ("" or "B" or "L" or "Lz"))
                 {
                     error = $"unsupported image gather variant {instruction.Opcode}";
                     return false;
                 }
 
-                if (hasBias || hasLod || isZeroLod)
+                if (hasBias || hasLod)
                 {
                     error = $"image gather LOD controls are unsupported for {instruction.Opcode}";
                     return false;
