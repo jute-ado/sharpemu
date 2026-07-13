@@ -24,7 +24,6 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     private const ulong GuestAllocationArenaSize = 0x0100_0000;
     private const ulong GuestAllocationArenaStartOffset = PageSize;
     private const ulong LargeDataReserveThreshold = 0x4000_0000UL; // 1 GiB
-    private const ulong FullCommitRegionLimit = 4UL << 30;
     private const ulong DefaultLazyReservePrimeBytes = 0x0400_0000UL; // 64 MiB
     private const ulong LazyReservePrimeChunkBytes = 0x0200_0000UL; // 32 MiB
 
@@ -121,9 +120,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         var protection = executable ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
         var allocationType = MEM_COMMIT | MEM_RESERVE;
         var reservedOnly = false;
-        var preferReserveOnly = !executable &&
-            alignedSize >= LargeDataReserveThreshold &&
-            alignedSize > FullCommitRegionLimit;
+        var preferReserveOnly = ShouldReserveWithoutCommit(alignedSize, executable);
 
         void* result = null;
         if (preferReserveOnly)
@@ -1047,6 +1044,9 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
         return DefaultLazyReservePrimeBytes;
     }
+
+    internal static bool ShouldReserveWithoutCommit(ulong alignedSize, bool executable) =>
+        !executable && alignedSize >= LargeDataReserveThreshold;
 
     private static void TraceVmem(string message)
     {
