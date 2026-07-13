@@ -1137,10 +1137,14 @@ public sealed class Gen5DecoderTests
     {
         var ctx = CreateContext(
         [
-            0xDC208000u, 0x00000800u, // global_load_ubyte v8, v0, s[0:1] offset:0
-            0xDC248001u, 0x00000900u, // global_load_sbyte v9, v0, s[0:1] offset:1
-            0xDC288002u, 0x00000A00u, // global_load_ushort v10, v0, s[0:1] offset:2
-            0xDC2C8003u, 0x00000B00u, // global_load_sshort v11, v0, s[0:1] offset:3
+            0xDC208000u, 0x08000000u, // global_load_ubyte v8, v0, s[0:1] offset:0
+            0xDC248001u, 0x09000000u, // global_load_sbyte v9, v0, s[0:1] offset:1
+            0xDC288002u, 0x0A000000u, // global_load_ushort v10, v0, s[0:1] offset:2
+            0xDC2C8003u, 0x0B000000u, // global_load_sshort v11, v0, s[0:1] offset:3
+            0xDC308004u, 0x20000000u, // global_load_dword v32, v0, s[0:1] offset:4
+            0xDC348008u, 0x22000000u, // global_load_dwordx2 v[34:35], v0, s[0:1] offset:8
+            0xDC388010u, 0x24000000u, // global_load_dwordx4 v[36:39], v0, s[0:1] offset:16
+            0xDC3C8020u, 0x28000000u, // global_load_dwordx3 v[40:42], v0, s[0:1] offset:32
             0xDC608001u, 0x00000C00u, // global_store_byte v0, v12, s[0:1] offset:1
             0xDC688003u, 0x00000D00u, // global_store_short v0, v13, s[0:1] offset:3
             0xDC708004u, 0x00000E00u, // global_store_dword v0, v14, s[0:1] offset:4
@@ -1162,6 +1166,10 @@ public sealed class Gen5DecoderTests
                 "GlobalLoadSbyte",
                 "GlobalLoadUshort",
                 "GlobalLoadSshort",
+                "GlobalLoadDword",
+                "GlobalLoadDwordx2",
+                "GlobalLoadDwordx4",
+                "GlobalLoadDwordx3",
                 "GlobalStoreByte",
                 "GlobalStoreShort",
                 "GlobalStoreDword",
@@ -1172,13 +1180,22 @@ public sealed class Gen5DecoderTests
             ],
             program.Instructions.Select(instruction => instruction.Opcode));
         Assert.Equal(
-            [1u, 1u, 1u, 1u, 1u, 1u, 1u, 2u, 4u, 3u],
+            [1u, 1u, 1u, 1u, 1u, 2u, 4u, 3u, 1u, 1u, 1u, 2u, 4u, 3u],
             program.Instructions
-                .Take(10)
+                .Take(14)
                 .Select(instruction =>
                     Assert.IsType<Gen5GlobalMemoryControl>(instruction.Control).DwordCount));
         Assert.All(program.Instructions.Take(4), instruction => Assert.Single(instruction.Destinations));
-        Assert.All(program.Instructions.Skip(4).Take(6), instruction => Assert.Empty(instruction.Destinations));
+        Assert.Equal(
+            [8u, 9u, 10u, 11u],
+            program.Instructions.Take(4)
+                .Select(instruction => Assert.Single(instruction.Destinations).Value));
+        Assert.Equal(
+            [32u, 34u, 35u, 36u, 37u, 38u, 39u, 40u, 41u, 42u],
+            program.Instructions.Skip(4).Take(4)
+                .SelectMany(instruction => instruction.Destinations)
+                .Select(destination => destination.Value));
+        Assert.All(program.Instructions.Skip(8).Take(6), instruction => Assert.Empty(instruction.Destinations));
 
         var scalarRegisters = new uint[128];
         var state = new Gen5ShaderState(program, [], Metadata: null);
@@ -1192,7 +1209,7 @@ public sealed class Gen5DecoderTests
                     ScalarAddress: 0,
                     BaseAddress: 0x2000_0000,
                     program.Instructions
-                        .Take(10)
+                        .Take(14)
                         .Select(instruction => instruction.Pc)
                         .ToArray(),
                     new byte[128]),
@@ -1213,6 +1230,120 @@ public sealed class Gen5DecoderTests
         Assert.Equal(2, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Phi));
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SelectionMerge));
         Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Store) >= 16);
+    }
+
+    [Fact]
+    public void CompilesGlobalAtomic32OperationsToSpirv()
+    {
+        // DATA and VDST intentionally use distinct VGPRs. RDNA Global atomics
+        // consume DATA but write the pre-operation value to VDST only with GLC.
+        var ctx = CreateContext(
+        [
+            0xDCC18000u, 0x28000800u, // global_atomic_swap v40, v0, v8, s[0:1] glc
+            0xDCC58000u, 0x29000A00u, // global_atomic_cmpswap v41, v0, v[10:11], s[0:1] glc
+            0xDCC98000u, 0x2A000C00u, // global_atomic_add v42, v0, v12, s[0:1] glc
+            0xDCCD8000u, 0x2B000E00u, // global_atomic_sub v43, v0, v14, s[0:1] glc
+            0xDCD58000u, 0x2C001000u, // global_atomic_smin v44, v0, v16, s[0:1] glc
+            0xDCD98000u, 0x2D001200u, // global_atomic_umin v45, v0, v18, s[0:1] glc
+            0xDCDD8000u, 0x2E001400u, // global_atomic_smax v46, v0, v20, s[0:1] glc
+            0xDCE18000u, 0x2F001600u, // global_atomic_umax v47, v0, v22, s[0:1] glc
+            0xDCE58000u, 0x30001800u, // global_atomic_and v48, v0, v24, s[0:1] glc
+            0xDCE98000u, 0x31001A00u, // global_atomic_or v49, v0, v26, s[0:1] glc
+            0xDCED8000u, 0x32001C00u, // global_atomic_xor v50, v0, v28, s[0:1] glc
+            0xDCF18000u, 0x33001E00u, // global_atomic_inc v51, v0, v30, s[0:1] glc
+            0xDCF58000u, 0x34002000u, // global_atomic_dec v52, v0, v32, s[0:1] glc
+            0xDCC88000u, 0x35002200u, // global_atomic_add v53, v0, v34, s[0:1]
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "GlobalAtomicSwap",
+                "GlobalAtomicCmpswap",
+                "GlobalAtomicAdd",
+                "GlobalAtomicSub",
+                "GlobalAtomicSmin",
+                "GlobalAtomicUmin",
+                "GlobalAtomicSmax",
+                "GlobalAtomicUmax",
+                "GlobalAtomicAnd",
+                "GlobalAtomicOr",
+                "GlobalAtomicXor",
+                "GlobalAtomicInc",
+                "GlobalAtomicDec",
+                "GlobalAtomicAdd",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            [1u, 2u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u],
+            program.Instructions.Take(14)
+                .Select(instruction =>
+                    Assert.IsType<Gen5GlobalMemoryControl>(instruction.Control).DwordCount));
+        Assert.Equal(
+            Enumerable.Range(40, 13).Select(value => (uint)value),
+            program.Instructions.Take(13)
+                .Select(instruction => Assert.Single(instruction.Destinations).Value));
+        Assert.Empty(program.Instructions[13].Destinations);
+        Assert.All(
+            program.Instructions.Take(13),
+            instruction => Assert.True(
+                Assert.IsType<Gen5GlobalMemoryControl>(instruction.Control).Glc));
+        Assert.False(
+            Assert.IsType<Gen5GlobalMemoryControl>(program.Instructions[13].Control).Glc);
+        Assert.Equal(
+            [8u, 10u, 12u, 14u, 16u, 18u, 20u, 22u, 24u, 26u, 28u, 30u, 32u, 34u],
+            program.Instructions.Take(14)
+                .Select(instruction =>
+                    Assert.IsType<Gen5GlobalMemoryControl>(instruction.Control).VectorData));
+
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    program.Instructions.Take(14).Select(instruction => instruction.Pc).ToArray(),
+                    new byte[128]),
+            ]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicExchange));
+        Assert.Equal(3, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicCompareExchange));
+        Assert.Equal(2, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicLoad));
+        Assert.Equal(2, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicIAdd));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicISub));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicSMin));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicUMin));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicSMax));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicUMax));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicAnd));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicOr));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicXor));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UGreaterThanEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UGreaterThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.LogicalOr));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 0x42));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 0x48));
     }
 
     [Fact]

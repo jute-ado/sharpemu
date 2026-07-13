@@ -2118,7 +2118,7 @@ internal static partial class Gen5SpirvTranslator
                 "GlobalLoadUshort" or "GlobalLoadSshort")
             {
                 StoreV(
-                    control.VectorData,
+                    control.VectorDestination,
                     EmitBufferSubwordLoad(
                         bindingIndex,
                         byteAddress,
@@ -2126,6 +2126,23 @@ internal static partial class Gen5SpirvTranslator
                             ? 16u
                             : 8u,
                         instruction.Opcode.Contains("LoadS", StringComparison.Ordinal)));
+                return true;
+            }
+
+            if (instruction.Opcode.StartsWith("GlobalAtomic", StringComparison.Ordinal))
+            {
+                EmitExecConditional(() =>
+                {
+                    var original = EmitStorageBufferAtomic32(
+                        instruction.Opcode,
+                        BufferWordPointer(bindingIndex, dwordAddress),
+                        control.VectorData);
+                    if (control.Glc)
+                    {
+                        StoreV(control.VectorDestination, original);
+                    }
+                });
+
                 return true;
             }
 
@@ -2170,7 +2187,7 @@ internal static partial class Gen5SpirvTranslator
                     ? dwordAddress
                     : IAdd(dwordAddress, UInt(index));
                 StoreV(
-                    control.VectorData + index,
+                    control.VectorDestination + index,
                     LoadBufferWord(bindingIndex, address));
             }
 
@@ -2253,51 +2270,10 @@ internal static partial class Gen5SpirvTranslator
             {
                 EmitExecConditional(() =>
                 {
-                    var pointer = BufferWordPointer(bindingIndex, dwordAddress);
-                    var original = instruction.Opcode switch
-                    {
-                        "BufferAtomicCmpswap" => _module.AddInstruction(
-                            SpirvOp.AtomicCompareExchange,
-                            _uintType,
-                            pointer,
-                            UInt(1),
-                            UInt(0x48),
-                            UInt(0x42),
-                            LoadV(control.VectorData),
-                            LoadV(control.VectorData + 1)),
-                        "BufferAtomicInc" or "BufferAtomicDec" =>
-                            EmitAtomicCompareExchangeLoop(
-                                pointer,
-                                UInt(1),
-                                UInt(0x42),
-                                UInt(0x48),
-                                UInt(0x42),
-                                expected => EmitBufferCasDesiredValue(
-                                    instruction.Opcode,
-                                    control.VectorData,
-                                    expected)),
-                        _ => _module.AddInstruction(
-                            instruction.Opcode switch
-                            {
-                                "BufferAtomicSwap" => SpirvOp.AtomicExchange,
-                                "BufferAtomicAdd" => SpirvOp.AtomicIAdd,
-                                "BufferAtomicSub" => SpirvOp.AtomicISub,
-                                "BufferAtomicSmin" => SpirvOp.AtomicSMin,
-                                "BufferAtomicUmin" => SpirvOp.AtomicUMin,
-                                "BufferAtomicSmax" => SpirvOp.AtomicSMax,
-                                "BufferAtomicUmax" => SpirvOp.AtomicUMax,
-                                "BufferAtomicAnd" => SpirvOp.AtomicAnd,
-                                "BufferAtomicOr" => SpirvOp.AtomicOr,
-                                "BufferAtomicXor" => SpirvOp.AtomicXor,
-                                _ => throw new InvalidOperationException(
-                                    $"unsupported buffer atomic {instruction.Opcode}"),
-                            },
-                            _uintType,
-                            pointer,
-                            UInt(1),
-                            UInt(0x48),
-                            LoadV(control.VectorData)),
-                    };
+                    var original = EmitStorageBufferAtomic32(
+                        instruction.Opcode,
+                        BufferWordPointer(bindingIndex, dwordAddress),
+                        control.VectorData);
                     if (control.Glc)
                     {
                         StoreV(control.VectorData, original);
@@ -2501,13 +2477,64 @@ internal static partial class Gen5SpirvTranslator
             _module.AddLabel(mergeLabel);
         }
 
-        private uint EmitBufferCasDesiredValue(
+        private uint EmitStorageBufferAtomic32(
             string opcode,
+            uint pointer,
+            uint vectorData)
+        {
+            var operation = opcode[(opcode.IndexOf("Atomic", StringComparison.Ordinal) + 6)..];
+            return operation switch
+            {
+                "Cmpswap" => _module.AddInstruction(
+                    SpirvOp.AtomicCompareExchange,
+                    _uintType,
+                    pointer,
+                    UInt(1),
+                    UInt(0x48),
+                    UInt(0x42),
+                    LoadV(vectorData),
+                    LoadV(vectorData + 1)),
+                "Inc" or "Dec" => EmitAtomicCompareExchangeLoop(
+                    pointer,
+                    UInt(1),
+                    UInt(0x42),
+                    UInt(0x48),
+                    UInt(0x42),
+                    expected => EmitAtomicIncDecDesiredValue(
+                        operation == "Inc",
+                        vectorData,
+                        expected)),
+                _ => _module.AddInstruction(
+                    operation switch
+                    {
+                        "Swap" => SpirvOp.AtomicExchange,
+                        "Add" => SpirvOp.AtomicIAdd,
+                        "Sub" => SpirvOp.AtomicISub,
+                        "Smin" => SpirvOp.AtomicSMin,
+                        "Umin" => SpirvOp.AtomicUMin,
+                        "Smax" => SpirvOp.AtomicSMax,
+                        "Umax" => SpirvOp.AtomicUMax,
+                        "And" => SpirvOp.AtomicAnd,
+                        "Or" => SpirvOp.AtomicOr,
+                        "Xor" => SpirvOp.AtomicXor,
+                        _ => throw new InvalidOperationException(
+                            $"unsupported storage-buffer atomic {opcode}"),
+                    },
+                    _uintType,
+                    pointer,
+                    UInt(1),
+                    UInt(0x48),
+                    LoadV(vectorData)),
+            };
+        }
+
+        private uint EmitAtomicIncDecDesiredValue(
+            bool increment,
             uint vectorData,
             uint expected)
         {
             var data = LoadV(vectorData);
-            if (opcode == "BufferAtomicInc")
+            if (increment)
             {
                 var incrementWraps = _module.AddInstruction(
                     SpirvOp.UGreaterThanEqual,
