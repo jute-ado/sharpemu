@@ -1247,6 +1247,7 @@ internal static class Gen5ShaderTranslator
             0x358 => "VMed3I16",
             0x359 => "VMed3U16",
             0x35E => "VMadI16",
+            0x35F => "VDivFixupF16",
             // 0x360/0x361 are v_readlane_b32/v_writelane_b32 on GFX10
             // (verified against llvm-mc); v_mad_u32_u16 is 0x373.
             0x360 => "VReadlaneB32",
