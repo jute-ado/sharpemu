@@ -1122,6 +1122,67 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesImageSampleBiasAndGradientsToSpirv()
+    {
+        // For 2D sampling, RDNA1 packs bias before the coordinates and packs
+        // four derivatives (dx/dh, dy/dh, dx/dv, dy/dv) before coordinates.
+        var ctx = CreateContext(
+        [
+            0xF0940108u, 0x00001000u, // image_sample_b v16, v[0:2], s[0:7], s[0:3] dmask:0x1 dim:2d
+            0xF0880108u, 0x00001404u, // image_sample_d v20, v[4:9], s[0:7], s[0:3] dmask:0x1 dim:2d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            ["ImageSampleB", "ImageSampleD", "SEndpgm"],
+            program.Instructions.Select(instruction => instruction.Opcode));
+
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var imageBindings = program.Instructions.Take(2)
+            .Select(
+                instruction => new Gen5ImageBinding(
+                    instruction.Pc,
+                    instruction.Opcode,
+                    Assert.IsType<Gen5ImageControl>(instruction.Control),
+                    [0u, 0u],
+                    [0u, 0u, 0u, 0u],
+                    MipLevel: null))
+            .ToArray();
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            imageBindings,
+            []);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompilePixelShader(
+                state,
+                evaluation,
+                Gen5PixelOutputKind.Float,
+                out var shader,
+                out var compileError),
+            compileError);
+
+        Assert.Equal(
+            (7u, 0x1u),
+            GetSpirvImageInstructionShape(
+                shader.Spirv,
+                SpirvOp.ImageSampleImplicitLod));
+        Assert.Equal(
+            (8u, 0x4u),
+            GetSpirvImageInstructionShape(
+                shader.Spirv,
+                SpirvOp.ImageSampleExplicitLod));
+    }
+
+    [Fact]
     public void CompilesImageAtomic32OperationsToSpirv()
     {
         // RDNA1 MIMG encodings for a 2D R32ui storage image. GLC requests
@@ -5957,6 +6018,31 @@ public sealed class Gen5DecoderTests
         }
 
         return false;
+    }
+
+    private static (uint WordCount, uint ImageOperands)
+        GetSpirvImageInstructionShape(byte[] spirv, SpirvOp opcode)
+    {
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var instruction = BitConverter.ToUInt32(spirv, offset);
+            var wordCount = instruction >> 16;
+            if ((ushort)instruction == (ushort)opcode && wordCount >= 6)
+            {
+                return (
+                    wordCount,
+                    BitConverter.ToUInt32(spirv, offset + (5 * sizeof(uint))));
+            }
+
+            if (wordCount == 0)
+            {
+                break;
+            }
+
+            offset += checked((int)wordCount * sizeof(uint));
+        }
+
+        throw new Xunit.Sdk.XunitException($"Missing SPIR-V instruction {opcode}.");
     }
 
     private static int CountSpirvOpcode(byte[] spirv, ushort opcode)
