@@ -2512,6 +2512,79 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesScratchDwordMemoryToPrivateSpirv()
+    {
+        // Encodings follow the official RDNA FLAT format. The first pair uses
+        // a VGPR offset (SADDR=NULL) and an intentionally unaligned immediate;
+        // the second pair uses an SGPR offset and exercises a four-dword span.
+        var ctx = CreateContext(
+        [
+            0xDC704003u, 0x007F0800u, // scratch_store_dword v0, v8 offset:3
+            0xDC304003u, 0x107F0000u, // scratch_load_dword v16, v0 offset:3
+            0xDC784004u, 0x00040800u, // scratch_store_dwordx4 off, v[8:11], s4 offset:4
+            0xDC384004u, 0x14040000u, // scratch_load_dwordx4 v[20:23], off, s4 offset:4
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "ScratchStoreDword",
+                "ScratchLoadDword",
+                "ScratchStoreDwordx4",
+                "ScratchLoadDwordx4",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            [1u, 1u, 4u, 4u],
+            program.Instructions.Take(4).Select(instruction =>
+                Assert.IsType<Gen5GlobalMemoryControl>(instruction.Control).DwordCount));
+        Assert.Equal(3, program.Instructions[0].Sources.Count);
+        Assert.Empty(program.Instructions[0].Destinations);
+        Assert.Equal(2, program.Instructions[1].Sources.Count);
+        Assert.Equal(Gen5Operand.Vector(16), Assert.Single(program.Instructions[1].Destinations));
+        Assert.Equal(6, program.Instructions[2].Sources.Count);
+        Assert.Empty(program.Instructions[2].Destinations);
+        Assert.Equal(2, program.Instructions[3].Sources.Count);
+        Assert.Equal(
+            [20u, 21u, 22u, 23u],
+            program.Instructions[3].Destinations.Select(destination => destination.Value));
+
+        var state = new Gen5ShaderState(
+            program,
+            [0, 0, 0, 0, 4],
+            Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.Empty(evaluation.GlobalMemoryBindings);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ULessThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Phi));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldInsert));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 4096));
+    }
+
+    [Fact]
     public void RejectsUnsupportedFlatMemoryInsteadOfCompilingNoOp()
     {
         var ctx = CreateContext(

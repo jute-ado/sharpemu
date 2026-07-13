@@ -9,6 +9,7 @@ internal static partial class Gen5SpirvTranslator
     private const uint VectorRegisterCount = 512;
     private const uint M0Register = 124;
     private const uint LdsDwordCount = 8192;
+    private const uint ScratchDwordCount = 4096;
     private const uint RdnaWaveLaneCount = 32;
 
     public static bool TryCompilePixelShader(
@@ -126,6 +127,7 @@ internal static partial class Gen5SpirvTranslator
         private uint _programActive;
         private uint _globalBuffers;
         private uint _storageUintPointer;
+        private uint _scratch;
         private uint _lds;
         private uint _workgroupUintPointer;
         private uint _positionOutput;
@@ -421,8 +423,27 @@ internal static partial class Gen5SpirvTranslator
 
             DeclareBuffers();
             DeclareImages();
+            DeclareScratch();
             DeclareLds();
             DeclareStageInterface();
+        }
+
+        private void DeclareScratch()
+        {
+            if (!UsesScratch())
+            {
+                return;
+            }
+
+            var scratchArrayType = _module.TypeArray(_uintType, ScratchDwordCount);
+            var scratchPointer =
+                _module.TypePointer(SpirvStorageClass.Private, scratchArrayType);
+            _scratch = _module.AddGlobalVariable(
+                scratchPointer,
+                SpirvStorageClass.Private,
+                _module.ConstantNull(scratchArrayType));
+            _module.AddName(_scratch, "scratch");
+            _interfaces.Add(_scratch);
         }
 
         private void DeclareLds()
@@ -1080,6 +1101,11 @@ internal static partial class Gen5SpirvTranslator
 
             if (instruction.Control is Gen5GlobalMemoryControl globalMemory)
             {
+                if (instruction.Opcode.StartsWith("Scratch", StringComparison.Ordinal))
+                {
+                    return TryEmitScratchMemory(instruction, globalMemory, out error);
+                }
+
                 return TryEmitGlobalMemory(instruction, globalMemory, out error);
             }
 
@@ -2101,6 +2127,222 @@ internal static partial class Gen5SpirvTranslator
 
             return true;
         }
+
+        private bool TryEmitScratchMemory(
+            Gen5ShaderInstruction instruction,
+            Gen5GlobalMemoryControl control,
+            out string error)
+        {
+            error = string.Empty;
+            if (_scratch == 0)
+            {
+                error = "invalid scratch-memory instruction";
+                return false;
+            }
+
+            var dynamicOffset = control.ScalarAddress == 0x7Fu
+                ? LoadV(control.VectorAddress)
+                : LoadS(control.ScalarAddress);
+            var byteAddress = IAdd(
+                dynamicOffset,
+                UInt(unchecked((uint)control.OffsetBytes)));
+
+            if (instruction.Opcode.StartsWith(
+                    "ScratchStoreDword",
+                    StringComparison.Ordinal))
+            {
+                for (uint index = 0; index < control.DwordCount; index++)
+                {
+                    StoreScratchDword(
+                        index == 0
+                            ? byteAddress
+                            : IAdd(byteAddress, UInt(index * sizeof(uint))),
+                        LoadV(control.VectorData + index));
+                }
+
+                return true;
+            }
+
+            if (instruction.Opcode.StartsWith(
+                    "ScratchLoadDword",
+                    StringComparison.Ordinal))
+            {
+                for (uint index = 0; index < control.DwordCount; index++)
+                {
+                    StoreV(
+                        control.VectorDestination + index,
+                        LoadScratchDword(
+                            index == 0
+                                ? byteAddress
+                                : IAdd(byteAddress, UInt(index * sizeof(uint)))));
+                }
+
+                return true;
+            }
+
+            error = $"unsupported scratch-memory opcode {instruction.Opcode}";
+            return false;
+        }
+
+        private uint LoadScratchDword(uint byteAddress)
+        {
+            var dwordAddress = ShiftRightLogical(byteAddress, UInt(2));
+            var byteOffset = BitwiseAnd(byteAddress, UInt(3));
+            var bitOffset = ShiftLeftLogical(byteOffset, UInt(3));
+            var alignedLabel = _module.AllocateId();
+            var unalignedLabel = _module.AllocateId();
+            var mergeLabel = _module.AllocateId();
+            var aligned = _module.AddInstruction(
+                SpirvOp.IEqual,
+                _boolType,
+                byteOffset,
+                UInt(0));
+            _module.AddStatement(SpirvOp.SelectionMerge, mergeLabel, 0);
+            _module.AddStatement(
+                SpirvOp.BranchConditional,
+                aligned,
+                alignedLabel,
+                unalignedLabel);
+
+            _module.AddLabel(alignedLabel);
+            var alignedValue = LoadScratchWord(dwordAddress);
+            _module.AddStatement(SpirvOp.Branch, mergeLabel);
+
+            _module.AddLabel(unalignedLabel);
+            var firstWord = LoadScratchWord(dwordAddress);
+            var secondWord = LoadScratchWord(IAdd(dwordAddress, UInt(1)));
+            var firstBits = _module.AddInstruction(
+                SpirvOp.ISub,
+                _uintType,
+                UInt(32),
+                bitOffset);
+            var unalignedValue = BitwiseOr(
+                ShiftRightLogical(firstWord, bitOffset),
+                ShiftLeftLogical(secondWord, firstBits));
+            _module.AddStatement(SpirvOp.Branch, mergeLabel);
+
+            _module.AddLabel(mergeLabel);
+            return _module.AddInstruction(
+                SpirvOp.Phi,
+                _uintType,
+                alignedValue,
+                alignedLabel,
+                unalignedValue,
+                unalignedLabel);
+        }
+
+        private void StoreScratchDword(uint byteAddress, uint value)
+        {
+            var dwordAddress = ShiftRightLogical(byteAddress, UInt(2));
+            var byteOffset = BitwiseAnd(byteAddress, UInt(3));
+            var bitOffset = ShiftLeftLogical(byteOffset, UInt(3));
+            var alignedLabel = _module.AllocateId();
+            var unalignedLabel = _module.AllocateId();
+            var mergeLabel = _module.AllocateId();
+            var aligned = _module.AddInstruction(
+                SpirvOp.IEqual,
+                _boolType,
+                byteOffset,
+                UInt(0));
+            _module.AddStatement(SpirvOp.SelectionMerge, mergeLabel, 0);
+            _module.AddStatement(
+                SpirvOp.BranchConditional,
+                aligned,
+                alignedLabel,
+                unalignedLabel);
+
+            _module.AddLabel(alignedLabel);
+            StoreScratchWord(dwordAddress, value);
+            _module.AddStatement(SpirvOp.Branch, mergeLabel);
+
+            _module.AddLabel(unalignedLabel);
+            var firstBits = _module.AddInstruction(
+                SpirvOp.ISub,
+                _uintType,
+                UInt(32),
+                bitOffset);
+            var firstWord = LoadScratchWord(dwordAddress);
+            StoreScratchWord(
+                dwordAddress,
+                _module.AddInstruction(
+                    SpirvOp.BitFieldInsert,
+                    _uintType,
+                    firstWord,
+                    value,
+                    bitOffset,
+                    firstBits));
+            var secondAddress = IAdd(dwordAddress, UInt(1));
+            var secondWord = LoadScratchWord(secondAddress);
+            StoreScratchWord(
+                secondAddress,
+                _module.AddInstruction(
+                    SpirvOp.BitFieldInsert,
+                    _uintType,
+                    secondWord,
+                    ShiftRightLogical(value, firstBits),
+                    UInt(0),
+                    bitOffset));
+            _module.AddStatement(SpirvOp.Branch, mergeLabel);
+            _module.AddLabel(mergeLabel);
+        }
+
+        private uint LoadScratchWord(uint dwordAddress)
+        {
+            var inRange = _module.AddInstruction(
+                SpirvOp.ULessThan,
+                _boolType,
+                dwordAddress,
+                UInt(ScratchDwordCount));
+            var safeAddress = _module.AddInstruction(
+                SpirvOp.Select,
+                _uintType,
+                inRange,
+                dwordAddress,
+                UInt(0));
+            var value = Load(_uintType, ScratchPointer(safeAddress));
+            return _module.AddInstruction(
+                SpirvOp.Select,
+                _uintType,
+                inRange,
+                value,
+                UInt(0));
+        }
+
+        private void StoreScratchWord(uint dwordAddress, uint value)
+        {
+            var inRange = _module.AddInstruction(
+                SpirvOp.ULessThan,
+                _boolType,
+                dwordAddress,
+                UInt(ScratchDwordCount));
+            var safeAddress = _module.AddInstruction(
+                SpirvOp.Select,
+                _uintType,
+                inRange,
+                dwordAddress,
+                UInt(0));
+            var pointer = ScratchPointer(safeAddress);
+            var activeAndInRange = _module.AddInstruction(
+                SpirvOp.LogicalAnd,
+                _boolType,
+                Load(_boolType, _exec),
+                inRange);
+            Store(
+                pointer,
+                _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    activeAndInRange,
+                    value,
+                    Load(_uintType, pointer)));
+        }
+
+        private uint ScratchPointer(uint dwordAddress) =>
+            _module.AddInstruction(
+                SpirvOp.AccessChain,
+                _privateUintPointer,
+                _scratch,
+                dwordAddress);
 
         private bool TryEmitGlobalMemory(
             Gen5ShaderInstruction instruction,
@@ -4052,6 +4294,10 @@ internal static partial class Gen5SpirvTranslator
                 instruction.Control is Gen5DataShareControl &&
                 instruction.Opcode is not (
                     "DsPermuteB32" or "DsBpermuteB32" or "DsSwizzleB32"));
+
+        private bool UsesScratch() =>
+            _state.Program.Instructions.Any(instruction =>
+                instruction.Opcode.StartsWith("Scratch", StringComparison.Ordinal));
 
         private bool UsesSubgroupShuffle() =>
             _state.Program.Instructions.Any(instruction =>
