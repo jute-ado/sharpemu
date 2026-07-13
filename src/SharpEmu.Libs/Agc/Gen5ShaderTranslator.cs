@@ -1990,7 +1990,7 @@ internal static class Gen5ShaderTranslator
                     ((word >> 17) & 1) != 0);
                 sources = opcode switch
                 {
-                    "DsWriteB32" => [
+                    "DsWriteB8" or "DsWriteB16" or "DsWriteB32" => [
                         Gen5Operand.Vector(vectorAddress),
                         Gen5Operand.Vector(vectorData0),
                     ],
@@ -2009,8 +2009,14 @@ internal static class Gen5ShaderTranslator
                 };
                 destinations = opcode switch
                 {
+                    "DsReadI8" or "DsReadU8" or
+                    "DsReadI16" or "DsReadU16" or
                     "DsReadB32" or "DsSwizzleB32" => [
                         Gen5Operand.Vector(vectorDestination),
+                    ],
+                    "DsReadB64" => [
+                        Gen5Operand.Vector(vectorDestination),
+                        Gen5Operand.Vector(vectorDestination + 1),
                     ],
                     "DsRead2B32" or "DsRead2St64B32" => [
                         Gen5Operand.Vector(vectorDestination),
