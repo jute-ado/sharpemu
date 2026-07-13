@@ -3811,6 +3811,77 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesRemainingVop1RegisterUtilitiesToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump. M0 selects source +10 and destination +20 for
+        // the split-offset relative operations.
+        var ctx = CreateContext(
+        [
+            0xBEFC03FFu, 0x0014000Au, // s_mov_b32 m0, 0x0014000a
+            0x7E00C501u,              // v_sat_pk_u8_i16_e32 v0, v1
+            0x7E04CB03u,              // v_swap_b32 v2, v3
+            0x7E08D105u,              // v_swaprel_b32 v4, v5
+            0x7E0C9107u,              // v_movrelsd_2_b32_e32 v6, v7
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "SMovB32", "VSatPkU8I16", "VSwapB32", "VSwaprelB32",
+                "VMovrelsd2B32", "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            [0u, 2u, 4u, 6u],
+            program.Instructions
+                .Skip(1)
+                .Take(4)
+                .Select(instruction => Assert.Single(instruction.Destinations).Value));
+        Assert.Equal(
+            [1u, 3u, 5u, 7u],
+            program.Instructions
+                .Skip(1)
+                .Take(4)
+                .Select(instruction => Assert.Single(instruction.Sources).Value));
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 39));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 42));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldSExtract));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftLeftLogical));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseAnd));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseOr));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AccessChain));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IAdd));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Load));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Store));
+    }
+
+    [Fact]
     public void CompilesLegacyLightingMultiplyToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified

@@ -51,9 +51,15 @@ internal static partial class Gen5SpirvTranslator
             }
 
             if (instruction.Opcode is
-                "VMovreldB32" or "VMovrelsB32" or "VMovrelsdB32")
+                "VMovreldB32" or "VMovrelsB32" or "VMovrelsdB32" or
+                "VMovrelsd2B32")
             {
                 return TryEmitRelativeMove(instruction, out error);
+            }
+
+            if (instruction.Opcode is "VSwapB32" or "VSwaprelB32")
+            {
+                return TryEmitVectorSwap(instruction, out error);
             }
 
             if (instruction.Opcode == "VReadfirstlaneB32")
@@ -1302,6 +1308,29 @@ internal static partial class Gen5SpirvTranslator
                             UInt(16)));
                     break;
                 }
+                case "VSatPkU8I16":
+                {
+                    var raw = GetRawSource(instruction, 0);
+                    var minimum = _module.Constant(_intType, 0);
+                    var maximum = _module.Constant(_intType, byte.MaxValue);
+                    uint Saturate(uint offset)
+                    {
+                        var value = _module.AddInstruction(
+                            SpirvOp.BitFieldSExtract,
+                            _intType,
+                            Bitcast(_intType, raw),
+                            UInt(offset),
+                            UInt(16));
+                        value = Ext(39, _intType, value, maximum);
+                        value = Ext(42, _intType, value, minimum);
+                        return Bitcast(_uintType, value);
+                    }
+
+                    result = BitwiseOr(
+                        Saturate(0),
+                        ShiftLeftLogical(Saturate(16), UInt(8)));
+                    break;
+                }
                 default:
                     error = $"unsupported vector opcode {instruction.Opcode}";
                     return false;
@@ -1324,10 +1353,17 @@ internal static partial class Gen5SpirvTranslator
             }
 
             var relativeSource = instruction.Opcode is
-                "VMovrelsB32" or "VMovrelsdB32";
+                "VMovrelsB32" or "VMovrelsdB32" or "VMovrelsd2B32";
             var relativeDestination = instruction.Opcode is
-                "VMovreldB32" or "VMovrelsdB32";
+                "VMovreldB32" or "VMovrelsdB32" or "VMovrelsd2B32";
+            var splitOffsets = instruction.Opcode == "VMovrelsd2B32";
             var offset = LoadS(M0Register);
+            var sourceOffset = splitOffsets
+                ? BitwiseAnd(offset, UInt(0x3FF))
+                : offset;
+            var destinationOffset = splitOffsets
+                ? BitwiseAnd(ShiftRightLogical(offset, UInt(16)), UInt(0x3FF))
+                : offset;
             uint value;
             if (relativeSource)
             {
@@ -1338,7 +1374,7 @@ internal static partial class Gen5SpirvTranslator
                     return false;
                 }
 
-                value = LoadVAt(IAdd(UInt(source.Value), offset));
+                value = LoadVAt(IAdd(UInt(source.Value), sourceOffset));
                 value = ApplySdwaSourceSelection(instruction, 0, value);
             }
             else
@@ -1348,13 +1384,49 @@ internal static partial class Gen5SpirvTranslator
 
             if (relativeDestination)
             {
-                StoreVAt(IAdd(UInt(destination), offset), value);
+                StoreVAt(IAdd(UInt(destination), destinationOffset), value);
             }
             else
             {
                 StoreV(destination, value);
             }
 
+            return true;
+        }
+
+        private bool TryEmitVectorSwap(
+            Gen5ShaderInstruction instruction,
+            out string error)
+        {
+            error = string.Empty;
+            if (!TryGetVectorDestination(instruction, out var destination) ||
+                instruction.Sources.Count == 0 ||
+                instruction.Sources[0].Kind != Gen5OperandKind.VectorRegister)
+            {
+                error = "missing vector swap register operand";
+                return false;
+            }
+
+            var source = instruction.Sources[0].Value;
+            var sourceIndex = UInt(source);
+            var destinationIndex = UInt(destination);
+            if (instruction.Opcode == "VSwaprelB32")
+            {
+                var offset = LoadS(M0Register);
+                sourceIndex = IAdd(
+                    sourceIndex,
+                    BitwiseAnd(offset, UInt(0x3FF)));
+                destinationIndex = IAdd(
+                    destinationIndex,
+                    BitwiseAnd(
+                        ShiftRightLogical(offset, UInt(16)),
+                        UInt(0x3FF)));
+            }
+
+            var sourceValue = LoadVAt(sourceIndex);
+            var destinationValue = LoadVAt(destinationIndex);
+            StoreVAt(sourceIndex, destinationValue);
+            StoreVAt(destinationIndex, sourceValue);
             return true;
         }
 
