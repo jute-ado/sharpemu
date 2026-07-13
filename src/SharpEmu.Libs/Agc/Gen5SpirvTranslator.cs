@@ -1347,11 +1347,13 @@ internal static partial class Gen5SpirvTranslator
                 case "DsIncRtnU32":
                 case "DsDecRtnU32":
                 case "DsMskorRtnB32":
+                case "DsWrapRtnB32":
                 {
-                    var maskedOr = instruction.Opcode.Contains(
+                    var usesData1 = instruction.Opcode.Contains(
                         "Mskor",
-                        StringComparison.Ordinal);
-                    if (instruction.Sources.Count < (maskedOr ? 3 : 2))
+                        StringComparison.Ordinal) ||
+                        instruction.Opcode == "DsWrapRtnB32";
+                    if (instruction.Sources.Count < (usesData1 ? 3 : 2))
                     {
                         error = "missing compare/exchange LDS atomic source";
                         return false;
@@ -1830,6 +1832,24 @@ internal static partial class Gen5SpirvTranslator
                             _uintType,
                             expected,
                             UInt(1)));
+                }
+                case "DsWrapRtnB32":
+                {
+                    var subtracts = _module.AddInstruction(
+                        SpirvOp.UGreaterThanEqual,
+                        _boolType,
+                        expected,
+                        data0);
+                    return _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        subtracts,
+                        _module.AddInstruction(
+                            SpirvOp.ISub,
+                            _uintType,
+                            expected,
+                            data0),
+                        IAdd(expected, GetRawSource(instruction, 2)));
                 }
                 default:
                     return BitwiseOr(
