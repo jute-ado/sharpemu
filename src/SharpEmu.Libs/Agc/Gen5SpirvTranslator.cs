@@ -2352,7 +2352,8 @@ internal static partial class Gen5SpirvTranslator
                 return true;
             }
 
-            if (instruction.Opcode.StartsWith("BufferStoreDword", StringComparison.Ordinal))
+            if (instruction.Opcode.StartsWith("BufferStoreDword", StringComparison.Ordinal) ||
+                IsFormatBufferStore(instruction.Opcode))
             {
                 EmitExecConditional(() =>
                 {
@@ -2663,6 +2664,10 @@ internal static partial class Gen5SpirvTranslator
         private static bool IsFormatBufferLoad(string opcode) =>
             opcode.StartsWith("BufferLoadFormat", StringComparison.Ordinal) ||
             opcode.StartsWith("TBufferLoadFormat", StringComparison.Ordinal);
+
+        private static bool IsFormatBufferStore(string opcode) =>
+            opcode.StartsWith("BufferStoreFormat", StringComparison.Ordinal) ||
+            opcode.StartsWith("TBufferStoreFormat", StringComparison.Ordinal);
 
         private bool TryEmitVertexInputFetch(
             Gen5BufferMemoryControl control,
