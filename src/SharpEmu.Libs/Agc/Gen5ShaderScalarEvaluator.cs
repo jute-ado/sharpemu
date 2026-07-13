@@ -618,6 +618,16 @@ internal static class Gen5ShaderScalarEvaluator
             return true;
         }
 
+        if (instruction.Opcode == "SCmovkI32")
+        {
+            if (scalarConditionCode)
+            {
+                registers[destination.Value] = unchecked((uint)(short)instruction.Sources[0].Value);
+            }
+
+            return true;
+        }
+
         if (instruction.Opcode is "SAddkI32" or "SMulkI32")
         {
             var immediate = unchecked((uint)(short)instruction.Sources[0].Value);
@@ -644,7 +654,7 @@ internal static class Gen5ShaderScalarEvaluator
             return true;
         }
 
-        if (instruction.Opcode is "SMovB64" or "SWqmB64" or "SNotB64")
+        if (instruction.Opcode is "SMovB64" or "SCmovB64" or "SWqmB64" or "SNotB64")
         {
             if (destination.Value >= ScalarRegisterCount - 1 ||
                 !TryEvaluateScalarOperand64(
@@ -655,6 +665,11 @@ internal static class Gen5ShaderScalarEvaluator
             {
                 error = $"scalar-source64 pc=0x{instruction.Pc:X} op={instruction.Opcode}";
                 return false;
+            }
+
+            if (instruction.Opcode == "SCmovB64" && !scalarConditionCode)
+            {
+                return true;
             }
 
             if (instruction.Opcode == "SNotB64")
@@ -819,9 +834,13 @@ internal static class Gen5ShaderScalarEvaluator
             return false;
         }
 
-        if (instruction.Opcode == "SMovB32")
+        if (instruction.Opcode is "SMovB32" or "SCmovB32")
         {
-            registers[destination.Value] = left;
+            if (instruction.Opcode == "SMovB32" || scalarConditionCode)
+            {
+                registers[destination.Value] = left;
+            }
+
             return true;
         }
 
@@ -1209,6 +1228,21 @@ internal static class Gen5ShaderScalarEvaluator
             var bit = (int)(right & 63u);
             var isSet = ((wide >> bit) & 1UL) != 0;
             scalarConditionCode = instruction.Opcode == "SBitcmp1B64" ? isSet : !isSet;
+            return true;
+        }
+
+        if (instruction.Opcode is "SCmpEqU64" or "SCmpLgU64")
+        {
+            if (!TryEvaluateScalarOperand64(instruction.Sources[0], registers, ulong.MaxValue, out var wideLeft) ||
+                !TryEvaluateScalarOperand64(instruction.Sources[1], registers, ulong.MaxValue, out var wideRight))
+            {
+                error = $"scalar-compare-source64 pc=0x{instruction.Pc:X} op={instruction.Opcode}";
+                return false;
+            }
+
+            scalarConditionCode = instruction.Opcode == "SCmpEqU64"
+                ? wideLeft == wideRight
+                : wideLeft != wideRight;
             return true;
         }
 

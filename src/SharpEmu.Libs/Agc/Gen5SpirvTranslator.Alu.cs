@@ -2288,6 +2288,12 @@ internal static partial class Gen5SpirvTranslator
                 var value = instruction.Opcode switch
                 {
                     "SMovkI32" => UInt(immediate),
+                    "SCmovkI32" => _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        Load(_boolType, _scc),
+                        UInt(immediate),
+                        current),
                     "SAddkI32" => IAdd(current, UInt(immediate)),
                     "SMulkI32" => _module.AddInstruction(
                         SpirvOp.IMul,
@@ -2328,6 +2334,14 @@ internal static partial class Gen5SpirvTranslator
             {
                 case "SMovB32":
                     result = left;
+                    break;
+                case "SCmovB32":
+                    result = _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        Load(_boolType, _scc),
+                        left,
+                        LoadS(destination));
                     break;
                 case "SNotB32":
                     result = _module.AddInstruction(SpirvOp.Not, _uintType, left);
@@ -2820,6 +2834,45 @@ internal static partial class Gen5SpirvTranslator
                 return true;
             }
 
+            if (instruction.Opcode is "SBitcmp0B64" or "SBitcmp1B64")
+            {
+                var bit = _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _ulongType,
+                    BitwiseAnd(right, UInt(63)));
+                var shifted = ShiftRightLogical64(GetRawSource64(instruction, 0), bit);
+                var isSet = IsNotZero64(
+                    _module.AddInstruction(
+                        SpirvOp.BitwiseAnd,
+                        _ulongType,
+                        shifted,
+                        _module.Constant64(_ulongType, 1)));
+                Store(
+                    _scc,
+                    instruction.Opcode == "SBitcmp1B64"
+                        ? isSet
+                        : _module.AddInstruction(
+                            SpirvOp.LogicalNot,
+                            _boolType,
+                            isSet));
+                return true;
+            }
+
+            if (instruction.Opcode is "SCmpEqU64" or "SCmpLgU64")
+            {
+                var operation64 = instruction.Opcode == "SCmpEqU64"
+                    ? SpirvOp.IEqual
+                    : SpirvOp.INotEqual;
+                Store(
+                    _scc,
+                    _module.AddInstruction(
+                        operation64,
+                        _boolType,
+                        GetRawSource64(instruction, 0),
+                        GetRawSource64(instruction, 1)));
+                return true;
+            }
+
             var operation = instruction.Opcode switch
             {
                 "SCmpEqI32" or "SCmpEqU32" => SpirvOp.IEqual,
@@ -3119,6 +3172,15 @@ internal static partial class Gen5SpirvTranslator
             if (instruction.Opcode is "SMovB64" or "SWqmB64")
             {
                 value = left;
+            }
+            else if (instruction.Opcode == "SCmovB64")
+            {
+                value = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _ulongType,
+                    Load(_boolType, _scc),
+                    left,
+                    LoadS64(destination));
             }
             else if (instruction.Opcode == "SNotB64")
             {
