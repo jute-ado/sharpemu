@@ -7,6 +7,7 @@ internal static partial class Gen5SpirvTranslator
 {
     private const uint ScalarRegisterCount = 256;
     private const uint VectorRegisterCount = 512;
+    private const uint M0Register = 124;
     private const uint LdsDwordCount = 8192;
     private const uint RdnaWaveLaneCount = 32;
 
@@ -2240,16 +2241,20 @@ internal static partial class Gen5SpirvTranslator
                 _scalarRegisters,
                 UInt(register));
 
-        private uint VectorPointer(uint register) =>
+        private uint VectorPointer(uint register) => VectorPointerAt(UInt(register));
+
+        private uint VectorPointerAt(uint index) =>
             _module.AddInstruction(
                 SpirvOp.AccessChain,
                 _privateUintPointer,
                 _vectorRegisters,
-                UInt(register));
+                index);
 
         private uint LoadS(uint register) => Load(_uintType, ScalarPointer(register));
 
         private uint LoadV(uint register) => Load(_uintType, VectorPointer(register));
+
+        private uint LoadVAt(uint index) => Load(_uintType, VectorPointerAt(index));
 
         private void StoreS(uint register, uint value)
         {
@@ -2266,10 +2271,15 @@ internal static partial class Gen5SpirvTranslator
 
         private void StoreV(uint register, uint value, bool guardWithExec = true)
         {
+            StoreVAt(UInt(register), value, guardWithExec);
+        }
+
+        private void StoreVAt(uint index, uint value, bool guardWithExec = true)
+        {
             if (guardWithExec)
             {
                 var active = Load(_boolType, _exec);
-                var oldValue = LoadV(register);
+                var oldValue = LoadVAt(index);
                 value = _module.AddInstruction(
                     SpirvOp.Select,
                     _uintType,
@@ -2278,7 +2288,7 @@ internal static partial class Gen5SpirvTranslator
                     oldValue);
             }
 
-            Store(VectorPointer(register), value);
+            Store(VectorPointerAt(index), value);
         }
 
         private uint Load(uint type, uint pointer) =>

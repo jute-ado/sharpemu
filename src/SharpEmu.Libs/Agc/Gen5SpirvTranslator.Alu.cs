@@ -37,6 +37,12 @@ internal static partial class Gen5SpirvTranslator
                 return TryEmitVectorCompare(instruction, out error);
             }
 
+            if (instruction.Opcode is
+                "VMovreldB32" or "VMovrelsB32" or "VMovrelsdB32")
+            {
+                return TryEmitRelativeMove(instruction, out error);
+            }
+
             if (instruction.Opcode == "VReadlaneB32")
             {
                 if (instruction.Destinations.Count == 0 ||
@@ -1025,6 +1031,53 @@ internal static partial class Gen5SpirvTranslator
             }
 
             StoreV(destination, result);
+            return true;
+        }
+
+        private bool TryEmitRelativeMove(
+            Gen5ShaderInstruction instruction,
+            out string error)
+        {
+            error = string.Empty;
+            if (!TryGetVectorDestination(instruction, out var destination) ||
+                instruction.Sources.Count == 0)
+            {
+                error = "missing relative vector move operand";
+                return false;
+            }
+
+            var relativeSource = instruction.Opcode is
+                "VMovrelsB32" or "VMovrelsdB32";
+            var relativeDestination = instruction.Opcode is
+                "VMovreldB32" or "VMovrelsdB32";
+            var offset = LoadS(M0Register);
+            uint value;
+            if (relativeSource)
+            {
+                var source = instruction.Sources[0];
+                if (source.Kind != Gen5OperandKind.VectorRegister)
+                {
+                    error = "relative move source is not a vector register";
+                    return false;
+                }
+
+                value = LoadVAt(IAdd(UInt(source.Value), offset));
+                value = ApplySdwaSourceSelection(instruction, 0, value);
+            }
+            else
+            {
+                value = GetRawSource(instruction, 0);
+            }
+
+            if (relativeDestination)
+            {
+                StoreVAt(IAdd(UInt(destination), offset), value);
+            }
+            else
+            {
+                StoreV(destination, value);
+            }
+
             return true;
         }
 
@@ -3290,6 +3343,14 @@ internal static partial class Gen5SpirvTranslator
                 _ => throw new InvalidOperationException($"unsupported source {operand}"),
             };
 
+            return ApplySdwaSourceSelection(instruction, sourceIndex, value);
+        }
+
+        private uint ApplySdwaSourceSelection(
+            Gen5ShaderInstruction instruction,
+            int sourceIndex,
+            uint value)
+        {
             if (instruction.Control is Gen5SdwaControl sdwa)
             {
                 var selector = sourceIndex switch
