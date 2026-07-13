@@ -138,6 +138,33 @@ public static class UserServiceExports
     }
 
     [SysAbiExport(
+        Nid = "woNpu+45RLk",
+        ExportName = "sceUserServiceGetAgeLevel",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceUserService")]
+    public static int UserServiceGetAgeLevel(CpuContext ctx)
+    {
+        var userId = unchecked((int)ctx[CpuRegister.Rdi]);
+        var ageLevelAddress = ctx[CpuRegister.Rsi];
+        if (userId != PrimaryUserId)
+        {
+            return ctx.SetReturn(OrbisUserServiceErrorInvalidParameter);
+        }
+
+        if (ageLevelAddress == 0)
+        {
+            return ctx.SetReturn(OrbisUserServiceErrorInvalidArgument);
+        }
+
+        var result = ctx.TryWriteInt32(ageLevelAddress, 18)
+            ? 0
+            : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        TraceUserService(
+            $"get_age_level user={userId} out=0x{ageLevelAddress:X16} value=18 result=0x{result:X8}");
+        return ctx.SetReturn(result);
+    }
+
+    [SysAbiExport(
         Nid = "D-CzAxQL0XI",
         ExportName = "sceUserServiceGetPlatformPrivacySetting",
         Target = Generation.Gen4 | Generation.Gen5,
