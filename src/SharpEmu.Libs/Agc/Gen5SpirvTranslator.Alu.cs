@@ -17,6 +17,11 @@ internal static partial class Gen5SpirvTranslator
                 return true;
             }
 
+            if (instruction.Control is Gen5Vop3pControl packedControl)
+            {
+                return TryEmitPackedAlu(instruction, packedControl, out error);
+            }
+
             if (instruction.Opcode.StartsWith("VCmp", StringComparison.Ordinal))
             {
                 return TryEmitVectorCompare(instruction, out error);
@@ -1740,6 +1745,481 @@ internal static partial class Gen5SpirvTranslator
             }
 
             return true;
+        }
+
+        private bool TryEmitPackedAlu(
+            Gen5ShaderInstruction instruction,
+            Gen5Vop3pControl control,
+            out string error)
+        {
+            error = string.Empty;
+            if (!TryGetVectorDestination(instruction, out var destination))
+            {
+                error = "missing packed vector destination";
+                return false;
+            }
+
+            uint result;
+            if (instruction.Opcode.StartsWith("VPk", StringComparison.Ordinal))
+            {
+                var isFloat = instruction.Opcode.EndsWith("F16", StringComparison.Ordinal);
+                var low = isFloat
+                    ? EmitPackedFloatComponent(instruction, control, high: false)
+                    : EmitPackedIntegerComponent(instruction, control, high: false);
+                var high = isFloat
+                    ? EmitPackedFloatComponent(instruction, control, high: true)
+                    : EmitPackedIntegerComponent(instruction, control, high: true);
+                result = isFloat
+                    ? PackHalf2(low, high)
+                    : BitwiseOr(
+                        BitwiseAnd(low, UInt(0xFFFF)),
+                        ShiftLeftLogical(BitwiseAnd(high, UInt(0xFFFF)), UInt(16)));
+            }
+            else if (instruction.Opcode == "VDot2F32F16")
+            {
+                result = Bitcast(_uintType, EmitDot2F16(instruction, control));
+            }
+            else if (instruction.Opcode is
+                "VDot2I32I16" or "VDot2U32U16" or
+                "VDot4I32I8" or "VDot4U32U8" or
+                "VDot8I32I4" or "VDot8U32U4")
+            {
+                result = EmitIntegerDot(instruction, control);
+            }
+            else if (instruction.Opcode is
+                "VFmaMixF32" or "VFmaMixloF16" or "VFmaMixhiF16")
+            {
+                var value = Ext(
+                    50,
+                    _floatType,
+                    GetMixFloatSource(instruction, control, 0),
+                    GetMixFloatSource(instruction, control, 1),
+                    GetMixFloatSource(instruction, control, 2));
+                if (control.Clamp)
+                {
+                    value = Ext(43, _floatType, value, Float(0), Float(1));
+                }
+
+                result = instruction.Opcode switch
+                {
+                    "VFmaMixF32" => Bitcast(_uintType, value),
+                    "VFmaMixloF16" => BitwiseAnd(PackHalf2(value, Float(0)), UInt(0xFFFF)),
+                    _ => BitwiseAnd(PackHalf2(Float(0), value), UInt(0xFFFF_0000)),
+                };
+            }
+            else
+            {
+                error = $"unsupported packed opcode {instruction.Opcode}";
+                return false;
+            }
+
+            StoreV(destination, result);
+            return true;
+        }
+
+        private uint EmitPackedIntegerComponent(
+            Gen5ShaderInstruction instruction,
+            Gen5Vop3pControl control,
+            bool high)
+        {
+            var signed = instruction.Opcode is
+                "VPkMadI16" or "VPkAddI16" or "VPkSubI16" or
+                "VPkAshrrevI16" or "VPkMaxI16" or "VPkMinI16";
+            var left = ExtractPackedInteger(instruction, control, 0, high, signed);
+            var right = ExtractPackedInteger(instruction, control, 1, high, signed);
+            var third = ExtractPackedInteger(instruction, control, 2, high, signed);
+
+            return instruction.Opcode switch
+            {
+                "VPkMadI16" or "VPkMadU16" => IAdd(
+                    _module.AddInstruction(SpirvOp.IMul, _uintType, left, right),
+                    third),
+                "VPkMulLoU16" => _module.AddInstruction(
+                    SpirvOp.IMul,
+                    _uintType,
+                    left,
+                    right),
+                "VPkAddI16" or "VPkAddU16" => IAdd(left, right),
+                "VPkSubI16" or "VPkSubU16" => _module.AddInstruction(
+                    SpirvOp.ISub,
+                    _uintType,
+                    left,
+                    right),
+                "VPkLshlrevB16" => ShiftLeftLogical(right, BitwiseAnd(left, UInt(15))),
+                "VPkLshrrevB16" => ShiftRightLogical(right, BitwiseAnd(left, UInt(15))),
+                "VPkAshrrevI16" => ShiftRightArithmetic(right, BitwiseAnd(left, UInt(15))),
+                "VPkMaxI16" => Bitcast(
+                    _uintType,
+                    Ext(42, _intType, Bitcast(_intType, left), Bitcast(_intType, right))),
+                "VPkMinI16" => Bitcast(
+                    _uintType,
+                    Ext(39, _intType, Bitcast(_intType, left), Bitcast(_intType, right))),
+                "VPkMaxU16" => Ext(41, _uintType, left, right),
+                "VPkMinU16" => Ext(38, _uintType, left, right),
+                _ => throw new InvalidOperationException(
+                    $"unsupported packed integer opcode {instruction.Opcode}"),
+            };
+        }
+
+        private uint ExtractPackedInteger(
+            Gen5ShaderInstruction instruction,
+            Gen5Vop3pControl control,
+            int sourceIndex,
+            bool high,
+            bool signed)
+        {
+            var operand = instruction.Sources[sourceIndex];
+            if (operand.Kind == Gen5OperandKind.EncodedConstant &&
+                TryDecodeInlineConstant(operand.Value, out var inline))
+            {
+                return UInt(inline);
+            }
+
+            var selectorMask = high ? control.OpSelectHighMask : control.OpSelectMask;
+            var offset = (selectorMask & (1u << sourceIndex)) != 0 ? 16u : 0u;
+            var operation = signed ? SpirvOp.BitFieldSExtract : SpirvOp.BitFieldUExtract;
+            var type = signed ? _intType : _uintType;
+            var value = _module.AddInstruction(
+                operation,
+                type,
+                signed
+                    ? Bitcast(_intType, GetRawSource(instruction, sourceIndex))
+                    : GetRawSource(instruction, sourceIndex),
+                UInt(offset),
+                UInt(16));
+            return signed ? Bitcast(_uintType, value) : value;
+        }
+
+        private uint EmitPackedFloatComponent(
+            Gen5ShaderInstruction instruction,
+            Gen5Vop3pControl control,
+            bool high)
+        {
+            var left = GetPackedFloatSource(instruction, control, 0, high);
+            var right = GetPackedFloatSource(instruction, control, 1, high);
+            var third = GetPackedFloatSource(instruction, control, 2, high);
+            var result = instruction.Opcode switch
+            {
+                "VPkFmaF16" => Ext(50, _floatType, left, right, third),
+                "VPkAddF16" => _module.AddInstruction(
+                    SpirvOp.FAdd,
+                    _floatType,
+                    left,
+                    right),
+                "VPkMulF16" => _module.AddInstruction(
+                    SpirvOp.FMul,
+                    _floatType,
+                    left,
+                    right),
+                "VPkMinF16" => Ext(37, _floatType, left, right),
+                "VPkMaxF16" => Ext(40, _floatType, left, right),
+                _ => throw new InvalidOperationException(
+                    $"unsupported packed float opcode {instruction.Opcode}"),
+            };
+            return control.Clamp
+                ? Ext(43, _floatType, result, Float(0), Float(1))
+                : result;
+        }
+
+        private uint GetPackedFloatSource(
+            Gen5ShaderInstruction instruction,
+            Gen5Vop3pControl control,
+            int sourceIndex,
+            bool high)
+        {
+            if (TryGetInlineFloatSource(instruction, sourceIndex, out var inline))
+            {
+                var inlineNegateMask = high
+                    ? control.NegateHighMask
+                    : control.NegateLowMask;
+                return (inlineNegateMask & (1u << sourceIndex)) != 0
+                    ? _module.AddInstruction(SpirvOp.FNegate, _floatType, inline)
+                    : inline;
+            }
+
+            var selectorMask = high ? control.OpSelectHighMask : control.OpSelectMask;
+            var component = (selectorMask & (1u << sourceIndex)) != 0 ? 1u : 0u;
+            var unpacked = Ext(62, _vec2Type, GetRawSource(instruction, sourceIndex));
+            var value = _module.AddInstruction(
+                SpirvOp.CompositeExtract,
+                _floatType,
+                unpacked,
+                component);
+            var negateMask = high ? control.NegateHighMask : control.NegateLowMask;
+            return (negateMask & (1u << sourceIndex)) != 0
+                ? _module.AddInstruction(SpirvOp.FNegate, _floatType, value)
+                : value;
+        }
+
+        private uint GetMixFloatSource(
+            Gen5ShaderInstruction instruction,
+            Gen5Vop3pControl control,
+            int sourceIndex)
+        {
+            if (TryGetInlineFloatSource(instruction, sourceIndex, out var inline))
+            {
+                if ((control.NegateHighMask & (1u << sourceIndex)) != 0)
+                {
+                    inline = Ext(4, _floatType, inline);
+                }
+
+                return (control.NegateLowMask & (1u << sourceIndex)) != 0
+                    ? _module.AddInstruction(SpirvOp.FNegate, _floatType, inline)
+                    : inline;
+            }
+
+            var selector =
+                ((control.OpSelectMask >> sourceIndex) & 1) |
+                (((control.OpSelectHighMask >> sourceIndex) & 1) << 1);
+            uint value;
+            if (selector < 2)
+            {
+                value = Bitcast(_floatType, GetRawSource(instruction, sourceIndex));
+            }
+            else
+            {
+                var unpacked = Ext(62, _vec2Type, GetRawSource(instruction, sourceIndex));
+                value = _module.AddInstruction(
+                    SpirvOp.CompositeExtract,
+                    _floatType,
+                    unpacked,
+                    selector - 2);
+            }
+
+            if ((control.NegateHighMask & (1u << sourceIndex)) != 0)
+            {
+                value = Ext(4, _floatType, value);
+            }
+
+            return (control.NegateLowMask & (1u << sourceIndex)) != 0
+                ? _module.AddInstruction(SpirvOp.FNegate, _floatType, value)
+                : value;
+        }
+
+        private uint EmitDot2F16(
+            Gen5ShaderInstruction instruction,
+            Gen5Vop3pControl control)
+        {
+            var leftLow = GetDotHalfSource(instruction, control, 0, high: false);
+            var rightLow = GetDotHalfSource(instruction, control, 1, high: false);
+            var leftHigh = GetDotHalfSource(instruction, control, 0, high: true);
+            var rightHigh = GetDotHalfSource(instruction, control, 1, high: true);
+            var addend = TryGetInlineFloatSource(instruction, 2, out var inlineAddend)
+                ? inlineAddend
+                : Bitcast(_floatType, GetRawSource(instruction, 2));
+            if ((control.NegateHighMask & 4) != 0)
+            {
+                addend = Ext(4, _floatType, addend);
+            }
+
+            if ((control.NegateLowMask & 4) != 0)
+            {
+                addend = _module.AddInstruction(SpirvOp.FNegate, _floatType, addend);
+            }
+
+            var result = Ext(50, _floatType, leftLow, rightLow, addend);
+            result = Ext(50, _floatType, leftHigh, rightHigh, result);
+            return control.Clamp
+                ? Ext(43, _floatType, result, Float(0), Float(1))
+                : result;
+        }
+
+        private uint GetDotHalfSource(
+            Gen5ShaderInstruction instruction,
+            Gen5Vop3pControl control,
+            int sourceIndex,
+            bool high)
+        {
+            if (TryGetInlineFloatSource(instruction, sourceIndex, out var inline))
+            {
+                var inlineNegateMask = high
+                    ? control.NegateHighMask
+                    : control.NegateLowMask;
+                return (inlineNegateMask & (1u << sourceIndex)) != 0
+                    ? _module.AddInstruction(SpirvOp.FNegate, _floatType, inline)
+                    : inline;
+            }
+
+            var unpacked = Ext(62, _vec2Type, GetRawSource(instruction, sourceIndex));
+            var value = _module.AddInstruction(
+                SpirvOp.CompositeExtract,
+                _floatType,
+                unpacked,
+                high ? 1u : 0u);
+            var negateMask = high ? control.NegateHighMask : control.NegateLowMask;
+            return (negateMask & (1u << sourceIndex)) != 0
+                ? _module.AddInstruction(SpirvOp.FNegate, _floatType, value)
+                : value;
+        }
+
+        private uint EmitIntegerDot(
+            Gen5ShaderInstruction instruction,
+            Gen5Vop3pControl control)
+        {
+            var signed = instruction.Opcode.Contains('I', StringComparison.Ordinal);
+            var componentBits = instruction.Opcode.StartsWith("VDot2", StringComparison.Ordinal)
+                ? 16u
+                : instruction.Opcode.StartsWith("VDot4", StringComparison.Ordinal) ? 8u : 4u;
+            var componentCount = 32u / componentBits;
+            return signed
+                ? EmitSignedIntegerDot(instruction, control.Clamp, componentBits, componentCount)
+                : EmitUnsignedIntegerDot(instruction, control.Clamp, componentBits, componentCount);
+        }
+
+        private uint EmitSignedIntegerDot(
+            Gen5ShaderInstruction instruction,
+            bool clamp,
+            uint componentBits,
+            uint componentCount)
+        {
+            var addend = Bitcast(_intType, GetRawSource(instruction, 2));
+            var accumulator = _module.AddInstruction(SpirvOp.SConvert, _longType, addend);
+            for (uint component = 0; component < componentCount; component++)
+            {
+                var left = ExtractDotComponent(instruction, 0, component, componentBits, signed: true);
+                var right = ExtractDotComponent(instruction, 1, component, componentBits, signed: true);
+                var left64 = _module.AddInstruction(SpirvOp.SConvert, _longType, left);
+                var right64 = _module.AddInstruction(SpirvOp.SConvert, _longType, right);
+                accumulator = _module.AddInstruction(
+                    SpirvOp.IAdd,
+                    _longType,
+                    accumulator,
+                    _module.AddInstruction(SpirvOp.IMul, _longType, left64, right64));
+            }
+
+            if (clamp)
+            {
+                var min = _module.Constant64(_longType, unchecked((ulong)int.MinValue));
+                var max = _module.Constant64(_longType, int.MaxValue);
+                accumulator = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _longType,
+                    _module.AddInstruction(SpirvOp.SLessThan, _boolType, accumulator, min),
+                    min,
+                    accumulator);
+                accumulator = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _longType,
+                    _module.AddInstruction(SpirvOp.SGreaterThan, _boolType, accumulator, max),
+                    max,
+                    accumulator);
+            }
+
+            return Bitcast(
+                _uintType,
+                _module.AddInstruction(SpirvOp.SConvert, _intType, accumulator));
+        }
+
+        private uint EmitUnsignedIntegerDot(
+            Gen5ShaderInstruction instruction,
+            bool clamp,
+            uint componentBits,
+            uint componentCount)
+        {
+            var accumulator = _module.AddInstruction(
+                SpirvOp.UConvert,
+                _ulongType,
+                GetRawSource(instruction, 2));
+            for (uint component = 0; component < componentCount; component++)
+            {
+                var left = ExtractDotComponent(instruction, 0, component, componentBits, signed: false);
+                var right = ExtractDotComponent(instruction, 1, component, componentBits, signed: false);
+                var left64 = _module.AddInstruction(SpirvOp.UConvert, _ulongType, left);
+                var right64 = _module.AddInstruction(SpirvOp.UConvert, _ulongType, right);
+                accumulator = _module.AddInstruction(
+                    SpirvOp.IAdd,
+                    _ulongType,
+                    accumulator,
+                    _module.AddInstruction(SpirvOp.IMul, _ulongType, left64, right64));
+            }
+
+            if (clamp)
+            {
+                var max = _module.Constant64(_ulongType, uint.MaxValue);
+                accumulator = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _ulongType,
+                    _module.AddInstruction(SpirvOp.UGreaterThan, _boolType, accumulator, max),
+                    max,
+                    accumulator);
+            }
+
+            return _module.AddInstruction(SpirvOp.UConvert, _uintType, accumulator);
+        }
+
+        private uint ExtractDotComponent(
+            Gen5ShaderInstruction instruction,
+            int sourceIndex,
+            uint component,
+            uint componentBits,
+            bool signed)
+        {
+            var operand = instruction.Sources[sourceIndex];
+            if (operand.Kind == Gen5OperandKind.EncodedConstant &&
+                TryDecodeInlineConstant(operand.Value, out var inline))
+            {
+                return signed ? Bitcast(_intType, UInt(inline)) : UInt(inline);
+            }
+
+            var type = signed ? _intType : _uintType;
+            return _module.AddInstruction(
+                signed ? SpirvOp.BitFieldSExtract : SpirvOp.BitFieldUExtract,
+                type,
+                signed
+                    ? Bitcast(_intType, GetRawSource(instruction, sourceIndex))
+                    : GetRawSource(instruction, sourceIndex),
+                UInt(component * componentBits),
+                UInt(componentBits));
+        }
+
+        private uint PackHalf2(uint low, uint high)
+        {
+            var vector = _module.AddInstruction(
+                SpirvOp.CompositeConstruct,
+                _vec2Type,
+                low,
+                high);
+            return Ext(58, _uintType, vector);
+        }
+
+        private bool TryGetInlineFloatSource(
+            Gen5ShaderInstruction instruction,
+            int sourceIndex,
+            out uint value)
+        {
+            var operand = instruction.Sources[sourceIndex];
+            if (operand.Kind != Gen5OperandKind.EncodedConstant)
+            {
+                value = 0;
+                return false;
+            }
+
+            if (operand.Value == 125)
+            {
+                value = Float(0);
+                return true;
+            }
+
+            if (operand.Value is >= 128 and <= 192)
+            {
+                value = Float(operand.Value - 128);
+                return true;
+            }
+
+            if (operand.Value is >= 193 and <= 208)
+            {
+                value = Float(-(operand.Value - 192));
+                return true;
+            }
+
+            if (TryDecodeInlineConstant(operand.Value, out var raw))
+            {
+                value = Bitcast(_floatType, UInt(raw));
+                return true;
+            }
+
+            value = 0;
+            return false;
         }
 
         private uint GetRawSource(
