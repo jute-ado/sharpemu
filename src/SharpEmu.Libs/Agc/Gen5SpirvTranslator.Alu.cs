@@ -419,21 +419,11 @@ internal static partial class Gen5SpirvTranslator
                 {
                     var left = GetFloatSource(instruction, 0);
                     var right = GetFloatSource(instruction, 1);
-                    var leftZero = _module.AddInstruction(
-                        SpirvOp.IEqual,
-                        _boolType,
-                        BitwiseAnd(Bitcast(_uintType, left), UInt(0x7FFF_FFFF)),
-                        UInt(0));
-                    var rightZero = _module.AddInstruction(
-                        SpirvOp.IEqual,
-                        _boolType,
-                        BitwiseAnd(Bitcast(_uintType, right), UInt(0x7FFF_FFFF)),
-                        UInt(0));
                     var eitherZero = _module.AddInstruction(
                         SpirvOp.LogicalOr,
                         _boolType,
-                        leftZero,
-                        rightZero);
+                        IsFloat32Zero(left),
+                        IsFloat32Zero(right));
                     var multiplied = _module.AddInstruction(
                         SpirvOp.FMul,
                         _floatType,
@@ -457,6 +447,9 @@ internal static partial class Gen5SpirvTranslator
                     break;
                 case "VMaxF32":
                     result = EmitFloatExtBinary(instruction, 40);
+                    break;
+                case "VFmaLegacyF32":
+                    result = EmitLegacyFloatFma(instruction);
                     break;
                 case "VFmaF32":
                 case "VMadMkF32":
@@ -1219,6 +1212,39 @@ internal static partial class Gen5SpirvTranslator
                 GetFloat16Source(instruction, 2));
             return EmitFloat16Result(instruction, destination, value);
         }
+
+        private uint EmitLegacyFloatFma(Gen5ShaderInstruction instruction)
+        {
+            var left = GetFloatSource(instruction, 0);
+            var right = GetFloatSource(instruction, 1);
+            var addend = GetFloatSource(instruction, 2);
+            var eitherZero = _module.AddInstruction(
+                SpirvOp.LogicalOr,
+                _boolType,
+                IsFloat32Zero(left),
+                IsFloat32Zero(right));
+            var fused = Ext(50, _floatType, left, right, addend);
+            var zeroProductSum = _module.AddInstruction(
+                SpirvOp.FAdd,
+                _floatType,
+                Float(0),
+                addend);
+            return EmitFloatResult(
+                instruction,
+                _module.AddInstruction(
+                    SpirvOp.Select,
+                    _floatType,
+                    eitherZero,
+                    zeroProductSum,
+                    fused));
+        }
+
+        private uint IsFloat32Zero(uint value) =>
+            _module.AddInstruction(
+                SpirvOp.IEqual,
+                _boolType,
+                BitwiseAnd(Bitcast(_uintType, value), UInt(0x7FFF_FFFF)),
+                UInt(0));
 
         private uint EmitFloat16Ternary(
             Gen5ShaderInstruction instruction,
