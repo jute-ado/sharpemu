@@ -1339,6 +1339,47 @@ internal static partial class Gen5SpirvTranslator
                     });
                     return true;
                 }
+                case "DsRsubU32":
+                case "DsIncU32":
+                case "DsDecU32":
+                case "DsMskorB32":
+                case "DsRsubRtnU32":
+                case "DsIncRtnU32":
+                case "DsDecRtnU32":
+                case "DsMskorRtnB32":
+                {
+                    var maskedOr = instruction.Opcode.Contains(
+                        "Mskor",
+                        StringComparison.Ordinal);
+                    if (instruction.Sources.Count < (maskedOr ? 3 : 2))
+                    {
+                        error = "missing compare/exchange LDS atomic source";
+                        return false;
+                    }
+
+                    var returnsValue = instruction.Opcode.Contains(
+                        "Rtn",
+                        StringComparison.Ordinal);
+                    if (returnsValue && instruction.Destinations.Count < 1)
+                    {
+                        error = "missing compare/exchange LDS atomic destination";
+                        return false;
+                    }
+
+                    EmitExecConditional(() =>
+                    {
+                        var original = EmitLdsCompareExchangeLoop(
+                            LdsPointer(
+                                GetRawSource(instruction, 0),
+                                EffectiveDsSingleOffsetBytes(control)),
+                            expected => EmitLdsCasDesiredValue(instruction, expected));
+                        if (returnsValue)
+                        {
+                            StoreV(instruction.Destinations[0].Value, original);
+                        }
+                    });
+                    return true;
+                }
                 case "DsWrxchg2RtnB32":
                 case "DsWrxchg2St64RtnB32":
                 {
@@ -1681,6 +1722,122 @@ internal static partial class Gen5SpirvTranslator
             return BitwiseAnd(
                 ShiftRightLogical(byteIndex, UInt(2)),
                 UInt(RdnaWaveLaneCount - 1));
+        }
+
+        private uint EmitLdsCompareExchangeLoop(
+            uint pointer,
+            Func<uint, uint> emitDesiredValue)
+        {
+            var loopHeader = _module.AllocateId();
+            var loopBody = _module.AllocateId();
+            var loopContinue = _module.AllocateId();
+            var loopMerge = _module.AllocateId();
+            _module.AddStatement(SpirvOp.Branch, loopHeader);
+            _module.AddLabel(loopHeader);
+            _module.AddStatement(
+                SpirvOp.LoopMerge,
+                loopMerge,
+                loopContinue,
+                0);
+            _module.AddStatement(SpirvOp.Branch, loopBody);
+            _module.AddLabel(loopBody);
+            var expected = _module.AddInstruction(
+                SpirvOp.AtomicLoad,
+                _uintType,
+                pointer,
+                UInt(2),
+                UInt(0x102));
+            var desired = emitDesiredValue(expected);
+            var observed = _module.AddInstruction(
+                SpirvOp.AtomicCompareExchange,
+                _uintType,
+                pointer,
+                UInt(2),
+                UInt(0x108),
+                UInt(0x102),
+                desired,
+                expected);
+            var succeeded = _module.AddInstruction(
+                SpirvOp.IEqual,
+                _boolType,
+                observed,
+                expected);
+            _module.AddStatement(
+                SpirvOp.BranchConditional,
+                succeeded,
+                loopMerge,
+                loopContinue);
+            _module.AddLabel(loopContinue);
+            _module.AddStatement(SpirvOp.Branch, loopHeader);
+            _module.AddLabel(loopMerge);
+            return observed;
+        }
+
+        private uint EmitLdsCasDesiredValue(
+            Gen5ShaderInstruction instruction,
+            uint expected)
+        {
+            var data0 = GetRawSource(instruction, 1);
+            switch (instruction.Opcode)
+            {
+                case "DsRsubU32":
+                case "DsRsubRtnU32":
+                    return _module.AddInstruction(
+                        SpirvOp.ISub,
+                        _uintType,
+                        data0,
+                        expected);
+                case "DsIncU32":
+                case "DsIncRtnU32":
+                {
+                    var wraps = _module.AddInstruction(
+                        SpirvOp.UGreaterThanEqual,
+                        _boolType,
+                        expected,
+                        data0);
+                    return _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        wraps,
+                        UInt(0),
+                        IAdd(expected, UInt(1)));
+                }
+                case "DsDecU32":
+                case "DsDecRtnU32":
+                {
+                    var isZero = _module.AddInstruction(
+                        SpirvOp.IEqual,
+                        _boolType,
+                        expected,
+                        UInt(0));
+                    var aboveLimit = _module.AddInstruction(
+                        SpirvOp.UGreaterThan,
+                        _boolType,
+                        expected,
+                        data0);
+                    var wraps = _module.AddInstruction(
+                        SpirvOp.LogicalOr,
+                        _boolType,
+                        isZero,
+                        aboveLimit);
+                    return _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        wraps,
+                        data0,
+                        _module.AddInstruction(
+                            SpirvOp.ISub,
+                            _uintType,
+                            expected,
+                            UInt(1)));
+                }
+                default:
+                    return BitwiseOr(
+                        BitwiseAnd(
+                            expected,
+                            _module.AddInstruction(SpirvOp.Not, _uintType, data0)),
+                        GetRawSource(instruction, 2));
+            }
         }
 
         private uint EmitDsAddTidByteAddress(Gen5DataShareControl control)
