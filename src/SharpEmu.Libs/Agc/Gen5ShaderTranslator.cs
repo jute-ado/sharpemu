@@ -1170,7 +1170,9 @@ internal static class Gen5ShaderTranslator
         var src0 = extra & 0x1FF;
         var src1 = (extra >> 9) & 0x1FF;
         var src2 = (extra >> 18) & 0x1FF;
-        sizeDwords = opcode is 0x360 or 0x361
+        sizeDwords = opcode is 0x200 or 0x201 or 0x202 or 0x342 or 0x343 or 0x35A
+            ? 2u
+            : opcode is 0x360 or 0x361
             ? (src0 == 0xFF || src1 == 0xFF ? 3u : 2u)
             : (src0 == 0xFF || src1 == 0xFF || src2 == 0xFF ? 3u : 2u);
         error = string.Empty;
@@ -1238,6 +1240,9 @@ internal static class Gen5ShaderTranslator
             0x173 => "VMqsadPkU16U8",
             0x175 => "VMqsadU32U8",
             0x178 => "VXor3B32",
+            0x200 => "VInterpP1F32",
+            0x201 => "VInterpP2F32",
+            0x202 => "VInterpMovF32",
             0x2FF => "VLshlrevB64",
             0x300 => "VLshrrevB64",
             0x301 => "VAshrrevI64",
@@ -1257,6 +1262,8 @@ internal static class Gen5ShaderTranslator
             0x313 => "VCvtPknormU16F16",
             0x314 => "VLshlrevB16",
             0x340 => "VMadU16",
+            0x342 => "VInterpP1llF16",
+            0x343 => "VInterpP1lvF16",
             0x344 => "VPermB32",
             0x345 => "VXadU32",
             0x34B => "VFmaF16",
@@ -1269,6 +1276,7 @@ internal static class Gen5ShaderTranslator
             0x357 => "VMed3F16",
             0x358 => "VMed3I16",
             0x359 => "VMed3U16",
+            0x35A => "VInterpP2F16",
             0x35E => "VMadI16",
             0x35F => "VDivFixupF16",
             // 0x360/0x361 are v_readlane_b32/v_writelane_b32 on GFX10
@@ -1894,6 +1902,19 @@ internal static class Gen5ShaderTranslator
             case Gen5ShaderEncoding.Vop3:
             {
                 var extra = words[1];
+                if (opcode.StartsWith("VInterp", StringComparison.Ordinal))
+                {
+                    var source1 = Gen5Operand.Source((extra >> 9) & 0x1FF);
+                    sources = opcode is "VInterpP1lvF16" or "VInterpP2F16"
+                        ? [source1, Gen5Operand.Source((extra >> 18) & 0x1FF)]
+                        : [source1];
+                    destinations = [Gen5Operand.Vector(word & 0xFF)];
+                    control = new Gen5InterpolationControl(
+                        extra & 0x3F,
+                        (extra >> 6) & 0x3);
+                    break;
+                }
+
                 if (opcode.StartsWith("VCmp", StringComparison.Ordinal))
                 {
                     sources =

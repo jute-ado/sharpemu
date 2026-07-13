@@ -1042,8 +1042,7 @@ internal static partial class Gen5SpirvTranslator
                 "SNop" or
                 "SWaitcnt" or
                 "SInstPrefetch" or
-                "STtraceData" or
-                "VInterpMovF32")
+                "STtraceData")
             {
                 return true;
             }
@@ -1287,7 +1286,10 @@ internal static partial class Gen5SpirvTranslator
                 _floatType,
                 vector,
                 interpolation.Channel);
-            StoreV(destination, Bitcast(_uintType, component));
+            var result = instruction.Opcode == "VInterpP2F16"
+                ? BitwiseAnd(PackHalf2(component, Float(0)), UInt(0xFFFF))
+                : Bitcast(_uintType, component);
+            StoreV(destination, result);
             return true;
         }
 
