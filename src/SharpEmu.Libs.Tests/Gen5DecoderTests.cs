@@ -1373,6 +1373,79 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesImageGetResinfoMipAndLevelQueriesToSpirv()
+    {
+        var ctx = CreateContext(
+        [
+            0xF0380F08u, 0x00000804u, // image_get_resinfo v[8:11], v4, s[0:7] dmask:0xf dim:2d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var instruction = program.Instructions[0];
+        Assert.Equal("ImageGetResinfo", instruction.Opcode);
+        Assert.Equal(
+            [
+                Gen5Operand.Vector(8),
+                Gen5Operand.Vector(9),
+                Gen5Operand.Vector(10),
+                Gen5Operand.Vector(11),
+            ],
+            instruction.Destinations);
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [
+                new Gen5ImageBinding(
+                    instruction.Pc,
+                    instruction.Opcode,
+                    Assert.IsType<Gen5ImageControl>(instruction.Control),
+                    [0u, 0u],
+                    [],
+                    MipLevel: null),
+            ],
+            []);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.Equal(
+            1,
+            CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ImageQuerySizeLod));
+        Assert.Equal(
+            1,
+            CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ImageQueryLevels));
+
+        var sizeQuery = GetSpirvInstruction(shader.Spirv, SpirvOp.ImageQuerySizeLod);
+        Assert.Equal(5u, sizeQuery[0] >> 16);
+        var mipBitcast = GetSpirvInstructionWithResult(
+            shader.Spirv,
+            SpirvOp.Bitcast,
+            sizeQuery[4]);
+        Assert.Equal(4u, mipBitcast[0] >> 16);
+        var mipLoad = GetSpirvInstructionWithResult(
+            shader.Spirv,
+            SpirvOp.Load,
+            mipBitcast[3]);
+        Assert.True((mipLoad[0] >> 16) >= 4);
+    }
+
+    [Fact]
     public void CompilesImageAtomic32OperationsToSpirv()
     {
         // RDNA1 MIMG encodings for a 2D R32ui storage image. GLC requests
@@ -6270,6 +6343,46 @@ public sealed class Gen5DecoderTests
         }
 
         return count;
+    }
+
+    private static uint[] GetSpirvInstruction(byte[] spirv, SpirvOp opcode) =>
+        GetSpirvInstructionWithResult(spirv, opcode, resultId: null);
+
+    private static uint[] GetSpirvInstructionWithResult(
+        byte[] spirv,
+        SpirvOp opcode,
+        uint? resultId)
+    {
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var firstWord = BitConverter.ToUInt32(spirv, offset);
+            var wordCount = firstWord >> 16;
+            if ((ushort)firstWord == (ushort)opcode &&
+                (resultId is null ||
+                 (wordCount >= 3 &&
+                  BitConverter.ToUInt32(spirv, offset + (2 * sizeof(uint))) ==
+                      resultId)))
+            {
+                return Enumerable
+                    .Range(0, checked((int)wordCount))
+                    .Select(index => BitConverter.ToUInt32(
+                        spirv,
+                        offset + (index * sizeof(uint))))
+                    .ToArray();
+            }
+
+            if (wordCount == 0)
+            {
+                break;
+            }
+
+            offset += checked((int)wordCount * sizeof(uint));
+        }
+
+        throw new Xunit.Sdk.XunitException(
+            resultId is null
+                ? $"Missing SPIR-V instruction {opcode}."
+                : $"Missing SPIR-V instruction {opcode} with result %{resultId}.");
     }
 
     private static CpuContext CreateContext(uint[] instructionWords)
