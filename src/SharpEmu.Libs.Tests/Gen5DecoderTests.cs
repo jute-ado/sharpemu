@@ -431,6 +431,104 @@ public sealed class Gen5DecoderTests
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Not));
     }
 
+    [Fact]
+    public void CompilesVectorFloatUtilityOperationsToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xD7680000u, 0x00020501u, // v_cvt_pknorm_i16_f32 v0, v1, v2
+            0xD7690003u, 0x00020B04u, // v_cvt_pknorm_u16_f32 v3, v4, v5
+            0x7E0C7F07u,              // v_frexp_exp_i32_f32_e32 v6, v7
+            0x7E108109u,              // v_frexp_mant_f32_e32 v8, v9
+            0x0E14190Bu,              // v_mul_legacy_f32_e32 v10, v11, v12
+            0x7C141D0Du,              // v_cmp_nlg_f32_e32 vcc_lo, v13, v14
+            0x7C0E210Fu,              // v_cmp_o_f32_e32 vcc_lo, v15, v16
+            0x7C102511u,              // v_cmp_u_f32_e32 vcc_lo, v17, v18
+            0x7D202913u,              // v_cmpx_f_i32_e32 v19, v20
+            0x7D2E2D15u,              // v_cmpx_t_i32_e32 v21, v22
+            0x7DA03117u,              // v_cmpx_f_u32_e32 v23, v24
+            0x7DAE3519u,              // v_cmpx_t_u32_e32 v25, v26
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "VCvtPknormI16F32",
+                "VCvtPknormU16F32",
+                "VFrexpExpI32F32",
+                "VFrexpMantF32",
+                "VMulLegacyF32",
+                "VCmpNlgF32",
+                "VCmpOF32",
+                "VCmpUF32",
+                "VCmpxFI32",
+                "VCmpxTI32",
+                "VCmpxFU32",
+                "VCmpxTU32",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ExtInst));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 52));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 56));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 57));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.CompositeExtract));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FUnordEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IsNan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Select));
+    }
+
+    private static bool ContainsGlslExtInst(byte[] spirv, uint operation)
+    {
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var instruction = BitConverter.ToUInt32(spirv, offset);
+            var wordCount = instruction >> 16;
+            if ((ushort)instruction == (ushort)SpirvOp.ExtInst &&
+                wordCount >= 5 &&
+                BitConverter.ToUInt32(spirv, offset + (4 * sizeof(uint))) == operation)
+            {
+                return true;
+            }
+
+            if (wordCount == 0)
+            {
+                return false;
+            }
+
+            offset += checked((int)wordCount * sizeof(uint));
+        }
+
+        return false;
+    }
+
     private static bool ContainsSpirvOpcode(byte[] spirv, ushort opcode)
     {
         for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
