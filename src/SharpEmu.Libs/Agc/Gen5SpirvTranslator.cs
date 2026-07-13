@@ -2951,12 +2951,6 @@ internal static partial class Gen5SpirvTranslator
             var writeAllComponents = false;
             if (instruction.Opcode is "ImageLoad" or "ImageLoadMip")
             {
-                var coordinates = TryGetImageBounds(
-                        _evaluation.ImageBindings[bindingIndex].ResourceDescriptor,
-                        out var width,
-                        out var height)
-                    ? BuildClampedIntegerCoordinates(image, 0, width, height)
-                    : BuildIntegerCoordinates(image, 0);
                 var mipLevel = instruction.Opcode == "ImageLoadMip"
                     ? Bitcast(
                         _intType,
@@ -2966,6 +2960,29 @@ internal static partial class Gen5SpirvTranslator
                     SpirvOp.Image,
                     resource.ImageType,
                     imageObject);
+                uint coordinates;
+                if (instruction.Opcode == "ImageLoadMip")
+                {
+                    var mipSize = _module.AddInstruction(
+                        SpirvOp.ImageQuerySizeLod,
+                        _module.TypeVector(_intType, 2),
+                        fetchedImage,
+                        mipLevel);
+                    coordinates = BuildClampedIntegerCoordinates(
+                        image,
+                        0,
+                        mipSize);
+                }
+                else
+                {
+                    coordinates = TryGetImageBounds(
+                            _evaluation.ImageBindings[bindingIndex].ResourceDescriptor,
+                            out var width,
+                            out var height)
+                        ? BuildClampedIntegerCoordinates(image, 0, width, height)
+                        : BuildIntegerCoordinates(image, 0);
+                }
+
                 sampled = _module.AddInstruction(
                     SpirvOp.ImageFetch,
                     resource.VectorType,
@@ -3317,6 +3334,39 @@ internal static partial class Gen5SpirvTranslator
                 y);
         }
 
+        private uint BuildClampedIntegerCoordinates(
+            Gen5ImageControl image,
+            int start,
+            uint extents)
+        {
+            var ivec2 = _module.TypeVector(_intType, 2);
+            var xExtent = _module.AddInstruction(
+                SpirvOp.CompositeExtract,
+                _intType,
+                extents,
+                0);
+            var yExtent = _module.AddInstruction(
+                SpirvOp.CompositeExtract,
+                _intType,
+                extents,
+                1);
+            var x = ClampSignedCoordinateToDynamicExtent(
+                Bitcast(
+                    _intType,
+                    LoadV(image.GetAddressRegister(start))),
+                xExtent);
+            var y = ClampSignedCoordinateToDynamicExtent(
+                Bitcast(
+                    _intType,
+                    LoadV(image.GetAddressRegister(start + 1))),
+                yExtent);
+            return _module.AddInstruction(
+                SpirvOp.CompositeConstruct,
+                ivec2,
+                x,
+                y);
+        }
+
         private uint BuildIntegerCoordinates(Gen5ImageControl image, int start)
         {
             var ivec2 = _module.TypeVector(_intType, 2);
@@ -3361,6 +3411,52 @@ internal static partial class Gen5SpirvTranslator
         {
             var zero = _module.Constant(_intType, 0);
             var max = _module.Constant(_intType, Math.Max(extent, 1) - 1);
+            var belowZero = _module.AddInstruction(
+                SpirvOp.SLessThan,
+                _boolType,
+                value,
+                zero);
+            var atLeastZero = _module.AddInstruction(
+                SpirvOp.Select,
+                _intType,
+                belowZero,
+                zero,
+                value);
+            var aboveMax = _module.AddInstruction(
+                SpirvOp.SGreaterThan,
+                _boolType,
+                atLeastZero,
+                max);
+            return _module.AddInstruction(
+                SpirvOp.Select,
+                _intType,
+                aboveMax,
+                max,
+                atLeastZero);
+        }
+
+        private uint ClampSignedCoordinateToDynamicExtent(
+            uint value,
+            uint extent)
+        {
+            var zero = _module.Constant(_intType, 0);
+            var one = _module.Constant(_intType, 1);
+            var hasPositiveExtent = _module.AddInstruction(
+                SpirvOp.SGreaterThan,
+                _boolType,
+                extent,
+                zero);
+            var safeExtent = _module.AddInstruction(
+                SpirvOp.Select,
+                _intType,
+                hasPositiveExtent,
+                extent,
+                one);
+            var max = _module.AddInstruction(
+                SpirvOp.ISub,
+                _intType,
+                safeExtent,
+                one);
             var belowZero = _module.AddInstruction(
                 SpirvOp.SLessThan,
                 _boolType,
