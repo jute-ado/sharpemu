@@ -407,6 +407,29 @@ internal static partial class Gen5SpirvTranslator
                 case "VFmaF16":
                     result = EmitFloat16Fma(instruction, destination);
                     break;
+                case "VDivFmasF32":
+                {
+                    var fused = Ext(
+                        50,
+                        _floatType,
+                        GetFloatSource(instruction, 0),
+                        GetFloatSource(instruction, 1),
+                        GetFloatSource(instruction, 2));
+                    var scaled = Ext(
+                        53,
+                        _floatType,
+                        fused,
+                        _module.Constant(_intType, 32));
+                    result = EmitFloatResult(
+                        instruction,
+                        _module.AddInstruction(
+                            SpirvOp.Select,
+                            _floatType,
+                            Load(_boolType, _vcc),
+                            scaled,
+                            fused));
+                    break;
+                }
                 case "VMacF32":
                 case "VFmacF32":
                 {
