@@ -246,10 +246,10 @@ internal static partial class Gen5SpirvTranslator
                     break;
                 case "VCvtPkU8F32":
                 {
-                    var converted = _module.AddInstruction(
-                        SpirvOp.ConvertFToU,
-                        _uintType,
-                        GetFloatSource(instruction, 0));
+                    var converted = EmitSaturatingFloatToInteger(
+                        GetFloatSource(instruction, 0),
+                        _floatType,
+                        signed: false);
                     var offset = ShiftLeftLogical(
                         BitwiseAnd(GetRawSource(instruction, 1), UInt(3)),
                         UInt(3));

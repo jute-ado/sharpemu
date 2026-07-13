@@ -2863,14 +2863,17 @@ internal static partial class Gen5SpirvTranslator
                             component);
                         values[component] = _outputKind switch
                         {
-                            Gen5PixelOutputKind.Uint => _module.AddInstruction(
-                                SpirvOp.ConvertFToU,
-                                _uintType,
-                                value),
-                            Gen5PixelOutputKind.Sint => _module.AddInstruction(
-                                SpirvOp.ConvertFToS,
+                            Gen5PixelOutputKind.Uint =>
+                                EmitSaturatingFloatToInteger(
+                                    value,
+                                    _floatType,
+                                    signed: false),
+                            Gen5PixelOutputKind.Sint => Bitcast(
                                 _intType,
-                                value),
+                                EmitSaturatingFloatToInteger(
+                                    value,
+                                    _floatType,
+                                    signed: true)),
                             _ => value,
                         };
                         continue;
