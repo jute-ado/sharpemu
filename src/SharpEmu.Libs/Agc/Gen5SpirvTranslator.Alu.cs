@@ -341,6 +341,12 @@ internal static partial class Gen5SpirvTranslator
                 case "VXorB32":
                     result = EmitIntegerBinary(instruction, SpirvOp.BitwiseXor);
                     break;
+                case "VXnorB32":
+                    result = _module.AddInstruction(
+                        SpirvOp.Not,
+                        _uintType,
+                        EmitIntegerBinary(instruction, SpirvOp.BitwiseXor));
+                    break;
                 case "VNotB32":
                     result = _module.AddInstruction(
                         SpirvOp.Not,
@@ -360,6 +366,26 @@ internal static partial class Gen5SpirvTranslator
                             73,
                             _intType,
                             Bitcast(_intType, GetRawSource(instruction, 0))));
+                    break;
+                case "VFfbhU32":
+                    result = EmitFindFirstBitHigh(instruction, signed: false);
+                    break;
+                case "VFfbhI32":
+                    result = EmitFindFirstBitHigh(instruction, signed: true);
+                    break;
+                case "VBcntU32B32":
+                    result = IAdd(
+                        _module.AddInstruction(
+                            SpirvOp.BitCount,
+                            _uintType,
+                            GetRawSource(instruction, 0)),
+                        GetRawSource(instruction, 1));
+                    break;
+                case "VMbcntLoU32B32":
+                    result = EmitMbcnt(instruction, highHalf: false);
+                    break;
+                case "VMbcntHiU32B32":
+                    result = EmitMbcnt(instruction, highHalf: true);
                     break;
                 case "VAddI32":
                 case "VAddU32":
@@ -386,6 +412,51 @@ internal static partial class Gen5SpirvTranslator
                 case "VMulU32U24":
                     result = EmitIntegerBinary(instruction, SpirvOp.IMul);
                     break;
+                case "VMulI32I24":
+                {
+                    var left = ExtractSignedBits(GetRawSource(instruction, 0), 24);
+                    var right = ExtractSignedBits(GetRawSource(instruction, 1), 24);
+                    result = _module.AddInstruction(
+                        SpirvOp.IMul,
+                        _uintType,
+                        left,
+                        right);
+                    break;
+                }
+                case "VMulHiI32":
+                case "VMulHiI32I24":
+                {
+                    var left = GetRawSource(instruction, 0);
+                    var right = GetRawSource(instruction, 1);
+                    if (instruction.Opcode == "VMulHiI32I24")
+                    {
+                        left = ExtractSignedBits(left, 24);
+                        right = ExtractSignedBits(right, 24);
+                    }
+
+                    var wideLeft = _module.AddInstruction(
+                        SpirvOp.SConvert,
+                        _longType,
+                        Bitcast(_intType, left));
+                    var wideRight = _module.AddInstruction(
+                        SpirvOp.SConvert,
+                        _longType,
+                        Bitcast(_intType, right));
+                    var product = _module.AddInstruction(
+                        SpirvOp.IMul,
+                        _longType,
+                        wideLeft,
+                        wideRight);
+                    var high = _module.AddInstruction(
+                        SpirvOp.ShiftRightArithmetic,
+                        _longType,
+                        product,
+                        _module.Constant64(_ulongType, 32));
+                    result = Bitcast(
+                        _uintType,
+                        _module.AddInstruction(SpirvOp.SConvert, _intType, high));
+                    break;
+                }
                 case "VMulHiU32":
                 case "VMulHiU32U24":
                 {
@@ -452,6 +523,34 @@ internal static partial class Gen5SpirvTranslator
                         GetRawSource(instruction, 2));
                     break;
                 }
+                case "VMadI16":
+                case "VMadU16":
+                case "VMadI32I24":
+                {
+                    var signed = instruction.Opcode != "VMadU16";
+                    var width = instruction.Opcode == "VMadI32I24" ? 24u : 16u;
+                    var left = GetRawSource(instruction, 0);
+                    var right = GetRawSource(instruction, 1);
+                    if (signed)
+                    {
+                        left = ExtractSignedBits(left, width);
+                        right = ExtractSignedBits(right, width);
+                    }
+                    else
+                    {
+                        left = BitwiseAnd(left, UInt(ushort.MaxValue));
+                        right = BitwiseAnd(right, UInt(ushort.MaxValue));
+                    }
+
+                    result = IAdd(
+                        _module.AddInstruction(
+                            SpirvOp.IMul,
+                            _uintType,
+                            left,
+                            right),
+                        GetRawSource(instruction, 2));
+                    break;
+                }
                 case "VLshrB32":
                     result = EmitIntegerBinary(instruction, SpirvOp.ShiftRightLogical);
                     break;
@@ -497,6 +596,12 @@ internal static partial class Gen5SpirvTranslator
                         GetRawSource(instruction, 2));
                     break;
                 }
+                case "VAlignbitB32":
+                    result = EmitAlign(instruction, byteAligned: false);
+                    break;
+                case "VAlignbyteB32":
+                    result = EmitAlign(instruction, byteAligned: true);
+                    break;
                 case "VAndOrB32":
                     result = BitwiseOr(
                         BitwiseAnd(
@@ -510,6 +615,31 @@ internal static partial class Gen5SpirvTranslator
                             GetRawSource(instruction, 0),
                             GetRawSource(instruction, 1)),
                         GetRawSource(instruction, 2));
+                    break;
+                case "VXadU32":
+                    result = IAdd(
+                        BitwiseXor(
+                            GetRawSource(instruction, 0),
+                            GetRawSource(instruction, 1)),
+                        GetRawSource(instruction, 2));
+                    break;
+                case "VLerpU8":
+                    result = EmitLerpU8(instruction);
+                    break;
+                case "VSadU8":
+                    result = EmitPackedSad(instruction, 8, shiftResult: false, masked: false);
+                    break;
+                case "VSadHiU8":
+                    result = EmitPackedSad(instruction, 8, shiftResult: true, masked: false);
+                    break;
+                case "VSadU16":
+                    result = EmitPackedSad(instruction, 16, shiftResult: false, masked: false);
+                    break;
+                case "VSadU32":
+                    result = EmitPackedSad(instruction, 32, shiftResult: false, masked: false);
+                    break;
+                case "VMsadU8":
+                    result = EmitPackedSad(instruction, 8, shiftResult: false, masked: true);
                     break;
                 case "VPermlane16B32":
                     result = EmitPermlane16(instruction, exchangeRows: false);
@@ -698,6 +828,18 @@ internal static partial class Gen5SpirvTranslator
                         width);
                     break;
                 }
+                case "VBfeI32":
+                {
+                    var width = BitwiseAnd(GetRawSource(instruction, 2), UInt(31));
+                    var extracted = _module.AddInstruction(
+                        SpirvOp.BitFieldSExtract,
+                        _intType,
+                        Bitcast(_intType, GetRawSource(instruction, 0)),
+                        BitwiseAnd(GetRawSource(instruction, 1), UInt(31)),
+                        width);
+                    result = Bitcast(_uintType, extracted);
+                    break;
+                }
                 case "VBfiB32":
                 {
                     var mask = GetRawSource(instruction, 0);
@@ -724,6 +866,38 @@ internal static partial class Gen5SpirvTranslator
                     result = Ext(58, _uintType, vector);
                     break;
                 }
+                case "VCvtPkU16U32":
+                {
+                    var low = Ext(
+                        38,
+                        _uintType,
+                        GetRawSource(instruction, 0),
+                        UInt(ushort.MaxValue));
+                    var high = Ext(
+                        38,
+                        _uintType,
+                        GetRawSource(instruction, 1),
+                        UInt(ushort.MaxValue));
+                    result = BitwiseOr(
+                        low,
+                        ShiftLeftLogical(high, UInt(16)));
+                    break;
+                }
+                case "VCvtPkI16I32":
+                {
+                    var minimum = _module.Constant(
+                        _intType,
+                        unchecked((uint)short.MinValue));
+                    var maximum = _module.Constant(_intType, (uint)short.MaxValue);
+                    var low = ClampSigned16(GetRawSource(instruction, 0), minimum, maximum);
+                    var high = ClampSigned16(GetRawSource(instruction, 1), minimum, maximum);
+                    result = BitwiseOr(
+                        BitwiseAnd(low, UInt(ushort.MaxValue)),
+                        ShiftLeftLogical(
+                            BitwiseAnd(high, UInt(ushort.MaxValue)),
+                            UInt(16)));
+                    break;
+                }
                 default:
                     error = $"unsupported vector opcode {instruction.Opcode}";
                     return false;
@@ -731,6 +905,233 @@ internal static partial class Gen5SpirvTranslator
 
             StoreV(destination, result);
             return true;
+        }
+
+        private uint EmitAlign(
+            Gen5ShaderInstruction instruction,
+            bool byteAligned)
+        {
+            var high = ShiftLeftLogical64(
+                _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _ulongType,
+                    GetRawSource(instruction, 0)),
+                _module.Constant64(_ulongType, 32));
+            var low = _module.AddInstruction(
+                SpirvOp.UConvert,
+                _ulongType,
+                GetRawSource(instruction, 1));
+            var combined = _module.AddInstruction(
+                SpirvOp.BitwiseOr,
+                _ulongType,
+                high,
+                low);
+            var offset = BitwiseAnd(
+                GetRawSource(instruction, 2),
+                UInt(byteAligned ? 3u : 31u));
+            if (byteAligned)
+            {
+                offset = ShiftLeftLogical(offset, UInt(3));
+            }
+
+            return _module.AddInstruction(
+                SpirvOp.UConvert,
+                _uintType,
+                ShiftRightLogical64(
+                    combined,
+                    _module.AddInstruction(
+                        SpirvOp.UConvert,
+                        _ulongType,
+                        offset)));
+        }
+
+        private uint EmitLerpU8(Gen5ShaderInstruction instruction)
+        {
+            var result = UInt(0);
+            for (uint component = 0; component < 4; component++)
+            {
+                var offset = component * 8;
+                var left = ExtractUnsignedBits(
+                    GetRawSource(instruction, 0),
+                    offset,
+                    8);
+                var right = ExtractUnsignedBits(
+                    GetRawSource(instruction, 1),
+                    offset,
+                    8);
+                var rounding = BitwiseAnd(
+                    ShiftRightLogical(
+                        GetRawSource(instruction, 2),
+                        UInt(offset)),
+                    UInt(1));
+                var average = ShiftRightLogical(
+                    IAdd(IAdd(left, right), rounding),
+                    UInt(1));
+                result = BitwiseOr(
+                    result,
+                    ShiftLeftLogical(average, UInt(offset)));
+            }
+
+            return result;
+        }
+
+        private uint EmitPackedSad(
+            Gen5ShaderInstruction instruction,
+            uint componentBits,
+            bool shiftResult,
+            bool masked)
+        {
+            var sum = UInt(0);
+            var componentCount = 32u / componentBits;
+            for (uint component = 0; component < componentCount; component++)
+            {
+                var offset = component * componentBits;
+                var left = ExtractUnsignedBits(
+                    GetRawSource(instruction, 0),
+                    offset,
+                    componentBits);
+                var right = ExtractUnsignedBits(
+                    GetRawSource(instruction, 1),
+                    offset,
+                    componentBits);
+                var difference = _module.AddInstruction(
+                    SpirvOp.ISub,
+                    _uintType,
+                    Ext(41, _uintType, left, right),
+                    Ext(38, _uintType, left, right));
+                if (masked)
+                {
+                    difference = _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.IEqual,
+                            _boolType,
+                            right,
+                            UInt(0)),
+                        UInt(0),
+                        difference);
+                }
+
+                sum = IAdd(sum, difference);
+            }
+
+            if (shiftResult)
+            {
+                sum = ShiftLeftLogical(sum, UInt(16));
+            }
+
+            return IAdd(sum, GetRawSource(instruction, 2));
+        }
+
+        private uint EmitFindFirstBitHigh(
+            Gen5ShaderInstruction instruction,
+            bool signed)
+        {
+            var raw = GetRawSource(instruction, 0);
+            var found = Ext(
+                signed ? 74u : 75u,
+                _intType,
+                signed ? Bitcast(_intType, raw) : raw);
+            var notFound = _module.Constant(_intType, uint.MaxValue);
+            var count = _module.AddInstruction(
+                SpirvOp.ISub,
+                _intType,
+                _module.Constant(_intType, 31),
+                found);
+            return Bitcast(
+                _uintType,
+                _module.AddInstruction(
+                    SpirvOp.Select,
+                    _intType,
+                    _module.AddInstruction(
+                        SpirvOp.IEqual,
+                        _boolType,
+                        found,
+                        notFound),
+                    notFound,
+                    count));
+        }
+
+        private uint EmitMbcnt(
+            Gen5ShaderInstruction instruction,
+            bool highHalf)
+        {
+            var lane = _subgroupInvocationIdInput == 0
+                ? UInt(0)
+                : Load(_uintType, _subgroupInvocationIdInput);
+            var inHalf = highHalf
+                ? _module.AddInstruction(
+                    SpirvOp.UGreaterThanEqual,
+                    _boolType,
+                    lane,
+                    UInt(32))
+                : _module.AddInstruction(
+                    SpirvOp.ULessThan,
+                    _boolType,
+                    lane,
+                    UInt(32));
+            var localLane = highHalf
+                ? _module.AddInstruction(SpirvOp.ISub, _uintType, lane, UInt(32))
+                : lane;
+            var prefixMask = _module.AddInstruction(
+                SpirvOp.ISub,
+                _uintType,
+                ShiftLeftLogical(UInt(1), localLane),
+                UInt(1));
+            if (!highHalf)
+            {
+                prefixMask = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    inHalf,
+                    prefixMask,
+                    UInt(uint.MaxValue));
+            }
+            else
+            {
+                prefixMask = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    inHalf,
+                    prefixMask,
+                    UInt(0));
+            }
+
+            var count = _module.AddInstruction(
+                SpirvOp.BitCount,
+                _uintType,
+                BitwiseAnd(GetRawSource(instruction, 0), prefixMask));
+            return IAdd(count, GetRawSource(instruction, 1));
+        }
+
+        private uint ExtractSignedBits(uint value, uint width) =>
+            Bitcast(
+                _uintType,
+                _module.AddInstruction(
+                    SpirvOp.BitFieldSExtract,
+                    _intType,
+                    Bitcast(_intType, value),
+                    UInt(0),
+                    UInt(width)));
+
+        private uint ExtractUnsignedBits(uint value, uint offset, uint width) =>
+            _module.AddInstruction(
+                SpirvOp.BitFieldUExtract,
+                _uintType,
+                value,
+                UInt(offset),
+                UInt(width));
+
+        private uint ClampSigned16(uint value, uint minimum, uint maximum)
+        {
+            var signed = Bitcast(_intType, value);
+            var clamped = Ext(
+                42,
+                _intType,
+                Ext(39, _intType, signed, maximum),
+                minimum);
+            return Bitcast(_uintType, clamped);
         }
 
         private bool TryEmitVectorCompare(
