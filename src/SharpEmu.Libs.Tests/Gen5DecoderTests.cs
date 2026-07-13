@@ -212,12 +212,13 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
-    public void CompilesVectorClearExceptionsAsNoOp()
+    public void CompilesOperandlessVectorControlOperationsAsNoOps()
     {
-        // Encoding assembled with LLVM 18 llvm-mc for gfx1030 and verified
-        // with llvm-objdump.
+        // Encodings verified against the official RDNA2 VOP1 opcode table.
         var ctx = CreateContext(
         [
+            0x7E000000u, // v_nop
+            0x7E003600u, // v_pipeflush
             0x7E008200u, // v_clrexcp
             SEndpgm,
         ]);
@@ -228,10 +229,13 @@ public sealed class Gen5DecoderTests
                 out var program,
                 out var decodeError),
             decodeError);
-        Assert.Equal(["VClrexcp", "SEndpgm"],
+        Assert.Equal(["VNop", "VPipeflush", "VClrexcp", "SEndpgm"],
             program.Instructions.Select(instruction => instruction.Opcode));
-        Assert.Empty(program.Instructions[0].Sources);
-        Assert.Empty(program.Instructions[0].Destinations);
+        Assert.All(program.Instructions.Take(3), instruction =>
+        {
+            Assert.Empty(instruction.Sources);
+            Assert.Empty(instruction.Destinations);
+        });
 
         var state = new Gen5ShaderState(program, [], Metadata: null);
         Assert.True(

@@ -12,8 +12,10 @@ internal static partial class Gen5SpirvTranslator
             out string error)
         {
             error = string.Empty;
-            // SPIR-V has no guest-visible floating-point exception state.
-            if (instruction.Opcode is "VNop" or "VClrexcp")
+            // SPIR-V exposes neither the guest VALU destination cache nor its
+            // floating-point exception state. Emission already preserves the
+            // instruction ordering that V_PIPEFLUSH would enforce.
+            if (instruction.Opcode is "VNop" or "VPipeflush" or "VClrexcp")
             {
                 return true;
             }
