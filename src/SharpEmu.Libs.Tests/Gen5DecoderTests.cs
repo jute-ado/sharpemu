@@ -636,6 +636,8 @@ public sealed class Gen5DecoderTests
             0xD5640020u, 0x000244F2u, // v_add_f64 v[32:33], 1.0, v[34:35]
             0xD5650024u, 0x00024CF5u, // v_mul_f64 v[36:37], -2.0, v[38:39]
             0xD54C0228u, 0x23C2592Au, // v_fma_f64 v[40:41], -v[42:43], |v[44:45]|, 0.5
+            0xD5680030u, 0x00026932u, // v_ldexp_f64 v[48:49], v[50:51], v52
+            0xD5688136u, 0x28027538u, // v_ldexp_f64 v[54:55], -|v[56:57]|, v58 clamp mul:2
             SEndpgm,
         ]);
         Assert.True(
@@ -655,9 +657,17 @@ public sealed class Gen5DecoderTests
                 "VAddF64",
                 "VMulF64",
                 "VFmaF64",
+                "VLdexpF64",
+                "VLdexpF64",
                 "SEndpgm",
             ],
             program.Instructions.Select(instruction => instruction.Opcode));
+        var modifiedLdexp = Assert.IsType<Gen5Vop3Control>(
+            program.Instructions[9].Control);
+        Assert.Equal(1u, modifiedLdexp.AbsoluteMask);
+        Assert.Equal(1u, modifiedLdexp.NegateMask);
+        Assert.Equal(1u, modifiedLdexp.OutputModifier);
+        Assert.True(modifiedLdexp.Clamp);
         var state = new Gen5ShaderState(program, [], Metadata: null);
         Assert.True(
             Gen5ShaderScalarEvaluator.TryEvaluate(
@@ -685,6 +695,7 @@ public sealed class Gen5DecoderTests
         Assert.True(ContainsGlslExtInst(shader.Spirv, 37));
         Assert.True(ContainsGlslExtInst(shader.Spirv, 40));
         Assert.True(ContainsGlslExtInst(shader.Spirv, 50));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 53));
     }
 
     [Fact]
