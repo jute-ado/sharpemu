@@ -23,6 +23,11 @@ internal static partial class Gen5SpirvTranslator
                 return TryEmitPackedAlu(instruction, packedControl, out error);
             }
 
+            if (instruction.Opcode.StartsWith("VCmp", StringComparison.Ordinal))
+            {
+                return TryEmitVectorCompare(instruction, out error);
+            }
+
             if (instruction.Opcode.Contains("F64", StringComparison.Ordinal))
             {
                 return TryEmitVectorFloat64(instruction, out error);
@@ -31,11 +36,6 @@ internal static partial class Gen5SpirvTranslator
             if (instruction.Opcode is "VMadU64U32" or "VMadI64I32")
             {
                 return TryEmitVectorMad64(instruction, out error);
-            }
-
-            if (instruction.Opcode.StartsWith("VCmp", StringComparison.Ordinal))
-            {
-                return TryEmitVectorCompare(instruction, out error);
             }
 
             if (instruction.Opcode is
@@ -2173,7 +2173,10 @@ internal static partial class Gen5SpirvTranslator
             var destination = instruction.Destinations[0].Value;
             uint condition = _module.ConstantBool(false);
             var opcode = instruction.Opcode;
-            if (opcode is "VCmpClassF32" or "VCmpxClassF32")
+            var predicateOpcode = opcode.EndsWith("F64", StringComparison.Ordinal)
+                ? opcode[..^3] + "F32"
+                : opcode;
+            if (predicateOpcode is "VCmpClassF32" or "VCmpxClassF32")
             {
                 var source = GetFloatSource(instruction, 0);
                 var raw = GetRawSource(instruction, 0);
@@ -2280,24 +2283,30 @@ internal static partial class Gen5SpirvTranslator
                     condition,
                     SignedClass(0x020, 0x040, zero));
             }
-            else if (opcode is "VCmpFF32" or "VCmpxFF32" or
+            else if (predicateOpcode is "VCmpFF32" or "VCmpxFF32" or
                      "VCmpFI32" or "VCmpxFI32" or
                      "VCmpFU32" or "VCmpxFU32")
             {
                 condition = _module.ConstantBool(false);
             }
-            else if (opcode is "VCmpTruF32" or "VCmpxTruF32" or
+            else if (predicateOpcode is "VCmpTruF32" or "VCmpxTruF32" or
                      "VCmpTI32" or "VCmpxTI32" or
                      "VCmpTU32" or "VCmpxTU32")
             {
                 condition = _module.ConstantBool(true);
             }
-            else if (opcode is not ("VCmpClassF32" or "VCmpxClassF32") &&
-                     opcode.EndsWith("F32", StringComparison.Ordinal))
+            else if (predicateOpcode is not ("VCmpClassF32" or "VCmpxClassF32") &&
+                     (opcode.EndsWith("F32", StringComparison.Ordinal) ||
+                      opcode.EndsWith("F64", StringComparison.Ordinal)))
             {
-                var left = GetFloatSource(instruction, 0);
-                var right = GetFloatSource(instruction, 1);
-                var operation = opcode switch
+                var isFloat64 = opcode.EndsWith("F64", StringComparison.Ordinal);
+                var left = isFloat64
+                    ? GetDoubleSource(instruction, 0)
+                    : GetFloatSource(instruction, 0);
+                var right = isFloat64
+                    ? GetDoubleSource(instruction, 1)
+                    : GetFloatSource(instruction, 1);
+                var operation = predicateOpcode switch
                 {
                     "VCmpLtF32" or "VCmpxLtF32" => SpirvOp.FOrdLessThan,
                     "VCmpEqF32" or "VCmpxEqF32" => SpirvOp.FOrdEqual,
@@ -2313,14 +2322,15 @@ internal static partial class Gen5SpirvTranslator
                     "VCmpNgeF32" or "VCmpxNgeF32" => SpirvOp.FUnordLessThan,
                     _ => SpirvOp.Nop,
                 };
-                if (opcode is "VCmpOF32" or "VCmpxOF32" or "VCmpUF32" or "VCmpxUF32")
+                if (predicateOpcode is "VCmpOF32" or "VCmpxOF32" or
+                    "VCmpUF32" or "VCmpxUF32")
                 {
                     var unordered = _module.AddInstruction(
                         SpirvOp.LogicalOr,
                         _boolType,
                         _module.AddInstruction(SpirvOp.IsNan, _boolType, left),
                         _module.AddInstruction(SpirvOp.IsNan, _boolType, right));
-                    condition = opcode is "VCmpUF32" or "VCmpxUF32"
+                    condition = predicateOpcode is "VCmpUF32" or "VCmpxUF32"
                         ? unordered
                         : _module.AddInstruction(
                             SpirvOp.LogicalNot,
@@ -2337,7 +2347,7 @@ internal static partial class Gen5SpirvTranslator
                     condition = _module.AddInstruction(operation, _boolType, left, right);
                 }
             }
-            else if (opcode is not ("VCmpClassF32" or "VCmpxClassF32"))
+            else if (predicateOpcode is not ("VCmpClassF32" or "VCmpxClassF32"))
             {
                 var left = GetRawSource(instruction, 0);
                 var right = GetRawSource(instruction, 1);
