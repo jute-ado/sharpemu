@@ -3093,15 +3093,48 @@ internal static partial class Gen5SpirvTranslator
                          "ImageGather4",
                          StringComparison.Ordinal))
             {
-                var hasOffset =
-                    instruction.Opcode.EndsWith("O", StringComparison.Ordinal);
-                var hasCompare =
-                    instruction.Opcode.Contains("Gather4C", StringComparison.Ordinal);
-                var start = (hasOffset ? 1 : 0) + (hasCompare ? 1 : 0);
+                var gatherSuffix = instruction.Opcode["ImageGather4".Length..];
+                var hasOffset = gatherSuffix.EndsWith("O", StringComparison.Ordinal);
+                if (hasOffset)
+                {
+                    gatherSuffix = gatherSuffix[..^1];
+                }
+
+                if (gatherSuffix.Contains("Cl", StringComparison.Ordinal))
+                {
+                    error = $"image gather LOD clamp is unsupported for {instruction.Opcode}";
+                    return false;
+                }
+
+                var hasCompare = gatherSuffix.StartsWith("C", StringComparison.Ordinal);
+                if (hasCompare)
+                {
+                    gatherSuffix = gatherSuffix[1..];
+                }
+
+                var hasBias = gatherSuffix == "B";
+                var hasLod = gatherSuffix == "L";
+                var isZeroLod = gatherSuffix == "Lz";
+                if (gatherSuffix is not ("" or "B" or "L" or "Lz"))
+                {
+                    error = $"unsupported image gather variant {instruction.Opcode}";
+                    return false;
+                }
+
+                if (hasBias || hasLod || isZeroLod)
+                {
+                    error = $"image gather LOD controls are unsupported for {instruction.Opcode}";
+                    return false;
+                }
+
+                var compareIndex = hasOffset ? 1 : 0;
+                var start = compareIndex + (hasCompare ? 1 : 0);
                 var coordinates = BuildFloatCoordinates(image, start);
                 var offset = hasOffset ? BuildImageOffset(image, 0) : 0u;
                 var reference = hasCompare
-                    ? Bitcast(_floatType, LoadV(image.GetAddressRegister(hasOffset ? 1 : 0)))
+                    ? Bitcast(
+                        _floatType,
+                        LoadV(image.GetAddressRegister(compareIndex)))
                     : 0u;
                 var operands = new List<uint>
                 {
@@ -3124,9 +3157,10 @@ internal static partial class Gen5SpirvTranslator
                     operands.Add(UInt(component));
                 }
 
-                if (hasOffset)
+                var imageOperands = hasOffset ? 0x10u : 0u;
+                if (imageOperands != 0)
                 {
-                    operands.Add(0x10u);
+                    operands.Add(imageOperands);
                     operands.Add(offset);
                 }
 
