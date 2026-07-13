@@ -4,6 +4,7 @@
 using SharpEmu.HLE;
 using SharpEmu.Libs.VideoOut;
 using System.Buffers.Binary;
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -2280,12 +2281,21 @@ internal static class Gen5ShaderTranslator
                     "GlobalAtomicInc" or "GlobalAtomicDec" => 1u,
                     _ => 0u,
                 };
-                sources =
-                [
+                var globalSources = new List<Gen5Operand>
+                {
                     Gen5Operand.Vector(vectorAddress),
                     Gen5Operand.Scalar(scalarAddress),
-                ];
+                };
                 var isAtomic = opcode.StartsWith("GlobalAtomic", StringComparison.Ordinal);
+                if (opcode.StartsWith("GlobalStore", StringComparison.Ordinal) || isAtomic)
+                {
+                    for (uint index = 0; index < dwordCount; index++)
+                    {
+                        globalSources.Add(Gen5Operand.Vector(vectorData + index));
+                    }
+                }
+
+                sources = globalSources;
                 destinations = opcode.StartsWith("GlobalStore", StringComparison.Ordinal) ||
                     (isAtomic && !glc)
                     ? []
@@ -2348,13 +2358,22 @@ internal static class Gen5ShaderTranslator
                     "BufferAtomicInc" or "BufferAtomicDec" => 1u,
                     _ => 0u,
                 };
-                sources =
-                [
+                var bufferSources = new List<Gen5Operand>
+                {
                     Gen5Operand.Vector(vectorAddress),
                     Gen5Operand.Scalar(scalarResource),
                     Gen5Operand.Source(scalarOffset, literal),
-                ];
+                };
                 var isAtomic = opcode.StartsWith("BufferAtomic", StringComparison.Ordinal);
+                if (opcode.StartsWith("BufferStore", StringComparison.Ordinal) || isAtomic)
+                {
+                    for (uint index = 0; index < dwordCount; index++)
+                    {
+                        bufferSources.Add(Gen5Operand.Vector(vectorData + index));
+                    }
+                }
+
+                sources = bufferSources;
                 destinations = opcode.StartsWith("BufferStore", StringComparison.Ordinal) ||
                     (isAtomic && !glc)
                     ? []
@@ -2395,12 +2414,21 @@ internal static class Gen5ShaderTranslator
                     "TBufferStoreFormatXyzw" => 4u,
                     _ => 0u,
                 };
-                sources =
-                [
+                var typedBufferSources = new List<Gen5Operand>
+                {
                     Gen5Operand.Vector(vectorAddress),
                     Gen5Operand.Scalar(scalarResource),
                     Gen5Operand.Source(scalarOffset, literal),
-                ];
+                };
+                if (opcode.StartsWith("TBufferStore", StringComparison.Ordinal))
+                {
+                    for (uint index = 0; index < dwordCount; index++)
+                    {
+                        typedBufferSources.Add(Gen5Operand.Vector(vectorData + index));
+                    }
+                }
+
+                sources = typedBufferSources;
                 destinations = opcode.StartsWith("TBufferStore", StringComparison.Ordinal)
                     ? []
                     : Enumerable
@@ -2451,6 +2479,14 @@ internal static class Gen5ShaderTranslator
                     if (opcode == "ImageAtomicCmpswap")
                     {
                         imageSources.Add(Gen5Operand.Vector(vectorData + 1));
+                    }
+                }
+                else if (opcode.StartsWith("ImageStore", StringComparison.Ordinal))
+                {
+                    var sourceCount = BitOperations.PopCount((word >> 8) & 0xFu);
+                    for (var index = 0; index < sourceCount; index++)
+                    {
+                        imageSources.Add(Gen5Operand.Vector(vectorData + (uint)index));
                     }
                 }
 
