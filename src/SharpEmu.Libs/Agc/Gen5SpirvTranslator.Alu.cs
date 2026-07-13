@@ -439,6 +439,9 @@ internal static partial class Gen5SpirvTranslator
                 case "VDivFixupF32":
                     result = EmitDivisionFixupF32(instruction);
                     break;
+                case "VDivScaleF32":
+                    result = EmitDivisionScaleF32(instruction);
+                    break;
                 case "VMacF32":
                 case "VFmacF32":
                 {
@@ -1210,6 +1213,136 @@ internal static partial class Gen5SpirvTranslator
                 BitwiseOr(numeratorRaw, UInt(0x0040_0000)),
                 value);
             return EmitFloatResult(instruction, Bitcast(_floatType, value));
+        }
+
+        private uint EmitDivisionScaleF32(Gen5ShaderInstruction instruction)
+        {
+            var input = GetFloatSource(instruction, 0);
+            var denominator = GetFloatSource(instruction, 1);
+            var numerator = GetFloatSource(instruction, 2);
+            var denominatorAbs = BitwiseAnd(
+                Bitcast(_uintType, denominator),
+                UInt(0x7FFF_FFFF));
+            var numeratorAbs = BitwiseAnd(
+                Bitcast(_uintType, numerator),
+                UInt(0x7FFF_FFFF));
+
+            uint Equal(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.IEqual, _boolType, left, right);
+            uint Both(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.LogicalAnd, _boolType, left, right);
+            uint Either(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.LogicalOr, _boolType, left, right);
+            uint SelectFloat(uint condition, uint whenTrue, uint whenFalse) =>
+                _module.AddInstruction(
+                    SpirvOp.Select,
+                    _floatType,
+                    condition,
+                    whenTrue,
+                    whenFalse);
+            uint SelectBool(uint condition, uint whenTrue, uint whenFalse) =>
+                _module.AddInstruction(
+                    SpirvOp.Select,
+                    _boolType,
+                    condition,
+                    whenTrue,
+                    whenFalse);
+            uint IsDenormal(uint value)
+            {
+                var absolute = BitwiseAnd(
+                    Bitcast(_uintType, value),
+                    UInt(0x7FFF_FFFF));
+                return Both(
+                    Equal(BitwiseAnd(absolute, UInt(0x7F80_0000)), UInt(0)),
+                    _module.AddInstruction(
+                        SpirvOp.INotEqual,
+                        _boolType,
+                        absolute,
+                        UInt(0)));
+            }
+
+            var denominatorZero = Equal(denominatorAbs, UInt(0));
+            var numeratorZero = Equal(numeratorAbs, UInt(0));
+            var eitherZero = Either(denominatorZero, numeratorZero);
+            var denominatorExponent = ShiftRightLogical(denominatorAbs, UInt(23));
+            var numeratorExponent = ShiftRightLogical(numeratorAbs, UInt(23));
+            var nearMaximum = _module.AddInstruction(
+                SpirvOp.UGreaterThanEqual,
+                _boolType,
+                numeratorExponent,
+                IAdd(denominatorExponent, UInt(96)));
+            var denominatorDenormal = IsDenormal(denominator);
+            var reciprocal = _module.AddInstruction(
+                SpirvOp.FDiv,
+                _floatType,
+                Float(1),
+                denominator);
+            var quotient = _module.AddInstruction(
+                SpirvOp.FDiv,
+                _floatType,
+                numerator,
+                denominator);
+            var reciprocalDenormal = IsDenormal(reciprocal);
+            var quotientDenormal = IsDenormal(quotient);
+            var bothResultsDenormal = Both(reciprocalDenormal, quotientDenormal);
+            var tinyNumerator = _module.AddInstruction(
+                SpirvOp.ULessThanEqual,
+                _boolType,
+                numeratorExponent,
+                UInt(23));
+            var inputIsDenominator = _module.AddInstruction(
+                SpirvOp.FOrdEqual,
+                _boolType,
+                input,
+                denominator);
+            var inputIsNumerator = _module.AddInstruction(
+                SpirvOp.FOrdEqual,
+                _boolType,
+                input,
+                numerator);
+            var scaleUp = Ext(
+                53,
+                _floatType,
+                input,
+                _module.Constant(_intType, 64));
+            var scaleDown = Ext(
+                53,
+                _floatType,
+                input,
+                _module.Constant(_intType, unchecked((uint)-64)));
+
+            var value = input;
+            value = SelectFloat(tinyNumerator, scaleUp, value);
+            value = SelectFloat(
+                quotientDenormal,
+                SelectFloat(inputIsNumerator, scaleUp, input),
+                value);
+            value = SelectFloat(reciprocalDenormal, scaleDown, value);
+            value = SelectFloat(
+                bothResultsDenormal,
+                SelectFloat(inputIsDenominator, scaleUp, input),
+                value);
+            value = SelectFloat(denominatorDenormal, scaleUp, value);
+            value = SelectFloat(
+                nearMaximum,
+                SelectFloat(inputIsDenominator, scaleUp, input),
+                value);
+            value = SelectFloat(
+                eitherZero,
+                Bitcast(_floatType, UInt(0x7FC0_0000)),
+                value);
+
+            var falseValue = _module.ConstantBool(false);
+            var trueValue = _module.ConstantBool(true);
+            var scaleQuotient = falseValue;
+            scaleQuotient = SelectBool(quotientDenormal, trueValue, scaleQuotient);
+            scaleQuotient = SelectBool(reciprocalDenormal, falseValue, scaleQuotient);
+            scaleQuotient = SelectBool(bothResultsDenormal, trueValue, scaleQuotient);
+            scaleQuotient = SelectBool(denominatorDenormal, falseValue, scaleQuotient);
+            scaleQuotient = SelectBool(nearMaximum, trueValue, scaleQuotient);
+            scaleQuotient = SelectBool(eitherZero, falseValue, scaleQuotient);
+            StoreCarryOut(instruction, scaleQuotient);
+            return EmitFloatResult(instruction, value);
         }
 
         private uint GetFloat16Source(
