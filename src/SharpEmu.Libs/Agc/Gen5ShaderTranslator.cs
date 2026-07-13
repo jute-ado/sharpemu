@@ -799,6 +799,7 @@ internal static class Gen5ShaderTranslator
         0x42 => "VMovreldB32",
         0x43 => "VMovrelsB32",
         0x44 => "VMovrelsdB32",
+        0x48 => "VMovrelsd2B32",
         0x50 => "VCvtF16U16",
         0x51 => "VCvtF16I16",
         0x52 => "VCvtU16F16",
@@ -817,8 +818,11 @@ internal static class Gen5ShaderTranslator
         0x5F => "VFractF16",
         0x60 => "VSinF16",
         0x61 => "VCosF16",
+        0x62 => "VSatPkU8I16",
         0x63 => "VCvtNormI16F16",
         0x64 => "VCvtNormU16F16",
+        0x65 => "VSwapB32",
+        0x68 => "VSwaprelB32",
         _ => string.Empty,
     };
 
