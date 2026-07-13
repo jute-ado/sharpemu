@@ -2317,7 +2317,7 @@ internal static partial class Gen5SpirvTranslator
             }
 
             if (instruction.Opcode.EndsWith("B64", StringComparison.Ordinal) ||
-                instruction.Opcode is "SWqmB64" or "SBfeU64" or "SBfeI64")
+                instruction.Opcode is "SWqmB64" or "SBfeU64" or "SBfeI64" or "SAshrI64")
             {
                 return TryEmitScalar64(instruction, destination, out error);
             }
@@ -2482,6 +2482,95 @@ internal static partial class Gen5SpirvTranslator
                                 _uintType,
                                 left,
                                 right);
+                            break;
+                        case "SMulHiU32":
+                        {
+                            var product = _module.AddInstruction(
+                                SpirvOp.IMul,
+                                _ulongType,
+                                _module.AddInstruction(
+                                    SpirvOp.UConvert,
+                                    _ulongType,
+                                    left),
+                                _module.AddInstruction(
+                                    SpirvOp.UConvert,
+                                    _ulongType,
+                                    right));
+                            result = _module.AddInstruction(
+                                SpirvOp.UConvert,
+                                _uintType,
+                                ShiftRightLogical64(
+                                    product,
+                                    _module.Constant64(_ulongType, 32)));
+                            break;
+                        }
+                        case "SMulHiI32":
+                        {
+                            var product = _module.AddInstruction(
+                                SpirvOp.IMul,
+                                _longType,
+                                _module.AddInstruction(
+                                    SpirvOp.SConvert,
+                                    _longType,
+                                    Bitcast(_intType, left)),
+                                _module.AddInstruction(
+                                    SpirvOp.SConvert,
+                                    _longType,
+                                    Bitcast(_intType, right)));
+                            var high = _module.AddInstruction(
+                                SpirvOp.ShiftRightArithmetic,
+                                _longType,
+                                product,
+                                _module.Constant64(_ulongType, 32));
+                            result = Bitcast(
+                                _uintType,
+                                _module.AddInstruction(
+                                    SpirvOp.SConvert,
+                                    _intType,
+                                    high));
+                            break;
+                        }
+                        case "SAbsdiffI32":
+                        {
+                            var difference = _module.AddInstruction(
+                                SpirvOp.ISub,
+                                _uintType,
+                                left,
+                                right);
+                            var negative = _module.AddInstruction(
+                                SpirvOp.SLessThan,
+                                _boolType,
+                                Bitcast(_intType, difference),
+                                Bitcast(_intType, UInt(0)));
+                            result = _module.AddInstruction(
+                                SpirvOp.Select,
+                                _uintType,
+                                negative,
+                                _module.AddInstruction(
+                                    SpirvOp.ISub,
+                                    _uintType,
+                                    UInt(0),
+                                    difference),
+                                difference);
+                            Store(_scc, IsNotZero(result));
+                            break;
+                        }
+                        case "SPackLlB32B16":
+                            result = BitwiseOr(
+                                BitwiseAnd(left, UInt(0xFFFF)),
+                                ShiftLeftLogical(
+                                    BitwiseAnd(right, UInt(0xFFFF)),
+                                    UInt(16)));
+                            break;
+                        case "SPackLhB32B16":
+                            result = BitwiseOr(
+                                BitwiseAnd(left, UInt(0xFFFF)),
+                                BitwiseAnd(right, UInt(0xFFFF_0000)));
+                            break;
+                        case "SPackHhB32B16":
+                            result = BitwiseOr(
+                                ShiftRightLogical(left, UInt(16)),
+                                BitwiseAnd(right, UInt(0xFFFF_0000)));
                             break;
                         case "SAndB32":
                             result = BitwiseAnd(left, right);
@@ -2662,9 +2751,30 @@ internal static partial class Gen5SpirvTranslator
                         case "SLshl4AddU32":
                         {
                             var shift = (uint)(instruction.Opcode[5] - '0');
-                            result = IAdd(
-                                ShiftLeftLogical(left, UInt(shift)),
-                                right);
+                            var wideResult = _module.AddInstruction(
+                                SpirvOp.IAdd,
+                                _ulongType,
+                                ShiftLeftLogical64(
+                                    _module.AddInstruction(
+                                        SpirvOp.UConvert,
+                                        _ulongType,
+                                        left),
+                                    _module.Constant64(_ulongType, shift)),
+                                _module.AddInstruction(
+                                    SpirvOp.UConvert,
+                                    _ulongType,
+                                    right));
+                            result = _module.AddInstruction(
+                                SpirvOp.UConvert,
+                                _uintType,
+                                wideResult);
+                            Store(
+                                _scc,
+                                _module.AddInstruction(
+                                    SpirvOp.UGreaterThan,
+                                    _boolType,
+                                    wideResult,
+                                    _module.Constant64(_ulongType, uint.MaxValue)));
                             break;
                         }
                         default:
@@ -2785,6 +2895,32 @@ internal static partial class Gen5SpirvTranslator
             out string error)
         {
             error = string.Empty;
+            if (instruction.Opcode == "SBfmB64")
+            {
+                if (instruction.Sources.Count < 2)
+                {
+                    error = "missing scalar 64-bit mask source";
+                    return false;
+                }
+
+                var width = _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _ulongType,
+                    BitwiseAnd(GetRawSource(instruction, 0), UInt(63)));
+                var offset = _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _ulongType,
+                    BitwiseAnd(GetRawSource(instruction, 1), UInt(63)));
+                var one = _module.Constant64(_ulongType, 1);
+                var mask = _module.AddInstruction(
+                    SpirvOp.ISub,
+                    _ulongType,
+                    ShiftLeftLogical64(one, width),
+                    one);
+                StoreS64(destination, ShiftLeftLogical64(mask, offset));
+                return true;
+            }
+
             var left = GetRawSource64(instruction, 0);
             if (instruction.Opcode.EndsWith("SaveexecB64", StringComparison.Ordinal))
             {
@@ -2863,7 +2999,7 @@ internal static partial class Gen5SpirvTranslator
                 return true;
             }
 
-            if (instruction.Opcode is "SLshlB64" or "SLshrB64")
+            if (instruction.Opcode is "SLshlB64" or "SLshrB64" or "SAshrI64")
             {
                 if (instruction.Sources.Count < 2)
                 {
@@ -2875,9 +3011,12 @@ internal static partial class Gen5SpirvTranslator
                     SpirvOp.UConvert,
                     _ulongType,
                     GetRawSource(instruction, 1));
-                var shiftedValue = instruction.Opcode == "SLshlB64"
-                    ? ShiftLeftLogical64(left, shift)
-                    : ShiftRightLogical64(left, shift);
+                var shiftedValue = instruction.Opcode switch
+                {
+                    "SLshlB64" => ShiftLeftLogical64(left, shift),
+                    "SLshrB64" => ShiftRightLogical64(left, shift),
+                    _ => ShiftRightArithmetic64(left, shift),
+                };
                 StoreS64(destination, shiftedValue);
                 Store(_scc, IsNotZero64(shiftedValue));
                 return true;

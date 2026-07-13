@@ -579,7 +579,6 @@ internal static class Gen5ShaderTranslator
             0x28 => "SBfeI32",
             0x29 => "SBfeU64",
             0x2A => "SBfeI64",
-            0x2D => "SAbsdiffI32",
             0x2E => "SLshl1AddU32",
             0x2F => "SLshl2AddU32",
             0x30 => "SLshl3AddU32",
