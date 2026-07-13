@@ -196,6 +196,7 @@ internal sealed record Gen5GlobalMemoryControl(
     uint DwordCount,
     uint VectorAddress,
     uint VectorData,
+    uint VectorDestination,
     uint ScalarAddress,
     int OffsetBytes,
     bool Glc,

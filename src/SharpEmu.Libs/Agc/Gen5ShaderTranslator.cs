@@ -1562,6 +1562,16 @@ internal static class Gen5ShaderTranslator
             0x30 => "AtomicSwap",
             0x31 => "AtomicCmpswap",
             0x32 => "AtomicAdd",
+            0x33 => "AtomicSub",
+            0x35 => "AtomicSmin",
+            0x36 => "AtomicUmin",
+            0x37 => "AtomicSmax",
+            0x38 => "AtomicUmax",
+            0x39 => "AtomicAnd",
+            0x3A => "AtomicOr",
+            0x3B => "AtomicXor",
+            0x3C => "AtomicInc",
+            0x3D => "AtomicDec",
             _ => string.Empty,
         };
         name = prefix.Length == 0 || operation.Length == 0 ? string.Empty : prefix + operation;
@@ -2214,7 +2224,9 @@ internal static class Gen5ShaderTranslator
                 var extra = words[1];
                 var vectorAddress = extra & 0xFF;
                 var vectorData = (extra >> 8) & 0xFF;
+                var vectorDestination = (extra >> 24) & 0xFF;
                 var scalarAddress = (extra >> 16) & 0x7F;
+                var glc = ((word >> 16) & 1) != 0;
                 var dwordCount = opcode switch
                 {
                     "GlobalLoadUbyte" or "GlobalLoadSbyte" or
@@ -2228,6 +2240,13 @@ internal static class Gen5ShaderTranslator
                     "GlobalStoreDwordx2" => 2u,
                     "GlobalStoreDwordx3" => 3u,
                     "GlobalStoreDwordx4" => 4u,
+                    "GlobalAtomicCmpswap" => 2u,
+                    "GlobalAtomicSwap" or "GlobalAtomicAdd" or
+                    "GlobalAtomicSub" or "GlobalAtomicSmin" or
+                    "GlobalAtomicUmin" or "GlobalAtomicSmax" or
+                    "GlobalAtomicUmax" or "GlobalAtomicAnd" or
+                    "GlobalAtomicOr" or "GlobalAtomicXor" or
+                    "GlobalAtomicInc" or "GlobalAtomicDec" => 1u,
                     _ => 0u,
                 };
                 sources =
@@ -2235,19 +2254,24 @@ internal static class Gen5ShaderTranslator
                     Gen5Operand.Vector(vectorAddress),
                     Gen5Operand.Scalar(scalarAddress),
                 ];
-                destinations = opcode.StartsWith("GlobalStore", StringComparison.Ordinal)
+                var isAtomic = opcode.StartsWith("GlobalAtomic", StringComparison.Ordinal);
+                destinations = opcode.StartsWith("GlobalStore", StringComparison.Ordinal) ||
+                    (isAtomic && !glc)
                     ? []
                     : Enumerable
-                        .Range((int)vectorData, checked((int)dwordCount))
+                        .Range(
+                            (int)vectorDestination,
+                            checked((int)(isAtomic ? 1u : dwordCount)))
                         .Select(index => Gen5Operand.Vector((uint)index))
                         .ToArray();
                 control = new Gen5GlobalMemoryControl(
                     dwordCount,
                     vectorAddress,
                     vectorData,
+                    vectorDestination,
                     scalarAddress,
                     SignExtend(word & 0x1FFF, 13),
-                    ((word >> 16) & 1) != 0,
+                    glc,
                     ((word >> 17) & 1) != 0);
                 break;
             }
