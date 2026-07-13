@@ -2143,6 +2143,105 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesVectorFloat16UnaryOperationsToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump. The E64 forms exercise source modifiers and F16
+        // output clamp/multiplier handling in addition to the compact forms.
+        var ctx = CreateContext(
+        [
+            0x7E34A91Bu,              // v_rcp_f16_e32 v26, v27
+            0x7E3CAB1Fu,              // v_sqrt_f16_e32 v30, v31
+            0x7E38AD1Du,              // v_rsq_f16_e32 v28, v29
+            0x7E30AF19u,              // v_log_f16_e32 v24, v25
+            0x7E2CB117u,              // v_exp_f16_e32 v22, v23
+            0x7E4CB327u,              // v_frexp_mant_f16_e32 v38, v39
+            0x7E48B525u,              // v_frexp_exp_i16_f16_e32 v36, v37
+            0x7E24B713u,              // v_floor_f16_e32 v18, v19
+            0x7E20B911u,              // v_ceil_f16_e32 v16, v17
+            0x7E1CBB0Fu,              // v_trunc_f16_e32 v14, v15
+            0x7E28BD15u,              // v_rndne_f16_e32 v20, v21
+            0x7E18BF0Du,              // v_fract_f16_e32 v12, v13
+            0x7E40C121u,              // v_sin_f16_e32 v32, v33
+            0x7E44C323u,              // v_cos_f16_e32 v34, v35
+            0xD5D58128u, 0x08000129u, // v_sqrt_f16_e64 v40, |v41| clamp mul:2
+            0xD5DF002Au, 0x2000012Bu, // v_fract_f16_e64 v42, -v43
+            0xD5DA002Cu, 0x0000012Du, // v_frexp_exp_i16_f16_e64 v44, v45
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "VRcpF16", "VSqrtF16", "VRsqF16", "VLogF16", "VExpF16",
+                "VFrexpMantF16", "VFrexpExpI16F16", "VFloorF16", "VCeilF16",
+                "VTruncF16", "VRndneF16", "VFractF16", "VSinF16", "VCosF16",
+                "VSqrtF16", "VFractF16", "VFrexpExpI16F16", "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            [26u, 30u, 28u, 24u, 22u, 38u, 36u, 18u, 16u, 14u, 20u, 12u,
+             32u, 34u, 40u, 42u, 44u],
+            program.Instructions
+                .Take(17)
+                .Select(instruction => Assert.Single(instruction.Destinations).Value));
+
+        var modified = Assert.IsType<Gen5Vop3Control>(program.Instructions[14].Control);
+        Assert.Equal(1u, modified.AbsoluteMask);
+        Assert.Equal(1u, modified.OutputModifier);
+        Assert.True(modified.Clamp);
+        Assert.Equal(
+            1u,
+            Assert.IsType<Gen5Vop3Control>(program.Instructions[15].Control).NegateMask);
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.False(ContainsSpirvCapability(shader.Spirv, SpirvCapability.Float16));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 2));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 3));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 4));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 8));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 9));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 10));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 13));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 14));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 29));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 30));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 31));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 32));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 43));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 52));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 58));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 62));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FDiv));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FMul));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FNegate));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.CompositeExtract));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseAnd));
+    }
+
+    [Fact]
     public void CompilesVectorBytePermuteAndDotAccumulateToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
