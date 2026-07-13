@@ -266,18 +266,11 @@ internal static partial class Gen5SpirvTranslator
                 }
                 case "VCvtPknormI16F32":
                 case "VCvtPknormU16F32":
-                {
-                    var vector = _module.AddInstruction(
-                        SpirvOp.CompositeConstruct,
-                        _vec2Type,
+                    result = EmitPackedNormalizedFloatToInteger16(
                         GetFloatSource(instruction, 0),
-                        GetFloatSource(instruction, 1));
-                    result = Ext(
-                        instruction.Opcode == "VCvtPknormI16F32" ? 56u : 57u,
-                        _uintType,
-                        vector);
+                        GetFloatSource(instruction, 1),
+                        instruction.Opcode == "VCvtPknormI16F32");
                     break;
-                }
                 case "VPackB32F16":
                     result = BitwiseOr(
                         GetFloat16RawSource(instruction, 0),
@@ -287,18 +280,11 @@ internal static partial class Gen5SpirvTranslator
                     break;
                 case "VCvtPknormI16F16":
                 case "VCvtPknormU16F16":
-                {
-                    var vector = _module.AddInstruction(
-                        SpirvOp.CompositeConstruct,
-                        _vec2Type,
+                    result = EmitPackedNormalizedFloatToInteger16(
                         GetFloat16Source(instruction, 0),
-                        GetFloat16Source(instruction, 1));
-                    result = Ext(
-                        instruction.Opcode == "VCvtPknormI16F16" ? 56u : 57u,
-                        _uintType,
-                        vector);
+                        GetFloat16Source(instruction, 1),
+                        instruction.Opcode == "VCvtPknormI16F16");
                     break;
-                }
                 case "VCvtF16I16":
                 case "VCvtF16U16":
                 {
@@ -1845,6 +1831,29 @@ internal static partial class Gen5SpirvTranslator
                 instruction,
                 destination,
                 Ext(signed ? 56u : 57u, _uintType, vector));
+        }
+
+        private uint EmitPackedNormalizedFloatToInteger16(
+            uint low,
+            uint high,
+            bool signed)
+        {
+            // AMD defines these conversions using DirectX SNORM/UNORM rules,
+            // which convert NaN to zero. GLSL pack instructions do not define
+            // a NaN result, so sanitize both components before packing.
+            uint Sanitize(uint source) => _module.AddInstruction(
+                SpirvOp.Select,
+                _floatType,
+                _module.AddInstruction(SpirvOp.IsNan, _boolType, source),
+                Float(0),
+                source);
+
+            var vector = _module.AddInstruction(
+                SpirvOp.CompositeConstruct,
+                _vec2Type,
+                Sanitize(low),
+                Sanitize(high));
+            return Ext(signed ? 56u : 57u, _uintType, vector);
         }
 
         private uint Emit16BitResult(
