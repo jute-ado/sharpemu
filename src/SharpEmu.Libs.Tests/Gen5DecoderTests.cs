@@ -972,6 +972,10 @@ public sealed class Gen5DecoderTests
             0xE0E44000u, 0x80001400u, // buffer_atomic_and v20, off, s[0:3], 0 glc
             0xE0E84000u, 0x80001600u, // buffer_atomic_or v22, off, s[0:3], 0 glc
             0xE0EC4000u, 0x80001800u, // buffer_atomic_xor v24, off, s[0:3], 0 glc
+            0xE0D84000u, 0x80001A00u, // buffer_atomic_umin v26, off, s[0:3], 0 glc
+            0xE0DC4000u, 0x80001C00u, // buffer_atomic_smax v28, off, s[0:3], 0 glc
+            0xE0F04000u, 0x80001E00u, // buffer_atomic_inc v30, off, s[0:3], 0 glc
+            0xE0F44000u, 0x80002000u, // buffer_atomic_dec v32, off, s[0:3], 0 glc
             SEndpgm,
         ]);
         Assert.True(
@@ -992,16 +996,20 @@ public sealed class Gen5DecoderTests
                 "BufferAtomicAnd",
                 "BufferAtomicOr",
                 "BufferAtomicXor",
+                "BufferAtomicUmin",
+                "BufferAtomicSmax",
+                "BufferAtomicInc",
+                "BufferAtomicDec",
                 "SEndpgm",
             ],
             program.Instructions.Select(instruction => instruction.Opcode));
         Assert.Equal(
-            [1u, 2u, 1u, 1u, 1u, 1u, 1u, 1u, 1u],
-            program.Instructions.Take(9)
+            [1u, 2u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u, 1u],
+            program.Instructions.Take(13)
                 .Select(instruction =>
                     Assert.IsType<Gen5BufferMemoryControl>(instruction.Control).DwordCount));
         Assert.All(
-            program.Instructions.Take(9),
+            program.Instructions.Take(13),
             instruction => Assert.True(
                 Assert.IsType<Gen5BufferMemoryControl>(instruction.Control).Glc));
 
@@ -1016,7 +1024,7 @@ public sealed class Gen5DecoderTests
                 new Gen5GlobalMemoryBinding(
                     ScalarAddress: 0,
                     BaseAddress: 0x2000_0000,
-                    program.Instructions.Take(9).Select(instruction => instruction.Pc).ToArray(),
+                    program.Instructions.Take(13).Select(instruction => instruction.Pc).ToArray(),
                     new byte[64]),
             ]);
         Assert.True(
@@ -1030,14 +1038,20 @@ public sealed class Gen5DecoderTests
                 out var compileError),
             compileError);
         Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicExchange));
-        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicCompareExchange));
+        Assert.Equal(3, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicCompareExchange));
+        Assert.Equal(2, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicLoad));
         Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicIAdd));
         Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicISub));
         Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicSMin));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicUMin));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicSMax));
         Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicUMax));
         Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicAnd));
         Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicOr));
         Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicXor));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UGreaterThanEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UGreaterThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.LogicalOr));
         Assert.True(ContainsSpirvConstant(shader.Spirv, 0x42));
         Assert.True(ContainsSpirvConstant(shader.Spirv, 0x48));
     }
