@@ -654,7 +654,7 @@ internal static class Gen5ShaderScalarEvaluator
             return true;
         }
 
-        if (instruction.Opcode is "SMovB64" or "SWqmB64" or "SNotB64")
+        if (instruction.Opcode is "SMovB64" or "SCmovB64" or "SWqmB64" or "SNotB64")
         {
             if (destination.Value >= ScalarRegisterCount - 1 ||
                 !TryEvaluateScalarOperand64(
@@ -665,6 +665,11 @@ internal static class Gen5ShaderScalarEvaluator
             {
                 error = $"scalar-source64 pc=0x{instruction.Pc:X} op={instruction.Opcode}";
                 return false;
+            }
+
+            if (instruction.Opcode == "SCmovB64" && !scalarConditionCode)
+            {
+                return true;
             }
 
             if (instruction.Opcode == "SNotB64")
@@ -829,9 +834,13 @@ internal static class Gen5ShaderScalarEvaluator
             return false;
         }
 
-        if (instruction.Opcode == "SMovB32")
+        if (instruction.Opcode is "SMovB32" or "SCmovB32")
         {
-            registers[destination.Value] = left;
+            if (instruction.Opcode == "SMovB32" || scalarConditionCode)
+            {
+                registers[destination.Value] = left;
+            }
+
             return true;
         }
 

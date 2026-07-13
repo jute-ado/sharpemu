@@ -2335,6 +2335,14 @@ internal static partial class Gen5SpirvTranslator
                 case "SMovB32":
                     result = left;
                     break;
+                case "SCmovB32":
+                    result = _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        Load(_boolType, _scc),
+                        left,
+                        LoadS(destination));
+                    break;
                 case "SNotB32":
                     result = _module.AddInstruction(SpirvOp.Not, _uintType, left);
                     StoreS(destination, result);
@@ -3164,6 +3172,15 @@ internal static partial class Gen5SpirvTranslator
             if (instruction.Opcode is "SMovB64" or "SWqmB64")
             {
                 value = left;
+            }
+            else if (instruction.Opcode == "SCmovB64")
+            {
+                value = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _ulongType,
+                    Load(_boolType, _scc),
+                    left,
+                    LoadS64(destination));
             }
             else if (instruction.Opcode == "SNotB64")
             {
