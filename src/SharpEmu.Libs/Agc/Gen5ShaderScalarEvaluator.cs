@@ -191,6 +191,11 @@ internal static class Gen5ShaderScalarEvaluator
 
             if (instruction.Control is Gen5GlobalMemoryControl globalMemory)
             {
+                if (!instruction.Opcode.StartsWith("Global", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
                 if (globalMemory.ScalarAddress >= ScalarRegisterCount - 1)
                 {
                     error =

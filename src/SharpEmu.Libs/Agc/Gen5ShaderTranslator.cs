@@ -2286,30 +2286,37 @@ internal static class Gen5ShaderTranslator
                 var vectorDestination = (extra >> 24) & 0xFF;
                 var scalarAddress = (extra >> 16) & 0x7F;
                 var glc = ((word >> 16) & 1) != 0;
-                var dwordCount = opcode switch
+                var operation = opcode.StartsWith("Global", StringComparison.Ordinal)
+                    ? opcode["Global".Length..]
+                    : opcode.StartsWith("Scratch", StringComparison.Ordinal)
+                        ? opcode["Scratch".Length..]
+                        : opcode.StartsWith("Flat", StringComparison.Ordinal)
+                            ? opcode["Flat".Length..]
+                            : string.Empty;
+                var dwordCount = operation switch
                 {
-                    "GlobalLoadUbyte" or "GlobalLoadSbyte" or
-                    "GlobalLoadUshort" or "GlobalLoadSshort" or
-                    "GlobalLoadUbyteD16" or "GlobalLoadUbyteD16Hi" or
-                    "GlobalLoadSbyteD16" or "GlobalLoadSbyteD16Hi" or
-                    "GlobalLoadShortD16" or "GlobalLoadShortD16Hi" => 1u,
-                    "GlobalLoadDword" => 1u,
-                    "GlobalLoadDwordx2" => 2u,
-                    "GlobalLoadDwordx3" => 3u,
-                    "GlobalLoadDwordx4" => 4u,
-                    "GlobalStoreByte" or "GlobalStoreByteD16Hi" or
-                    "GlobalStoreShort" or "GlobalStoreShortD16Hi" => 1u,
-                    "GlobalStoreDword" => 1u,
-                    "GlobalStoreDwordx2" => 2u,
-                    "GlobalStoreDwordx3" => 3u,
-                    "GlobalStoreDwordx4" => 4u,
-                    "GlobalAtomicCmpswap" => 2u,
-                    "GlobalAtomicSwap" or "GlobalAtomicAdd" or
-                    "GlobalAtomicSub" or "GlobalAtomicSmin" or
-                    "GlobalAtomicUmin" or "GlobalAtomicSmax" or
-                    "GlobalAtomicUmax" or "GlobalAtomicAnd" or
-                    "GlobalAtomicOr" or "GlobalAtomicXor" or
-                    "GlobalAtomicInc" or "GlobalAtomicDec" => 1u,
+                    "LoadUbyte" or "LoadSbyte" or
+                    "LoadUshort" or "LoadSshort" or
+                    "LoadUbyteD16" or "LoadUbyteD16Hi" or
+                    "LoadSbyteD16" or "LoadSbyteD16Hi" or
+                    "LoadShortD16" or "LoadShortD16Hi" => 1u,
+                    "LoadDword" => 1u,
+                    "LoadDwordx2" => 2u,
+                    "LoadDwordx3" => 3u,
+                    "LoadDwordx4" => 4u,
+                    "StoreByte" or "StoreByteD16Hi" or
+                    "StoreShort" or "StoreShortD16Hi" => 1u,
+                    "StoreDword" => 1u,
+                    "StoreDwordx2" => 2u,
+                    "StoreDwordx3" => 3u,
+                    "StoreDwordx4" => 4u,
+                    "AtomicCmpswap" => 2u,
+                    "AtomicSwap" or "AtomicAdd" or
+                    "AtomicSub" or "AtomicSmin" or
+                    "AtomicUmin" or "AtomicSmax" or
+                    "AtomicUmax" or "AtomicAnd" or
+                    "AtomicOr" or "AtomicXor" or
+                    "AtomicInc" or "AtomicDec" => 1u,
                     _ => 0u,
                 };
                 var globalSources = new List<Gen5Operand>
@@ -2317,8 +2324,8 @@ internal static class Gen5ShaderTranslator
                     Gen5Operand.Vector(vectorAddress),
                     Gen5Operand.Scalar(scalarAddress),
                 };
-                var isAtomic = opcode.StartsWith("GlobalAtomic", StringComparison.Ordinal);
-                if (opcode.StartsWith("GlobalStore", StringComparison.Ordinal) || isAtomic)
+                var isAtomic = operation.StartsWith("Atomic", StringComparison.Ordinal);
+                if (operation.StartsWith("Store", StringComparison.Ordinal) || isAtomic)
                 {
                     for (uint index = 0; index < dwordCount; index++)
                     {
@@ -2327,7 +2334,7 @@ internal static class Gen5ShaderTranslator
                 }
 
                 sources = globalSources;
-                destinations = opcode.StartsWith("GlobalStore", StringComparison.Ordinal) ||
+                destinations = operation.StartsWith("Store", StringComparison.Ordinal) ||
                     (isAtomic && !glc)
                     ? []
                     : Enumerable
