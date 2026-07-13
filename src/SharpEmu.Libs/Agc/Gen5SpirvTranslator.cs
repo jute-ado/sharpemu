@@ -2908,23 +2908,30 @@ internal static partial class Gen5SpirvTranslator
             {
                 var hasOffset =
                     instruction.Opcode.EndsWith("O", StringComparison.Ordinal);
+                var hasBias =
+                    instruction.Opcode.Contains("SampleB", StringComparison.Ordinal);
                 var hasCompare =
                     instruction.Opcode.Contains("SampleC", StringComparison.Ordinal);
-                var start = (hasOffset ? 1 : 0) + (hasCompare ? 1 : 0);
+                var hasGradients =
+                    instruction.Opcode.Contains("SampleD", StringComparison.Ordinal);
+                var offsetIndex = 0;
+                var biasIndex = hasOffset ? 1 : 0;
+                var compareIndex = biasIndex + (hasBias ? 1 : 0);
+                var gradientIndex = compareIndex + (hasCompare ? 1 : 0);
+                var start = gradientIndex + (hasGradients ? 4 : 0);
                 var coordinates = BuildFloatCoordinates(image, start);
                 var explicitLod =
                     instruction.Opcode.Contains("Lz", StringComparison.Ordinal) ||
-                    instruction.Opcode.Contains("SampleL", StringComparison.Ordinal);
-                var lod = instruction.Opcode.Contains("Lz", StringComparison.Ordinal)
-                    ? Float(0)
-                    : Bitcast(
-                        _floatType,
-                        LoadV(image.GetAddressRegister(start + 2)));
-                var offset = hasOffset ? BuildImageOffset(image, 0) : 0u;
-                var imageOperands =
-                    (explicitLod ? 2u : 0u) | (hasOffset ? 0x10u : 0u);
+                    instruction.Opcode.Contains("SampleL", StringComparison.Ordinal) ||
+                    hasGradients;
+                var offset = hasOffset ? BuildImageOffset(image, offsetIndex) : 0u;
+                var imageOperands = (hasBias ? 1u : 0u) |
+                    (hasGradients ? 4u : explicitLod ? 2u : 0u) |
+                    (hasOffset ? 0x10u : 0u);
                 var reference = hasCompare
-                    ? Bitcast(_floatType, LoadV(image.GetAddressRegister(hasOffset ? 1 : 0)))
+                    ? Bitcast(
+                        _floatType,
+                        LoadV(image.GetAddressRegister(compareIndex)))
                     : 0u;
                 var operands = new List<uint>
                 {
@@ -2935,9 +2942,27 @@ internal static partial class Gen5SpirvTranslator
                 if (imageOperands != 0)
                 {
                     operands.Add(imageOperands);
-                    if (explicitLod)
+                    if (hasBias)
                     {
-                        operands.Add(lod);
+                        operands.Add(
+                            Bitcast(
+                                _floatType,
+                                LoadV(image.GetAddressRegister(biasIndex))));
+                    }
+
+                    if (hasGradients)
+                    {
+                        operands.Add(BuildFloatCoordinates(image, gradientIndex));
+                        operands.Add(BuildFloatCoordinates(image, gradientIndex + 2));
+                    }
+                    else if (explicitLod)
+                    {
+                        operands.Add(
+                            instruction.Opcode.Contains("Lz", StringComparison.Ordinal)
+                                ? Float(0)
+                                : Bitcast(
+                                    _floatType,
+                                    LoadV(image.GetAddressRegister(start + 2))));
                     }
 
                     if (hasOffset)
