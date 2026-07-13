@@ -2259,7 +2259,11 @@ internal static class Gen5ShaderTranslator
                     "BufferStoreDwordx2" => 2u,
                     "BufferStoreDwordx3" => 3u,
                     "BufferStoreDwordx4" => 4u,
-                    "BufferAtomicAdd" => 1u,
+                    "BufferAtomicCmpswap" => 2u,
+                    "BufferAtomicSwap" or "BufferAtomicAdd" or
+                    "BufferAtomicSub" or "BufferAtomicSmin" or
+                    "BufferAtomicUmax" or "BufferAtomicAnd" or
+                    "BufferAtomicOr" or "BufferAtomicXor" => 1u,
                     _ => 0u,
                 };
                 sources =
