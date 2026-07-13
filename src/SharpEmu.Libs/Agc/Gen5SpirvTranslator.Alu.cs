@@ -12,7 +12,8 @@ internal static partial class Gen5SpirvTranslator
             out string error)
         {
             error = string.Empty;
-            if (instruction.Opcode == "VNop")
+            // SPIR-V has no guest-visible floating-point exception state.
+            if (instruction.Opcode is "VNop" or "VClrexcp")
             {
                 return true;
             }

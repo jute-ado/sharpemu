@@ -212,6 +212,48 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesVectorClearExceptionsAsNoOp()
+    {
+        // Encoding assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0x7E008200u, // v_clrexcp
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(["VClrexcp", "SEndpgm"],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Empty(program.Instructions[0].Sources);
+        Assert.Empty(program.Instructions[0].Destinations);
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out _,
+                out var compileError),
+            compileError);
+    }
+
+    [Fact]
     public void DecodesVop3pOperandsSelectorsAndModifiers()
     {
         var ctx = CreateContext(
