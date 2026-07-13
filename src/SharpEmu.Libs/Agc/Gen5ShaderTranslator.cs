@@ -1511,10 +1511,14 @@ internal static class Gen5ShaderTranslator
             0x32 => "BufferAtomicAdd",
             0x33 => "BufferAtomicSub",
             0x35 => "BufferAtomicSmin",
+            0x36 => "BufferAtomicUmin",
+            0x37 => "BufferAtomicSmax",
             0x38 => "BufferAtomicUmax",
             0x39 => "BufferAtomicAnd",
             0x3A => "BufferAtomicOr",
             0x3B => "BufferAtomicXor",
+            0x3C => "BufferAtomicInc",
+            0x3D => "BufferAtomicDec",
             _ => $"MubufRaw{opcode:X2}",
         };
         sizeDwords = (extra >> 24) == 0xFF ? 3u : 2u;
@@ -2262,8 +2266,10 @@ internal static class Gen5ShaderTranslator
                     "BufferAtomicCmpswap" => 2u,
                     "BufferAtomicSwap" or "BufferAtomicAdd" or
                     "BufferAtomicSub" or "BufferAtomicSmin" or
+                    "BufferAtomicUmin" or "BufferAtomicSmax" or
                     "BufferAtomicUmax" or "BufferAtomicAnd" or
-                    "BufferAtomicOr" or "BufferAtomicXor" => 1u,
+                    "BufferAtomicOr" or "BufferAtomicXor" or
+                    "BufferAtomicInc" or "BufferAtomicDec" => 1u,
                     _ => 0u,
                 };
                 sources =

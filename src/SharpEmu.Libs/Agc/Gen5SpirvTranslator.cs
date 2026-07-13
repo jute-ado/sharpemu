@@ -1379,10 +1379,14 @@ internal static partial class Gen5SpirvTranslator
 
                     EmitExecConditional(() =>
                     {
-                        var original = EmitLdsCompareExchangeLoop(
+                        var original = EmitAtomicCompareExchangeLoop(
                             LdsPointer(
                                 GetRawSource(instruction, 0),
                                 EffectiveDsSingleOffsetBytes(control)),
+                            UInt(2),
+                            UInt(0x102),
+                            UInt(0x108),
+                            UInt(0x102),
                             expected => EmitLdsCasDesiredValue(instruction, expected));
                         if (returnsValue)
                         {
@@ -1735,8 +1739,12 @@ internal static partial class Gen5SpirvTranslator
                 UInt(RdnaWaveLaneCount - 1));
         }
 
-        private uint EmitLdsCompareExchangeLoop(
+        private uint EmitAtomicCompareExchangeLoop(
             uint pointer,
+            uint scope,
+            uint loadMemorySemantics,
+            uint equalMemorySemantics,
+            uint unequalMemorySemantics,
             Func<uint, uint> emitDesiredValue)
         {
             var loopHeader = _module.AllocateId();
@@ -1756,16 +1764,16 @@ internal static partial class Gen5SpirvTranslator
                 SpirvOp.AtomicLoad,
                 _uintType,
                 pointer,
-                UInt(2),
-                UInt(0x102));
+                scope,
+                loadMemorySemantics);
             var desired = emitDesiredValue(expected);
             var observed = _module.AddInstruction(
                 SpirvOp.AtomicCompareExchange,
                 _uintType,
                 pointer,
-                UInt(2),
-                UInt(0x108),
-                UInt(0x102),
+                scope,
+                equalMemorySemantics,
+                unequalMemorySemantics,
                 desired,
                 expected);
             var succeeded = _module.AddInstruction(
@@ -2167,8 +2175,9 @@ internal static partial class Gen5SpirvTranslator
                 EmitExecConditional(() =>
                 {
                     var pointer = BufferWordPointer(bindingIndex, dwordAddress);
-                    var original = instruction.Opcode == "BufferAtomicCmpswap"
-                        ? _module.AddInstruction(
+                    var original = instruction.Opcode switch
+                    {
+                        "BufferAtomicCmpswap" => _module.AddInstruction(
                             SpirvOp.AtomicCompareExchange,
                             _uintType,
                             pointer,
@@ -2176,14 +2185,27 @@ internal static partial class Gen5SpirvTranslator
                             UInt(0x48),
                             UInt(0x42),
                             LoadV(control.VectorData),
-                            LoadV(control.VectorData + 1))
-                        : _module.AddInstruction(
+                            LoadV(control.VectorData + 1)),
+                        "BufferAtomicInc" or "BufferAtomicDec" =>
+                            EmitAtomicCompareExchangeLoop(
+                                pointer,
+                                UInt(1),
+                                UInt(0x42),
+                                UInt(0x48),
+                                UInt(0x42),
+                                expected => EmitBufferCasDesiredValue(
+                                    instruction.Opcode,
+                                    control.VectorData,
+                                    expected)),
+                        _ => _module.AddInstruction(
                             instruction.Opcode switch
                             {
                                 "BufferAtomicSwap" => SpirvOp.AtomicExchange,
                                 "BufferAtomicAdd" => SpirvOp.AtomicIAdd,
                                 "BufferAtomicSub" => SpirvOp.AtomicISub,
                                 "BufferAtomicSmin" => SpirvOp.AtomicSMin,
+                                "BufferAtomicUmin" => SpirvOp.AtomicUMin,
+                                "BufferAtomicSmax" => SpirvOp.AtomicSMax,
                                 "BufferAtomicUmax" => SpirvOp.AtomicUMax,
                                 "BufferAtomicAnd" => SpirvOp.AtomicAnd,
                                 "BufferAtomicOr" => SpirvOp.AtomicOr,
@@ -2195,7 +2217,8 @@ internal static partial class Gen5SpirvTranslator
                             pointer,
                             UInt(1),
                             UInt(0x48),
-                            LoadV(control.VectorData));
+                            LoadV(control.VectorData)),
+                    };
                     if (control.Glc)
                     {
                         StoreV(control.VectorData, original);
@@ -2242,6 +2265,54 @@ internal static partial class Gen5SpirvTranslator
             }
 
             return true;
+        }
+
+        private uint EmitBufferCasDesiredValue(
+            string opcode,
+            uint vectorData,
+            uint expected)
+        {
+            var data = LoadV(vectorData);
+            if (opcode == "BufferAtomicInc")
+            {
+                var incrementWraps = _module.AddInstruction(
+                    SpirvOp.UGreaterThanEqual,
+                    _boolType,
+                    expected,
+                    data);
+                return _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    incrementWraps,
+                    UInt(0),
+                    IAdd(expected, UInt(1)));
+            }
+
+            var isZero = _module.AddInstruction(
+                SpirvOp.IEqual,
+                _boolType,
+                expected,
+                UInt(0));
+            var aboveLimit = _module.AddInstruction(
+                SpirvOp.UGreaterThan,
+                _boolType,
+                expected,
+                data);
+            var decrementWraps = _module.AddInstruction(
+                SpirvOp.LogicalOr,
+                _boolType,
+                isZero,
+                aboveLimit);
+            return _module.AddInstruction(
+                SpirvOp.Select,
+                _uintType,
+                decrementWraps,
+                data,
+                _module.AddInstruction(
+                    SpirvOp.ISub,
+                    _uintType,
+                    expected,
+                    UInt(1)));
         }
 
         private static bool IsFormatBufferLoad(string opcode) =>
