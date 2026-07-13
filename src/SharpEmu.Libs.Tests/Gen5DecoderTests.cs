@@ -1177,6 +1177,126 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesRdna2ScalarUnaryAluToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xBE800901u, // s_wqm_b32 s0, s1
+            0xBE820A04u, // s_wqm_b64 s[2:3], s[4:5]
+            0xBE860C08u, // s_brev_b64 s[6:7], s[8:9]
+            0xBE8A0D0Bu, // s_bcnt0_i32_b32 s10, s11
+            0xBE8C0E0Eu, // s_bcnt0_i32_b64 s12, s[14:15]
+            0xBE8D1010u, // s_bcnt1_i32_b64 s13, s[16:17]
+            0xBE921113u, // s_ff0_i32_b32 s18, s19
+            0xBE941216u, // s_ff0_i32_b64 s20, s[22:23]
+            0xBE951418u, // s_ff1_i32_b64 s21, s[24:25]
+            0xBE9A151Bu, // s_flbit_i32_b32 s26, s27
+            0xBE9C1620u, // s_flbit_i32_b64 s28, s[32:33]
+            0xBE9D171Eu, // s_flbit_i32 s29, s30
+            0xBE9F1822u, // s_flbit_i32_i64 s31, s[34:35]
+            0xBEA41925u, // s_sext_i32_i8 s36, s37
+            0xBEA61A27u, // s_sext_i32_i16 s38, s39
+            0xBEA81B29u, // s_bitset0_b32 s40, s41
+            0xBEAA1C2Cu, // s_bitset0_b64 s[42:43], s44
+            0xBEAE1E30u, // s_bitset1_b64 s[46:47], s48
+            0xBEB13432u, // s_abs_i32 s49, s50
+            0xBF060000u, // s_cmp_eq_u32 s0, s0
+            0xBEB30B34u, // s_brev_b32 s51, s52
+            0xB1350007u, // s_cmovk_i32 s53, 7
+            0xBF070000u, // s_cmp_lg_u32 s0, s0
+            0xBEB31336u, // s_ff1_i32_b32 s51, s54
+            0xB1350009u, // s_cmovk_i32 s53, 9
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[55];
+        scalarRegisters[1] = 0x0001_0000;
+        scalarRegisters[4] = 1;
+        scalarRegisters[5] = 0x8000_0000;
+        scalarRegisters[8] = 1;
+        scalarRegisters[11] = uint.MaxValue;
+        scalarRegisters[14] = uint.MaxValue;
+        scalarRegisters[16] = 0xF0F0_F0F0;
+        scalarRegisters[17] = 0x0F0F_0F0F;
+        scalarRegisters[19] = 0xFFFF_FFFE;
+        scalarRegisters[22] = uint.MaxValue;
+        scalarRegisters[23] = 0xFFFE_FFFF;
+        scalarRegisters[25] = 0x10;
+        scalarRegisters[27] = 0x0000_CCCC;
+        scalarRegisters[33] = 0x0000_CCCC;
+        scalarRegisters[30] = 0xFFFF_3333;
+        scalarRegisters[34] = uint.MaxValue;
+        scalarRegisters[35] = 0xFFFF_3333;
+        scalarRegisters[37] = 0x80;
+        scalarRegisters[39] = 0x8001;
+        scalarRegisters[40] = uint.MaxValue;
+        scalarRegisters[41] = 31;
+        scalarRegisters[42] = uint.MaxValue;
+        scalarRegisters[43] = uint.MaxValue;
+        scalarRegisters[44] = 32;
+        scalarRegisters[48] = 63;
+        scalarRegisters[50] = 0x8000_0001;
+        scalarRegisters[54] = 1;
+        var state = new Gen5ShaderState(program, scalarRegisters, Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.Equal(0x000F_0000u, evaluation.ScalarRegisters[0]);
+        Assert.Equal(0x0000_000Fu, evaluation.ScalarRegisters[2]);
+        Assert.Equal(0xF000_0000u, evaluation.ScalarRegisters[3]);
+        Assert.Equal(0u, evaluation.ScalarRegisters[6]);
+        Assert.Equal(0x8000_0000u, evaluation.ScalarRegisters[7]);
+        Assert.Equal(0u, evaluation.ScalarRegisters[10]);
+        Assert.Equal(32u, evaluation.ScalarRegisters[12]);
+        Assert.Equal(32u, evaluation.ScalarRegisters[13]);
+        Assert.Equal(0u, evaluation.ScalarRegisters[18]);
+        Assert.Equal(48u, evaluation.ScalarRegisters[20]);
+        Assert.Equal(36u, evaluation.ScalarRegisters[21]);
+        Assert.Equal(16u, evaluation.ScalarRegisters[26]);
+        Assert.Equal(16u, evaluation.ScalarRegisters[28]);
+        Assert.Equal(16u, evaluation.ScalarRegisters[29]);
+        Assert.Equal(16u, evaluation.ScalarRegisters[31]);
+        Assert.Equal(0xFFFF_FF80u, evaluation.ScalarRegisters[36]);
+        Assert.Equal(0xFFFF_8001u, evaluation.ScalarRegisters[38]);
+        Assert.Equal(0x7FFF_FFFFu, evaluation.ScalarRegisters[40]);
+        Assert.Equal(uint.MaxValue, evaluation.ScalarRegisters[42]);
+        Assert.Equal(0xFFFF_FFFEu, evaluation.ScalarRegisters[43]);
+        Assert.Equal(0u, evaluation.ScalarRegisters[46]);
+        Assert.Equal(0x8000_0000u, evaluation.ScalarRegisters[47]);
+        Assert.Equal(0x7FFF_FFFFu, evaluation.ScalarRegisters[49]);
+        Assert.Equal(0u, evaluation.ScalarRegisters[51]);
+        Assert.Equal(7u, evaluation.ScalarRegisters[53]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitCount));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitReverse));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldSExtract));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldInsert));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ExtInst));
+    }
+
+    [Fact]
     public void CompilesRdna2ScalarConditionalOperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
