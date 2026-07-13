@@ -804,6 +804,15 @@ internal static class Gen5ShaderTranslator
 
     private static string Vop3FallbackName(uint opcode)
     {
+        var vop2Opcode = opcode - 0x100;
+        var vop2Name = opcode is >= 0x100 and <= 0x13F && HasVop2E64Alias(vop2Opcode)
+            ? Vop2Name(vop2Opcode)
+            : string.Empty;
+        if (!string.IsNullOrEmpty(vop2Name))
+        {
+            return vop2Name;
+        }
+
         var vop1Name = opcode is >= 0x180 and <= 0x27F &&
             opcode is not (0x182 or 0x1C1)
             ? Vop1Name(opcode - 0x180)
@@ -829,60 +838,67 @@ internal static class Gen5ShaderTranslator
         var src0 = word & 0x1FF;
         sizeDwords = opcode is 0x20 or 0x21 or 0x2C or 0x2D || src0 is 0xF9 or 0xFA or 0xFF ? 2u : 1u;
         error = string.Empty;
-        name = opcode switch
-        {
-            0x01 => "VCndmaskB32",
-            0x02 => "VDot2cF32F16",
-            0x03 => "VAddF32",
-            0x04 => "VSubF32",
-            0x05 => "VSubrevF32",
-            0x07 => "VMulLegacyF32",
-            0x08 => "VMulF32",
-            0x09 => "VMulI32I24",
-            0x0A => "VMulHiI32I24",
-            0x0B => "VMulU32U24",
-            0x0C => "VMulHiU32U24",
-            0x0F => "VMinF32",
-            0x10 => "VMaxF32",
-            0x11 => "VMinI32",
-            0x12 => "VMaxI32",
-            0x13 => "VMinU32",
-            0x14 => "VMaxU32",
-            0x15 => "VLshrB32",
-            0x16 => "VLshrrevB32",
-            0x17 => "VAshrI32",
-            0x18 => "VAshrrevI32",
-            0x19 => "VLshlB32",
-            0x1A => "VLshlrevB32",
-            0x1B => "VAndB32",
-            0x1C => "VOrB32",
-            0x1D => "VXorB32",
-            0x1E => "VXnorB32",
-            0x1F => "VMacF32",
-            0x20 => "VMadMkF32",
-            0x21 => "VMadAkF32",
-            0x22 => "VBcntU32B32",
-            0x23 => "VMbcntLoU32B32",
-            0x24 => "VMbcntHiU32B32",
-            0x25 => "VAddI32",
-            0x26 => "VSubI32",
-            0x27 => "VSubrevI32",
-            0x28 => "VAddcU32",
-            0x29 => "VSubbU32",
-            0x2A => "VSubbrevU32",
-            // 0x2B is v_fmac_f32 on GFX10 (v_ldexp_f32 exists only as VOP3 0x362);
-            // verified against llvm-mc gfx1013/gfx1030 encodings.
-            0x2B => "VFmacF32",
-            0x2C => "VFmamkF32",
-            0x2D => "VFmaakF32",
-            0x2F => "VCvtPkrtzF16F32",
-            0x30 => "VCvtPkU16U32",
-            0x31 => "VCvtPkI16I32",
-            _ => string.Empty,
-        };
+        name = Vop2Name(opcode);
 
         return FinishDecode(name, $"unknown-vop2 op=0x{opcode:X2}", out error);
     }
+
+    private static string Vop2Name(uint opcode) => opcode switch
+    {
+        0x01 => "VCndmaskB32",
+        0x02 => "VDot2cF32F16",
+        0x03 => "VAddF32",
+        0x04 => "VSubF32",
+        0x05 => "VSubrevF32",
+        0x07 => "VMulLegacyF32",
+        0x08 => "VMulF32",
+        0x09 => "VMulI32I24",
+        0x0A => "VMulHiI32I24",
+        0x0B => "VMulU32U24",
+        0x0C => "VMulHiU32U24",
+        0x0F => "VMinF32",
+        0x10 => "VMaxF32",
+        0x11 => "VMinI32",
+        0x12 => "VMaxI32",
+        0x13 => "VMinU32",
+        0x14 => "VMaxU32",
+        0x15 => "VLshrB32",
+        0x16 => "VLshrrevB32",
+        0x17 => "VAshrI32",
+        0x18 => "VAshrrevI32",
+        0x19 => "VLshlB32",
+        0x1A => "VLshlrevB32",
+        0x1B => "VAndB32",
+        0x1C => "VOrB32",
+        0x1D => "VXorB32",
+        0x1E => "VXnorB32",
+        0x1F => "VMacF32",
+        0x20 => "VMadMkF32",
+        0x21 => "VMadAkF32",
+        0x22 => "VBcntU32B32",
+        0x23 => "VMbcntLoU32B32",
+        0x24 => "VMbcntHiU32B32",
+        0x25 => "VAddI32",
+        0x26 => "VSubI32",
+        0x27 => "VSubrevI32",
+        0x28 => "VAddcU32",
+        0x29 => "VSubbU32",
+        0x2A => "VSubbrevU32",
+        // 0x2B is v_fmac_f32 on GFX10 (v_ldexp_f32 exists only as VOP3 0x362);
+        // verified against llvm-mc gfx1013/gfx1030 encodings.
+        0x2B => "VFmacF32",
+        0x2C => "VFmamkF32",
+        0x2D => "VFmaakF32",
+        0x2F => "VCvtPkrtzF16F32",
+        0x30 => "VCvtPkU16U32",
+        0x31 => "VCvtPkI16I32",
+        _ => string.Empty,
+    };
+
+    private static bool HasVop2E64Alias(uint opcode) =>
+        opcode == 0x01 ||
+        opcode is >= 0x03 and <= 0x1E ||
+        opcode is 0x2B or 0x2F;
 
     private static bool DecodeVop3p(
         uint word,
@@ -1035,13 +1051,6 @@ internal static class Gen5ShaderTranslator
             }
             : opcode switch
         {
-            0x101 => "VCndmaskB32",
-            0x103 => "VAddF32",
-            0x104 => "VSubF32",
-            0x108 => "VMulF32",
-            0x10F => "VMinF32",
-            0x110 => "VMaxF32",
-            0x12F => "VCvtPkrtzF16F32",
             0x142 => "VMadI32I24",
             0x143 => "VMadU32U24",
             0x144 => "VCubeidF32",

@@ -813,6 +813,67 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesExtendedVop2EncodingsToSpirv()
+    {
+        // E64 encodings assembled with LLVM 18 llvm-mc for gfx1030 and
+        // verified with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xD5050100u, 0x20020902u, // v_subrev_f32 v0, -|v2|, v4
+            0xD5090006u, 0x00021508u, // v_mul_i32_i24 v6, v8, v10
+            0xD516000Cu, 0x0002210Eu, // v_lshrrev_b32 v12, v14, v16
+            0xD51B0012u, 0x00022D14u, // v_and_b32 v18, v20, v22
+            0xD52B0024u, 0x00025126u, // v_fmac_f32 v36, v38, v40
+            0xD52F002Au, 0x00025D2Cu, // v_cvt_pkrtz_f16_f32 v42, v44, v46
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "VSubrevF32", "VMulI32I24", "VLshrrevB32", "VAndB32",
+                "VFmacF32", "VCvtPkrtzF16F32", "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+
+        var modifiedControl = Assert.IsType<Gen5Vop3Control>(program.Instructions[0].Control);
+        Assert.Equal(1u, modifiedControl.AbsoluteMask);
+        Assert.Equal(1u, modifiedControl.NegateMask);
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FSub));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FNegate));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IMul));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldSExtract));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftRightLogical));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseAnd));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 50));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 58));
+    }
+
+    [Fact]
     public void CompilesVectorInteger64MultiplyAddToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
@@ -1212,11 +1273,15 @@ public sealed class Gen5DecoderTests
     [Fact]
     public void UsesRdna2Vop3OpcodesAndCanonicalBitwiseNames()
     {
-        // LLVM 18 gfx1030 rejects the three reserved encodings below. The
+        // LLVM 18 gfx1030 rejects the reserved encodings below. The
         // canonical bitwise encodings were assembled and verified with LLVM.
         var ctx = CreateContext(
         [
+            0xD5020000u, 0x040A0301u, // reserved (compact v_dot2c_f32_f16 encoding)
             0xD51F0000u, 0x040A0301u, // reserved (legacy v_mac_f32 encoding)
+            0xD5220000u, 0x040A0301u, // reserved (compact v_bcnt_u32_b32 encoding)
+            0xD5300000u, 0x040A0301u, // reserved (compact v_cvt_pk_u16_u32 encoding)
+            0xD5310000u, 0x040A0301u, // reserved (compact v_cvt_pk_i16_i32 encoding)
             0xD5410000u, 0x040A0301u, // reserved (legacy v_mad_f32 encoding)
             0xD56B0000u, 0x040A0301u, // reserved (legacy v_mul_lo_i32 encoding)
             0xD76F0007u, 0x042A1308u, // v_lshl_or_b32 v7, v8, v9, v10
@@ -1231,14 +1296,18 @@ public sealed class Gen5DecoderTests
                 out var decodeError),
             decodeError);
         Assert.Equal(
-            ["Vop3Raw11F", "Vop3Raw141", "Vop3Raw16B", "VLshlOrB32", "VOr3B32", "SEndpgm"],
+            [
+                "Vop3Raw102", "Vop3Raw11F", "Vop3Raw122", "Vop3Raw130",
+                "Vop3Raw131", "Vop3Raw141", "Vop3Raw16B", "VLshlOrB32",
+                "VOr3B32", "SEndpgm",
+            ],
             program.Instructions.Select(instruction => instruction.Opcode));
 
         // Reserved instructions remain decodable for diagnostics, but only
         // the supported RDNA2 instructions are submitted to the translator.
         var supportedProgram = program with
         {
-            Instructions = program.Instructions.Skip(3).ToArray(),
+            Instructions = program.Instructions.Skip(7).ToArray(),
         };
         var state = new Gen5ShaderState(supportedProgram, [], Metadata: null);
         Assert.True(
