@@ -1310,6 +1310,69 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesImageGetLodToSpirv()
+    {
+        var ctx = CreateContext(
+        [
+            0xF1800308u, 0x00000800u, // image_get_lod v[8:9], v[0:1], s[0:7], s[0:3] dmask:0x3 dim:2d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var instruction = program.Instructions[0];
+        Assert.Equal("ImageGetLod", instruction.Opcode);
+        Assert.Equal(
+            [Gen5Operand.Vector(8), Gen5Operand.Vector(9)],
+            instruction.Destinations);
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [
+                new Gen5ImageBinding(
+                    instruction.Pc,
+                    instruction.Opcode,
+                    Assert.IsType<Gen5ImageControl>(instruction.Control),
+                    [0u, 0u],
+                    [0u, 0u, 0u, 0u],
+                    MipLevel: null),
+            ],
+            []);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompilePixelShader(
+                state,
+                evaluation,
+                Gen5PixelOutputKind.Float,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.Equal(
+            1,
+            CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ImageQueryLod));
+        Assert.False(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out _,
+                out var computeError));
+        Assert.Contains(
+            "image_get_lod requires a pixel shader",
+            computeError,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CompilesImageAtomic32OperationsToSpirv()
     {
         // RDNA1 MIMG encodings for a 2D R32ui storage image. GLC requests

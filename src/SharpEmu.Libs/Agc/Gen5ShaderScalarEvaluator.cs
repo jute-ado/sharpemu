@@ -2126,6 +2126,7 @@ internal static class Gen5ShaderScalarEvaluator
 
     private static bool UsesSampler(string opcode) =>
         opcode.StartsWith("ImageSample", StringComparison.Ordinal) ||
-        opcode.StartsWith("ImageGather", StringComparison.Ordinal);
+        opcode.StartsWith("ImageGather", StringComparison.Ordinal) ||
+        opcode == "ImageGetLod";
 
 }

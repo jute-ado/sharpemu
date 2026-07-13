@@ -2715,6 +2715,35 @@ internal static partial class Gen5SpirvTranslator
 
             var resource = _imageResources[bindingIndex];
             var imageObject = Load(resource.ObjectType, resource.Variable);
+            if (instruction.Opcode == "ImageGetLod")
+            {
+                if (_stage != Gen5SpirvStage.Pixel)
+                {
+                    error = "image_get_lod requires a pixel shader";
+                    return false;
+                }
+
+                var lod = _module.AddInstruction(
+                    SpirvOp.ImageQueryLod,
+                    _vec2Type,
+                    imageObject,
+                    BuildFloatCoordinates(image, 0));
+                for (var component = 0u; component < 2; component++)
+                {
+                    StoreV(
+                        image.VectorData + component,
+                        Bitcast(
+                            _uintType,
+                            _module.AddInstruction(
+                                SpirvOp.CompositeExtract,
+                                _floatType,
+                                lod,
+                                component)));
+                }
+
+                return true;
+            }
+
             if (instruction.Opcode == "ImageGetResinfo")
             {
                 var queryImage = resource.IsStorage
