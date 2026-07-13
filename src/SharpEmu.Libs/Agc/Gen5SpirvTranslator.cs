@@ -2112,6 +2112,58 @@ internal static partial class Gen5SpirvTranslator
                 LoadV(control.VectorAddress),
                 UInt(unchecked((uint)control.OffsetBytes)));
             var dwordAddress = ShiftRightLogical(byteAddress, UInt(2));
+
+            if (instruction.Opcode is
+                "GlobalLoadUbyte" or "GlobalLoadSbyte" or
+                "GlobalLoadUshort" or "GlobalLoadSshort")
+            {
+                StoreV(
+                    control.VectorData,
+                    EmitBufferSubwordLoad(
+                        bindingIndex,
+                        byteAddress,
+                        instruction.Opcode.EndsWith("short", StringComparison.OrdinalIgnoreCase)
+                            ? 16u
+                            : 8u,
+                        instruction.Opcode.Contains("LoadS", StringComparison.Ordinal)));
+                return true;
+            }
+
+            if (instruction.Opcode is "GlobalStoreByte" or "GlobalStoreShort")
+            {
+                EmitExecConditional(() =>
+                    EmitBufferSubwordStore(
+                        bindingIndex,
+                        byteAddress,
+                        LoadV(control.VectorData),
+                        instruction.Opcode == "GlobalStoreShort" ? 16u : 8u));
+                return true;
+            }
+
+            if (instruction.Opcode.StartsWith("GlobalStoreDword", StringComparison.Ordinal))
+            {
+                EmitExecConditional(() =>
+                {
+                    for (uint index = 0; index < control.DwordCount; index++)
+                    {
+                        var address = index == 0
+                            ? dwordAddress
+                            : IAdd(dwordAddress, UInt(index));
+                        StoreBufferWord(
+                            bindingIndex,
+                            address,
+                            LoadV(control.VectorData + index));
+                    }
+                });
+                return true;
+            }
+
+            if (!instruction.Opcode.StartsWith("GlobalLoadDword", StringComparison.Ordinal))
+            {
+                error = $"unsupported global-memory opcode {instruction.Opcode}";
+                return false;
+            }
+
             for (uint index = 0; index < control.DwordCount; index++)
             {
                 var address = index == 0

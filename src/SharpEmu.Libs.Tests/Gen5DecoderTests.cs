@@ -1133,6 +1133,132 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesGlobalLoadAndStoreOperationsToSpirv()
+    {
+        var ctx = CreateContext(
+        [
+            0xDC208000u, 0x00000800u, // global_load_ubyte v8, v0, s[0:1] offset:0
+            0xDC248001u, 0x00000900u, // global_load_sbyte v9, v0, s[0:1] offset:1
+            0xDC288002u, 0x00000A00u, // global_load_ushort v10, v0, s[0:1] offset:2
+            0xDC2C8003u, 0x00000B00u, // global_load_sshort v11, v0, s[0:1] offset:3
+            0xDC608001u, 0x00000C00u, // global_store_byte v0, v12, s[0:1] offset:1
+            0xDC688003u, 0x00000D00u, // global_store_short v0, v13, s[0:1] offset:3
+            0xDC708004u, 0x00000E00u, // global_store_dword v0, v14, s[0:1] offset:4
+            0xDC748008u, 0x00001000u, // global_store_dwordx2 v0, v[16:17], s[0:1] offset:8
+            0xDC788010u, 0x00001400u, // global_store_dwordx4 v0, v[20:23], s[0:1] offset:16
+            0xDC7C8020u, 0x00001800u, // global_store_dwordx3 v0, v[24:26], s[0:1] offset:32
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "GlobalLoadUbyte",
+                "GlobalLoadSbyte",
+                "GlobalLoadUshort",
+                "GlobalLoadSshort",
+                "GlobalStoreByte",
+                "GlobalStoreShort",
+                "GlobalStoreDword",
+                "GlobalStoreDwordx2",
+                "GlobalStoreDwordx4",
+                "GlobalStoreDwordx3",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            [1u, 1u, 1u, 1u, 1u, 1u, 1u, 2u, 4u, 3u],
+            program.Instructions
+                .Take(10)
+                .Select(instruction =>
+                    Assert.IsType<Gen5GlobalMemoryControl>(instruction.Control).DwordCount));
+        Assert.All(program.Instructions.Take(4), instruction => Assert.Single(instruction.Destinations));
+        Assert.All(program.Instructions.Skip(4).Take(6), instruction => Assert.Empty(instruction.Destinations));
+
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    program.Instructions
+                        .Take(10)
+                        .Select(instruction => instruction.Pc)
+                        .ToArray(),
+                    new byte[128]),
+            ]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.Equal(3, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldUExtract));
+        Assert.Equal(3, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldSExtract));
+        Assert.Equal(4, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldInsert));
+        Assert.Equal(2, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Phi));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SelectionMerge));
+        Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Store) >= 16);
+    }
+
+    [Fact]
+    public void RejectsUnsupportedFlatMemoryInsteadOfCompilingNoOp()
+    {
+        var ctx = CreateContext(
+        [
+            0xDC300000u, 0x00000800u, // flat_load_dword v8, v[0:1]
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(["FlatLoadDword", "SEndpgm"], program.Instructions.Select(i => i.Opcode));
+
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    [program.Instructions[0].Pc],
+                    new byte[64]),
+            ]);
+        Assert.False(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out _,
+                out var compileError));
+        Assert.Contains("unsupported global-memory opcode FlatLoadDword", compileError);
+    }
+
+    [Fact]
     public void CompilesPairedLdsExchange32OperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
