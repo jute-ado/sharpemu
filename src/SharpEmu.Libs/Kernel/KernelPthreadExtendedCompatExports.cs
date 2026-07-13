@@ -315,12 +315,15 @@ public static class KernelPthreadExtendedCompatExports
             priority = GetOrCreateThreadStateLocked(thread).Priority;
         }
 
-        if (!ctx.TryWriteInt32(outPriorityAddress, priority))
+        if (!KernelMemoryCompatExports.TryWriteUInt32Compat(
+                ctx,
+                outPriorityAddress,
+                unchecked((uint)priority)))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        ctx[CpuRegister.Rax] = unchecked((uint)priority);
+        ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -340,7 +343,9 @@ public static class KernelPthreadExtendedCompatExports
 
         lock (_stateGate)
         {
-            GetOrCreateThreadStateLocked(thread).Priority = priority;
+            var state = GetOrCreateThreadStateLocked(thread);
+            state.Priority = priority;
+            state.Attributes = state.Attributes with { SchedPriority = priority };
         }
 
         ctx[CpuRegister.Rax] = 0;
@@ -348,11 +353,73 @@ public static class KernelPthreadExtendedCompatExports
     }
 
     [SysAbiExport(
+        Nid = "P41kTWUS3EI",
+        ExportName = "scePthreadGetschedparam",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadGetschedparam(CpuContext ctx)
+        => PthreadGetschedparamCore(ctx);
+
+    [SysAbiExport(
+        Nid = "FIs3-UQT9sg",
+        ExportName = "pthread_getschedparam",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadGetschedparam(CpuContext ctx)
+        => PthreadGetschedparamCore(ctx);
+
+    [SysAbiExport(
+        Nid = "oIRFTjoILbg",
+        ExportName = "scePthreadSetschedparam",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadSetschedparam(CpuContext ctx)
+        => PthreadSetschedparamCore(ctx);
+
+    [SysAbiExport(
         Nid = "Xs9hdiD7sAA",
         ExportName = "pthread_setschedparam",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixPthreadSetschedparam(CpuContext ctx)
+        => PthreadSetschedparamCore(ctx);
+
+    private static int PthreadGetschedparamCore(CpuContext ctx)
+    {
+        var thread = ctx[CpuRegister.Rdi];
+        var policyAddress = ctx[CpuRegister.Rsi];
+        var schedParamAddress = ctx[CpuRegister.Rdx];
+        if (thread == 0 || policyAddress == 0 || schedParamAddress == 0)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        int policy;
+        int priority;
+        lock (_stateGate)
+        {
+            var state = GetOrCreateThreadStateLocked(thread);
+            policy = state.Attributes.SchedPolicy;
+            priority = state.Priority;
+        }
+
+        if (!KernelMemoryCompatExports.TryWriteUInt32Compat(
+                ctx,
+                policyAddress,
+                unchecked((uint)policy)) ||
+            !KernelMemoryCompatExports.TryWriteUInt32Compat(
+                ctx,
+                schedParamAddress,
+                unchecked((uint)priority)))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static int PthreadSetschedparamCore(CpuContext ctx)
     {
         var thread = ctx[CpuRegister.Rdi];
         var policy = unchecked((int)ctx[CpuRegister.Rsi]);
@@ -362,11 +429,15 @@ public static class KernelPthreadExtendedCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        if (!ctx.TryReadInt32(schedParamAddress, out var schedPriority))
+        if (!KernelMemoryCompatExports.TryReadUInt32Compat(
+                ctx,
+                schedParamAddress,
+                out var schedPriorityValue))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
+        var schedPriority = unchecked((int)schedPriorityValue);
         lock (_stateGate)
         {
             var state = GetOrCreateThreadStateLocked(thread);
