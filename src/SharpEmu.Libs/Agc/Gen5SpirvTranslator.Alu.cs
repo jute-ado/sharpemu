@@ -404,6 +404,9 @@ internal static partial class Gen5SpirvTranslator
                             GetFloatSource(instruction, 1),
                             GetFloatSource(instruction, 2)));
                     break;
+                case "VFmaF16":
+                    result = EmitFloat16Fma(instruction, destination);
+                    break;
                 case "VMacF32":
                 case "VFmacF32":
                 {
@@ -1000,6 +1003,74 @@ internal static partial class Gen5SpirvTranslator
 
             StoreV(destination, result);
             return true;
+        }
+
+        private uint EmitFloat16Fma(
+            Gen5ShaderInstruction instruction,
+            uint destination)
+        {
+            if (instruction.Control is not Gen5Vop3Control control)
+            {
+                throw new InvalidOperationException("V_FMA_F16 requires VOP3 control");
+            }
+
+            var value = Ext(
+                50,
+                _floatType,
+                GetFloat16Source(instruction, control, 0),
+                GetFloat16Source(instruction, control, 1),
+                GetFloat16Source(instruction, control, 2));
+            value = control.OutputModifier switch
+            {
+                1 => _module.AddInstruction(SpirvOp.FMul, _floatType, value, Float(2)),
+                2 => _module.AddInstruction(SpirvOp.FMul, _floatType, value, Float(4)),
+                3 => _module.AddInstruction(SpirvOp.FMul, _floatType, value, Float(0.5f)),
+                _ => value,
+            };
+            if (control.Clamp)
+            {
+                value = Ext(43, _floatType, value, Float(0), Float(1));
+            }
+
+            if ((control.OpSelectMask & 8) == 0)
+            {
+                // RDNA2 clears the unused upper half when writing the low half.
+                return BitwiseAnd(PackHalf2(value, Float(0)), UInt(0xFFFF));
+            }
+
+            // A high-half write preserves the destination's low 16 bits.
+            return BitwiseOr(
+                BitwiseAnd(LoadV(destination), UInt(0xFFFF)),
+                BitwiseAnd(PackHalf2(Float(0), value), UInt(0xFFFF_0000)));
+        }
+
+        private uint GetFloat16Source(
+            Gen5ShaderInstruction instruction,
+            Gen5Vop3Control control,
+            int sourceIndex)
+        {
+            uint value;
+            if (!TryGetInlineFloatSource(instruction, sourceIndex, out value))
+            {
+                var unpacked = Ext(
+                    62,
+                    _vec2Type,
+                    GetRawSource(instruction, sourceIndex));
+                value = _module.AddInstruction(
+                    SpirvOp.CompositeExtract,
+                    _floatType,
+                    unpacked,
+                    (control.OpSelectMask >> sourceIndex) & 1);
+            }
+
+            if ((control.AbsoluteMask & (1u << sourceIndex)) != 0)
+            {
+                value = Ext(4, _floatType, value);
+            }
+
+            return (control.NegateMask & (1u << sourceIndex)) != 0
+                ? _module.AddInstruction(SpirvOp.FNegate, _floatType, value)
+                : value;
         }
 
         private bool TryEmitVectorFloat64(

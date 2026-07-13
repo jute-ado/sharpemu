@@ -671,6 +671,68 @@ public sealed class Gen5DecoderTests
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.LogicalEqual));
     }
 
+    [Fact]
+    public void CompilesVectorFloat16FusedMultiplyAddToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xD74B0001u, 0x04120702u, // v_fma_f16 v1, v2, v3, v4
+            0xD74B7805u, 0x04220F06u, // v_fma_f16 v5, v6, v7, v8 op_sel:[1,1,1,1]
+            0xD74B8109u, 0x4C32170Au, // v_fma_f16 v9, |v10|, -v11, v12 clamp mul:2
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            ["VFmaF16", "VFmaF16", "VFmaF16", "SEndpgm"],
+            program.Instructions.Select(instruction => instruction.Opcode));
+
+        var lowControl = Assert.IsType<Gen5Vop3Control>(program.Instructions[0].Control);
+        Assert.Equal(0u, lowControl.OpSelectMask);
+        var highControl = Assert.IsType<Gen5Vop3Control>(program.Instructions[1].Control);
+        Assert.Equal(15u, highControl.OpSelectMask);
+        var modifiedControl = Assert.IsType<Gen5Vop3Control>(program.Instructions[2].Control);
+        Assert.Equal(1u, modifiedControl.AbsoluteMask);
+        Assert.Equal(2u, modifiedControl.NegateMask);
+        Assert.Equal(1u, modifiedControl.OutputModifier);
+        Assert.True(modifiedControl.Clamp);
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 4));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 43));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 50));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 58));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 62));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.CompositeExtract));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FNegate));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FMul));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseOr));
+    }
+
     private static bool ContainsSpirvCapability(
         byte[] spirv,
         SpirvCapability capability)
