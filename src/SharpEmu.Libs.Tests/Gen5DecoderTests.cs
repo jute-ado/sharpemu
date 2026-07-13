@@ -965,6 +965,78 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesLdsAddTidTransfersWithM0AndLaneAddressing()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump. ADD_TID uses DATA0 without an ADDR VGPR and forms
+        // its byte address from M0, the immediate, and the wave lane ID.
+        var ctx = CreateContext(
+        [
+            0xBEFC03C0u,              // s_mov_b32 m0, 64
+            0xDAC001FCu, 0x00000500u, // ds_write_addtid_b32 v5 offset:508
+            0xDAC401FCu, 0x03000000u, // ds_read_addtid_b32 v3 offset:508
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            ["SMovB32", "DsWriteAddtidB32", "DsReadAddtidB32", "SEndpgm"],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            Gen5Operand.Vector(5),
+            Assert.Single(program.Instructions[1].Sources));
+        Assert.Empty(program.Instructions[1].Destinations);
+        Assert.Empty(program.Instructions[2].Sources);
+        Assert.Equal(
+            Gen5Operand.Vector(3),
+            Assert.Single(program.Instructions[2].Destinations));
+        Assert.All(
+            program.Instructions.Skip(1).Take(2),
+            instruction =>
+            {
+                var control = Assert.IsType<Gen5DataShareControl>(instruction.Control);
+                Assert.Equal(0xFCu, control.Offset0);
+                Assert.Equal(0x01u, control.Offset1);
+            });
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvCapability(
+            shader.Spirv,
+            SpirvCapability.GroupNonUniform));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IAdd));
+        Assert.True(ContainsSpirvOpcode(
+            shader.Spirv,
+            (ushort)SpirvOp.ShiftLeftLogical));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 64));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 508));
+        Assert.True(ContainsSpirvVariable(
+            shader.Spirv,
+            SpirvStorageClass.Workgroup));
+    }
+
+    [Fact]
     public void CompilesAllLdsSwizzleModesToSubgroupShuffle()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified

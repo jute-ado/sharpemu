@@ -1390,6 +1390,19 @@ internal static partial class Gen5SpirvTranslator
                         GetRawSource(instruction, 1));
                     return true;
                 }
+                case "DsWriteAddtidB32":
+                {
+                    if (instruction.Sources.Count < 1)
+                    {
+                        error = "missing LDS add-TID write source";
+                        return false;
+                    }
+
+                    StoreLds(
+                        LdsPointerFromByteAddress(EmitDsAddTidByteAddress(control)),
+                        GetRawSource(instruction, 0));
+                    return true;
+                }
                 case "DsWriteB64":
                 case "DsWriteB96":
                 case "DsWriteB128":
@@ -1471,6 +1484,20 @@ internal static partial class Gen5SpirvTranslator
                     var value = Load(
                         _uintType,
                         LdsPointer(address, EffectiveDsSingleOffsetBytes(control)));
+                    StoreV(instruction.Destinations[0].Value, value);
+                    return true;
+                }
+                case "DsReadAddtidB32":
+                {
+                    if (instruction.Destinations.Count < 1)
+                    {
+                        error = "missing LDS add-TID read destination";
+                        return false;
+                    }
+
+                    var value = Load(
+                        _uintType,
+                        LdsPointerFromByteAddress(EmitDsAddTidByteAddress(control)));
                     StoreV(instruction.Destinations[0].Value, value);
                     return true;
                 }
@@ -1623,6 +1650,16 @@ internal static partial class Gen5SpirvTranslator
             return BitwiseAnd(
                 ShiftRightLogical(byteIndex, UInt(2)),
                 UInt(RdnaWaveLaneCount - 1));
+        }
+
+        private uint EmitDsAddTidByteAddress(Gen5DataShareControl control)
+        {
+            var laneOffset = ShiftLeftLogical(
+                Load(_uintType, _subgroupInvocationIdInput),
+                UInt(2));
+            return LdsByteAddress(
+                IAdd(LoadS(M0Register), laneOffset),
+                EffectiveDsSingleOffsetBytes(control));
         }
 
         private uint EmitDsSwizzleSourceLane(Gen5DataShareControl control)
@@ -2946,6 +2983,10 @@ internal static partial class Gen5SpirvTranslator
             _state.Program.Instructions.Any(instruction =>
                 instruction.Opcode == "VReadfirstlaneB32");
 
+        private bool UsesDsAddTid() =>
+            _state.Program.Instructions.Any(instruction =>
+                instruction.Opcode is "DsWriteAddtidB32" or "DsReadAddtidB32");
+
         private bool UsesWaveControl() =>
             _state.Program.Instructions.Any(instruction =>
                 instruction.Opcode.Contains("Saveexec", StringComparison.Ordinal) ||
@@ -2959,7 +3000,7 @@ internal static partial class Gen5SpirvTranslator
         private bool UsesSubgroupOperations() =>
             UsesLaneOperations() ||
             (_stage == Gen5SpirvStage.Compute &&
-             (UsesSubgroupShuffle() || UsesWaveControl()));
+             (UsesSubgroupShuffle() || UsesWaveControl() || UsesDsAddTid()));
 
         private static bool IsWaveMaskOperand(Gen5Operand operand) =>
             operand.Kind == Gen5OperandKind.ScalarRegister &&
