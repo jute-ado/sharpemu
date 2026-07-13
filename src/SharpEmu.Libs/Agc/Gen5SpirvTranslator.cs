@@ -2811,6 +2811,20 @@ internal static partial class Gen5SpirvTranslator
                     return false;
                 }
 
+                uint mipLevel = 0;
+                if (instruction.Opcode == "ImageStoreMip")
+                {
+                    var resolvedMipLevel =
+                        _evaluation.ImageBindings[bindingIndex].MipLevel;
+                    if (!resolvedMipLevel.HasValue)
+                    {
+                        error = "dynamic image_store_mip is unsupported";
+                        return false;
+                    }
+
+                    mipLevel = resolvedMipLevel.Value;
+                }
+
                 var coordinates = BuildIntegerCoordinates(image, 0);
                 var components = new uint[4];
                 uint sourceIndex = 0;
@@ -2847,6 +2861,17 @@ internal static partial class Gen5SpirvTranslator
                         out var width,
                         out var height))
                 {
+                    if (mipLevel >= 32)
+                    {
+                        width = 1;
+                        height = 1;
+                    }
+                    else
+                    {
+                        width = Math.Max(width >> (int)mipLevel, 1);
+                        height = Math.Max(height >> (int)mipLevel, 1);
+                    }
+
                     EmitBoundsCheckedImageWrite(
                         coordinates,
                         width,

@@ -1500,6 +1500,93 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesConstantImageStoreMipWithMipSizedBounds()
+    {
+        var ctx = CreateContext(
+        [
+            0x7E040282u,              // v_mov_b32_e32 v2, 2
+            0xF0240108u, 0x00000800u, // image_store_mip v8, v[0:2], s[0:7] dmask:0x1 dim:2d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[1] = 0xC140_0000u;
+        scalarRegisters[2] = 0x0003_C003u; // 16x16 R32ui image
+        var state = new Gen5ShaderState(program, scalarRegisters, Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.Equal(2u, Assert.Single(evaluation.ImageBindings).MipLevel);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ImageWrite));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 4));
+        Assert.False(ContainsSpirvConstant(shader.Spirv, 16));
+    }
+
+    [Fact]
+    public void RejectsDynamicImageStoreMipInsteadOfWritingMipZero()
+    {
+        var ctx = CreateContext(
+        [
+            0xF0240108u, 0x00000800u, // image_store_mip v8, v[0:2], s[0:7] dmask:0x1 dim:2d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[1] = 0xC140_0000u;
+        scalarRegisters[2] = 0x0003_C003u;
+        var state = new Gen5ShaderState(program, scalarRegisters, Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.Null(Assert.Single(evaluation.ImageBindings).MipLevel);
+        Assert.False(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out _,
+                out var compileError));
+        Assert.Contains(
+            "dynamic image_store_mip is unsupported",
+            compileError,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CompilesImageAtomic32OperationsToSpirv()
     {
         // RDNA1 MIMG encodings for a 2D R32ui storage image. GLC requests
