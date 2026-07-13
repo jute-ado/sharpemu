@@ -412,8 +412,14 @@ internal static class Gen5ShaderTranslator
         switch (word >> 26)
         {
             case 0x33:
-                encoding = Gen5ShaderEncoding.Smem;
-                return DecodeSmem(word, out name, out sizeDwords, out error);
+                encoding = Gen5ShaderEncoding.Vop3p;
+                if (!ctx.TryReadUInt32(baseAddress + pc + sizeof(uint), out var vop3pExtra))
+                {
+                    error = $"vop3p-extra-read-failed pc=0x{pc:X}";
+                    return false;
+                }
+
+                return DecodeVop3p(word, vop3pExtra, out name, out sizeDwords, out error);
             case 0x32:
                 encoding = Gen5ShaderEncoding.Vintrp;
                 return DecodeVintrp(word, out name, out sizeDwords, out error);
@@ -468,9 +474,6 @@ internal static class Gen5ShaderTranslator
                 name = "Exp";
                 sizeDwords = 2;
                 return true;
-            case 0x3F:
-                encoding = Gen5ShaderEncoding.Vop3p;
-                return DecodeRaw2(word, "Vop3p", out name, out sizeDwords, out error);
             default:
                 error = $"unknown-top pc=0x{pc:X} word=0x{word:X8}";
                 return false;
@@ -810,6 +813,56 @@ internal static class Gen5ShaderTranslator
         return FinishDecode(name, $"unknown-vop2 op=0x{opcode:X2}", out error);
     }
 
+    private static bool DecodeVop3p(
+        uint word,
+        uint extra,
+        out string name,
+        out uint sizeDwords,
+        out string error)
+    {
+        var opcode = (word >> 16) & 0x7F;
+        var source0 = extra & 0x1FF;
+        var source1 = (extra >> 9) & 0x1FF;
+        var source2 = (extra >> 18) & 0x1FF;
+        sizeDwords = source0 == 0xFF || source1 == 0xFF || source2 == 0xFF ? 3u : 2u;
+        error = string.Empty;
+        name = opcode switch
+        {
+            0x00 => "VPkMadI16",
+            0x01 => "VPkMulLoU16",
+            0x02 => "VPkAddI16",
+            0x03 => "VPkSubI16",
+            0x04 => "VPkLshlrevB16",
+            0x05 => "VPkLshrrevB16",
+            0x06 => "VPkAshrrevI16",
+            0x07 => "VPkMaxI16",
+            0x08 => "VPkMinI16",
+            0x09 => "VPkMadU16",
+            0x0A => "VPkAddU16",
+            0x0B => "VPkSubU16",
+            0x0C => "VPkMaxU16",
+            0x0D => "VPkMinU16",
+            0x0E => "VPkFmaF16",
+            0x0F => "VPkAddF16",
+            0x10 => "VPkMulF16",
+            0x11 => "VPkMinF16",
+            0x12 => "VPkMaxF16",
+            0x13 => "VDot2F32F16",
+            0x14 => "VDot2I32I16",
+            0x15 => "VDot2U32U16",
+            0x16 => "VDot4I32I8",
+            0x17 => "VDot4U32U8",
+            0x18 => "VDot8I32I4",
+            0x19 => "VDot8U32U4",
+            0x20 => "VFmaMixF32",
+            0x21 => "VFmaMixloF16",
+            0x22 => "VFmaMixhiF16",
+            _ => string.Empty,
+        };
+
+        return FinishDecode(name, $"unknown-vop3p op=0x{opcode:X2} word=0x{word:X8}", out error);
+    }
+
     private static bool DecodeVopc(uint word, out string name, out uint sizeDwords, out string error)
     {
         var opcode = (word >> 17) & 0xFF;
@@ -994,19 +1047,6 @@ internal static class Gen5ShaderTranslator
 
     private static bool IsVop3BOpcode(uint opcode) =>
         opcode is 0x16D or 0x16E or 0x176 or 0x177 or 0x30F or 0x310 or 0x319;
-
-    private static bool DecodeRaw2(
-        uint word,
-        string prefix,
-        out string name,
-        out uint sizeDwords,
-        out string error)
-    {
-        name = $"{prefix}Raw{word >> 24:X2}";
-        sizeDwords = 2;
-        error = string.Empty;
-        return true;
-    }
 
     private static bool DecodeDs(
         uint word,
@@ -1613,6 +1653,24 @@ internal static class Gen5ShaderTranslator
                     (extra >> 27) & 0x3,
                     ((word >> 15) & 1) != 0,
                     isVop3B ? (word >> 8) & 0x7F : null);
+                break;
+            }
+            case Gen5ShaderEncoding.Vop3p:
+            {
+                var extra = words[1];
+                sources =
+                [
+                    Gen5Operand.Source(extra & 0x1FF, literal),
+                    Gen5Operand.Source((extra >> 9) & 0x1FF, literal),
+                    Gen5Operand.Source((extra >> 18) & 0x1FF, literal),
+                ];
+                destinations = [Gen5Operand.Vector(word & 0xFF)];
+                control = new Gen5Vop3pControl(
+                    (word >> 11) & 0x7,
+                    ((extra >> 27) & 0x3) | (((word >> 14) & 1) << 2),
+                    (extra >> 29) & 0x7,
+                    (word >> 8) & 0x7,
+                    ((word >> 15) & 1) != 0);
                 break;
             }
             case Gen5ShaderEncoding.Ds:

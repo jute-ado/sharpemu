@@ -230,6 +230,13 @@ internal sealed record Gen5Vop3Control(
     bool Clamp,
     uint? ScalarDestination) : Gen5InstructionControl;
 
+internal sealed record Gen5Vop3pControl(
+    uint OpSelectMask,
+    uint OpSelectHighMask,
+    uint NegateLowMask,
+    uint NegateHighMask,
+    bool Clamp) : Gen5InstructionControl;
+
 internal sealed record Gen5SdwaControl(
     uint DestinationSelect,
     uint Source0Select,
