@@ -1061,13 +1061,11 @@ public partial class MainWindow : Window
             arguments.Add($"--trace-imports={_settings.ImportTraceLimit}");
         }
 
-        arguments.Add(ebootPath);
-
         _consoleLines.Clear();
         ConsoleToggle.IsChecked = true;
 
-        // Mirror everything the console pane shows into a log file for the
-        // duration of the run, regardless of the emulator's log level.
+        // Let the CLI mirror stdout/stderr itself; it sees loader/native
+        // diagnostics before the GUI pipe reader can filter or batch them.
         DropFileLog();
         if (_settings.LogToFile)
         {
@@ -1105,17 +1103,13 @@ public partial class MainWindow : Window
 
             if (!string.IsNullOrEmpty(filePath))
             {
-                try
-                {
-                    _fileLog = new StreamWriter(filePath, append: false);
-                    AppendConsoleLine($"Log file: {filePath}", DimLineBrush);
-                }
-                catch (Exception ex)
-                {
-                    AppendConsoleLine($"Could not open the log file: {ex.Message}", WarningLineBrush);
-                }
+                arguments.Add("--log-file");
+                arguments.Add(filePath);
+                AppendConsoleLine($"Log file: {filePath}", DimLineBrush);
             }
         }
+
+        arguments.Add(ebootPath);
 
         AppendConsoleLine($"$ SharpEmu {string.Join(' ', arguments)}", DimLineBrush);
 

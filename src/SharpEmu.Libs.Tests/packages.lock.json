@@ -150,7 +150,10 @@
         }
       },
       "sharpemu.hle": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "SharpEmu.Logging": "[1.0.0, )"
+        }
       },
       "sharpemu.libs": {
         "type": "Project",
@@ -161,6 +164,9 @@
           "Silk.NET.Vulkan.Extensions.KHR": "[2.23.0, )",
           "Silk.NET.Windowing": "[2.23.0, )"
         }
+      },
+      "sharpemu.logging": {
+        "type": "Project"
       },
       "Silk.NET.Vulkan": {
         "type": "CentralTransitive",
