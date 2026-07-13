@@ -193,23 +193,44 @@ public static class KernelPthreadExtendedCompatExports
         ExportName = "scePthreadDetach",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PthreadDetach(CpuContext ctx)
+    public static int PthreadDetach(CpuContext ctx) => PthreadDetachCore(ctx);
+
+    [SysAbiExport(
+        Nid = "+U1R4WtXvoc",
+        ExportName = "pthread_detach",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libScePosix")]
+    public static int PosixPthreadDetach(CpuContext ctx) => PthreadDetachCore(ctx);
+
+    internal static bool IsThreadDetached(ulong thread)
+    {
+        lock (_stateGate)
+        {
+            return _threadStates.TryGetValue(thread, out var state) && state.DetachState != 0;
+        }
+    }
+
+    private static int PthreadDetachCore(CpuContext ctx)
     {
         var thread = ctx[CpuRegister.Rdi];
         if (thread == 0)
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
         lock (_stateGate)
         {
             var state = GetOrCreateThreadStateLocked(thread);
+            if (state.DetachState != 0)
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+            }
+
             state.DetachState = 1;
             state.Attributes = state.Attributes with { DetachState = 1 };
         }
 
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
     [SysAbiExport(

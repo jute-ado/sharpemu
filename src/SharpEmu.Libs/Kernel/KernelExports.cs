@@ -329,6 +329,11 @@ public static class KernelExports
                 $"[LOADER][TRACE] pthread_join: thread=0x{threadId:X16} retval_out=0x{returnValueAddress:X16}");
         }
 
+        if (KernelPthreadExtendedCompatExports.IsThreadDetached(threadId))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
         var returnValue = 0UL;
         if (GuestThreadExecution.Scheduler is { } scheduler &&
             !scheduler.TryJoinThread(ctx, threadId, out returnValue, out var error))
