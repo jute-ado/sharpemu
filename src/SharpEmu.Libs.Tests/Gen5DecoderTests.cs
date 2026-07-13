@@ -1382,6 +1382,77 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesFormatBufferStoresToSpirv()
+    {
+        var ctx = CreateContext(
+        [
+            0xE0100000u, 0x80000800u, // buffer_store_format_x v8, off, s[0:3], 0
+            0xE0140004u, 0x80000A00u, // buffer_store_format_xy v[10:11], off, s[0:3], 0 offset:4
+            0xE018000Cu, 0x80000C00u, // buffer_store_format_xyz v[12:14], off, s[0:3], 0 offset:12
+            0xE01C0018u, 0x80001000u, // buffer_store_format_xyzw v[16:19], off, s[0:3], 0 offset:24
+            0xE8040000u, 0x80001400u, // tbuffer_store_format_x v20, off, s[0:3], 0
+            0xE8050004u, 0x80001600u, // tbuffer_store_format_xy v[22:23], off, s[0:3], 0 offset:4
+            0xE806000Cu, 0x80001800u, // tbuffer_store_format_xyz v[24:26], off, s[0:3], 0 offset:12
+            0xE8070018u, 0x80001C00u, // tbuffer_store_format_xyzw v[28:31], off, s[0:3], 0 offset:24
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "BufferStoreFormatX",
+                "BufferStoreFormatXy",
+                "BufferStoreFormatXyz",
+                "BufferStoreFormatXyzw",
+                "TBufferStoreFormatX",
+                "TBufferStoreFormatXy",
+                "TBufferStoreFormatXyz",
+                "TBufferStoreFormatXyzw",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            [1u, 2u, 3u, 4u, 1u, 2u, 3u, 4u],
+            program.Instructions.Take(8)
+                .Select(instruction =>
+                    Assert.IsType<Gen5BufferMemoryControl>(instruction.Control).DwordCount));
+        Assert.All(
+            program.Instructions.Take(8),
+            instruction => Assert.Empty(instruction.Destinations));
+
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    program.Instructions.Take(8).Select(instruction => instruction.Pc).ToArray(),
+                    new byte[128]),
+            ]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Store) >= 20);
+    }
+
+    [Fact]
     public void CompilesBufferD16MemoryOperationsToSpirv()
     {
         var ctx = CreateContext(

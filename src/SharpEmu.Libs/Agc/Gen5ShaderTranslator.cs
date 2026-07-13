@@ -2320,6 +2320,10 @@ internal static class Gen5ShaderTranslator
                     "BufferLoadFormatXy" => 2u,
                     "BufferLoadFormatXyz" => 3u,
                     "BufferLoadFormatXyzw" => 4u,
+                    "BufferStoreFormatX" => 1u,
+                    "BufferStoreFormatXy" => 2u,
+                    "BufferStoreFormatXyz" => 3u,
+                    "BufferStoreFormatXyzw" => 4u,
                     "BufferLoadUbyte" or "BufferLoadSbyte" or
                     "BufferLoadUshort" or "BufferLoadSshort" or
                     "BufferLoadUbyteD16" or "BufferLoadUbyteD16Hi" or
@@ -2385,6 +2389,10 @@ internal static class Gen5ShaderTranslator
                     "TBufferLoadFormatXy" => 2u,
                     "TBufferLoadFormatXyz" => 3u,
                     "TBufferLoadFormatXyzw" => 4u,
+                    "TBufferStoreFormatX" => 1u,
+                    "TBufferStoreFormatXy" => 2u,
+                    "TBufferStoreFormatXyz" => 3u,
+                    "TBufferStoreFormatXyzw" => 4u,
                     _ => 0u,
                 };
                 sources =
@@ -2393,10 +2401,12 @@ internal static class Gen5ShaderTranslator
                     Gen5Operand.Scalar(scalarResource),
                     Gen5Operand.Source(scalarOffset, literal),
                 ];
-                destinations = Enumerable
-                    .Range((int)vectorData, checked((int)dwordCount))
-                    .Select(index => Gen5Operand.Vector((uint)index))
-                    .ToArray();
+                destinations = opcode.StartsWith("TBufferStore", StringComparison.Ordinal)
+                    ? []
+                    : Enumerable
+                        .Range((int)vectorData, checked((int)dwordCount))
+                        .Select(index => Gen5Operand.Vector((uint)index))
+                        .ToArray();
                 control = new Gen5BufferMemoryControl(
                     dwordCount,
                     vectorAddress,
