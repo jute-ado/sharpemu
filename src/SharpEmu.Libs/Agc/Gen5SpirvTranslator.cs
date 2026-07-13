@@ -308,7 +308,7 @@ internal static partial class Gen5SpirvTranslator
         private void DeclareModule()
         {
             var usesFloat64 = _state.Program.Instructions.Any(
-                static instruction => instruction.Opcode.EndsWith(
+                static instruction => instruction.Opcode.Contains(
                     "F64",
                     StringComparison.Ordinal));
             _module.AddCapability(SpirvCapability.Shader);

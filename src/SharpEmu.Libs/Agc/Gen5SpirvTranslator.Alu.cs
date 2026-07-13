@@ -22,7 +22,7 @@ internal static partial class Gen5SpirvTranslator
                 return TryEmitPackedAlu(instruction, packedControl, out error);
             }
 
-            if (instruction.Opcode.EndsWith("F64", StringComparison.Ordinal))
+            if (instruction.Opcode.Contains("F64", StringComparison.Ordinal))
             {
                 return TryEmitVectorFloat64(instruction, out error);
             }
@@ -1386,38 +1386,130 @@ internal static partial class Gen5SpirvTranslator
                 return false;
             }
 
+            if (instruction.Opcode is "VCvtF64I32" or "VCvtF64U32" or "VCvtF64F32")
+            {
+                var converted = instruction.Opcode switch
+                {
+                    "VCvtF64I32" => _module.AddInstruction(
+                        SpirvOp.ConvertSToF,
+                        _doubleType,
+                        Bitcast(_intType, GetRawSource(instruction, 0))),
+                    "VCvtF64U32" => _module.AddInstruction(
+                        SpirvOp.ConvertUToF,
+                        _doubleType,
+                        GetRawSource(instruction, 0)),
+                    _ => _module.AddInstruction(
+                        SpirvOp.FConvert,
+                        _doubleType,
+                        GetFloatSource(instruction, 0)),
+                };
+                StoreDouble(destination, EmitDoubleResult(instruction, converted));
+                return true;
+            }
+
             var left = GetDoubleSource(instruction, 0);
-            var right = GetDoubleSource(instruction, 1);
             uint result;
             switch (instruction.Opcode)
             {
+                case "VCvtI32F64":
+                    result = Bitcast(
+                        _uintType,
+                        _module.AddInstruction(SpirvOp.ConvertFToS, _intType, left));
+                    StoreV(destination, result);
+                    return true;
+                case "VCvtU32F64":
+                    result = _module.AddInstruction(
+                        SpirvOp.ConvertFToU,
+                        _uintType,
+                        left);
+                    StoreV(destination, result);
+                    return true;
+                case "VCvtF32F64":
+                    result = Bitcast(
+                        _uintType,
+                        _module.AddInstruction(SpirvOp.FConvert, _floatType, left));
+                    StoreV(destination, result);
+                    return true;
+                case "VFrexpExpI32F64":
+                {
+                    var resultType = _module.TypeStruct(_doubleType, _intType);
+                    var decomposed = Ext(52, resultType, left);
+                    result = Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.CompositeExtract,
+                            _intType,
+                            decomposed,
+                            1));
+                    StoreV(destination, result);
+                    return true;
+                }
+                case "VTruncF64":
+                    result = Ext(3, _doubleType, left);
+                    break;
+                case "VCeilF64":
+                    result = Ext(9, _doubleType, left);
+                    break;
+                case "VRndneF64":
+                    result = Ext(2, _doubleType, left);
+                    break;
+                case "VFloorF64":
+                    result = Ext(8, _doubleType, left);
+                    break;
+                case "VFractF64":
+                    result = Ext(10, _doubleType, left);
+                    break;
+                case "VFrexpMantF64":
+                {
+                    var resultType = _module.TypeStruct(_doubleType, _intType);
+                    var decomposed = Ext(52, resultType, left);
+                    result = _module.AddInstruction(
+                        SpirvOp.CompositeExtract,
+                        _doubleType,
+                        decomposed,
+                        0);
+                    break;
+                }
+                case "VRcpF64":
+                    result = _module.AddInstruction(
+                        SpirvOp.FDiv,
+                        _doubleType,
+                        Double(1),
+                        left);
+                    break;
+                case "VRsqF64":
+                    result = Ext(32, _doubleType, left);
+                    break;
+                case "VSqrtF64":
+                    result = Ext(31, _doubleType, left);
+                    break;
                 case "VAddF64":
                     result = _module.AddInstruction(
                         SpirvOp.FAdd,
                         _doubleType,
                         left,
-                        right);
+                        GetDoubleSource(instruction, 1));
                     break;
                 case "VMulF64":
                     result = _module.AddInstruction(
                         SpirvOp.FMul,
                         _doubleType,
                         left,
-                        right);
+                        GetDoubleSource(instruction, 1));
                     break;
                 case "VFmaF64":
                     result = Ext(
                         50,
                         _doubleType,
                         left,
-                        right,
+                        GetDoubleSource(instruction, 1),
                         GetDoubleSource(instruction, 2));
                     break;
                 case "VMinF64":
-                    result = Ext(37, _doubleType, left, right);
+                    result = Ext(37, _doubleType, left, GetDoubleSource(instruction, 1));
                     break;
                 case "VMaxF64":
-                    result = Ext(40, _doubleType, left, right);
+                    result = Ext(40, _doubleType, left, GetDoubleSource(instruction, 1));
                     break;
                 default:
                     error = $"unsupported FP64 vector opcode {instruction.Opcode}";
