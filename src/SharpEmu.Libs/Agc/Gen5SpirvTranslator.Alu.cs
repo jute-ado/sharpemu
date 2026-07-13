@@ -2219,6 +2219,129 @@ internal static partial class Gen5SpirvTranslator
             return Bitcast(_uintType, clamped);
         }
 
+        private uint EmitFloatClassCondition(Gen5ShaderInstruction instruction)
+        {
+            var isFloat64 = instruction.Opcode.EndsWith(
+                "F64",
+                StringComparison.Ordinal);
+            var isFloat16 = instruction.Opcode.EndsWith(
+                "F16",
+                StringComparison.Ordinal);
+            var integerType = isFloat64 ? _ulongType : _uintType;
+            var raw = isFloat64
+                ? GetRawSource64(instruction, 0)
+                : isFloat16
+                    ? GetInteger16Source(instruction, 0, signed: false)
+                    : GetRawSource(instruction, 0);
+            var mask = GetRawSource(instruction, 1);
+            var signMask = isFloat64
+                ? 0x8000_0000_0000_0000UL
+                : isFloat16
+                    ? 0x8000UL
+                    : 0x8000_0000UL;
+            var exponentMask = isFloat64
+                ? 0x7FF0_0000_0000_0000UL
+                : isFloat16
+                    ? 0x7C00UL
+                    : 0x7F80_0000UL;
+            var mantissaMask = isFloat64
+                ? 0x000F_FFFF_FFFF_FFFFUL
+                : isFloat16
+                    ? 0x03FFUL
+                    : 0x007F_FFFFUL;
+            var quietMask = isFloat64
+                ? 0x0008_0000_0000_0000UL
+                : isFloat16
+                    ? 0x0200UL
+                    : 0x0040_0000UL;
+
+            uint Constant(ulong value) => isFloat64
+                ? _module.Constant64(_ulongType, value)
+                : UInt((uint)value);
+
+            uint IntegerAnd(uint left, ulong right) => _module.AddInstruction(
+                SpirvOp.BitwiseAnd,
+                integerType,
+                left,
+                Constant(right));
+
+            uint IsSet(uint value) => isFloat64
+                ? IsNotZero64(value)
+                : IsNotZero(value);
+
+            uint Equal(uint value, ulong expected) => _module.AddInstruction(
+                SpirvOp.IEqual,
+                _boolType,
+                value,
+                Constant(expected));
+
+            uint Not(uint value) => _module.AddInstruction(
+                SpirvOp.LogicalNot,
+                _boolType,
+                value);
+
+            uint And(uint left, uint right) => _module.AddInstruction(
+                SpirvOp.LogicalAnd,
+                _boolType,
+                left,
+                right);
+
+            uint Or(uint left, uint right) => _module.AddInstruction(
+                SpirvOp.LogicalOr,
+                _boolType,
+                left,
+                right);
+
+            if (instruction.Control is Gen5Vop3Control control)
+            {
+                if ((control.AbsoluteMask & 1) != 0)
+                {
+                    raw = IntegerAnd(raw, signMask - 1);
+                }
+
+                if ((control.NegateMask & 1) != 0)
+                {
+                    raw = _module.AddInstruction(
+                        SpirvOp.BitwiseXor,
+                        integerType,
+                        raw,
+                        Constant(signMask));
+                }
+            }
+
+            var negative = IsSet(IntegerAnd(raw, signMask));
+            var positive = Not(negative);
+            var exponent = IntegerAnd(raw, exponentMask);
+            var mantissa = IntegerAnd(raw, mantissaMask);
+            var exponentAllOnes = Equal(exponent, exponentMask);
+            var exponentZero = Equal(exponent, 0);
+            var mantissaZero = Equal(mantissa, 0);
+            var nan = And(exponentAllOnes, Not(mantissaZero));
+            var quiet = IsSet(IntegerAnd(mantissa, quietMask));
+            var signalingNan = And(nan, Not(quiet));
+            var quietNan = And(nan, quiet);
+            var infinity = And(exponentAllOnes, mantissaZero);
+            var zero = And(exponentZero, mantissaZero);
+            var subnormal = And(exponentZero, Not(mantissaZero));
+            var normal = And(Not(exponentZero), Not(exponentAllOnes));
+
+            uint MaskedClass(uint bits, uint value) => And(
+                IsNotZero(BitwiseAnd(mask, UInt(bits))),
+                value);
+
+            uint SignedClass(uint negativeBit, uint positiveBit, uint value) => Or(
+                MaskedClass(negativeBit, And(negative, value)),
+                MaskedClass(positiveBit, And(positive, value)));
+
+            var condition = Or(
+                MaskedClass(0x001, signalingNan),
+                MaskedClass(0x002, quietNan));
+            condition = Or(condition, SignedClass(0x004, 0x200, infinity));
+            condition = Or(condition, SignedClass(0x008, 0x100, normal));
+            condition = Or(condition, SignedClass(0x010, 0x080, subnormal));
+            return Or(condition, SignedClass(0x020, 0x040, zero));
+        }
+
         private bool TryEmitVectorCompare(
             Gen5ShaderInstruction instruction,
             out string error)
@@ -2252,110 +2375,7 @@ internal static partial class Gen5SpirvTranslator
             }
             if (predicateOpcode is "VCmpClassF32" or "VCmpxClassF32")
             {
-                var source = GetFloatSource(instruction, 0);
-                var raw = GetRawSource(instruction, 0);
-                var mask = GetRawSource(instruction, 1);
-                var negative = IsNotZero(BitwiseAnd(raw, UInt(0x8000_0000)));
-                var positive = _module.AddInstruction(
-                    SpirvOp.LogicalNot,
-                    _boolType,
-                    negative);
-                var nan = _module.AddInstruction(SpirvOp.IsNan, _boolType, source);
-                var infinity =
-                    _module.AddInstruction(SpirvOp.IsInf, _boolType, source);
-                var zero = _module.AddInstruction(
-                    SpirvOp.FOrdEqual,
-                    _boolType,
-                    source,
-                    Float(0));
-                var absolute = Ext(4, _floatType, source);
-                var nonzero = _module.AddInstruction(
-                    SpirvOp.FOrdGreaterThan,
-                    _boolType,
-                    absolute,
-                    Float(0));
-                var belowNormal = _module.AddInstruction(
-                    SpirvOp.FOrdLessThan,
-                    _boolType,
-                    absolute,
-                    Bitcast(_floatType, UInt(0x0080_0000)));
-                var subnormal = _module.AddInstruction(
-                    SpirvOp.LogicalAnd,
-                    _boolType,
-                    nonzero,
-                    belowNormal);
-                var special = _module.AddInstruction(
-                    SpirvOp.LogicalOr,
-                    _boolType,
-                    nan,
-                    _module.AddInstruction(
-                        SpirvOp.LogicalOr,
-                        _boolType,
-                        infinity,
-                        _module.AddInstruction(
-                            SpirvOp.LogicalOr,
-                            _boolType,
-                            zero,
-                            subnormal)));
-                var normal = _module.AddInstruction(
-                    SpirvOp.LogicalNot,
-                    _boolType,
-                    special);
-
-                uint MaskedClass(uint bits, uint value)
-                {
-                    var enabled = IsNotZero(BitwiseAnd(mask, UInt(bits)));
-                    return _module.AddInstruction(
-                        SpirvOp.LogicalAnd,
-                        _boolType,
-                        enabled,
-                        value);
-                }
-
-                uint SignedClass(uint negativeBit, uint positiveBit, uint value)
-                {
-                    var negativeClass = MaskedClass(
-                        negativeBit,
-                        _module.AddInstruction(
-                            SpirvOp.LogicalAnd,
-                            _boolType,
-                            negative,
-                            value));
-                    var positiveClass = MaskedClass(
-                        positiveBit,
-                        _module.AddInstruction(
-                            SpirvOp.LogicalAnd,
-                            _boolType,
-                            positive,
-                            value));
-                    return _module.AddInstruction(
-                        SpirvOp.LogicalOr,
-                        _boolType,
-                        negativeClass,
-                        positiveClass);
-                }
-
-                condition = MaskedClass(0x003, nan);
-                condition = _module.AddInstruction(
-                    SpirvOp.LogicalOr,
-                    _boolType,
-                    condition,
-                    SignedClass(0x004, 0x200, infinity));
-                condition = _module.AddInstruction(
-                    SpirvOp.LogicalOr,
-                    _boolType,
-                    condition,
-                    SignedClass(0x008, 0x100, normal));
-                condition = _module.AddInstruction(
-                    SpirvOp.LogicalOr,
-                    _boolType,
-                    condition,
-                    SignedClass(0x010, 0x080, subnormal));
-                condition = _module.AddInstruction(
-                    SpirvOp.LogicalOr,
-                    _boolType,
-                    condition,
-                    SignedClass(0x020, 0x040, zero));
+                condition = EmitFloatClassCondition(instruction);
             }
             else if (predicateOpcode is "VCmpFF32" or "VCmpxFF32" or
                      "VCmpFI32" or "VCmpxFI32" or
