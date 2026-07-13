@@ -1363,6 +1363,10 @@ internal static class Gen5ShaderTranslator
             0x76 => "DsReadB64",
             0xB2 => "DsPermuteB32",
             0xB3 => "DsBpermuteB32",
+            0xDE => "DsWriteB96",
+            0xDF => "DsWriteB128",
+            0xFE => "DsReadB96",
+            0xFF => "DsReadB128",
             _ => string.Empty,
         };
 
@@ -2012,6 +2016,19 @@ internal static class Gen5ShaderTranslator
                         Gen5Operand.Vector(vectorData0),
                         Gen5Operand.Vector(vectorData0 + 1),
                     ],
+                    "DsWriteB96" => [
+                        Gen5Operand.Vector(vectorAddress),
+                        Gen5Operand.Vector(vectorData0),
+                        Gen5Operand.Vector(vectorData0 + 1),
+                        Gen5Operand.Vector(vectorData0 + 2),
+                    ],
+                    "DsWriteB128" => [
+                        Gen5Operand.Vector(vectorAddress),
+                        Gen5Operand.Vector(vectorData0),
+                        Gen5Operand.Vector(vectorData0 + 1),
+                        Gen5Operand.Vector(vectorData0 + 2),
+                        Gen5Operand.Vector(vectorData0 + 3),
+                    ],
                     "DsWrite2B32" or "DsWrite2St64B32" => [
                         Gen5Operand.Vector(vectorAddress),
                         Gen5Operand.Vector(vectorData0),
@@ -2050,6 +2067,17 @@ internal static class Gen5ShaderTranslator
                     "DsReadB64" => [
                         Gen5Operand.Vector(vectorDestination),
                         Gen5Operand.Vector(vectorDestination + 1),
+                    ],
+                    "DsReadB96" => [
+                        Gen5Operand.Vector(vectorDestination),
+                        Gen5Operand.Vector(vectorDestination + 1),
+                        Gen5Operand.Vector(vectorDestination + 2),
+                    ],
+                    "DsReadB128" => [
+                        Gen5Operand.Vector(vectorDestination),
+                        Gen5Operand.Vector(vectorDestination + 1),
+                        Gen5Operand.Vector(vectorDestination + 2),
+                        Gen5Operand.Vector(vectorDestination + 3),
                     ],
                     "DsAddRtnU32" or "DsSubRtnU32" or
                     "DsMinRtnI32" or "DsMaxRtnI32" or
