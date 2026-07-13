@@ -1177,6 +1177,74 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesRdna2ScalarConditionalOperationsToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xBF120200u, // s_cmp_eq_u64 s[0:1], s[2:3]
+            0xB104FFFEu, // s_cmovk_i32 s4, -2
+            0xBF130200u, // s_cmp_lg_u64 s[0:1], s[2:3]
+            0xB1050007u, // s_cmovk_i32 s5, 7
+            0xBF0FBF00u, // s_bitcmp1_b64 s[0:1], 63
+            0xB1060009u, // s_cmovk_i32 s6, 9
+            0xBF0E8000u, // s_bitcmp0_b64 s[0:1], 0
+            0xB107000Bu, // s_cmovk_i32 s7, 11
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "SCmpEqU64", "SCmovkI32", "SCmpLgU64", "SCmovkI32",
+                "SBitcmp1B64", "SCmovkI32", "SBitcmp0B64", "SCmovkI32",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+
+        var scalarRegisters = new uint[8];
+        scalarRegisters[0] = 1;
+        scalarRegisters[1] = 0x8000_0000;
+        scalarRegisters[2] = 1;
+        scalarRegisters[3] = 0x8000_0000;
+        scalarRegisters[4] = 4;
+        scalarRegisters[5] = 5;
+        scalarRegisters[6] = 6;
+        scalarRegisters[7] = 7;
+        var state = new Gen5ShaderState(program, scalarRegisters, Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.Equal(0xFFFF_FFFEu, evaluation.ScalarRegisters[4]);
+        Assert.Equal(5u, evaluation.ScalarRegisters[5]);
+        Assert.Equal(9u, evaluation.ScalarRegisters[6]);
+        Assert.Equal(7u, evaluation.ScalarRegisters[7]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.INotEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Select));
+    }
+
+    [Fact]
     public void RejectsReservedRdna2Sop2Opcode2D()
     {
         var ctx = CreateContext(

@@ -2288,6 +2288,12 @@ internal static partial class Gen5SpirvTranslator
                 var value = instruction.Opcode switch
                 {
                     "SMovkI32" => UInt(immediate),
+                    "SCmovkI32" => _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        Load(_boolType, _scc),
+                        UInt(immediate),
+                        current),
                     "SAddkI32" => IAdd(current, UInt(immediate)),
                     "SMulkI32" => _module.AddInstruction(
                         SpirvOp.IMul,
@@ -2817,6 +2823,45 @@ internal static partial class Gen5SpirvTranslator
                             SpirvOp.LogicalNot,
                             _boolType,
                             isSet));
+                return true;
+            }
+
+            if (instruction.Opcode is "SBitcmp0B64" or "SBitcmp1B64")
+            {
+                var bit = _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _ulongType,
+                    BitwiseAnd(right, UInt(63)));
+                var shifted = ShiftRightLogical64(GetRawSource64(instruction, 0), bit);
+                var isSet = IsNotZero64(
+                    _module.AddInstruction(
+                        SpirvOp.BitwiseAnd,
+                        _ulongType,
+                        shifted,
+                        _module.Constant64(_ulongType, 1)));
+                Store(
+                    _scc,
+                    instruction.Opcode == "SBitcmp1B64"
+                        ? isSet
+                        : _module.AddInstruction(
+                            SpirvOp.LogicalNot,
+                            _boolType,
+                            isSet));
+                return true;
+            }
+
+            if (instruction.Opcode is "SCmpEqU64" or "SCmpLgU64")
+            {
+                var operation64 = instruction.Opcode == "SCmpEqU64"
+                    ? SpirvOp.IEqual
+                    : SpirvOp.INotEqual;
+                Store(
+                    _scc,
+                    _module.AddInstruction(
+                        operation64,
+                        _boolType,
+                        GetRawSource64(instruction, 0),
+                        GetRawSource64(instruction, 1)));
                 return true;
             }
 
