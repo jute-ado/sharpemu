@@ -17,6 +17,7 @@ public sealed class Gen5DecoderTests
     private const uint VSubF32_V0_V1_V2 = 0x08000501; // v_sub_f32_e32 v0, v1, v2
     private const uint VReadlaneB32_S0_V1_S2 = 0xD7600000;
     private const uint VReadlaneB32_S0_V1_S2_Extra = 0x00000501;
+    private const uint VReadfirstlaneB32_S4_V6 = 0x7E080506;
     private const uint VWritelaneB32_V0_S1_S2 = 0xD7610000;
     private const uint VWritelaneB32_V0_S1_S2_Extra = 0x00000401;
     private const uint VPkMadI16_V1_V2_V3_V4 = 0xCC004001;
@@ -121,6 +122,7 @@ public sealed class Gen5DecoderTests
             VWritelaneB32_V0_S1_S2_Extra,
             VReadlaneB32_S0_V1_S2,
             VReadlaneB32_S0_V1_S2_Extra,
+            VReadfirstlaneB32_S4_V6,
             SEndpgm,
         ]);
 
@@ -147,6 +149,11 @@ public sealed class Gen5DecoderTests
             source => Assert.Equal(Gen5Operand.Vector(1), source),
             source => Assert.Equal(Gen5Operand.Scalar(2), source));
         Assert.Equal(Gen5Operand.Scalar(0), Assert.Single(read.Destinations));
+
+        var readFirst = program.Instructions[2];
+        Assert.Equal("VReadfirstlaneB32", readFirst.Opcode);
+        Assert.Equal(Gen5Operand.Vector(6), Assert.Single(readFirst.Sources));
+        Assert.Equal(Gen5Operand.Scalar(4), Assert.Single(readFirst.Destinations));
     }
 
     [Fact]
@@ -158,6 +165,7 @@ public sealed class Gen5DecoderTests
             VWritelaneB32_V0_S1_S2_Extra,
             VReadlaneB32_S0_V1_S2,
             VReadlaneB32_S0_V1_S2_Extra,
+            VReadfirstlaneB32_S4_V6,
             SEndpgm,
         ]);
         Assert.True(
@@ -189,7 +197,18 @@ public sealed class Gen5DecoderTests
                 out var shader,
                 out var compileError),
             compileError);
-        Assert.True(ContainsSpirvOpcode(shader.Spirv, 345));
+        Assert.True(ContainsSpirvCapability(
+            shader.Spirv,
+            SpirvCapability.GroupNonUniformBallot));
+        Assert.True(ContainsSpirvOpcode(
+            shader.Spirv,
+            (ushort)SpirvOp.GroupNonUniformBallot));
+        Assert.True(ContainsSpirvOpcode(
+            shader.Spirv,
+            (ushort)SpirvOp.GroupNonUniformBallotFindLSB));
+        Assert.True(ContainsSpirvOpcode(
+            shader.Spirv,
+            (ushort)SpirvOp.GroupNonUniformShuffle));
     }
 
     [Fact]

@@ -161,6 +161,7 @@ internal enum SpirvOp : ushort
     GroupNonUniformBroadcast = 337,
     GroupNonUniformBroadcastFirst = 338,
     GroupNonUniformBallot = 339,
+    GroupNonUniformBallotFindLSB = 344,
     GroupNonUniformShuffle = 345,
     GroupNonUniformShuffleXor = 346,
     GroupNonUniformShuffleUp = 347,

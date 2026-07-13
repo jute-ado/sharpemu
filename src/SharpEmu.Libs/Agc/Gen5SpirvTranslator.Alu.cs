@@ -43,6 +43,35 @@ internal static partial class Gen5SpirvTranslator
                 return TryEmitRelativeMove(instruction, out error);
             }
 
+            if (instruction.Opcode == "VReadfirstlaneB32")
+            {
+                if (instruction.Destinations.Count == 0 ||
+                    instruction.Destinations[0].Kind != Gen5OperandKind.ScalarRegister)
+                {
+                    error = "missing scalar destination";
+                    return false;
+                }
+
+                var activeLanes = _module.AddInstruction(
+                    SpirvOp.GroupNonUniformBallot,
+                    _uvec4Type,
+                    UInt(3),
+                    Load(_boolType, _exec));
+                var firstActiveLane = _module.AddInstruction(
+                    SpirvOp.GroupNonUniformBallotFindLSB,
+                    _uintType,
+                    UInt(3),
+                    activeLanes);
+                var value = _module.AddInstruction(
+                    SpirvOp.GroupNonUniformShuffle,
+                    _uintType,
+                    UInt(3),
+                    GetRawSource(instruction, 0),
+                    firstActiveLane);
+                StoreS(instruction.Destinations[0].Value, value);
+                return true;
+            }
+
             if (instruction.Opcode == "VReadlaneB32")
             {
                 if (instruction.Destinations.Count == 0 ||
@@ -75,7 +104,6 @@ internal static partial class Gen5SpirvTranslator
             switch (instruction.Opcode)
             {
                 case "VMovB32":
-                case "VReadfirstlaneB32":
                     result = GetRawSource(instruction, 0);
                     break;
                 case "VWritelaneB32":

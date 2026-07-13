@@ -1580,7 +1580,9 @@ internal static class Gen5ShaderTranslator
                     sources = [Gen5Operand.Source(word & 0x1FF, literal)];
                 }
 
-                destinations = [Gen5Operand.Vector((word >> 17) & 0xFF)];
+                destinations = opcode == "VReadfirstlaneB32"
+                    ? [Gen5Operand.Scalar((word >> 17) & 0x7F)]
+                    : [Gen5Operand.Vector((word >> 17) & 0xFF)];
                 break;
             case Gen5ShaderEncoding.Vop2:
                 if (isDpp)
