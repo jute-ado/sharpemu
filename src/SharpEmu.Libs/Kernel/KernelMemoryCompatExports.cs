@@ -5810,7 +5810,18 @@ public static class KernelMemoryCompatExports
 
     private static bool TryReadHostMemory(ulong address, Span<byte> destination)
     {
-        if (destination.IsEmpty || !IsHostRangeAccessible(address, (ulong)destination.Length, writeAccess: false))
+        if (destination.IsEmpty)
+        {
+            return false;
+        }
+
+        if (TryReadTrackedLibcHeap(address, destination))
+        {
+            return true;
+        }
+
+        if (!OperatingSystem.IsWindows() ||
+            !IsHostRangeAccessible(address, (ulong)destination.Length, writeAccess: false))
         {
             return false;
         }
@@ -5852,7 +5863,17 @@ public static class KernelMemoryCompatExports
                     continue;
                 }
 
-                return TryReadHostMemory(address, destination);
+                try
+                {
+                    var temporary = new byte[destination.Length];
+                    Marshal.Copy((nint)address, temporary, 0, temporary.Length);
+                    temporary.AsSpan().CopyTo(destination);
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
             }
         }
 
@@ -5950,6 +5971,11 @@ public static class KernelMemoryCompatExports
     private static unsafe bool TryAllocateGuardedLibcHeap(nuint actualSize, nuint alignment, bool zeroFill, out ulong address)
     {
         address = 0;
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
         const nuint pageSize = 0x1000;
 
         try
@@ -6163,7 +6189,18 @@ public static class KernelMemoryCompatExports
 
     private static bool TryWriteHostMemory(ulong address, ReadOnlySpan<byte> source)
     {
-        if (source.IsEmpty || !IsHostRangeAccessible(address, (ulong)source.Length, writeAccess: true))
+        if (source.IsEmpty)
+        {
+            return false;
+        }
+
+        if (TryWriteTrackedLibcHeap(address, source))
+        {
+            return true;
+        }
+
+        if (!OperatingSystem.IsWindows() ||
+            !IsHostRangeAccessible(address, (ulong)source.Length, writeAccess: true))
         {
             return false;
         }
@@ -6180,6 +6217,38 @@ public static class KernelMemoryCompatExports
         }
     }
 
+    private static bool TryWriteTrackedLibcHeap(ulong address, ReadOnlySpan<byte> source)
+    {
+        var length = (ulong)source.Length;
+        lock (_libcAllocGate)
+        {
+            foreach (var (allocationAddress, allocation) in _libcAllocations)
+            {
+                var allocationSize = (ulong)allocation.Size;
+                var offset = address >= allocationAddress
+                    ? address - allocationAddress
+                    : ulong.MaxValue;
+                if (offset > allocationSize || length > allocationSize - offset)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var temporary = source.ToArray();
+                    Marshal.Copy(temporary, 0, (nint)address, temporary.Length);
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+        }
+
+        return false;
+    }
+
     private static bool IsHostRangeAccessible(ulong address, ulong length, bool writeAccess)
     {
         if (address == 0 || length == 0)
@@ -6194,6 +6263,15 @@ public static class KernelMemoryCompatExports
         }
 
         if (ulong.MaxValue - address < length - 1)
+        {
+            return false;
+        }
+
+        // The compatibility fallback historically accepts raw host pointers on Windows.
+        // VirtualQuery is the safety boundary that makes those probes non-faulting. Other
+        // platforms have no equivalent implementation here, so only emulator-owned heap
+        // allocations are safe to dereference there.
+        if (!OperatingSystem.IsWindows())
         {
             return false;
         }
