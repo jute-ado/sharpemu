@@ -1597,6 +1597,48 @@ internal static partial class Gen5SpirvTranslator
             return value;
         }
 
+        private uint GetInteger64Source(
+            Gen5ShaderInstruction instruction,
+            int sourceIndex,
+            bool signed)
+        {
+            if ((uint)sourceIndex >= instruction.Sources.Count)
+            {
+                throw new InvalidOperationException($"missing integer64 source {sourceIndex}");
+            }
+
+            var operand = instruction.Sources[sourceIndex];
+            uint value;
+            if (operand.Kind == Gen5OperandKind.VectorRegister)
+            {
+                value = LoadV64(operand.Value);
+            }
+            else if (operand.Kind == Gen5OperandKind.ScalarRegister)
+            {
+                value = LoadS64(operand.Value);
+            }
+            else
+            {
+                var raw = operand.Kind switch
+                {
+                    Gen5OperandKind.LiteralConstant => operand.Value,
+                    Gen5OperandKind.EncodedConstant when TryDecodeInlineConstant(
+                        operand.Value,
+                        out var inline) => inline,
+                    _ => throw new InvalidOperationException(
+                        $"unsupported integer64 source {operand}"),
+                };
+                return signed
+                    ? _module.AddInstruction(
+                        SpirvOp.SConvert,
+                        _longType,
+                        Bitcast(_intType, UInt(raw)))
+                    : _module.AddInstruction(SpirvOp.UConvert, _ulongType, UInt(raw));
+            }
+
+            return signed ? Bitcast(_longType, value) : value;
+        }
+
         private bool TryGetInlineDoubleSource(Gen5Operand operand, out uint value)
         {
             if (operand.Kind != Gen5OperandKind.EncodedConstant)
@@ -2173,10 +2215,20 @@ internal static partial class Gen5SpirvTranslator
             var destination = instruction.Destinations[0].Value;
             uint condition = _module.ConstantBool(false);
             var opcode = instruction.Opcode;
-            var predicateOpcode = opcode.EndsWith("F64", StringComparison.Ordinal) ||
-                opcode.EndsWith("F16", StringComparison.Ordinal)
-                ? opcode[..^3] + "F32"
-                : opcode;
+            var predicateOpcode = opcode;
+            if (opcode.EndsWith("F64", StringComparison.Ordinal) ||
+                opcode.EndsWith("F16", StringComparison.Ordinal))
+            {
+                predicateOpcode = opcode[..^3] + "F32";
+            }
+            else if (opcode.EndsWith("I64", StringComparison.Ordinal))
+            {
+                predicateOpcode = opcode[..^3] + "I32";
+            }
+            else if (opcode.EndsWith("U64", StringComparison.Ordinal))
+            {
+                predicateOpcode = opcode[..^3] + "U32";
+            }
             if (predicateOpcode is "VCmpClassF32" or "VCmpxClassF32")
             {
                 var source = GetFloatSource(instruction, 0);
@@ -2356,16 +2408,23 @@ internal static partial class Gen5SpirvTranslator
             }
             else if (predicateOpcode is not ("VCmpClassF32" or "VCmpxClassF32"))
             {
-                var left = GetRawSource(instruction, 0);
-                var right = GetRawSource(instruction, 1);
-                var signed = opcode.EndsWith("I32", StringComparison.Ordinal);
-                if (signed)
+                var signed = opcode.EndsWith("I32", StringComparison.Ordinal) ||
+                    opcode.EndsWith("I64", StringComparison.Ordinal);
+                var is64Bit = opcode.EndsWith("I64", StringComparison.Ordinal) ||
+                    opcode.EndsWith("U64", StringComparison.Ordinal);
+                var left = is64Bit
+                    ? GetInteger64Source(instruction, 0, signed)
+                    : GetRawSource(instruction, 0);
+                var right = is64Bit
+                    ? GetInteger64Source(instruction, 1, signed)
+                    : GetRawSource(instruction, 1);
+                if (signed && !is64Bit)
                 {
                     left = Bitcast(_intType, left);
                     right = Bitcast(_intType, right);
                 }
 
-                var operation = opcode switch
+                var operation = predicateOpcode switch
                 {
                     "VCmpEqI32" or "VCmpxEqI32" or
                     "VCmpEqU32" or "VCmpxEqU32" => SpirvOp.IEqual,

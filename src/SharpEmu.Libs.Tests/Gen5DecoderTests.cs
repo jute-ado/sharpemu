@@ -927,6 +927,89 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesVectorInteger64ComparisonsToSpirv()
+    {
+        // The compact opcode blocks and E64 examples were verified with
+        // LLVM 18 llvm-mc for gfx1030.
+        var compactOpcodes = Enumerable
+            .Range(0xA0, 8)
+            .Concat(Enumerable.Range(0xB0, 8))
+            .Concat(Enumerable.Range(0xE0, 8))
+            .Concat(Enumerable.Range(0xF0, 8))
+            .Select(opcode => (uint)opcode)
+            .ToArray();
+        var instructionWords = compactOpcodes
+            .Select(opcode => 0x7C000000u | (opcode << 17) | (2u << 9) | 0x100u)
+            .Concat(
+            [
+                0xD4A20008u, 0x00022510u, // v_cmp_eq_i64 s8, v[16:17], v[18:19]
+                0xD4E4000Au, 0x00022D14u, // v_cmp_gt_u64 s10, v[20:21], v[22:23]
+                0xD4A1000Cu, 0x000230C1u, // v_cmp_lt_i64 s12, -1, v[24:25]
+                0xD4E6000Eu, 0x00023484u, // v_cmp_ge_u64 s14, 4, v[26:27]
+                SEndpgm,
+            ])
+            .ToArray();
+        var ctx = CreateContext(instructionWords);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "VCmpFI64", "VCmpLtI64", "VCmpEqI64", "VCmpLeI64",
+                "VCmpGtI64", "VCmpNeI64", "VCmpGeI64", "VCmpTI64",
+                "VCmpxFI64", "VCmpxLtI64", "VCmpxEqI64", "VCmpxLeI64",
+                "VCmpxGtI64", "VCmpxNeI64", "VCmpxGeI64", "VCmpxTI64",
+                "VCmpFU64", "VCmpLtU64", "VCmpEqU64", "VCmpLeU64",
+                "VCmpGtU64", "VCmpNeU64", "VCmpGeU64", "VCmpTU64",
+                "VCmpxFU64", "VCmpxLtU64", "VCmpxEqU64", "VCmpxLeU64",
+                "VCmpxGtU64", "VCmpxNeU64", "VCmpxGeU64", "VCmpxTU64",
+                "VCmpEqI64", "VCmpGtU64", "VCmpLtI64", "VCmpGeU64",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            [
+                .. Enumerable.Repeat(106u, 8), .. Enumerable.Repeat(126u, 8),
+                .. Enumerable.Repeat(106u, 8), .. Enumerable.Repeat(126u, 8),
+                8u, 10u, 12u, 14u,
+            ],
+            program.Instructions
+                .Take(36)
+                .Select(instruction => Assert.Single(instruction.Destinations).Value));
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvCapability(shader.Spirv, SpirvCapability.Int64));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SLessThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SGreaterThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UGreaterThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SConvert));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UConvert));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.LogicalAnd));
+    }
+
+    [Fact]
     public void CompilesExtendedVop1EncodingsToSpirv()
     {
         // E64 encodings assembled with LLVM 18 llvm-mc for gfx1030 and
