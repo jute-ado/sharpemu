@@ -1136,6 +1136,33 @@ internal static partial class Gen5SpirvTranslator
 
             switch (instruction.Opcode)
             {
+                case "DsWriteB8":
+                case "DsWriteB16":
+                {
+                    if (instruction.Sources.Count < 2)
+                    {
+                        error = "missing LDS subword write source";
+                        return false;
+                    }
+
+                    var componentBits = instruction.Opcode == "DsWriteB8" ? 8u : 16u;
+                    var byteAddress = LdsByteAddress(
+                        GetRawSource(instruction, 0),
+                        EffectiveDsOffsetBytes(control.Offset0));
+                    var pointer = LdsPointerFromByteAddress(byteAddress);
+                    var bitOffset = ShiftLeftLogical(
+                        BitwiseAnd(byteAddress, UInt(3)),
+                        UInt(3));
+                    var inserted = _module.AddInstruction(
+                        SpirvOp.BitFieldInsert,
+                        _uintType,
+                        Load(_uintType, pointer),
+                        GetRawSource(instruction, 1),
+                        bitOffset,
+                        UInt(componentBits));
+                    StoreLds(pointer, inserted);
+                    return true;
+                }
                 case "DsWriteB32":
                 {
                     if (instruction.Sources.Count < 2)
@@ -1180,12 +1207,12 @@ internal static partial class Gen5SpirvTranslator
                     StoreLds(
                         LdsPointer(
                             address,
-                            EffectiveDsOffsetBytes(control.Offset0, st64)),
+                            EffectiveDsPairOffsetBytes(control.Offset0, st64)),
                         GetRawSource(instruction, 1));
                     StoreLds(
                         LdsPointer(
                             address,
-                            EffectiveDsOffsetBytes(control.Offset1, st64)),
+                            EffectiveDsPairOffsetBytes(control.Offset1, st64)),
                         GetRawSource(instruction, 2));
                     return true;
                 }
@@ -1205,6 +1232,59 @@ internal static partial class Gen5SpirvTranslator
                     StoreV(instruction.Destinations[0].Value, value);
                     return true;
                 }
+                case "DsReadB64":
+                {
+                    if (instruction.Destinations.Count < 2 ||
+                        instruction.Sources.Count < 1)
+                    {
+                        error = "missing LDS read64 operand";
+                        return false;
+                    }
+
+                    var address = GetRawSource(instruction, 0);
+                    var offset = EffectiveDsOffsetBytes(control.Offset0);
+                    StoreV(
+                        instruction.Destinations[0].Value,
+                        Load(_uintType, LdsPointer(address, offset)));
+                    StoreV(
+                        instruction.Destinations[1].Value,
+                        Load(_uintType, LdsPointer(address, offset + sizeof(uint))));
+                    return true;
+                }
+                case "DsReadI8":
+                case "DsReadU8":
+                case "DsReadI16":
+                case "DsReadU16":
+                {
+                    if (instruction.Destinations.Count < 1 ||
+                        instruction.Sources.Count < 1)
+                    {
+                        error = "missing LDS subword read operand";
+                        return false;
+                    }
+
+                    var componentBits = instruction.Opcode.EndsWith("8", StringComparison.Ordinal)
+                        ? 8u
+                        : 16u;
+                    var signed = instruction.Opcode.Contains('I', StringComparison.Ordinal);
+                    var byteAddress = LdsByteAddress(
+                        GetRawSource(instruction, 0),
+                        EffectiveDsOffsetBytes(control.Offset0));
+                    var word = Load(_uintType, LdsPointerFromByteAddress(byteAddress));
+                    var bitOffset = ShiftLeftLogical(
+                        BitwiseAnd(byteAddress, UInt(3)),
+                        UInt(3));
+                    var value = _module.AddInstruction(
+                        signed ? SpirvOp.BitFieldSExtract : SpirvOp.BitFieldUExtract,
+                        signed ? _intType : _uintType,
+                        signed ? Bitcast(_intType, word) : word,
+                        bitOffset,
+                        UInt(componentBits));
+                    StoreV(
+                        instruction.Destinations[0].Value,
+                        signed ? Bitcast(_uintType, value) : value);
+                    return true;
+                }
                 case "DsRead2B32":
                 case "DsRead2St64B32":
                 {
@@ -1221,12 +1301,12 @@ internal static partial class Gen5SpirvTranslator
                         _uintType,
                         LdsPointer(
                             address,
-                            EffectiveDsOffsetBytes(control.Offset0, st64)));
+                            EffectiveDsPairOffsetBytes(control.Offset0, st64)));
                     var second = Load(
                         _uintType,
                         LdsPointer(
                             address,
-                            EffectiveDsOffsetBytes(control.Offset1, st64)));
+                            EffectiveDsPairOffsetBytes(control.Offset1, st64)));
                     StoreV(instruction.Destinations[0].Value, first);
                     StoreV(instruction.Destinations[1].Value, second);
                     return true;
@@ -1237,15 +1317,22 @@ internal static partial class Gen5SpirvTranslator
             }
         }
 
-        private static uint EffectiveDsOffsetBytes(uint offset, bool st64 = false) =>
-            offset * (st64 ? 256u : sizeof(uint));
+        // Regular DS offsets are bytes. The read2/write2 families instead
+        // scale each offset by the element width (and ST64 adds a 64x stride).
+        private static uint EffectiveDsOffsetBytes(uint offset) => offset;
 
-        private uint LdsPointer(uint address, uint offsetBytes)
+        private static uint EffectiveDsPairOffsetBytes(uint offset, bool st64) =>
+            offset * (st64 ? 64u * sizeof(uint) : sizeof(uint));
+
+        private uint LdsByteAddress(uint address, uint offsetBytes) =>
+            offsetBytes == 0 ? address : IAdd(address, UInt(offsetBytes));
+
+        private uint LdsPointer(uint address, uint offsetBytes) =>
+            LdsPointerFromByteAddress(LdsByteAddress(address, offsetBytes));
+
+        private uint LdsPointerFromByteAddress(uint byteAddress)
         {
-            var addressWithOffset = offsetBytes == 0
-                ? address
-                : IAdd(address, UInt(offsetBytes));
-            var index = ShiftRightLogical(addressWithOffset, UInt(2));
+            var index = ShiftRightLogical(byteAddress, UInt(2));
             return _module.AddInstruction(
                 SpirvOp.AccessChain,
                 _workgroupUintPointer,
