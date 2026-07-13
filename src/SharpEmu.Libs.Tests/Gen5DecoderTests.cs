@@ -902,6 +902,95 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesAllLdsSwizzleModesToSubgroupShuffle()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump. These cover quad, bitmask, rotate-left,
+        // rotate-right, and FFT swizzle modes respectively.
+        var ctx = CreateContext(
+        [
+            0xD8D480B1u, 0x00000001u,
+            0xD8D4041Fu, 0x02000003u,
+            0xD8D4C020u, 0x04000005u,
+            0xD8D4C420u, 0x06000007u,
+            0xD8D4E010u, 0x08000009u,
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "DsSwizzleB32",
+                "DsSwizzleB32",
+                "DsSwizzleB32",
+                "DsSwizzleB32",
+                "DsSwizzleB32",
+            ],
+            program.Instructions.Take(5).Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            [1u, 3u, 5u, 7u, 9u],
+            program.Instructions.Take(5)
+                .Select(instruction => Assert.Single(instruction.Sources).Value));
+        Assert.Equal(
+            [0u, 2u, 4u, 6u, 8u],
+            program.Instructions.Take(5)
+                .Select(instruction => Assert.Single(instruction.Destinations).Value));
+        Assert.Equal(
+            [0x80B1u, 0x041Fu, 0xC020u, 0xC420u, 0xE010u],
+            program.Instructions.Take(5).Select(instruction =>
+            {
+                var control = Assert.IsType<Gen5DataShareControl>(instruction.Control);
+                return control.Offset0 | (control.Offset1 << 8);
+            }));
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvCapability(
+            shader.Spirv,
+            SpirvCapability.GroupNonUniformShuffle));
+        Assert.True(ContainsSpirvOpcode(
+            shader.Spirv,
+            (ushort)SpirvOp.GroupNonUniformShuffle));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitReverse));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IAdd));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ISub));
+        Assert.True(ContainsSpirvOpcode(
+            shader.Spirv,
+            (ushort)SpirvOp.ShiftRightLogical));
+        Assert.True(ContainsSpirvOpcode(
+            shader.Spirv,
+            (ushort)SpirvOp.ShiftLeftLogical));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseAnd));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseOr));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseXor));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Select));
+        Assert.False(ContainsSpirvVariable(
+            shader.Spirv,
+            SpirvStorageClass.Workgroup));
+    }
+
+    [Fact]
     public void CompilesLdsAtomic32OperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified

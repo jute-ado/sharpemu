@@ -2037,7 +2037,7 @@ internal static class Gen5ShaderTranslator
                         Gen5Operand.Vector(vectorAddress),
                         Gen5Operand.Vector(vectorData0),
                     ],
-                    "DsSwizzleB32" => [Gen5Operand.Vector(vectorData0)],
+                    "DsSwizzleB32" => [Gen5Operand.Vector(vectorAddress)],
                     _ => [Gen5Operand.Vector(vectorAddress)],
                 };
                 destinations = opcode switch
