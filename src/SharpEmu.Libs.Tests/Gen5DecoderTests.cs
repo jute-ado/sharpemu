@@ -1047,6 +1047,83 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesFloatLdsAtomic32OperationsToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump. SPIR-V has no core float LDS atomics, so the
+        // operations use raw-word compare/exchange loops around float math.
+        var ctx = CreateContext(
+        [
+            0xD84401FCu, 0x00030201u,
+            0xD84801FCu, 0x00000504u,
+            0xD84C01FCu, 0x00000706u,
+            0xD85401FCu, 0x00000908u,
+            0xD8C401FCu, 0x0A0D0C0Bu,
+            0xD8C801FCu, 0x0E00100Fu,
+            0xD8CC01FCu, 0x11001312u,
+            0xD95401FCu, 0x14001615u,
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "DsCmpstF32", "DsMinF32", "DsMaxF32", "DsAddF32",
+                "DsCmpstRtnF32", "DsMinRtnF32", "DsMaxRtnF32",
+                "DsAddRtnF32", "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(3, program.Instructions[0].Sources.Count);
+        Assert.All(
+            program.Instructions.Skip(1).Take(3),
+            instruction => Assert.Equal(2, instruction.Sources.Count));
+        Assert.Equal(3, program.Instructions[4].Sources.Count);
+        Assert.All(
+            program.Instructions.Skip(4).Take(4),
+            instruction => Assert.Single(instruction.Destinations));
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.Equal(8, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicLoad));
+        Assert.Equal(
+            8,
+            CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicCompareExchange));
+        Assert.Equal(9, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.LoopMerge));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FOrdEqual));
+        Assert.True(ContainsSpirvOpcode(
+            shader.Spirv,
+            (ushort)SpirvOp.FOrdLessThan));
+        Assert.True(ContainsSpirvOpcode(
+            shader.Spirv,
+            (ushort)SpirvOp.FOrdGreaterThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FAdd));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Bitcast));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Select));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 508));
+    }
+
+    [Fact]
     public void CompilesLdsBackwardPermuteToSubgroupShuffle()
     {
         // Encoding assembled with LLVM 18 llvm-mc for gfx1030 and verified

@@ -1343,6 +1343,10 @@ internal static class Gen5ShaderTranslator
             0x0E => "DsWrite2B32",
             0x0F => "DsWrite2St64B32",
             0x10 => "DsCmpstB32",
+            0x11 => "DsCmpstF32",
+            0x12 => "DsMinF32",
+            0x13 => "DsMaxF32",
+            0x15 => "DsAddF32",
             0x1E => "DsWriteB8",
             0x1F => "DsWriteB16",
             0x20 => "DsAddRtnU32",
@@ -1362,6 +1366,9 @@ internal static class Gen5ShaderTranslator
             0x2E => "DsWrxchg2RtnB32",
             0x2F => "DsWrxchg2St64RtnB32",
             0x30 => "DsCmpstRtnB32",
+            0x31 => "DsCmpstRtnF32",
+            0x32 => "DsMinRtnF32",
+            0x33 => "DsMaxRtnF32",
             0x34 => "DsWrapRtnB32",
             0x35 => "DsSwizzleB32",
             0x36 => "DsReadB32",
@@ -1374,6 +1381,7 @@ internal static class Gen5ShaderTranslator
             0x4D => "DsWriteB64",
             0x4E => "DsWrite2B64",
             0x4F => "DsWrite2St64B64",
+            0x55 => "DsAddRtnF32",
             0x76 => "DsReadB64",
             0x77 => "DsRead2B64",
             0x78 => "DsRead2St64B64",
@@ -2074,12 +2082,14 @@ internal static class Gen5ShaderTranslator
                     "DsRsubU32" or "DsIncU32" or "DsDecU32" or
                     "DsMinI32" or "DsMaxI32" or "DsMinU32" or "DsMaxU32" or
                     "DsAndB32" or "DsOrB32" or "DsXorB32" or
+                    "DsMinF32" or "DsMaxF32" or "DsAddF32" or
                     "DsAddRtnU32" or "DsSubRtnU32" or
                     "DsRsubRtnU32" or "DsIncRtnU32" or "DsDecRtnU32" or
                     "DsMinRtnI32" or "DsMaxRtnI32" or
                     "DsMinRtnU32" or "DsMaxRtnU32" or
                     "DsAndRtnB32" or "DsOrRtnB32" or "DsXorRtnB32" or
-                    "DsWrxchgRtnB32" => [
+                    "DsWrxchgRtnB32" or
+                    "DsMinRtnF32" or "DsMaxRtnF32" or "DsAddRtnF32" => [
                         Gen5Operand.Vector(vectorAddress),
                         Gen5Operand.Vector(vectorData0),
                     ],
@@ -2094,7 +2104,8 @@ internal static class Gen5ShaderTranslator
                         Gen5Operand.Vector(vectorData0),
                         Gen5Operand.Vector(vectorData1),
                     ],
-                    "DsCmpstB32" or "DsCmpstRtnB32" => [
+                    "DsCmpstB32" or "DsCmpstRtnB32" or
+                    "DsCmpstF32" or "DsCmpstRtnF32" => [
                         Gen5Operand.Vector(vectorAddress),
                         Gen5Operand.Vector(vectorData0),
                         Gen5Operand.Vector(vectorData1),
@@ -2139,7 +2150,9 @@ internal static class Gen5ShaderTranslator
                     "DsMinRtnU32" or "DsMaxRtnU32" or
                     "DsAndRtnB32" or "DsOrRtnB32" or "DsXorRtnB32" or
                     "DsWrxchgRtnB32" or "DsMskorRtnB32" or
-                    "DsCmpstRtnB32" or "DsWrapRtnB32" => [
+                    "DsCmpstRtnB32" or "DsWrapRtnB32" or
+                    "DsCmpstRtnF32" or "DsMinRtnF32" or
+                    "DsMaxRtnF32" or "DsAddRtnF32" => [
                         Gen5Operand.Vector(vectorDestination),
                     ],
                     "DsWrxchg2RtnB32" or "DsWrxchg2St64RtnB32" => [
