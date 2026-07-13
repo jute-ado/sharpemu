@@ -537,6 +537,12 @@ public sealed class Gen5DecoderTests
                 "SEndpgm",
             ],
             program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            [106u, 106u, 106u, 126u, 126u, 126u, 126u],
+            program.Instructions
+                .Skip(5)
+                .Take(7)
+                .Select(instruction => Assert.Single(instruction.Destinations).Value));
         var state = new Gen5ShaderState(program, [], Metadata: null);
         Assert.True(
             Gen5ShaderScalarEvaluator.TryEvaluate(
@@ -871,6 +877,84 @@ public sealed class Gen5DecoderTests
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseAnd));
         Assert.True(ContainsGlslExtInst(shader.Spirv, 50));
         Assert.True(ContainsGlslExtInst(shader.Spirv, 58));
+    }
+
+    [Fact]
+    public void CompilesExtendedVectorComparisonsToScalarMasks()
+    {
+        // E64 encodings assembled with LLVM 18 llvm-mc for gfx1030 and
+        // verified with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xD4010104u, 0x20020500u, // v_cmp_lt_f32 s4, -|v0|, v2
+            0xD416007Eu, 0x00020D04u, // v_cmpx_ge_f32 v4, v6 (writes exec_lo)
+            0xD4820008u, 0x00021508u, // v_cmp_eq_i32 s8, v8, v10
+            0xD4C4000Au, 0x00021D0Cu, // v_cmp_gt_u32 s10, v12, v14
+            0xD417007Eu, 0x00022510u, // v_cmpx_o_f32 v16, v18
+            0xD418007Eu, 0x00022D14u, // v_cmpx_u_f32 v20, v22
+            0xD41A007Eu, 0x00023518u, // v_cmpx_nlg_f32 v24, v26
+            0xD498007Eu, 0x00023D1Cu, // v_cmpx_class_f32 v28, v30
+            0x7C321508u,              // v_cmpx_nge_f32_e32 v8, v10
+            0x7C362510u,              // v_cmpx_ngt_f32_e32 v16, v18
+            0x7C382D14u,              // v_cmpx_nle_f32_e32 v20, v22
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "VCmpLtF32", "VCmpxGeF32", "VCmpEqI32", "VCmpGtU32",
+                "VCmpxOF32", "VCmpxUF32", "VCmpxNlgF32", "VCmpxClassF32",
+                "VCmpxNgeF32", "VCmpxNgtF32", "VCmpxNleF32", "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.All(program.Instructions.Take(11), instruction => Assert.Equal(2, instruction.Sources.Count));
+        Assert.Equal(
+            [4u, 126u, 8u, 10u, 126u, 126u, 126u, 126u, 126u, 126u, 126u],
+            program.Instructions
+                .Take(11)
+                .Select(instruction => Assert.Single(instruction.Destinations).Value));
+        Assert.All(
+            program.Instructions.Take(11),
+            instruction => Assert.Equal(
+                Gen5OperandKind.ScalarRegister,
+                Assert.Single(instruction.Destinations).Kind));
+
+        var modifiedControl = Assert.IsType<Gen5Vop3Control>(program.Instructions[0].Control);
+        Assert.Equal(1u, modifiedControl.AbsoluteMask);
+        Assert.Equal(1u, modifiedControl.NegateMask);
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FOrdLessThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FOrdGreaterThanEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FNegate));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UGreaterThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.LogicalAnd));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FUnordEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IsNan));
     }
 
     [Fact]
