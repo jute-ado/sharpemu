@@ -667,7 +667,33 @@ internal static class Gen5ShaderScalarEvaluator
             return true;
         }
 
-        if (instruction.Opcode is "SLshlB64" or "SLshrB64")
+        if (instruction.Opcode == "SBfmB64")
+        {
+            if (instruction.Sources.Count < 2 ||
+                destination.Value >= ScalarRegisterCount - 1 ||
+                !TryEvaluateScalarOperand(
+                    instruction.Sources[0],
+                    registers,
+                    out var widthSource) ||
+                !TryEvaluateScalarOperand(
+                    instruction.Sources[1],
+                    registers,
+                    out var offsetSource))
+            {
+                error = $"scalar-source64 pc=0x{instruction.Pc:X} op={instruction.Opcode}";
+                return false;
+            }
+
+            var width = (int)widthSource & 63;
+            var offset = (int)offsetSource & 63;
+            var value = width == 0
+                ? 0UL
+                : ((1UL << width) - 1UL) << offset;
+            WriteScalarPair(registers, destination.Value, value, ref execMask);
+            return true;
+        }
+
+        if (instruction.Opcode is "SLshlB64" or "SLshrB64" or "SAshrI64")
         {
             if (instruction.Sources.Count < 2 ||
                 destination.Value >= ScalarRegisterCount - 1 ||
@@ -685,9 +711,12 @@ internal static class Gen5ShaderScalarEvaluator
                 return false;
             }
 
-            value = instruction.Opcode == "SLshlB64"
-                ? value << ((int)shift & 63)
-                : value >> ((int)shift & 63);
+            value = instruction.Opcode switch
+            {
+                "SLshlB64" => value << ((int)shift & 63),
+                "SLshrB64" => value >> ((int)shift & 63),
+                _ => unchecked((ulong)((long)value >> ((int)shift & 63))),
+            };
             WriteScalarPair(registers, destination.Value, value, ref execMask);
             scalarConditionCode = value != 0;
             return true;
@@ -958,7 +987,12 @@ internal static class Gen5ShaderScalarEvaluator
                     break;
                 }
             case "SAbsdiffI32":
-                result = unchecked((uint)Math.Abs((long)(int)left - (int)right));
+                {
+                    var difference = unchecked(left - right);
+                    result = (int)difference < 0
+                        ? unchecked(0u - difference)
+                        : difference;
+                }
                 scalarConditionCode = result != 0;
                 break;
             case "SLshl1AddU32":

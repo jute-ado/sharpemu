@@ -1070,6 +1070,130 @@ public sealed class Gen5DecoderTests
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseOr));
     }
 
+    [Fact]
+    public void CompilesRdna2ScalarIntegerAluToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0x96000201u, // s_absdiff_i32 s0, s1, s2
+            0x91820604u, // s_ashr_i64 s[2:3], s[4:5], s6
+            0x92880B0Au, // s_bfm_b64 s[8:9], s10, s11
+            0x990C0E0Du, // s_pack_ll_b32_b16 s12, s13, s14
+            0x998F1110u, // s_pack_lh_b32_b16 s15, s16, s17
+            0x9A121413u, // s_pack_hh_b32_b16 s18, s19, s20
+            0x9A951716u, // s_mul_hi_u32 s21, s22, s23
+            0x9B181A19u, // s_mul_hi_i32 s24, s25, s26
+            0x971B1D1Cu, // s_lshl1_add_u32 s27, s28, s29
+            0x979E201Fu, // s_lshl2_add_u32 s30, s31, s32
+            0x98212322u, // s_lshl3_add_u32 s33, s34, s35
+            0x98A42625u, // s_lshl4_add_u32 s36, s37, s38
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "SAbsdiffI32", "SAshrI64", "SBfmB64",
+                "SPackLlB32B16", "SPackLhB32B16", "SPackHhB32B16",
+                "SMulHiU32", "SMulHiI32",
+                "SLshl1AddU32", "SLshl2AddU32", "SLshl3AddU32", "SLshl4AddU32",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+
+        var scalarRegisters = new uint[39];
+        scalarRegisters[1] = 0x8000_0000;
+        scalarRegisters[2] = 1;
+        scalarRegisters[4] = 0xFFFF_FFF8;
+        scalarRegisters[5] = uint.MaxValue;
+        scalarRegisters[6] = 2;
+        scalarRegisters[10] = 4;
+        scalarRegisters[11] = 8;
+        scalarRegisters[13] = 0x1234_5678;
+        scalarRegisters[14] = 0x89AB_CDEF;
+        scalarRegisters[16] = 0x1357_2468;
+        scalarRegisters[17] = 0xABCD_0123;
+        scalarRegisters[19] = 0x1357_2468;
+        scalarRegisters[20] = 0xABCD_0123;
+        scalarRegisters[22] = uint.MaxValue;
+        scalarRegisters[23] = 2;
+        scalarRegisters[25] = 0xFFFF_FFFE;
+        scalarRegisters[26] = 3;
+        scalarRegisters[28] = 0x8000_0000;
+        scalarRegisters[31] = 0x4000_0000;
+        scalarRegisters[32] = 1;
+        scalarRegisters[34] = 0x2000_0000;
+        scalarRegisters[35] = 2;
+        scalarRegisters[37] = 0x1000_0000;
+        scalarRegisters[38] = 3;
+        var state = new Gen5ShaderState(program, scalarRegisters, Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.Equal(0x7FFF_FFFFu, evaluation.ScalarRegisters[0]);
+        Assert.Equal(0xFFFF_FFFEu, evaluation.ScalarRegisters[2]);
+        Assert.Equal(uint.MaxValue, evaluation.ScalarRegisters[3]);
+        Assert.Equal(0x0000_0F00u, evaluation.ScalarRegisters[8]);
+        Assert.Equal(0u, evaluation.ScalarRegisters[9]);
+        Assert.Equal(0xCDEF_5678u, evaluation.ScalarRegisters[12]);
+        Assert.Equal(0xABCD_2468u, evaluation.ScalarRegisters[15]);
+        Assert.Equal(0xABCD_1357u, evaluation.ScalarRegisters[18]);
+        Assert.Equal(1u, evaluation.ScalarRegisters[21]);
+        Assert.Equal(uint.MaxValue, evaluation.ScalarRegisters[24]);
+        Assert.Equal(0u, evaluation.ScalarRegisters[27]);
+        Assert.Equal(1u, evaluation.ScalarRegisters[30]);
+        Assert.Equal(2u, evaluation.ScalarRegisters[33]);
+        Assert.Equal(3u, evaluation.ScalarRegisters[36]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IMul));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SConvert));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UConvert));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftRightArithmetic));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftRightLogical));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftLeftLogical));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SLessThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UGreaterThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Select));
+    }
+
+    [Fact]
+    public void RejectsReservedRdna2Sop2Opcode2D()
+    {
+        var ctx = CreateContext(
+        [
+            0x96800201u, // reserved opcode 0x2d with s0, s1, s2 fields
+            SEndpgm,
+        ]);
+
+        Assert.False(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out _,
+                out var decodeError));
+        Assert.Contains("unknown-sop2 op=0x2D", decodeError, StringComparison.Ordinal);
+    }
+
     private static bool ContainsSpirvCapability(
         byte[] spirv,
         SpirvCapability capability)

@@ -2344,6 +2344,15 @@ internal static partial class Gen5SpirvTranslator
                 left,
                 BitwiseAnd64(right, _module.Constant64(_ulongType, 63)));
 
+        private uint ShiftRightArithmetic64(uint left, uint right) =>
+            Bitcast(
+                _ulongType,
+                _module.AddInstruction(
+                    SpirvOp.ShiftRightArithmetic,
+                    _longType,
+                    Bitcast(_longType, left),
+                    BitwiseAnd64(right, _module.Constant64(_ulongType, 63))));
+
         private uint BitwiseAnd(uint left, uint right) =>
             _module.AddInstruction(SpirvOp.BitwiseAnd, _uintType, left, right);
 
