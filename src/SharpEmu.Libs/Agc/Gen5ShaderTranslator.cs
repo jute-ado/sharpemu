@@ -542,10 +542,15 @@ internal static class Gen5ShaderTranslator
             0x2B => "SXnorSaveexecB64",
             0x2C => "SQuadmaskB32",
             0x2D => "SQuadmaskB64",
+            0x2E => "SMovrelsB32",
+            0x2F => "SMovrelsB64",
+            0x30 => "SMovreldB32",
+            0x31 => "SMovreldB64",
             0x34 => "SAbsI32",
             0x37 => "SAndn1SaveexecB64",
             0x38 => "SOrn1SaveexecB64",
             0x3B => "SBitreplicateB64B32",
+            0x49 => "SMovrelsd2B32",
             _ => string.Empty,
         };
 
