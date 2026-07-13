@@ -321,13 +321,14 @@ internal static partial class Gen5SpirvTranslator
             }
             if (_evaluation.ImageBindings.Any(
                     static binding =>
+                        binding.Opcode.EndsWith("O", StringComparison.Ordinal) &&
                         (binding.Opcode.StartsWith(
-                             "ImageSample",
-                             StringComparison.Ordinal) ||
-                         binding.Opcode.StartsWith(
                              "ImageGather4",
-                             StringComparison.Ordinal)) &&
-                        binding.Opcode.EndsWith("O", StringComparison.Ordinal)))
+                             StringComparison.Ordinal) ||
+                         (binding.Opcode.StartsWith(
+                              "ImageSample",
+                              StringComparison.Ordinal) &&
+                          !binding.PackedOffset.HasValue))))
             {
                 _module.AddCapability(SpirvCapability.ImageGatherExtended);
             }
@@ -3018,23 +3019,26 @@ internal static partial class Gen5SpirvTranslator
                 var coordinates = BuildFloatCoordinates(image, start);
                 var explicitLod = sampleSuffix == "L" || isZeroLod || hasGradients;
                 uint offset = 0;
+                uint offsetOperand = 0;
                 if (hasOffset)
                 {
                     var packedOffset =
                         _evaluation.ImageBindings[bindingIndex].PackedOffset;
-                    if (!packedOffset.HasValue)
+                    if (packedOffset.HasValue)
                     {
-                        error =
-                            $"dynamic sample offset is unsupported for {instruction.Opcode}";
-                        return false;
+                        offset = BuildConstantImageOffset(packedOffset.Value);
+                        offsetOperand = 0x8u;
                     }
-
-                    offset = BuildConstantImageOffset(packedOffset.Value);
+                    else
+                    {
+                        offset = BuildImageOffset(image, 0);
+                        offsetOperand = 0x10u;
+                    }
                 }
 
                 var imageOperands = (hasBias ? 1u : 0u) |
                     (hasGradients ? 4u : explicitLod ? 2u : 0u) |
-                    (hasOffset ? 0x8u : 0u);
+                    offsetOperand;
                 var reference = hasCompare
                     ? Bitcast(
                         _floatType,

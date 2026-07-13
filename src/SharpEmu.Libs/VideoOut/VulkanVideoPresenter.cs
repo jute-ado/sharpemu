@@ -1645,7 +1645,7 @@ internal static unsafe class VulkanVideoPresenter
             {
                 Console.Error.WriteLine(
                     "[LOADER][WARN] GPU does not support shaderImageGatherExtended " +
-                    "translated shaders using image gather with offsets/LOD/bias will fail.");
+                    "translated shaders using dynamic image offsets will fail.");
             }
 
             if (!supportedFeatures.ShaderStorageImageReadWithoutFormat ||
