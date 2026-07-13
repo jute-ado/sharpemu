@@ -107,6 +107,7 @@ internal static partial class Gen5SpirvTranslator
         private uint _longType;
         private uint _ulongType;
         private uint _floatType;
+        private uint _doubleType;
         private uint _vec2Type;
         private uint _vec3Type;
         private uint _vec4Type;
@@ -305,9 +306,17 @@ internal static partial class Gen5SpirvTranslator
 
         private void DeclareModule()
         {
+            var usesFloat64 = _state.Program.Instructions.Any(
+                static instruction => instruction.Opcode.EndsWith(
+                    "F64",
+                    StringComparison.Ordinal));
             _module.AddCapability(SpirvCapability.Shader);
             _module.AddCapability(SpirvCapability.Int64);
             _module.AddCapability(SpirvCapability.ImageQuery);
+            if (usesFloat64)
+            {
+                _module.AddCapability(SpirvCapability.Float64);
+            }
             if (_evaluation.ImageBindings.Any(
                     static binding =>
                         (binding.Opcode.StartsWith(
@@ -343,6 +352,10 @@ internal static partial class Gen5SpirvTranslator
             _longType = _module.TypeInt(64, signed: true);
             _ulongType = _module.TypeInt(64, signed: false);
             _floatType = _module.TypeFloat(32);
+            if (usesFloat64)
+            {
+                _doubleType = _module.TypeFloat(64);
+            }
             _vec2Type = _module.TypeVector(_floatType, 2);
             _vec3Type = _module.TypeVector(_floatType, 3);
             _vec4Type = _module.TypeVector(_floatType, 4);

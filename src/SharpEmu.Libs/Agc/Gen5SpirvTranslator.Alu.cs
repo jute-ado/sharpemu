@@ -22,6 +22,11 @@ internal static partial class Gen5SpirvTranslator
                 return TryEmitPackedAlu(instruction, packedControl, out error);
             }
 
+            if (instruction.Opcode.EndsWith("F64", StringComparison.Ordinal))
+            {
+                return TryEmitVectorFloat64(instruction, out error);
+            }
+
             if (instruction.Opcode.StartsWith("VCmp", StringComparison.Ordinal))
             {
                 return TryEmitVectorCompare(instruction, out error);
@@ -991,6 +996,215 @@ internal static partial class Gen5SpirvTranslator
             StoreV(destination, result);
             return true;
         }
+
+        private bool TryEmitVectorFloat64(
+            Gen5ShaderInstruction instruction,
+            out string error)
+        {
+            error = string.Empty;
+            if (_doubleType == 0 ||
+                !TryGetVectorDestination(instruction, out var destination))
+            {
+                error = "missing FP64 vector destination";
+                return false;
+            }
+
+            var left = GetDoubleSource(instruction, 0);
+            var right = GetDoubleSource(instruction, 1);
+            uint result;
+            switch (instruction.Opcode)
+            {
+                case "VAddF64":
+                    result = _module.AddInstruction(
+                        SpirvOp.FAdd,
+                        _doubleType,
+                        left,
+                        right);
+                    break;
+                case "VMulF64":
+                    result = _module.AddInstruction(
+                        SpirvOp.FMul,
+                        _doubleType,
+                        left,
+                        right);
+                    break;
+                case "VFmaF64":
+                    result = Ext(
+                        50,
+                        _doubleType,
+                        left,
+                        right,
+                        GetDoubleSource(instruction, 2));
+                    break;
+                case "VMinF64":
+                    result = Ext(37, _doubleType, left, right);
+                    break;
+                case "VMaxF64":
+                    result = Ext(40, _doubleType, left, right);
+                    break;
+                default:
+                    error = $"unsupported FP64 vector opcode {instruction.Opcode}";
+                    return false;
+            }
+
+            StoreDouble(destination, EmitDoubleResult(instruction, result));
+            return true;
+        }
+
+        private uint GetDoubleSource(
+            Gen5ShaderInstruction instruction,
+            int sourceIndex)
+        {
+            if ((uint)sourceIndex >= instruction.Sources.Count)
+            {
+                throw new InvalidOperationException($"missing FP64 source {sourceIndex}");
+            }
+
+            var operand = instruction.Sources[sourceIndex];
+            uint value;
+            if (TryGetInlineDoubleSource(operand, out var inline))
+            {
+                value = inline;
+            }
+            else
+            {
+                var raw = operand.Kind switch
+                {
+                    Gen5OperandKind.VectorRegister => LoadV64(operand.Value),
+                    Gen5OperandKind.ScalarRegister => LoadS64(operand.Value),
+                    Gen5OperandKind.LiteralConstant =>
+                        _module.Constant64(_ulongType, operand.Value),
+                    _ => throw new InvalidOperationException(
+                        $"unsupported FP64 source {operand}"),
+                };
+                value = Bitcast(_doubleType, raw);
+            }
+
+            if (instruction.Control is Gen5Vop3Control control)
+            {
+                if ((control.AbsoluteMask & (1u << sourceIndex)) != 0)
+                {
+                    value = Ext(4, _doubleType, value);
+                }
+
+                if ((control.NegateMask & (1u << sourceIndex)) != 0)
+                {
+                    value = _module.AddInstruction(
+                        SpirvOp.FNegate,
+                        _doubleType,
+                        value);
+                }
+            }
+
+            return value;
+        }
+
+        private bool TryGetInlineDoubleSource(Gen5Operand operand, out uint value)
+        {
+            if (operand.Kind != Gen5OperandKind.EncodedConstant)
+            {
+                value = 0;
+                return false;
+            }
+
+            double? inline = operand.Value switch
+            {
+                125 => 0,
+                >= 128 and <= 192 => operand.Value - 128,
+                >= 193 and <= 208 => -(operand.Value - 192),
+                240 => 0.5,
+                241 => -0.5,
+                242 => 1,
+                243 => -1,
+                244 => 2,
+                245 => -2,
+                246 => 4,
+                247 => -4,
+                248 => 1 / (2 * Math.PI),
+                _ => null,
+            };
+            if (!inline.HasValue)
+            {
+                value = 0;
+                return false;
+            }
+
+            value = Double(inline.Value);
+            return true;
+        }
+
+        private uint LoadV64(uint register)
+        {
+            var low = _module.AddInstruction(
+                SpirvOp.UConvert,
+                _ulongType,
+                LoadV(register));
+            var high = ShiftLeftLogical64(
+                _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _ulongType,
+                    LoadV(register + 1)),
+                _module.Constant64(_ulongType, 32));
+            return _module.AddInstruction(
+                SpirvOp.BitwiseOr,
+                _ulongType,
+                low,
+                high);
+        }
+
+        private void StoreDouble(uint register, uint value)
+        {
+            var raw = Bitcast(_ulongType, value);
+            StoreV(
+                register,
+                _module.AddInstruction(SpirvOp.UConvert, _uintType, raw));
+            StoreV(
+                register + 1,
+                _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _uintType,
+                    ShiftRightLogical64(
+                        raw,
+                        _module.Constant64(_ulongType, 32))));
+        }
+
+        private uint EmitDoubleResult(
+            Gen5ShaderInstruction instruction,
+            uint value)
+        {
+            if (instruction.Control is not Gen5Vop3Control control)
+            {
+                return value;
+            }
+
+            value = control.OutputModifier switch
+            {
+                1 => _module.AddInstruction(
+                    SpirvOp.FMul,
+                    _doubleType,
+                    value,
+                    Double(2)),
+                2 => _module.AddInstruction(
+                    SpirvOp.FMul,
+                    _doubleType,
+                    value,
+                    Double(4)),
+                3 => _module.AddInstruction(
+                    SpirvOp.FMul,
+                    _doubleType,
+                    value,
+                    Double(0.5)),
+                _ => value,
+            };
+            return control.Clamp
+                ? Ext(43, _doubleType, value, Double(0), Double(1))
+                : value;
+        }
+
+        private uint Double(double value) =>
+            _module.Constant64(
+                _doubleType,
+                unchecked((ulong)BitConverter.DoubleToInt64Bits(value)));
 
         private uint EmitAlign(
             Gen5ShaderInstruction instruction,
