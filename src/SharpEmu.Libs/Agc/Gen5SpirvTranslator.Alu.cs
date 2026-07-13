@@ -370,6 +370,9 @@ internal static partial class Gen5SpirvTranslator
                             multiplied));
                     break;
                 }
+                case "VDot2cF32F16":
+                    result = EmitDot2cF16(instruction, destination);
+                    break;
                 case "VMinF32":
                     result = EmitFloatExtBinary(instruction, 37);
                     break;
@@ -680,6 +683,9 @@ internal static partial class Gen5SpirvTranslator
                     break;
                 case "VAlignbyteB32":
                     result = EmitAlign(instruction, byteAligned: true);
+                    break;
+                case "VPermB32":
+                    result = EmitBytePermute(instruction);
                     break;
                 case "VAndOrB32":
                     result = BitwiseOr(
@@ -1022,6 +1028,125 @@ internal static partial class Gen5SpirvTranslator
                         SpirvOp.UConvert,
                         _ulongType,
                         offset)));
+        }
+
+        private uint EmitBytePermute(Gen5ShaderInstruction instruction)
+        {
+            // The ISA defines in[0..7] over the 64-bit value S0:S1, so the
+            // four low-index bytes come from S1 and the high four from S0.
+            var high = ShiftLeftLogical64(
+                _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _ulongType,
+                    GetRawSource(instruction, 0)),
+                _module.Constant64(_ulongType, 32));
+            var low = _module.AddInstruction(
+                SpirvOp.UConvert,
+                _ulongType,
+                GetRawSource(instruction, 1));
+            var inputs = _module.AddInstruction(
+                SpirvOp.BitwiseOr,
+                _ulongType,
+                high,
+                low);
+            var selectors = GetRawSource(instruction, 2);
+            var result = UInt(0);
+            for (uint component = 0; component < 4; component++)
+            {
+                var selector = ExtractUnsignedBits(selectors, component * 8, 8);
+                var selectedByte = ExtractByte64(inputs, selector);
+
+                // Selectors 8..11 sign-extend bytes 1, 3, 5, and 7.
+                var signByteIndex = _module.AddInstruction(
+                    SpirvOp.ISub,
+                    _uintType,
+                    ShiftLeftLogical(selector, UInt(1)),
+                    UInt(15));
+                var signByte = ExtractByte64(inputs, signByteIndex);
+                var signExtension = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    IsNotZero(BitwiseAnd(signByte, UInt(0x80))),
+                    UInt(0xFF),
+                    UInt(0));
+                var outputByte = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    _module.AddInstruction(
+                        SpirvOp.UGreaterThanEqual,
+                        _boolType,
+                        selector,
+                        UInt(8)),
+                    signExtension,
+                    selectedByte);
+                outputByte = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    _module.AddInstruction(
+                        SpirvOp.IEqual,
+                        _boolType,
+                        selector,
+                        UInt(12)),
+                    UInt(0),
+                    outputByte);
+                outputByte = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    _module.AddInstruction(
+                        SpirvOp.UGreaterThanEqual,
+                        _boolType,
+                        selector,
+                        UInt(13)),
+                    UInt(0xFF),
+                    outputByte);
+                result = BitwiseOr(
+                    result,
+                    ShiftLeftLogical(outputByte, UInt(component * 8)));
+            }
+
+            return result;
+        }
+
+        private uint ExtractByte64(uint value, uint index)
+        {
+            var shift = _module.AddInstruction(
+                SpirvOp.UConvert,
+                _ulongType,
+                ShiftLeftLogical(index, UInt(3)));
+            return _module.AddInstruction(
+                SpirvOp.UConvert,
+                _uintType,
+                BitwiseAnd64(
+                    ShiftRightLogical64(value, shift),
+                    _module.Constant64(_ulongType, 0xFF)));
+        }
+
+        private uint EmitDot2cF16(
+            Gen5ShaderInstruction instruction,
+            uint destination)
+        {
+            var left = Ext(62, _vec2Type, GetRawSource(instruction, 0));
+            var right = Ext(62, _vec2Type, GetRawSource(instruction, 1));
+            uint Component(uint vector, uint index) =>
+                _module.AddInstruction(
+                    SpirvOp.CompositeExtract,
+                    _floatType,
+                    vector,
+                    index);
+
+            var accumulated = Ext(
+                50,
+                _floatType,
+                Component(left, 0),
+                Component(right, 0),
+                Bitcast(_floatType, LoadV(destination)));
+            accumulated = Ext(
+                50,
+                _floatType,
+                Component(left, 1),
+                Component(right, 1),
+                accumulated);
+            return EmitFloatResult(instruction, accumulated);
         }
 
         private uint EmitLerpU8(Gen5ShaderInstruction instruction)
