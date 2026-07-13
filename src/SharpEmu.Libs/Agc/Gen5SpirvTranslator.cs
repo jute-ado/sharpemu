@@ -1139,6 +1139,8 @@ internal static partial class Gen5SpirvTranslator
                 case "DsAddU32":
                 case "DsSubU32":
                 case "DsMinI32":
+                case "DsMaxI32":
+                case "DsMinU32":
                 case "DsMaxU32":
                 case "DsAndB32":
                 case "DsOrB32":
@@ -1146,10 +1148,13 @@ internal static partial class Gen5SpirvTranslator
                 case "DsAddRtnU32":
                 case "DsSubRtnU32":
                 case "DsMinRtnI32":
+                case "DsMaxRtnI32":
+                case "DsMinRtnU32":
                 case "DsMaxRtnU32":
                 case "DsAndRtnB32":
                 case "DsOrRtnB32":
                 case "DsXorRtnB32":
+                case "DsWrxchgRtnB32":
                 {
                     if (instruction.Sources.Count < 2)
                     {
@@ -1162,10 +1167,13 @@ internal static partial class Gen5SpirvTranslator
                         "DsAddU32" or "DsAddRtnU32" => SpirvOp.AtomicIAdd,
                         "DsSubU32" or "DsSubRtnU32" => SpirvOp.AtomicISub,
                         "DsMinI32" or "DsMinRtnI32" => SpirvOp.AtomicSMin,
+                        "DsMaxI32" or "DsMaxRtnI32" => SpirvOp.AtomicSMax,
+                        "DsMinU32" or "DsMinRtnU32" => SpirvOp.AtomicUMin,
                         "DsMaxU32" or "DsMaxRtnU32" => SpirvOp.AtomicUMax,
                         "DsAndB32" or "DsAndRtnB32" => SpirvOp.AtomicAnd,
                         "DsOrB32" or "DsOrRtnB32" => SpirvOp.AtomicOr,
-                        _ => SpirvOp.AtomicXor,
+                        "DsXorB32" or "DsXorRtnB32" => SpirvOp.AtomicXor,
+                        _ => SpirvOp.AtomicExchange,
                     };
                     var returnsValue = instruction.Opcode.Contains("Rtn", StringComparison.Ordinal);
                     if (returnsValue && instruction.Destinations.Count < 1)
@@ -1184,6 +1192,42 @@ internal static partial class Gen5SpirvTranslator
                                 EffectiveDsOffsetBytes(control.Offset0)),
                             UInt(2),
                             UInt(0x108),
+                            GetRawSource(instruction, 1));
+                        if (returnsValue)
+                        {
+                            StoreV(instruction.Destinations[0].Value, original);
+                        }
+                    });
+                    return true;
+                }
+                case "DsCmpstB32":
+                case "DsCmpstRtnB32":
+                {
+                    if (instruction.Sources.Count < 3)
+                    {
+                        error = "missing LDS compare-store source";
+                        return false;
+                    }
+
+                    var returnsValue = instruction.Opcode == "DsCmpstRtnB32";
+                    if (returnsValue && instruction.Destinations.Count < 1)
+                    {
+                        error = "missing LDS compare-store destination";
+                        return false;
+                    }
+
+                    EmitExecConditional(() =>
+                    {
+                        var original = _module.AddInstruction(
+                            SpirvOp.AtomicCompareExchange,
+                            _uintType,
+                            LdsPointer(
+                                GetRawSource(instruction, 0),
+                                EffectiveDsOffsetBytes(control.Offset0)),
+                            UInt(2),
+                            UInt(0x108),
+                            UInt(0x102),
+                            GetRawSource(instruction, 2),
                             GetRawSource(instruction, 1));
                         if (returnsValue)
                         {

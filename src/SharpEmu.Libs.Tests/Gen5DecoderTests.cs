@@ -766,6 +766,78 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesExtendedLdsAtomic32OperationsToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xD8180004u, 0x00000100u, // ds_max_i32 v0, v1 offset:4
+            0xD81C0000u, 0x00000302u, // ds_min_u32 v2, v3
+            0xD8980000u, 0x04000605u, // ds_max_rtn_i32 v4, v5, v6
+            0xD89C0000u, 0x07000908u, // ds_min_rtn_u32 v7, v8, v9
+            0xD8B40000u, 0x0A000C0Bu, // ds_wrxchg_rtn_b32 v10, v11, v12
+            0xD8400000u, 0x000F0E0Du, // ds_cmpst_b32 v13, v14, v15
+            0xD8C00000u, 0x10131211u, // ds_cmpst_rtn_b32 v16, v17, v18, v19
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "DsMaxI32",
+                "DsMinU32",
+                "DsMaxRtnI32",
+                "DsMinRtnU32",
+                "DsWrxchgRtnB32",
+                "DsCmpstB32",
+                "DsCmpstRtnB32",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.All(
+            program.Instructions.Take(5),
+            instruction => Assert.Equal(2, instruction.Sources.Count));
+        Assert.Equal(3, program.Instructions[5].Sources.Count);
+        Assert.Equal(3, program.Instructions[6].Sources.Count);
+        Assert.Empty(program.Instructions[0].Destinations);
+        Assert.Empty(program.Instructions[1].Destinations);
+        Assert.Empty(program.Instructions[5].Destinations);
+        Assert.Equal(
+            [4u, 7u, 10u, 16u],
+            new[] { 2, 3, 4, 6 }
+                .Select(index => Assert.Single(program.Instructions[index].Destinations).Value));
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicSMax));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicUMin));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicExchange));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicCompareExchange));
+    }
+
+    [Fact]
     public void CompilesLdsAtomic32OperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
