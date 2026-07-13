@@ -810,11 +810,14 @@ public sealed partial class DirectExecutionBackend
 			return !_logUsleep;
 		}
 
+		// Only mutex/rwlock *lock* is excluded: it may block a contended acquire, which the
+		// leaf path can't. unlock never blocks and stays here — routing it off the fast path
+		// slows guest spinlocks enough to livelock (Demon's Souls).
 		return nid is
-			"9UK1vLZQft4" or // scePthreadMutexLock
 			"tn3VlD0hG60" or // scePthreadMutexUnlock
-			"7H0iTOciTLo" or // pthread_mutex_lock
 			"2Z+PpY6CaJg" or // pthread_mutex_unlock
+			"EgmLo6EWgso" or // pthread_rwlock_unlock
+			"+L98PIbGttk" or // scePthreadRwlockUnlock
 			"8aI7R7WaOlc" or // sceAmprCommandBufferConstructor
 			"zgXifHT9ErY" or // sceVideoOutIsFlipPending
 			"V++UgBtQhn0" or // sceAgcGetDataPacketPayloadAddress
@@ -888,12 +891,7 @@ public sealed partial class DirectExecutionBackend
 			"6ULAa0fq4jA" or // scePthreadRwlockInit
 			"1471ajPzxh0" or // pthread_rwlock_destroy
 			"BB+kb08Tl9A" or // scePthreadRwlockDestroy
-			"iGjsr1WAtI0" or // pthread_rwlock_rdlock
-			"Ox9i0c7L5w0" or // scePthreadRwlockRdlock
-			"sIlRvQqsN2Y" or // pthread_rwlock_wrlock
-			"mqdNorrB+gI" or // scePthreadRwlockWrlock
-			"EgmLo6EWgso" or // pthread_rwlock_unlock
-			"+L98PIbGttk" or // scePthreadRwlockUnlock
+			// rwlock rd/wr lock removed (can block); init/destroy/unlock stay.
 			"aI+OeCz8xrQ" or // scePthreadSelf
 			"EotR8a3ASf4" or // pthread_self
 			"eoht7mQOCmo" or // scePthreadGetspecific
