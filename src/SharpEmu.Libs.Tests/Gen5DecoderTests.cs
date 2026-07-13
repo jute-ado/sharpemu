@@ -838,6 +838,75 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesPairedLdsExchange32OperationsToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump. Both forms exchange two independent dwords; ST64
+        // applies a 64-dword stride to each encoded offset.
+        var ctx = CreateContext(
+        [
+            0xD8B80201u, 0x00040302u,
+            0xD8BC0403u, 0x05090807u,
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            ["DsWrxchg2RtnB32", "DsWrxchg2St64RtnB32", "SEndpgm"],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            [Gen5Operand.Vector(2), Gen5Operand.Vector(3), Gen5Operand.Vector(4)],
+            program.Instructions[0].Sources);
+        Assert.Equal(
+            [Gen5Operand.Vector(0), Gen5Operand.Vector(1)],
+            program.Instructions[0].Destinations);
+        Assert.Equal(
+            [Gen5Operand.Vector(7), Gen5Operand.Vector(8), Gen5Operand.Vector(9)],
+            program.Instructions[1].Sources);
+        Assert.Equal(
+            [Gen5Operand.Vector(5), Gen5Operand.Vector(6)],
+            program.Instructions[1].Destinations);
+        var regular = Assert.IsType<Gen5DataShareControl>(program.Instructions[0].Control);
+        Assert.Equal(1u, regular.Offset0);
+        Assert.Equal(2u, regular.Offset1);
+        var st64 = Assert.IsType<Gen5DataShareControl>(program.Instructions[1].Control);
+        Assert.Equal(3u, st64.Offset0);
+        Assert.Equal(4u, st64.Offset1);
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.Equal(
+            4,
+            CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicExchange));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 768));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 1024));
+        Assert.True(ContainsSpirvVariable(
+            shader.Spirv,
+            SpirvStorageClass.Workgroup));
+    }
+
+    [Fact]
     public void CompilesLdsBackwardPermuteToSubgroupShuffle()
     {
         // Encoding assembled with LLVM 18 llvm-mc for gfx1030 and verified
