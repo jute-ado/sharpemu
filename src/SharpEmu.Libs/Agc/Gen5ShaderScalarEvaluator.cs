@@ -384,6 +384,14 @@ internal static class Gen5ShaderScalarEvaluator
                     image.GetAddressRegister(2),
                     out var mipLevel)
                     ? mipLevel
+                    : null,
+                instruction.Opcode.EndsWith("O", StringComparison.Ordinal) &&
+                TryResolveVectorConstantBefore(
+                    state.Program,
+                    instruction.Pc,
+                    image.GetAddressRegister(0),
+                    out var packedOffset)
+                    ? packedOffset
                     : null));
         }
 

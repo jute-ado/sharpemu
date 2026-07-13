@@ -273,7 +273,8 @@ internal sealed record Gen5ImageBinding(
     Gen5ImageControl Control,
     IReadOnlyList<uint> ResourceDescriptor,
     IReadOnlyList<uint> SamplerDescriptor,
-    uint? MipLevel);
+    uint? MipLevel,
+    uint? PackedOffset = null);
 
 internal sealed record Gen5GlobalMemoryBinding(
     uint ScalarAddress,
