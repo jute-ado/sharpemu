@@ -1424,6 +1424,179 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesRdna2ScalarExecMaskOperationsToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xBEFE04C1u, // s_mov_b64 exec, -1
+            0xBE80393Cu, // s_andn1_wrexec_b64 s[0:1], s[60:61]
+            0xBEB40581u, // s_cmov_b32 s52, 1
+            0xBEFE04C1u, // s_mov_b64 exec, -1
+            0xBE823A3Cu, // s_andn2_wrexec_b64 s[2:3], s[60:61]
+            0xBEB50581u, // s_cmov_b32 s53, 1
+            0xBEFE03C1u, // s_mov_b32 exec_lo, -1
+            0xBE943C3Cu, // s_and_saveexec_b32 s20, s60
+            0xBEA8037Eu, // s_mov_b32 s40, exec_lo
+            0xBEFE03C1u, // s_mov_b32 exec_lo, -1
+            0xBE953D3Cu, // s_or_saveexec_b32 s21, s60
+            0xBEA9037Eu, // s_mov_b32 s41, exec_lo
+            0xBEFE03C1u, // s_mov_b32 exec_lo, -1
+            0xBE963E3Cu, // s_xor_saveexec_b32 s22, s60
+            0xBEAA037Eu, // s_mov_b32 s42, exec_lo
+            0xBEFE03C1u, // s_mov_b32 exec_lo, -1
+            0xBE973F3Cu, // s_andn2_saveexec_b32 s23, s60
+            0xBEAB037Eu, // s_mov_b32 s43, exec_lo
+            0xBEFE03C1u, // s_mov_b32 exec_lo, -1
+            0xBE98403Cu, // s_orn2_saveexec_b32 s24, s60
+            0xBEAC037Eu, // s_mov_b32 s44, exec_lo
+            0xBEFE03C1u, // s_mov_b32 exec_lo, -1
+            0xBE99413Cu, // s_nand_saveexec_b32 s25, s60
+            0xBEAD037Eu, // s_mov_b32 s45, exec_lo
+            0xBEFE03C1u, // s_mov_b32 exec_lo, -1
+            0xBE9A423Cu, // s_nor_saveexec_b32 s26, s60
+            0xBEAE037Eu, // s_mov_b32 s46, exec_lo
+            0xBEFE03C1u, // s_mov_b32 exec_lo, -1
+            0xBE9B433Cu, // s_xnor_saveexec_b32 s27, s60
+            0xBEAF037Eu, // s_mov_b32 s47, exec_lo
+            0xBEFE03C1u, // s_mov_b32 exec_lo, -1
+            0xBE9C443Cu, // s_andn1_saveexec_b32 s28, s60
+            0xBEB0037Eu, // s_mov_b32 s48, exec_lo
+            0xBEFE03C1u, // s_mov_b32 exec_lo, -1
+            0xBE9D453Cu, // s_orn1_saveexec_b32 s29, s60
+            0xBEB1037Eu, // s_mov_b32 s49, exec_lo
+            0xBEFE03C1u, // s_mov_b32 exec_lo, -1
+            0xBE9E463Cu, // s_andn1_wrexec_b32 s30, s60
+            0xBEB20581u, // s_cmov_b32 s50, 1
+            0xBEFE03C1u, // s_mov_b32 exec_lo, -1
+            0xBE9F473Cu, // s_andn2_wrexec_b32 s31, s60
+            0xBEB30581u, // s_cmov_b32 s51, 1
+            0xBEFE04C1u, // s_mov_b64 exec, -1
+            0xBEC0243Cu, // s_and_saveexec_b64 s[64:65], s[60:61]
+            0xBED4047Eu, // s_mov_b64 s[84:85], exec
+            0xBEFE04C1u, // s_mov_b64 exec, -1
+            0xBEC2253Cu, // s_or_saveexec_b64 s[66:67], s[60:61]
+            0xBED6047Eu, // s_mov_b64 s[86:87], exec
+            0xBEFE04C1u, // s_mov_b64 exec, -1
+            0xBEC4263Cu, // s_xor_saveexec_b64 s[68:69], s[60:61]
+            0xBED8047Eu, // s_mov_b64 s[88:89], exec
+            0xBEFE04C1u, // s_mov_b64 exec, -1
+            0xBEC6273Cu, // s_andn2_saveexec_b64 s[70:71], s[60:61]
+            0xBEDA047Eu, // s_mov_b64 s[90:91], exec
+            0xBEFE04C1u, // s_mov_b64 exec, -1
+            0xBEC8283Cu, // s_orn2_saveexec_b64 s[72:73], s[60:61]
+            0xBEDC047Eu, // s_mov_b64 s[92:93], exec
+            0xBEFE04C1u, // s_mov_b64 exec, -1
+            0xBECA293Cu, // s_nand_saveexec_b64 s[74:75], s[60:61]
+            0xBEDE047Eu, // s_mov_b64 s[94:95], exec
+            0xBEFE04C1u, // s_mov_b64 exec, -1
+            0xBECC2A3Cu, // s_nor_saveexec_b64 s[76:77], s[60:61]
+            0xBEE0047Eu, // s_mov_b64 s[96:97], exec
+            0xBEFE04C1u, // s_mov_b64 exec, -1
+            0xBECE2B3Cu, // s_xnor_saveexec_b64 s[78:79], s[60:61]
+            0xBEE2047Eu, // s_mov_b64 s[98:99], exec
+            0xBEFE04C1u, // s_mov_b64 exec, -1
+            0xBED0373Cu, // s_andn1_saveexec_b64 s[80:81], s[60:61]
+            0xBEE4047Eu, // s_mov_b64 s[100:101], exec
+            0xBEFE04C1u, // s_mov_b64 exec, -1
+            0xBED2383Cu, // s_orn1_saveexec_b64 s[82:83], s[60:61]
+            0xBEE6047Eu, // s_mov_b64 s[102:103], exec
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "SAndn1WrexecB64", "SAndn2WrexecB64",
+                "SAndSaveexecB32", "SOrSaveexecB32", "SXorSaveexecB32",
+                "SAndn2SaveexecB32", "SOrn2SaveexecB32", "SNandSaveexecB32",
+                "SNorSaveexecB32", "SXnorSaveexecB32", "SAndn1SaveexecB32",
+                "SOrn1SaveexecB32", "SAndn1WrexecB32", "SAndn2WrexecB32",
+                "SAndSaveexecB64", "SOrSaveexecB64", "SXorSaveexecB64",
+                "SAndn2SaveexecB64", "SOrn2SaveexecB64", "SNandSaveexecB64",
+                "SNorSaveexecB64", "SXnorSaveexecB64", "SAndn1SaveexecB64",
+                "SOrn1SaveexecB64",
+            ],
+            program.Instructions
+                .Where(instruction =>
+                    instruction.Opcode.Contains("Saveexec", StringComparison.Ordinal) ||
+                    instruction.Opcode.Contains("Wrexec", StringComparison.Ordinal))
+                .Select(instruction => instruction.Opcode));
+
+        const uint source = 0x0F0F_00FFu;
+        var scalarRegisters = new uint[104];
+        scalarRegisters[60] = source;
+        scalarRegisters[61] = 0xA5A5_5A5Au;
+        var state = new Gen5ShaderState(program, scalarRegisters, Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.Equal(~source, evaluation.ScalarRegisters[0]);
+        Assert.Equal(0u, evaluation.ScalarRegisters[1]);
+        Assert.Equal(0u, evaluation.ScalarRegisters[2]);
+        Assert.Equal(0u, evaluation.ScalarRegisters[3]);
+        Assert.Equal(1u, evaluation.ScalarRegisters[52]);
+        Assert.Equal(0u, evaluation.ScalarRegisters[53]);
+        for (var register = 20; register <= 29; register++)
+        {
+            Assert.Equal(uint.MaxValue, evaluation.ScalarRegisters[register]);
+        }
+
+        Assert.Equal(
+            [
+                source, uint.MaxValue, ~source, 0u, source,
+                ~source, 0u, source, ~source, uint.MaxValue,
+            ],
+            evaluation.ScalarRegisters.Skip(40).Take(10));
+        Assert.Equal(~source, evaluation.ScalarRegisters[30]);
+        Assert.Equal(0u, evaluation.ScalarRegisters[31]);
+        Assert.Equal(1u, evaluation.ScalarRegisters[50]);
+        Assert.Equal(0u, evaluation.ScalarRegisters[51]);
+        for (var register = 64; register <= 82; register += 2)
+        {
+            Assert.Equal(uint.MaxValue, evaluation.ScalarRegisters[register]);
+            Assert.Equal(0u, evaluation.ScalarRegisters[register + 1]);
+        }
+
+        var expected64Results = new[]
+        {
+            source, uint.MaxValue, ~source, 0u, source,
+            ~source, 0u, source, ~source, uint.MaxValue,
+        };
+        for (var index = 0; index < expected64Results.Length; index++)
+        {
+            var register = 84 + index * 2;
+            Assert.Equal(expected64Results[index], evaluation.ScalarRegisters[register]);
+            Assert.Equal(0u, evaluation.ScalarRegisters[register + 1]);
+        }
+
+        Assert.Equal(uint.MaxValue, evaluation.ScalarRegisters[126]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseAnd));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseOr));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseXor));
+    }
+
+    [Fact]
     public void CompilesRdna2ScalarConditionalOperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
