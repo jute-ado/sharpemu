@@ -2322,6 +2322,17 @@ internal static partial class Gen5SpirvTranslator
                 return true;
             }
 
+            if (instruction.Opcode is
+                "SBcnt0I32B64" or
+                "SBcnt1I32B64" or
+                "SFF0I32B64" or
+                "SFF1I32B64" or
+                "SFlbitI32B64" or
+                "SFlbitI32I64")
+            {
+                return TryEmitScalar64Result32(instruction, destination, out error);
+            }
+
             if (instruction.Opcode.EndsWith("B64", StringComparison.Ordinal) ||
                 instruction.Opcode is "SWqmB64" or "SBfeU64" or "SBfeI64" or "SAshrI64")
             {
@@ -2348,8 +2359,21 @@ internal static partial class Gen5SpirvTranslator
                     StoreS(destination, result);
                     Store(_scc, IsNotZero(result));
                     return true;
+                case "SWqmB32":
+                    result = WholeQuadMode(left, _uintType, UInt(0x1111_1111), UInt(15));
+                    StoreS(destination, result);
+                    Store(_scc, IsNotZero(result));
+                    return true;
                 case "SBrevB32":
                     result = _module.AddInstruction(SpirvOp.BitReverse, _uintType, left);
+                    StoreS(destination, result);
+                    return true;
+                case "SBcnt0I32B32":
+                    result = _module.AddInstruction(
+                        SpirvOp.ISub,
+                        _uintType,
+                        UInt(32),
+                        _module.AddInstruction(SpirvOp.BitCount, _uintType, left));
                     StoreS(destination, result);
                     Store(_scc, IsNotZero(result));
                     return true;
@@ -2358,20 +2382,51 @@ internal static partial class Gen5SpirvTranslator
                     StoreS(destination, result);
                     Store(_scc, IsNotZero(result));
                     return true;
+                case "SFF0I32B32":
+                    result = Ext(
+                        73,
+                        _uintType,
+                        _module.AddInstruction(SpirvOp.Not, _uintType, left));
+                    StoreS(destination, result);
+                    return true;
                 case "SFF1I32B32":
                     result = Ext(73, _uintType, left);
                     StoreS(destination, result);
-                    Store(_scc, IsNotZero(result));
                     return true;
+                case "SFlbitI32B32":
+                    result = EmitLeadingBitCount(left, _uintType, UInt(31));
+                    StoreS(destination, result);
+                    return true;
+                case "SFlbitI32":
+                    result = EmitSignedLeadingBitCount(left, _uintType, UInt(31));
+                    StoreS(destination, result);
+                    return true;
+                case "SSextI32I8":
+                case "SSextI32I16":
+                    result = _module.AddInstruction(
+                        SpirvOp.BitFieldSExtract,
+                        _uintType,
+                        left,
+                        UInt(0),
+                        UInt(instruction.Opcode == "SSextI32I8" ? 8u : 16u));
+                    StoreS(destination, result);
+                    return true;
+                case "SBitset0B32":
                 case "SBitset1B32":
                     result = _module.AddInstruction(
                         SpirvOp.BitFieldInsert,
                         _uintType,
                         LoadS(destination),
-                        UInt(1),
+                        UInt(instruction.Opcode == "SBitset1B32" ? 1u : 0u),
                         BitwiseAnd(left, UInt(31)),
                         UInt(1));
                     StoreS(destination, result);
+                    return true;
+                case "SAbsI32":
+                    result = Ext(5, _intType, Bitcast(_intType, left));
+                    result = Bitcast(_uintType, result);
+                    StoreS(destination, result);
+                    Store(_scc, IsNotZero(result));
                     return true;
                 default:
                 {
@@ -2942,6 +2997,46 @@ internal static partial class Gen5SpirvTranslator
             return true;
         }
 
+        private bool TryEmitScalar64Result32(
+            Gen5ShaderInstruction instruction,
+            uint destination,
+            out string error)
+        {
+            error = string.Empty;
+            var source = GetRawSource64(instruction, 0);
+            uint result;
+            if (instruction.Opcode is "SBcnt0I32B64" or "SBcnt1I32B64")
+            {
+                result = EmitBitCount64(source);
+                if (instruction.Opcode == "SBcnt0I32B64")
+                {
+                    result = _module.AddInstruction(SpirvOp.ISub, _uintType, UInt(64), result);
+                }
+
+                StoreS(destination, result);
+                Store(_scc, IsNotZero(result));
+                return true;
+            }
+
+            if (instruction.Opcode is "SFF0I32B64" or "SFF1I32B64")
+            {
+                if (instruction.Opcode == "SFF0I32B64")
+                {
+                    source = _module.AddInstruction(SpirvOp.Not, _ulongType, source);
+                }
+
+                result = EmitFirstSetBit64(source);
+                StoreS(destination, result);
+                return true;
+            }
+
+            result = instruction.Opcode == "SFlbitI32B64"
+                ? EmitLeadingBitCount64(source)
+                : EmitSignedLeadingBitCount64(source);
+            StoreS(destination, result);
+            return true;
+        }
+
         private bool TryEmitScalar64(
             Gen5ShaderInstruction instruction,
             uint destination,
@@ -2971,6 +3066,29 @@ internal static partial class Gen5SpirvTranslator
                     ShiftLeftLogical64(one, width),
                     one);
                 StoreS64(destination, ShiftLeftLogical64(mask, offset));
+                return true;
+            }
+
+            if (instruction.Opcode is "SBitset0B64" or "SBitset1B64")
+            {
+                var bit = ShiftLeftLogical64(
+                    _module.Constant64(_ulongType, 1),
+                    _module.AddInstruction(
+                        SpirvOp.UConvert,
+                        _ulongType,
+                        BitwiseAnd(GetRawSource(instruction, 0), UInt(63))));
+                var bitsetValue = instruction.Opcode == "SBitset1B64"
+                    ? _module.AddInstruction(
+                        SpirvOp.BitwiseOr,
+                        _ulongType,
+                        LoadS64(destination),
+                        bit)
+                    : _module.AddInstruction(
+                        SpirvOp.BitwiseAnd,
+                        _ulongType,
+                        LoadS64(destination),
+                        _module.AddInstruction(SpirvOp.Not, _ulongType, bit));
+                StoreS64(destination, bitsetValue);
                 return true;
             }
 
@@ -3169,7 +3287,7 @@ internal static partial class Gen5SpirvTranslator
             }
 
             uint value;
-            if (instruction.Opcode is "SMovB64" or "SWqmB64")
+            if (instruction.Opcode == "SMovB64")
             {
                 value = left;
             }
@@ -3185,6 +3303,18 @@ internal static partial class Gen5SpirvTranslator
             else if (instruction.Opcode == "SNotB64")
             {
                 value = _module.AddInstruction(SpirvOp.Not, _ulongType, left);
+            }
+            else if (instruction.Opcode == "SWqmB64")
+            {
+                value = WholeQuadMode(
+                    left,
+                    _ulongType,
+                    _module.Constant64(_ulongType, 0x1111_1111_1111_1111UL),
+                    _module.Constant64(_ulongType, 15));
+            }
+            else if (instruction.Opcode == "SBrevB64")
+            {
+                value = EmitBitReverse64(left);
             }
             else
             {
@@ -3256,6 +3386,7 @@ internal static partial class Gen5SpirvTranslator
             StoreS64(destination, value);
             if (instruction.Opcode is
                 "SNotB64" or
+                "SWqmB64" or
                 "SAndB64" or
                 "SOrB64" or
                 "SXorB64" or
@@ -4331,6 +4462,167 @@ internal static partial class Gen5SpirvTranslator
                 _boolType,
                 value,
                 _module.Constant64(_ulongType, 0));
+
+        private uint WholeQuadMode(
+            uint value,
+            uint integerType,
+            uint groupMask,
+            uint multiplier)
+        {
+            var groups = value;
+            for (uint shift = 1; shift <= 3; shift++)
+            {
+                groups = _module.AddInstruction(
+                    SpirvOp.BitwiseOr,
+                    integerType,
+                    groups,
+                    ShiftRightForType(value, integerType, shift));
+            }
+
+            groups = _module.AddInstruction(
+                SpirvOp.BitwiseAnd,
+                integerType,
+                groups,
+                groupMask);
+            return _module.AddInstruction(SpirvOp.IMul, integerType, groups, multiplier);
+        }
+
+        private uint EmitBitReverse64(uint value)
+        {
+            var low = _module.AddInstruction(SpirvOp.UConvert, _uintType, value);
+            var high = _module.AddInstruction(
+                SpirvOp.UConvert,
+                _uintType,
+                ShiftRightLogical64(value, _module.Constant64(_ulongType, 32)));
+            var reversedLow = _module.AddInstruction(SpirvOp.BitReverse, _uintType, low);
+            var reversedHigh = _module.AddInstruction(SpirvOp.BitReverse, _uintType, high);
+            return _module.AddInstruction(
+                SpirvOp.BitwiseOr,
+                _ulongType,
+                _module.AddInstruction(SpirvOp.UConvert, _ulongType, reversedHigh),
+                ShiftLeftLogical64(
+                    _module.AddInstruction(SpirvOp.UConvert, _ulongType, reversedLow),
+                    _module.Constant64(_ulongType, 32)));
+        }
+
+        private uint EmitBitCount64(uint value)
+        {
+            var low = _module.AddInstruction(SpirvOp.UConvert, _uintType, value);
+            var high = _module.AddInstruction(
+                SpirvOp.UConvert,
+                _uintType,
+                ShiftRightLogical64(value, _module.Constant64(_ulongType, 32)));
+            return _module.AddInstruction(
+                SpirvOp.IAdd,
+                _uintType,
+                _module.AddInstruction(SpirvOp.BitCount, _uintType, low),
+                _module.AddInstruction(SpirvOp.BitCount, _uintType, high));
+        }
+
+        private uint EmitFirstSetBit64(uint value)
+        {
+            var low = _module.AddInstruction(SpirvOp.UConvert, _uintType, value);
+            var high = _module.AddInstruction(
+                SpirvOp.UConvert,
+                _uintType,
+                ShiftRightLogical64(value, _module.Constant64(_ulongType, 32)));
+            return _module.AddInstruction(
+                SpirvOp.Select,
+                _uintType,
+                IsNotZero(low),
+                Ext(73, _uintType, low),
+                _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    IsNotZero(high),
+                    _module.AddInstruction(
+                        SpirvOp.IAdd,
+                        _uintType,
+                        UInt(32),
+                        Ext(73, _uintType, high)),
+                    UInt(uint.MaxValue)));
+        }
+
+        private uint EmitLeadingBitCount64(uint value)
+        {
+            var low = _module.AddInstruction(SpirvOp.UConvert, _uintType, value);
+            var high = _module.AddInstruction(
+                SpirvOp.UConvert,
+                _uintType,
+                ShiftRightLogical64(value, _module.Constant64(_ulongType, 32)));
+            return _module.AddInstruction(
+                SpirvOp.Select,
+                _uintType,
+                IsNotZero(high),
+                EmitLeadingBitCount(high, _uintType, UInt(31)),
+                _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    IsNotZero(low),
+                    _module.AddInstruction(
+                        SpirvOp.IAdd,
+                        _uintType,
+                        UInt(32),
+                        EmitLeadingBitCount(low, _uintType, UInt(31))),
+                    UInt(uint.MaxValue)));
+        }
+
+        private uint EmitSignedLeadingBitCount64(uint value)
+        {
+            var normalized = _module.AddInstruction(
+                SpirvOp.Select,
+                _ulongType,
+                IsNotZero64(ShiftRightForType(value, _ulongType, 63)),
+                _module.AddInstruction(SpirvOp.Not, _ulongType, value),
+                value);
+            return EmitLeadingBitCount64(normalized);
+        }
+
+        private uint EmitLeadingBitCount(uint value, uint integerType, uint highestBit)
+        {
+            var mostSignificantBit = Ext(75, integerType, value);
+            if (integerType == _ulongType)
+            {
+                mostSignificantBit = _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _uintType,
+                    mostSignificantBit);
+            }
+
+            var isZero = _module.AddInstruction(
+                SpirvOp.LogicalNot,
+                _boolType,
+                integerType == _ulongType ? IsNotZero64(value) : IsNotZero(value));
+            return _module.AddInstruction(
+                SpirvOp.Select,
+                _uintType,
+                isZero,
+                UInt(uint.MaxValue),
+                _module.AddInstruction(
+                    SpirvOp.ISub,
+                    _uintType,
+                    highestBit,
+                    mostSignificantBit));
+        }
+
+        private uint EmitSignedLeadingBitCount(uint value, uint integerType, uint highestBit)
+        {
+            var sign = integerType == _ulongType
+                ? IsNotZero64(ShiftRightForType(value, integerType, 63))
+                : IsNotZero(ShiftRightForType(value, integerType, 31));
+            var normalized = _module.AddInstruction(
+                SpirvOp.Select,
+                integerType,
+                sign,
+                _module.AddInstruction(SpirvOp.Not, integerType, value),
+                value);
+            return EmitLeadingBitCount(normalized, integerType, highestBit);
+        }
+
+        private uint ShiftRightForType(uint value, uint integerType, uint shift) =>
+            integerType == _ulongType
+                ? ShiftRightLogical64(value, _module.Constant64(_ulongType, shift))
+                : ShiftRightLogical(value, UInt(shift));
 
         private uint SignBit(uint value) =>
             ShiftRightLogical(value, UInt(31));

@@ -654,7 +654,71 @@ internal static class Gen5ShaderScalarEvaluator
             return true;
         }
 
-        if (instruction.Opcode is "SMovB64" or "SCmovB64" or "SWqmB64" or "SNotB64")
+        if (instruction.Opcode is
+            "SBcnt0I32B64" or
+            "SBcnt1I32B64" or
+            "SFF0I32B64" or
+            "SFF1I32B64" or
+            "SFlbitI32B64" or
+            "SFlbitI32I64")
+        {
+            if (!TryEvaluateScalarOperand64(
+                    instruction.Sources[0],
+                    registers,
+                    execMask,
+                    out var value))
+            {
+                error = $"scalar-source64 pc=0x{instruction.Pc:X} op={instruction.Opcode}";
+                return false;
+            }
+
+            var wideResult = instruction.Opcode switch
+            {
+                "SBcnt0I32B64" => (uint)(64 - BitOperations.PopCount(value)),
+                "SBcnt1I32B64" => (uint)BitOperations.PopCount(value),
+                "SFF0I32B64" => ~value == 0
+                    ? uint.MaxValue
+                    : (uint)BitOperations.TrailingZeroCount(~value),
+                "SFF1I32B64" => value == 0
+                    ? uint.MaxValue
+                    : (uint)BitOperations.TrailingZeroCount(value),
+                "SFlbitI32B64" => value == 0
+                    ? uint.MaxValue
+                    : (uint)BitOperations.LeadingZeroCount(value),
+                _ => SignedLeadingBitCount(value),
+            };
+            registers[destination.Value] = wideResult;
+            if (instruction.Opcode is "SBcnt0I32B64" or "SBcnt1I32B64")
+            {
+                scalarConditionCode = wideResult != 0;
+            }
+
+            return true;
+        }
+
+        if (instruction.Opcode is "SBitset0B64" or "SBitset1B64")
+        {
+            if (destination.Value >= ScalarRegisterCount - 1 ||
+                !TryEvaluateScalarOperand(instruction.Sources[0], registers, out var bitSource))
+            {
+                error = $"scalar-source64 pc=0x{instruction.Pc:X} op={instruction.Opcode}";
+                return false;
+            }
+
+            var value = registers[destination.Value] |
+                ((ulong)registers[destination.Value + 1] << 32);
+            var bit = 1UL << ((int)bitSource & 63);
+            value = instruction.Opcode == "SBitset1B64" ? value | bit : value & ~bit;
+            WriteScalarPair(registers, destination.Value, value, ref execMask);
+            return true;
+        }
+
+        if (instruction.Opcode is
+            "SMovB64" or
+            "SCmovB64" or
+            "SWqmB64" or
+            "SNotB64" or
+            "SBrevB64")
         {
             if (destination.Value >= ScalarRegisterCount - 1 ||
                 !TryEvaluateScalarOperand64(
@@ -675,10 +739,22 @@ internal static class Gen5ShaderScalarEvaluator
             if (instruction.Opcode == "SNotB64")
             {
                 value = ~value;
-                scalarConditionCode = value != 0;
+            }
+            else if (instruction.Opcode == "SWqmB64")
+            {
+                value = WholeQuadMode(value);
+            }
+            else if (instruction.Opcode == "SBrevB64")
+            {
+                value = ReverseBits(value);
             }
 
             WriteScalarPair(registers, destination.Value, value, ref execMask);
+            if (instruction.Opcode is "SNotB64" or "SWqmB64")
+            {
+                scalarConditionCode = value != 0;
+            }
+
             return true;
         }
 
@@ -846,20 +922,47 @@ internal static class Gen5ShaderScalarEvaluator
 
         if (instruction.Opcode is
             "SNotB32" or
+            "SWqmB32" or
             "SBrevB32" or
+            "SBcnt0I32B32" or
             "SBcnt1I32B32" or
+            "SFF0I32B32" or
             "SFF1I32B32" or
-            "SBitset1B32")
+            "SFlbitI32B32" or
+            "SFlbitI32" or
+            "SSextI32I8" or
+            "SSextI32I16" or
+            "SBitset0B32" or
+            "SBitset1B32" or
+            "SAbsI32")
         {
             registers[destination.Value] = instruction.Opcode switch
             {
                 "SNotB32" => ~left,
+                "SWqmB32" => WholeQuadMode(left),
                 "SBrevB32" => ReverseBits(left),
+                "SBcnt0I32B32" => (uint)(32 - BitOperations.PopCount(left)),
                 "SBcnt1I32B32" => (uint)BitOperations.PopCount(left),
+                "SFF0I32B32" => ~left == 0
+                    ? uint.MaxValue
+                    : (uint)BitOperations.TrailingZeroCount(~left),
                 "SFF1I32B32" => left == 0 ? uint.MaxValue : (uint)BitOperations.TrailingZeroCount(left),
-                _ => registers[destination.Value] | (1u << ((int)left & 31)),
+                "SFlbitI32B32" => left == 0
+                    ? uint.MaxValue
+                    : (uint)BitOperations.LeadingZeroCount(left),
+                "SFlbitI32" => SignedLeadingBitCount(left),
+                "SSextI32I8" => unchecked((uint)(int)(sbyte)left),
+                "SSextI32I16" => unchecked((uint)(int)(short)left),
+                "SBitset0B32" => registers[destination.Value] & ~(1u << ((int)left & 31)),
+                "SBitset1B32" => registers[destination.Value] | (1u << ((int)left & 31)),
+                _ => unchecked((uint)Math.Abs((long)(int)left)),
             };
-            if (instruction.Opcode != "SBitset1B32")
+            if (instruction.Opcode is
+                "SNotB32" or
+                "SWqmB32" or
+                "SBcnt0I32B32" or
+                "SBcnt1I32B32" or
+                "SAbsI32")
             {
                 scalarConditionCode = registers[destination.Value] != 0;
             }
@@ -1769,6 +1872,39 @@ internal static class Gen5ShaderScalarEvaluator
         value = (value >> 4 & 0x0F0F0F0Fu) | ((value & 0x0F0F0F0Fu) << 4);
         value = (value >> 8 & 0x00FF00FFu) | ((value & 0x00FF00FFu) << 8);
         return value >> 16 | value << 16;
+    }
+
+    private static ulong ReverseBits(ulong value) =>
+        ((ulong)ReverseBits((uint)value) << 32) |
+        ReverseBits((uint)(value >> 32));
+
+    private static uint WholeQuadMode(uint value)
+    {
+        var groups = (value | value >> 1 | value >> 2 | value >> 3) & 0x1111_1111u;
+        return groups * 15u;
+    }
+
+    private static ulong WholeQuadMode(ulong value)
+    {
+        var groups = (value | value >> 1 | value >> 2 | value >> 3) &
+            0x1111_1111_1111_1111UL;
+        return groups * 15UL;
+    }
+
+    private static uint SignedLeadingBitCount(uint value)
+    {
+        var normalized = (value & 0x8000_0000u) == 0 ? value : ~value;
+        return normalized == 0
+            ? uint.MaxValue
+            : (uint)BitOperations.LeadingZeroCount(normalized);
+    }
+
+    private static uint SignedLeadingBitCount(ulong value)
+    {
+        var normalized = (value & 0x8000_0000_0000_0000UL) == 0 ? value : ~value;
+        return normalized == 0
+            ? uint.MaxValue
+            : (uint)BitOperations.LeadingZeroCount(normalized);
     }
 
     private static bool TryCopyRegisters(
