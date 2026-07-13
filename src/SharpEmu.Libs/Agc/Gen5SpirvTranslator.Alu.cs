@@ -39,6 +39,12 @@ internal static partial class Gen5SpirvTranslator
             }
 
             if (instruction.Opcode is
+                "VQsadPkU16U8" or "VMqsadPkU16U8" or "VMqsadU32U8")
+            {
+                return TryEmitVectorQuadSad(instruction, out error);
+            }
+
+            if (instruction.Opcode is
                 "VMovreldB32" or "VMovrelsB32" or "VMovrelsdB32")
             {
                 return TryEmitRelativeMove(instruction, out error);
@@ -2637,6 +2643,137 @@ internal static partial class Gen5SpirvTranslator
             }
 
             return IAdd(sum, GetRawSource(instruction, 2));
+        }
+
+        private bool TryEmitVectorQuadSad(
+            Gen5ShaderInstruction instruction,
+            out string error)
+        {
+            error = string.Empty;
+            if (!TryGetVectorDestination(instruction, out var destination))
+            {
+                error = "missing quad SAD destination";
+                return false;
+            }
+
+            if (instruction.Sources.Count < 3)
+            {
+                error = "quad SAD requires three sources";
+                return false;
+            }
+
+            var samples = GetRawSource64(instruction, 0);
+            var reference = GetRawSource(instruction, 1);
+            var masked = instruction.Opcode != "VQsadPkU16U8";
+            if (instruction.Opcode != "VMqsadU32U8")
+            {
+                var accumulators = GetRawSource64(instruction, 2);
+                var result = _module.Constant64(_ulongType, 0);
+                for (uint window = 0; window < 4; window++)
+                {
+                    var accumulator = _module.AddInstruction(
+                        SpirvOp.UConvert,
+                        _uintType,
+                        BitwiseAnd64(
+                            ShiftRightLogical64(
+                                accumulators,
+                                _module.Constant64(_ulongType, window * 16)),
+                            _module.Constant64(_ulongType, 0xFFFF)));
+                    var component = BitwiseAnd(
+                        EmitQuadSadSum(
+                            samples,
+                            reference,
+                            accumulator,
+                            window,
+                            masked),
+                        UInt(0xFFFF));
+                    var wideComponent = _module.AddInstruction(
+                        SpirvOp.UConvert,
+                        _ulongType,
+                        component);
+                    wideComponent = ShiftLeftLogical64(
+                        wideComponent,
+                        _module.Constant64(_ulongType, window * 16));
+                    result = _module.AddInstruction(
+                        SpirvOp.BitwiseOr,
+                        _ulongType,
+                        result,
+                        wideComponent);
+                }
+
+                StoreV64(destination, result);
+                return true;
+            }
+
+            var accumulatorSource = instruction.Sources[2];
+            if (accumulatorSource.Kind != Gen5OperandKind.VectorRegister)
+            {
+                error = "128-bit masked quad SAD requires a vector accumulator source";
+                return false;
+            }
+
+            // Materialize every accumulator before writing any destination so
+            // shifted, overlapping source and destination ranges retain GPU
+            // read-before-write semantics.
+            var accumulators32 = new uint[4];
+            for (uint window = 0; window < 4; window++)
+            {
+                accumulators32[window] = LoadV(accumulatorSource.Value + window);
+            }
+
+            for (uint window = 0; window < 4; window++)
+            {
+                StoreV(
+                    destination + window,
+                    EmitQuadSadSum(
+                        samples,
+                        reference,
+                        accumulators32[window],
+                        window,
+                        masked: true));
+            }
+
+            return true;
+        }
+
+        private uint EmitQuadSadSum(
+            uint samples,
+            uint reference,
+            uint accumulator,
+            uint window,
+            bool masked)
+        {
+            var sum = accumulator;
+            for (uint component = 0; component < 4; component++)
+            {
+                var sample = ExtractByte64(samples, UInt(window + component));
+                var referenceByte = ExtractUnsignedBits(
+                    reference,
+                    component * 8,
+                    8);
+                var difference = _module.AddInstruction(
+                    SpirvOp.ISub,
+                    _uintType,
+                    Ext(41, _uintType, sample, referenceByte),
+                    Ext(38, _uintType, sample, referenceByte));
+                if (masked)
+                {
+                    difference = _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.IEqual,
+                            _boolType,
+                            referenceByte,
+                            UInt(0)),
+                        UInt(0),
+                        difference);
+                }
+
+                sum = IAdd(sum, difference);
+            }
+
+            return sum;
         }
 
         private uint EmitFindFirstBitHigh(
