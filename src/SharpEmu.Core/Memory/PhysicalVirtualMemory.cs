@@ -31,6 +31,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     private const uint MEM_COMMIT = 0x1000;
     private const uint MEM_RESERVE = 0x2000;
     private const uint MEM_RELEASE = 0x8000;
+    private const uint MEM_FREE = 0x10000;
     private const uint PAGE_EXECUTE_READ = 0x20;
     private const uint PAGE_EXECUTE_READWRITE = 0x40;
     private const uint PAGE_EXECUTE = 0x10;
@@ -274,6 +275,24 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 continue;
             }
 
+            if (!TryFindHostFreeCandidate(
+                    cursor,
+                    alignedSize,
+                    effectiveAlignment,
+                    out var hostCandidate,
+                    out var nextCursor))
+            {
+                if (nextCursor <= cursor)
+                {
+                    return false;
+                }
+
+                cursor = nextCursor;
+                continue;
+            }
+
+            cursor = hostCandidate;
+
             try
             {
                 actualAddress = AllocateAt(cursor, alignedSize, executable, allowAlternative: false);
@@ -292,6 +311,41 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             cursor = AlignUp(cursor + effectiveAlignment, effectiveAlignment);
         }
 
+        return false;
+    }
+
+    private static bool TryFindHostFreeCandidate(
+        ulong cursor,
+        ulong size,
+        ulong alignment,
+        out ulong candidate,
+        out ulong nextCursor)
+    {
+        candidate = cursor;
+        nextCursor = cursor;
+        if (!OperatingSystem.IsWindows() ||
+            VirtualQuery((void*)cursor, out var memoryInfo, (nuint)sizeof(MemoryBasicInformation64)) == 0 ||
+            memoryInfo.RegionSize == 0)
+        {
+            return true;
+        }
+
+        var regionEnd = memoryInfo.RegionSize > ulong.MaxValue - memoryInfo.BaseAddress
+            ? ulong.MaxValue
+            : memoryInfo.BaseAddress + memoryInfo.RegionSize;
+        if (memoryInfo.State == MEM_FREE)
+        {
+            var freeCandidate = AlignUp(Math.Max(cursor, memoryInfo.BaseAddress), alignment);
+            if (freeCandidate <= regionEnd && size <= regionEnd - freeCandidate)
+            {
+                candidate = freeCandidate;
+                return true;
+            }
+        }
+
+        nextCursor = regionEnd == ulong.MaxValue
+            ? ulong.MaxValue
+            : AlignUp(regionEnd, alignment);
         return false;
     }
 
