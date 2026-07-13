@@ -2932,7 +2932,11 @@ internal static partial class Gen5SpirvTranslator
                         out var height)
                     ? BuildClampedIntegerCoordinates(image, 0, width, height)
                     : BuildIntegerCoordinates(image, 0);
-                var mipLevel = _evaluation.ImageBindings[bindingIndex].MipLevel ?? 0;
+                var mipLevel = instruction.Opcode == "ImageLoadMip"
+                    ? Bitcast(
+                        _intType,
+                        LoadV(image.GetAddressRegister(2)))
+                    : _module.Constant(_intType, 0);
                 var fetchedImage = _module.AddInstruction(
                     SpirvOp.Image,
                     resource.ImageType,
@@ -2943,7 +2947,7 @@ internal static partial class Gen5SpirvTranslator
                     fetchedImage,
                     coordinates,
                     2,
-                    UInt(mipLevel));
+                    mipLevel);
             }
             else if (instruction.Opcode.StartsWith(
                          "ImageSample",
