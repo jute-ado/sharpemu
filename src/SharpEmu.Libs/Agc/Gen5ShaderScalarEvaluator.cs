@@ -155,6 +155,20 @@ internal static class Gen5ShaderScalarEvaluator
                     return false;
                 }
 
+                if (instruction.Destinations.Any(destination =>
+                        destination is
+                        {
+                            Kind: Gen5OperandKind.ScalarRegister,
+                            Value: 126 or 127,
+                        }))
+                {
+                    execMask = MaskWaveValue(
+                        scalarRegisters[126] |
+                        ((ulong)scalarRegisters[127] << 32));
+                    scalarRegisters[126] = (uint)execMask;
+                    scalarRegisters[127] = (uint)(execMask >> 32);
+                }
+
                 continue;
             }
 
@@ -655,7 +669,7 @@ internal static class Gen5ShaderScalarEvaluator
             return true;
         }
 
-        if (TryExecuteSaveExecScalarAlu(
+        if (TryExecuteExecMaskScalarAlu(
                 instruction,
                 registers,
                 ref execMask,
@@ -1275,7 +1289,7 @@ internal static class Gen5ShaderScalarEvaluator
         return true;
     }
 
-    private static bool TryExecuteSaveExecScalarAlu(
+    private static bool TryExecuteExecMaskScalarAlu(
         Gen5ShaderInstruction instruction,
         uint[] registers,
         ref ulong execMask,
@@ -1283,55 +1297,87 @@ internal static class Gen5ShaderScalarEvaluator
         out string error)
     {
         error = string.Empty;
-        if (instruction.Opcode is not (
-            "SAndSaveexecB64" or
-            "SOrSaveexecB64" or
-            "SXorSaveexecB64" or
-            "SAndn2SaveexecB64" or
-            "SOrn2SaveexecB64" or
-            "SNandSaveexecB64" or
-            "SNorSaveexecB64" or
-            "SXnorSaveexecB64" or
-            "SAndn1SaveexecB64" or
-            "SOrn1SaveexecB64"))
+        var isSaveExec = instruction.Opcode.Contains("Saveexec", StringComparison.Ordinal);
+        var isWriteExec = instruction.Opcode.Contains("Wrexec", StringComparison.Ordinal);
+        if (!isSaveExec && !isWriteExec)
         {
             return false;
         }
 
+        var is64Bit = instruction.Opcode.EndsWith("B64", StringComparison.Ordinal);
+        var destinationLimit = is64Bit ? ScalarRegisterCount - 1 : ScalarRegisterCount;
         if (instruction.Destinations.Count != 1 ||
             instruction.Destinations[0] is not
             {
                 Kind: Gen5OperandKind.ScalarRegister,
-                Value: < ScalarRegisterCount - 1,
             } destination ||
-            instruction.Sources.Count == 0 ||
-            !TryEvaluateScalarOperand64(
-                instruction.Sources[0],
-                registers,
-                execMask,
-                out var source))
+            destination.Value >= destinationLimit ||
+            instruction.Sources.Count == 0)
         {
-            error = $"scalar-source64 pc=0x{instruction.Pc:X} op={instruction.Opcode}";
+            error = $"scalar-exec-mask-operands pc=0x{instruction.Pc:X} op={instruction.Opcode}";
             return false;
         }
 
-        var oldExec = execMask;
-        var newExec = instruction.Opcode switch
+        ulong source;
+        if (is64Bit)
         {
-            "SAndSaveexecB64" => oldExec & source,
-            "SOrSaveexecB64" => oldExec | source,
-            "SXorSaveexecB64" => oldExec ^ source,
-            "SAndn1SaveexecB64" => ~source & oldExec,
-            "SAndn2SaveexecB64" => source & ~oldExec,
-            "SOrn1SaveexecB64" => ~source | oldExec,
-            "SOrn2SaveexecB64" => source | ~oldExec,
-            "SNandSaveexecB64" => ~(source & oldExec),
-            "SNorSaveexecB64" => ~(source | oldExec),
-            _ => ~(oldExec ^ source),
-        };
+            if (!TryEvaluateScalarOperand64(
+                    instruction.Sources[0],
+                    registers,
+                    execMask,
+                    out source))
+            {
+                error = $"scalar-source64 pc=0x{instruction.Pc:X} op={instruction.Opcode}";
+                return false;
+            }
+        }
+        else if (TryEvaluateScalarOperand(instruction.Sources[0], registers, out var source32))
+        {
+            source = source32;
+        }
+        else
+        {
+            error = $"scalar-source32 pc=0x{instruction.Pc:X} op={instruction.Opcode}";
+            return false;
+        }
 
-        WriteScalarPair(registers, destination.Value, oldExec, ref execMask);
-        execMask = MaskWaveValue(newExec);
+        var oldExec = is64Bit ? execMask : (uint)execMask;
+        ulong? computedExec = instruction.Opcode switch
+        {
+            "SAndSaveexecB32" or "SAndSaveexecB64" => oldExec & source,
+            "SOrSaveexecB32" or "SOrSaveexecB64" => oldExec | source,
+            "SXorSaveexecB32" or "SXorSaveexecB64" => oldExec ^ source,
+            "SAndn1SaveexecB32" or "SAndn1SaveexecB64" or
+                "SAndn1WrexecB32" or "SAndn1WrexecB64" => ~source & oldExec,
+            "SAndn2SaveexecB32" or "SAndn2SaveexecB64" or
+                "SAndn2WrexecB32" or "SAndn2WrexecB64" => source & ~oldExec,
+            "SOrn1SaveexecB32" or "SOrn1SaveexecB64" => ~source | oldExec,
+            "SOrn2SaveexecB32" or "SOrn2SaveexecB64" => source | ~oldExec,
+            "SNandSaveexecB32" or "SNandSaveexecB64" => ~(source & oldExec),
+            "SNorSaveexecB32" or "SNorSaveexecB64" => ~(source | oldExec),
+            "SXnorSaveexecB32" or "SXnorSaveexecB64" => ~(oldExec ^ source),
+            _ => null,
+        };
+        if (!computedExec.HasValue)
+        {
+            error = $"unsupported-scalar-exec-mask pc=0x{instruction.Pc:X} op={instruction.Opcode}";
+            return false;
+        }
+
+        execMask = MaskWaveValue(computedExec.Value);
+        if (is64Bit)
+        {
+            WriteScalarPair(
+                registers,
+                destination.Value,
+                isSaveExec ? oldExec : execMask,
+                ref execMask);
+        }
+        else
+        {
+            registers[destination.Value] = (uint)(isSaveExec ? oldExec : execMask);
+        }
+
         WriteScalarPair(registers, 126, execMask, ref execMask);
         scalarConditionCode = execMask != 0;
         return true;

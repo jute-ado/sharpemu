@@ -2344,6 +2344,12 @@ internal static partial class Gen5SpirvTranslator
                 return true;
             }
 
+            if (instruction.Opcode.Contains("Saveexec", StringComparison.Ordinal) ||
+                instruction.Opcode.Contains("Wrexec", StringComparison.Ordinal))
+            {
+                return TryEmitScalarExecMask(instruction, destination, out error);
+            }
+
             if (instruction.Opcode.EndsWith("B64", StringComparison.Ordinal) ||
                 instruction.Opcode is "SWqmB64" or "SBfeU64" or "SBfeI64" or "SAshrI64")
             {
@@ -3130,6 +3136,111 @@ internal static partial class Gen5SpirvTranslator
             return true;
         }
 
+        private bool TryEmitScalarExecMask(
+            Gen5ShaderInstruction instruction,
+            uint destination,
+            out string error)
+        {
+            error = string.Empty;
+            var isSaveExec = instruction.Opcode.Contains("Saveexec", StringComparison.Ordinal);
+            var is64Bit = instruction.Opcode.EndsWith("B64", StringComparison.Ordinal);
+            if (is64Bit)
+            {
+                var source = GetRawSource64(instruction, 0);
+                var oldExec = BooleanToLaneMask(Load(_boolType, _exec));
+                var notSource = _module.AddInstruction(SpirvOp.Not, _ulongType, source);
+                var notOldExec = _module.AddInstruction(SpirvOp.Not, _ulongType, oldExec);
+                var newExec = instruction.Opcode switch
+                {
+                    "SAndSaveexecB64" => _module.AddInstruction(
+                        SpirvOp.BitwiseAnd, _ulongType, oldExec, source),
+                    "SOrSaveexecB64" => _module.AddInstruction(
+                        SpirvOp.BitwiseOr, _ulongType, oldExec, source),
+                    "SXorSaveexecB64" => _module.AddInstruction(
+                        SpirvOp.BitwiseXor, _ulongType, oldExec, source),
+                    "SAndn1SaveexecB64" or "SAndn1WrexecB64" =>
+                        _module.AddInstruction(
+                            SpirvOp.BitwiseAnd, _ulongType, notSource, oldExec),
+                    "SAndn2SaveexecB64" or "SAndn2WrexecB64" =>
+                        _module.AddInstruction(
+                            SpirvOp.BitwiseAnd, _ulongType, source, notOldExec),
+                    "SOrn1SaveexecB64" => _module.AddInstruction(
+                        SpirvOp.BitwiseOr, _ulongType, notSource, oldExec),
+                    "SOrn2SaveexecB64" => _module.AddInstruction(
+                        SpirvOp.BitwiseOr, _ulongType, source, notOldExec),
+                    "SNandSaveexecB64" => _module.AddInstruction(
+                        SpirvOp.Not,
+                        _ulongType,
+                        _module.AddInstruction(
+                            SpirvOp.BitwiseAnd, _ulongType, source, oldExec)),
+                    "SNorSaveexecB64" => _module.AddInstruction(
+                        SpirvOp.Not,
+                        _ulongType,
+                        _module.AddInstruction(
+                            SpirvOp.BitwiseOr, _ulongType, source, oldExec)),
+                    "SXnorSaveexecB64" => _module.AddInstruction(
+                        SpirvOp.Not,
+                        _ulongType,
+                        _module.AddInstruction(
+                            SpirvOp.BitwiseXor, _ulongType, oldExec, source)),
+                    _ => 0u,
+                };
+                if (newExec == 0)
+                {
+                    error = $"unsupported scalar EXEC-mask opcode {instruction.Opcode}";
+                    return false;
+                }
+
+                StoreS64(destination, isSaveExec ? oldExec : newExec);
+                StoreS64(126, newExec);
+                Store(_scc, IsNotZero64(newExec));
+                return true;
+            }
+
+            var source32 = GetRawSource(instruction, 0);
+            var oldExec32 = _module.AddInstruction(
+                SpirvOp.UConvert,
+                _uintType,
+                BooleanToLaneMask(Load(_boolType, _exec)));
+            var notSource32 = _module.AddInstruction(SpirvOp.Not, _uintType, source32);
+            var notOldExec32 = _module.AddInstruction(SpirvOp.Not, _uintType, oldExec32);
+            var newExec32 = instruction.Opcode switch
+            {
+                "SAndSaveexecB32" => BitwiseAnd(oldExec32, source32),
+                "SOrSaveexecB32" => BitwiseOr(oldExec32, source32),
+                "SXorSaveexecB32" => BitwiseXor(oldExec32, source32),
+                "SAndn1SaveexecB32" or "SAndn1WrexecB32" =>
+                    BitwiseAnd(notSource32, oldExec32),
+                "SAndn2SaveexecB32" or "SAndn2WrexecB32" =>
+                    BitwiseAnd(source32, notOldExec32),
+                "SOrn1SaveexecB32" => BitwiseOr(notSource32, oldExec32),
+                "SOrn2SaveexecB32" => BitwiseOr(source32, notOldExec32),
+                "SNandSaveexecB32" => _module.AddInstruction(
+                    SpirvOp.Not,
+                    _uintType,
+                    BitwiseAnd(source32, oldExec32)),
+                "SNorSaveexecB32" => _module.AddInstruction(
+                    SpirvOp.Not,
+                    _uintType,
+                    BitwiseOr(source32, oldExec32)),
+                "SXnorSaveexecB32" => _module.AddInstruction(
+                    SpirvOp.Not,
+                    _uintType,
+                    BitwiseXor(oldExec32, source32)),
+                _ => 0u,
+            };
+            if (newExec32 == 0)
+            {
+                error = $"unsupported scalar EXEC-mask opcode {instruction.Opcode}";
+                return false;
+            }
+
+            StoreS(destination, isSaveExec ? oldExec32 : newExec32);
+            StoreS(126, newExec32);
+            Store(_scc, IsNotZero(newExec32));
+            return true;
+        }
+
         private bool TryEmitScalar64(
             Gen5ShaderInstruction instruction,
             uint destination,
@@ -3186,82 +3297,6 @@ internal static partial class Gen5SpirvTranslator
             }
 
             var left = GetRawSource64(instruction, 0);
-            if (instruction.Opcode.EndsWith("SaveexecB64", StringComparison.Ordinal))
-            {
-                var oldExec = BooleanToLaneMask(Load(_boolType, _exec));
-                var notLeft = _module.AddInstruction(SpirvOp.Not, _ulongType, left);
-                var newExec = instruction.Opcode switch
-                {
-                    "SAndSaveexecB64" => _module.AddInstruction(
-                        SpirvOp.BitwiseAnd, _ulongType, oldExec, left),
-                    "SOrSaveexecB64" => _module.AddInstruction(
-                        SpirvOp.BitwiseOr, _ulongType, oldExec, left),
-                    "SXorSaveexecB64" => _module.AddInstruction(
-                        SpirvOp.BitwiseXor, _ulongType, oldExec, left),
-                    "SAndn2SaveexecB64" => _module.AddInstruction(
-                        SpirvOp.BitwiseAnd,
-                        _ulongType,
-                        left,
-                        _module.AddInstruction(
-                            SpirvOp.Not,
-                            _ulongType,
-                            oldExec)),
-                    "SAndn1SaveexecB64" => _module.AddInstruction(
-                        SpirvOp.BitwiseAnd,
-                        _ulongType,
-                        notLeft,
-                        oldExec),
-                    "SOrn1SaveexecB64" => _module.AddInstruction(
-                        SpirvOp.BitwiseOr,
-                        _ulongType,
-                        notLeft,
-                        oldExec),
-                    "SOrn2SaveexecB64" => _module.AddInstruction(
-                        SpirvOp.BitwiseOr,
-                        _ulongType,
-                        left,
-                        _module.AddInstruction(
-                            SpirvOp.Not,
-                            _ulongType,
-                            oldExec)),
-                    "SNandSaveexecB64" => _module.AddInstruction(
-                        SpirvOp.Not,
-                        _ulongType,
-                        _module.AddInstruction(
-                            SpirvOp.BitwiseAnd,
-                            _ulongType,
-                            left,
-                            oldExec)),
-                    "SNorSaveexecB64" => _module.AddInstruction(
-                        SpirvOp.Not,
-                        _ulongType,
-                        _module.AddInstruction(
-                            SpirvOp.BitwiseOr,
-                            _ulongType,
-                            left,
-                            oldExec)),
-                    "SXnorSaveexecB64" => _module.AddInstruction(
-                        SpirvOp.Not,
-                        _ulongType,
-                        _module.AddInstruction(
-                            SpirvOp.BitwiseXor,
-                            _ulongType,
-                            left,
-                            oldExec)),
-                    _ => 0u,
-                };
-                if (newExec == 0)
-                {
-                    error =
-                        $"unsupported scalar 64-bit opcode {instruction.Opcode}";
-                    return false;
-                }
-
-                StoreS64(destination, oldExec);
-                StoreS64(126, newExec);
-                Store(_scc, IsNotZero64(newExec));
-                return true;
-            }
 
             if (instruction.Opcode is "SLshlB64" or "SLshrB64" or "SAshrI64")
             {

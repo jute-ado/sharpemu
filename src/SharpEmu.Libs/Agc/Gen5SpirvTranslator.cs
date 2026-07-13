@@ -2477,6 +2477,7 @@ internal static partial class Gen5SpirvTranslator
         private bool UsesWaveControl() =>
             _state.Program.Instructions.Any(instruction =>
                 instruction.Opcode.Contains("Saveexec", StringComparison.Ordinal) ||
+                instruction.Opcode.Contains("Wrexec", StringComparison.Ordinal) ||
                 instruction.Opcode.StartsWith("SCbranchExec", StringComparison.Ordinal) ||
                 instruction.Opcode.StartsWith("SCbranchVcc", StringComparison.Ordinal) ||
                 instruction.Opcode.StartsWith("VCmpx", StringComparison.Ordinal) ||
