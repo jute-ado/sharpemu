@@ -396,7 +396,6 @@ internal static partial class Gen5SpirvTranslator
                 case "VMaxF32":
                     result = EmitFloatExtBinary(instruction, 40);
                     break;
-                case "VMadF32":
                 case "VFmaF32":
                 case "VMadMkF32":
                 case "VMadAkF32":
@@ -711,7 +710,7 @@ internal static partial class Gen5SpirvTranslator
                     result = IAdd(shifted, GetRawSource(instruction, 2));
                     break;
                 }
-                case "VLshlOrU32":
+                case "VLshlOrB32":
                 {
                     var shifted = ShiftLeftLogical(
                         GetRawSource(instruction, 0),
@@ -737,7 +736,7 @@ internal static partial class Gen5SpirvTranslator
                             GetRawSource(instruction, 1)),
                         GetRawSource(instruction, 2));
                     break;
-                case "VOr3U32":
+                case "VOr3B32":
                     result = BitwiseOr(
                         BitwiseOr(
                             GetRawSource(instruction, 0),
