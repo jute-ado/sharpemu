@@ -1348,11 +1348,20 @@ internal static partial class Gen5SpirvTranslator
                 case "DsDecRtnU32":
                 case "DsMskorRtnB32":
                 case "DsWrapRtnB32":
+                case "DsCmpstF32":
+                case "DsMinF32":
+                case "DsMaxF32":
+                case "DsAddF32":
+                case "DsCmpstRtnF32":
+                case "DsMinRtnF32":
+                case "DsMaxRtnF32":
+                case "DsAddRtnF32":
                 {
                     var usesData1 = instruction.Opcode.Contains(
                         "Mskor",
                         StringComparison.Ordinal) ||
-                        instruction.Opcode == "DsWrapRtnB32";
+                        instruction.Opcode == "DsWrapRtnB32" ||
+                        instruction.Opcode.Contains("Cmpst", StringComparison.Ordinal);
                     if (instruction.Sources.Count < (usesData1 ? 3 : 2))
                     {
                         error = "missing compare/exchange LDS atomic source";
@@ -1851,6 +1860,49 @@ internal static partial class Gen5SpirvTranslator
                             data0),
                         IAdd(expected, GetRawSource(instruction, 2)));
                 }
+                case "DsCmpstF32":
+                case "DsCmpstRtnF32":
+                {
+                    var matches = _module.AddInstruction(
+                        SpirvOp.FOrdEqual,
+                        _boolType,
+                        Bitcast(_floatType, expected),
+                        Bitcast(_floatType, data0));
+                    return _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        matches,
+                        GetRawSource(instruction, 2),
+                        expected);
+                }
+                case "DsMinF32":
+                case "DsMinRtnF32":
+                case "DsMaxF32":
+                case "DsMaxRtnF32":
+                {
+                    var comparison = _module.AddInstruction(
+                        instruction.Opcode.Contains("Min", StringComparison.Ordinal)
+                            ? SpirvOp.FOrdLessThan
+                            : SpirvOp.FOrdGreaterThan,
+                        _boolType,
+                        Bitcast(_floatType, data0),
+                        Bitcast(_floatType, expected));
+                    return _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        comparison,
+                        data0,
+                        expected);
+                }
+                case "DsAddF32":
+                case "DsAddRtnF32":
+                    return Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.FAdd,
+                            _floatType,
+                            Bitcast(_floatType, expected),
+                            Bitcast(_floatType, data0)));
                 default:
                     return BitwiseOr(
                         BitwiseAnd(
