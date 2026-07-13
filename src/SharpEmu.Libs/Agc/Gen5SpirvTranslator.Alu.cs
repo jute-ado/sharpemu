@@ -2163,6 +2163,14 @@ internal static partial class Gen5SpirvTranslator
             out string error)
         {
             error = string.Empty;
+            if (instruction.Destinations.Count != 1 ||
+                instruction.Destinations[0].Kind != Gen5OperandKind.ScalarRegister)
+            {
+                error = "missing vector compare mask destination";
+                return false;
+            }
+
+            var destination = instruction.Destinations[0].Value;
             uint condition = _module.ConstantBool(false);
             var opcode = instruction.Opcode;
             if (opcode is "VCmpClassF32" or "VCmpxClassF32")
@@ -2297,7 +2305,7 @@ internal static partial class Gen5SpirvTranslator
                     "VCmpGtF32" or "VCmpxGtF32" => SpirvOp.FOrdGreaterThan,
                     "VCmpLgF32" or "VCmpxLgF32" => SpirvOp.FOrdNotEqual,
                     "VCmpGeF32" or "VCmpxGeF32" => SpirvOp.FOrdGreaterThanEqual,
-                    "VCmpNlgF32" => SpirvOp.FUnordEqual,
+                    "VCmpNlgF32" or "VCmpxNlgF32" => SpirvOp.FUnordEqual,
                     "VCmpNeqF32" or "VCmpxNeqF32" => SpirvOp.FUnordNotEqual,
                     "VCmpNltF32" or "VCmpxNltF32" => SpirvOp.FUnordGreaterThanEqual,
                     "VCmpNleF32" or "VCmpxNleF32" => SpirvOp.FUnordGreaterThan,
@@ -2305,14 +2313,14 @@ internal static partial class Gen5SpirvTranslator
                     "VCmpNgeF32" or "VCmpxNgeF32" => SpirvOp.FUnordLessThan,
                     _ => SpirvOp.Nop,
                 };
-                if (opcode is "VCmpOF32" or "VCmpUF32")
+                if (opcode is "VCmpOF32" or "VCmpxOF32" or "VCmpUF32" or "VCmpxUF32")
                 {
                     var unordered = _module.AddInstruction(
                         SpirvOp.LogicalOr,
                         _boolType,
                         _module.AddInstruction(SpirvOp.IsNan, _boolType, left),
                         _module.AddInstruction(SpirvOp.IsNan, _boolType, right));
-                    condition = opcode == "VCmpUF32"
+                    condition = opcode is "VCmpUF32" or "VCmpxUF32"
                         ? unordered
                         : _module.AddInstruction(
                             SpirvOp.LogicalNot,
@@ -2365,7 +2373,6 @@ internal static partial class Gen5SpirvTranslator
                 condition = _module.AddInstruction(operation, _boolType, left, right);
             }
 
-            StoreWaveMask(106, condition);
             if (opcode.StartsWith("VCmpx", StringComparison.Ordinal))
             {
                 var active = _module.AddInstruction(
@@ -2373,7 +2380,11 @@ internal static partial class Gen5SpirvTranslator
                     _boolType,
                     Load(_boolType, _exec),
                     condition);
-                StoreWaveMask(126, active);
+                StoreWaveMask(destination, active);
+            }
+            else
+            {
+                StoreWaveMask(destination, condition);
             }
 
             return true;
