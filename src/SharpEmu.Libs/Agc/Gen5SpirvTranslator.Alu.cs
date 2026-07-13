@@ -2333,6 +2333,12 @@ internal static partial class Gen5SpirvTranslator
                 return TryEmitScalar64Result32(instruction, destination, out error);
             }
 
+            if (instruction.Opcode == "SBitreplicateB64B32")
+            {
+                StoreS64(destination, EmitBitReplicate64(GetRawSource(instruction, 0)));
+                return true;
+            }
+
             if (instruction.Opcode.EndsWith("B64", StringComparison.Ordinal) ||
                 instruction.Opcode is "SWqmB64" or "SBfeU64" or "SBfeI64" or "SAshrI64")
             {
@@ -2410,6 +2416,11 @@ internal static partial class Gen5SpirvTranslator
                         UInt(0),
                         UInt(instruction.Opcode == "SSextI32I8" ? 8u : 16u));
                     StoreS(destination, result);
+                    return true;
+                case "SQuadmaskB32":
+                    result = EmitQuadMask(left, _uintType, 8);
+                    StoreS(destination, result);
+                    Store(_scc, IsNotZero(result));
                     return true;
                 case "SBitset0B32":
                 case "SBitset1B32":
@@ -3316,6 +3327,13 @@ internal static partial class Gen5SpirvTranslator
             {
                 value = EmitBitReverse64(left);
             }
+            else if (instruction.Opcode == "SQuadmaskB64")
+            {
+                value = _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _ulongType,
+                    EmitQuadMask(left, _ulongType, 16));
+            }
             else
             {
                 if (instruction.Sources.Count < 2)
@@ -3387,6 +3405,7 @@ internal static partial class Gen5SpirvTranslator
             if (instruction.Opcode is
                 "SNotB64" or
                 "SWqmB64" or
+                "SQuadmaskB64" or
                 "SAndB64" or
                 "SOrB64" or
                 "SXorB64" or
@@ -4485,6 +4504,67 @@ internal static partial class Gen5SpirvTranslator
                 groups,
                 groupMask);
             return _module.AddInstruction(SpirvOp.IMul, integerType, groups, multiplier);
+        }
+
+        private uint EmitQuadMask(uint value, uint integerType, uint groupCount)
+        {
+            var result = UInt(0);
+            var nibbleMask = integerType == _ulongType
+                ? _module.Constant64(_ulongType, 0xF)
+                : UInt(0xF);
+            for (uint group = 0; group < groupCount; group++)
+            {
+                var nibble = _module.AddInstruction(
+                    SpirvOp.BitwiseAnd,
+                    integerType,
+                    ShiftRightForType(value, integerType, group * 4),
+                    nibbleMask);
+                var active = integerType == _ulongType
+                    ? IsNotZero64(nibble)
+                    : IsNotZero(nibble);
+                result = _module.AddInstruction(
+                    SpirvOp.BitwiseOr,
+                    _uintType,
+                    result,
+                    _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        active,
+                        UInt(1u << (int)group),
+                        UInt(0)));
+            }
+
+            return result;
+        }
+
+        private uint EmitBitReplicate64(uint value)
+        {
+            var result = _module.AddInstruction(SpirvOp.UConvert, _ulongType, value);
+            foreach (var (shift, mask) in new (uint Shift, ulong Mask)[]
+                     {
+                         (16, 0x0000_FFFF_0000_FFFFUL),
+                         (8, 0x00FF_00FF_00FF_00FFUL),
+                         (4, 0x0F0F_0F0F_0F0F_0F0FUL),
+                         (2, 0x3333_3333_3333_3333UL),
+                         (1, 0x5555_5555_5555_5555UL),
+                     })
+            {
+                result = _module.AddInstruction(
+                    SpirvOp.BitwiseAnd,
+                    _ulongType,
+                    _module.AddInstruction(
+                        SpirvOp.BitwiseOr,
+                        _ulongType,
+                        result,
+                        ShiftLeftLogical64(result, _module.Constant64(_ulongType, shift))),
+                    _module.Constant64(_ulongType, mask));
+            }
+
+            return _module.AddInstruction(
+                SpirvOp.BitwiseOr,
+                _ulongType,
+                result,
+                ShiftLeftLogical64(result, _module.Constant64(_ulongType, 1)));
         }
 
         private uint EmitBitReverse64(uint value)

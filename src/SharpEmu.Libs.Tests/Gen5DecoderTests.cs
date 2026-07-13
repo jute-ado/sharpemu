@@ -1297,6 +1297,62 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesRdna2ScalarMaskTransformsToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xBE802C01u, // s_quadmask_b32 s0, s1
+            0xBE822D04u, // s_quadmask_b64 s[2:3], s[4:5]
+            0xBE863B08u, // s_bitreplicate_b64_b32 s[6:7], s8
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            ["SQuadmaskB32", "SQuadmaskB64", "SBitreplicateB64B32", "SEndpgm"],
+            program.Instructions.Select(instruction => instruction.Opcode));
+
+        var scalarRegisters = new uint[9];
+        scalarRegisters[1] = 0x8000_0101;
+        scalarRegisters[4] = 0x8000_0001;
+        scalarRegisters[5] = 0x0001_0000;
+        scalarRegisters[8] = 0x8000_0001;
+        var state = new Gen5ShaderState(program, scalarRegisters, Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.Equal(0x85u, evaluation.ScalarRegisters[0]);
+        Assert.Equal(0x1081u, evaluation.ScalarRegisters[2]);
+        Assert.Equal(0u, evaluation.ScalarRegisters[3]);
+        Assert.Equal(3u, evaluation.ScalarRegisters[6]);
+        Assert.Equal(0xC000_0000u, evaluation.ScalarRegisters[7]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Select));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftLeftLogical));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftRightLogical));
+    }
+
+    [Fact]
     public void CompilesRdna2ScalarConditionalOperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
