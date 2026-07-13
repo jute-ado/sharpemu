@@ -8,7 +8,7 @@ using SharpEmu.Logging;
 
 namespace SharpEmu.Core.Memory;
 
-public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryAllocator, IDisposable
+public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryAllocator, IGuestStackMemory, IDisposable
 {
     private static readonly SharpEmuLogger Log = SharpEmuLog.For("VMEM");
 
@@ -16,6 +16,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     private readonly object _guestAllocationGate = new();
     private readonly object _allocationSearchHintGate = new();
     private readonly List<MemoryRegion> _regions = new();
+    private readonly List<StackRange> _stackRanges = new();
     private readonly Dictionary<(ulong DesiredAddress, ulong Alignment, bool Executable), ulong> _allocationSearchHints = new();
     private readonly Dictionary<ulong, ProgramHeaderFlags> _pageProtections = new();
     private bool _disposed;
@@ -345,6 +346,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                     VirtualFree((void*)region.VirtualAddress, 0, MEM_RELEASE);
                 }
                 _regions.Clear();
+                _stackRanges.Clear();
                 _pageProtections.Clear();
                 lock (_allocationSearchHintGate)
                 {
@@ -359,6 +361,54 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             _guestAllocationArenaBase = 0;
             _guestAllocationOffset = 0;
         }
+    }
+
+    public void RegisterStackRange(ulong start, ulong size)
+    {
+        if (size == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(size));
+        }
+
+        var end = checked(start + size);
+        _gate.EnterWriteLock();
+        try
+        {
+            var range = new StackRange(start, end);
+            if (!_stackRanges.Contains(range))
+            {
+                _stackRanges.Add(range);
+            }
+        }
+        finally
+        {
+            _gate.ExitWriteLock();
+        }
+    }
+
+    public bool TryGetStackRange(ulong address, out ulong start, out ulong end)
+    {
+        _gate.EnterReadLock();
+        try
+        {
+            foreach (var range in _stackRanges)
+            {
+                if (address >= range.Start && address < range.End)
+                {
+                    start = range.Start;
+                    end = range.End;
+                    return true;
+                }
+            }
+        }
+        finally
+        {
+            _gate.ExitReadLock();
+        }
+
+        start = 0;
+        end = 0;
+        return false;
     }
 
     public void Map(ulong virtualAddress, ulong memorySize, ulong fileOffset, ReadOnlySpan<byte> fileData, ProgramHeaderFlags protection)
@@ -1075,6 +1125,8 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         public bool IsReservedOnly { get; set; }
         public uint Protection { get; set; }
     }
+
+    private readonly record struct StackRange(ulong Start, ulong End);
 
     private struct MemoryBasicInformation64
     {

@@ -327,6 +327,11 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                     fileOffset: 0,
                     fileData: ReadOnlySpan<byte>.Empty,
                     ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+                if (_virtualMemory is IGuestStackMemory stackMemory)
+                {
+                    stackMemory.RegisterStackRange(candidateBase, StackSize);
+                }
+
                 return candidateBase;
             }
             catch (InvalidOperationException)

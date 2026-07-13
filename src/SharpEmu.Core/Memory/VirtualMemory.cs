@@ -2,20 +2,61 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.Core.Loader;
+using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Memory;
 
-public sealed class VirtualMemory : IVirtualMemory
+public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory
 {
     private readonly object _gate = new();
     private readonly List<MappedRegion> _regions = new();
+    private readonly List<StackRange> _stackRanges = new();
 
     public void Clear()
     {
         lock (_gate)
         {
             _regions.Clear();
+            _stackRanges.Clear();
         }
+    }
+
+    public void RegisterStackRange(ulong start, ulong size)
+    {
+        if (size == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(size));
+        }
+
+        var end = checked(start + size);
+        lock (_gate)
+        {
+            var range = new StackRange(start, end);
+            if (!_stackRanges.Contains(range))
+            {
+                _stackRanges.Add(range);
+            }
+        }
+    }
+
+    public bool TryGetStackRange(ulong address, out ulong start, out ulong end)
+    {
+        lock (_gate)
+        {
+            foreach (var range in _stackRanges)
+            {
+                if (address >= range.Start && address < range.End)
+                {
+                    start = range.Start;
+                    end = range.End;
+                    return true;
+                }
+            }
+        }
+
+        start = 0;
+        end = 0;
+        return false;
     }
 
     public void Map(ulong virtualAddress, ulong memorySize, ulong fileOffset, ReadOnlySpan<byte> fileData, ProgramHeaderFlags protection)
@@ -124,4 +165,6 @@ public sealed class VirtualMemory : IVirtualMemory
     }
 
     private readonly record struct MappedRegion(VirtualMemoryRegion Region, ulong EndAddress, byte[] BackingMemory);
+
+    private readonly record struct StackRange(ulong Start, ulong End);
 }

@@ -5,7 +5,7 @@ using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Cpu;
 
-public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemoryAllocator
+public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemoryAllocator, IGuestStackMemory
 {
     private readonly ICpuMemory _inner;
 
@@ -48,6 +48,28 @@ public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemo
         }
 
         address = 0;
+        return false;
+    }
+
+    public void RegisterStackRange(ulong start, ulong size)
+    {
+        if (_inner is not IGuestStackMemory stackMemory)
+        {
+            throw new NotSupportedException("The wrapped memory does not track guest stack ranges.");
+        }
+
+        stackMemory.RegisterStackRange(start, size);
+    }
+
+    public bool TryGetStackRange(ulong address, out ulong start, out ulong end)
+    {
+        if (_inner is IGuestStackMemory stackMemory)
+        {
+            return stackMemory.TryGetStackRange(address, out start, out end);
+        }
+
+        start = 0;
+        end = 0;
         return false;
     }
 }
