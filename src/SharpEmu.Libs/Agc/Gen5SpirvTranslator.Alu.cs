@@ -1938,6 +1938,13 @@ internal static partial class Gen5SpirvTranslator
                 case "VMaxF64":
                     result = Ext(40, _doubleType, left, GetDoubleSource(instruction, 1));
                     break;
+                case "VLdexpF64":
+                    result = Ext(
+                        53,
+                        _doubleType,
+                        left,
+                        Bitcast(_intType, GetRawSource(instruction, 1)));
+                    break;
                 default:
                     error = $"unsupported FP64 vector opcode {instruction.Opcode}";
                     return false;
