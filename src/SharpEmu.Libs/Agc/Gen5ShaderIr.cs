@@ -225,6 +225,7 @@ internal sealed record Gen5InterpolationControl(
 
 internal sealed record Gen5Vop3Control(
     uint AbsoluteMask,
+    uint OpSelectMask,
     uint NegateMask,
     uint OutputModifier,
     bool Clamp,

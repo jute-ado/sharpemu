@@ -1649,6 +1649,7 @@ internal static class Gen5ShaderTranslator
                 var isVop3B = IsVop3BOpcode((word >> 16) & 0x3FF);
                 control = new Gen5Vop3Control(
                     isVop3B ? 0 : (word >> 8) & 0x7,
+                    isVop3B ? 0 : (word >> 11) & 0xF,
                     (extra >> 29) & 0x7,
                     (extra >> 27) & 0x3,
                     ((word >> 15) & 1) != 0,
