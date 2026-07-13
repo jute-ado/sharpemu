@@ -780,6 +780,20 @@ internal static partial class Gen5SpirvTranslator
                         GetRawSource(instruction, 2));
                     break;
                 }
+                case "VAddNcU16":
+                case "VSubNcU16":
+                case "VMulLoU16":
+                case "VLshrrevB16":
+                case "VAshrrevI16":
+                case "VMaxU16":
+                case "VMaxI16":
+                case "VMinU16":
+                case "VMinI16":
+                case "VAddNcI16":
+                case "VSubNcI16":
+                case "VLshlrevB16":
+                    result = EmitInteger16Binary(instruction, destination);
+                    break;
                 case "VLshrB32":
                     result = EmitIntegerBinary(instruction, SpirvOp.ShiftRightLogical);
                     break;
@@ -1275,6 +1289,117 @@ internal static partial class Gen5SpirvTranslator
                 instruction,
                 destination,
                 signed ? Bitcast(_uintType, value) : value);
+        }
+
+        private uint EmitInteger16Binary(
+            Gen5ShaderInstruction instruction,
+            uint destination)
+        {
+            if (instruction.Control is not Gen5Vop3Control control)
+            {
+                throw new InvalidOperationException("16-bit binary operation requires VOP3 control");
+            }
+
+            var signed = instruction.Opcode.EndsWith("I16", StringComparison.Ordinal);
+            uint result;
+            if (instruction.Opcode.Contains("Add", StringComparison.Ordinal) ||
+                instruction.Opcode.Contains("Sub", StringComparison.Ordinal))
+            {
+                var subtract = instruction.Opcode.Contains("Sub", StringComparison.Ordinal);
+                var left = GetInteger16Source(instruction, 0, signed);
+                var right = GetInteger16Source(instruction, 1, signed);
+                if (signed)
+                {
+                    var signedResult = _module.AddInstruction(
+                        subtract ? SpirvOp.ISub : SpirvOp.IAdd,
+                        _intType,
+                        left,
+                        right);
+                    result = Bitcast(_uintType, signedResult);
+                    if (control.Clamp)
+                    {
+                        result = ClampSigned16(
+                            result,
+                            _module.Constant(
+                                _intType,
+                                unchecked((uint)short.MinValue)),
+                            _module.Constant(_intType, (uint)short.MaxValue));
+                    }
+                }
+                else
+                {
+                    result = _module.AddInstruction(
+                        subtract ? SpirvOp.ISub : SpirvOp.IAdd,
+                        _uintType,
+                        left,
+                        right);
+                    if (control.Clamp)
+                    {
+                        result = subtract
+                            ? _module.AddInstruction(
+                                SpirvOp.Select,
+                                _uintType,
+                                _module.AddInstruction(
+                                    SpirvOp.ULessThan,
+                                    _boolType,
+                                    left,
+                                    right),
+                                UInt(0),
+                                result)
+                            : Ext(38, _uintType, result, UInt(ushort.MaxValue));
+                    }
+                }
+            }
+            else if (instruction.Opcode == "VMulLoU16")
+            {
+                result = _module.AddInstruction(
+                    SpirvOp.IMul,
+                    _uintType,
+                    GetInteger16Source(instruction, 0, signed: false),
+                    GetInteger16Source(instruction, 1, signed: false));
+                if (control.Clamp)
+                {
+                    result = Ext(38, _uintType, result, UInt(ushort.MaxValue));
+                }
+            }
+            else if (instruction.Opcode.EndsWith("revB16", StringComparison.Ordinal) ||
+                     instruction.Opcode == "VAshrrevI16")
+            {
+                var shift = BitwiseAnd(
+                    GetInteger16Source(instruction, 0, signed: false),
+                    UInt(15));
+                var value = GetInteger16Source(instruction, 1, signed);
+                if (signed)
+                {
+                    value = Bitcast(_uintType, value);
+                }
+
+                result = instruction.Opcode switch
+                {
+                    "VLshlrevB16" => ShiftLeftLogical(value, shift),
+                    "VLshrrevB16" => ShiftRightLogical(value, shift),
+                    _ => ShiftRightArithmetic(value, shift),
+                };
+            }
+            else
+            {
+                var left = GetInteger16Source(instruction, 0, signed);
+                var right = GetInteger16Source(instruction, 1, signed);
+                var minimum = instruction.Opcode.StartsWith("VMin", StringComparison.Ordinal);
+                result = Ext(
+                    signed
+                        ? minimum ? 39u : 42u
+                        : minimum ? 38u : 41u,
+                    signed ? _intType : _uintType,
+                    left,
+                    right);
+                if (signed)
+                {
+                    result = Bitcast(_uintType, result);
+                }
+            }
+
+            return Emit16BitResult(instruction, destination, result);
         }
 
         private uint EmitFloat16Result(
