@@ -2114,6 +2114,26 @@ internal static partial class Gen5SpirvTranslator
             var dwordAddress = ShiftRightLogical(byteAddress, UInt(2));
 
             if (instruction.Opcode is
+                "GlobalLoadUbyteD16" or "GlobalLoadUbyteD16Hi" or
+                "GlobalLoadSbyteD16" or "GlobalLoadSbyteD16Hi" or
+                "GlobalLoadShortD16" or "GlobalLoadShortD16Hi")
+            {
+                StoreV(
+                    control.VectorDestination,
+                    InsertD16RegisterHalf(
+                        control.VectorDestination,
+                        EmitBufferSubwordLoad(
+                            bindingIndex,
+                            byteAddress,
+                            instruction.Opcode.Contains("byte", StringComparison.Ordinal)
+                                ? 8u
+                                : 16u,
+                            instruction.Opcode.Contains("Sbyte", StringComparison.Ordinal)),
+                        instruction.Opcode.EndsWith("Hi", StringComparison.Ordinal)));
+                return true;
+            }
+
+            if (instruction.Opcode is
                 "GlobalLoadUbyte" or "GlobalLoadSbyte" or
                 "GlobalLoadUshort" or "GlobalLoadSshort")
             {
@@ -2143,6 +2163,18 @@ internal static partial class Gen5SpirvTranslator
                     }
                 });
 
+                return true;
+            }
+
+            if (instruction.Opcode is
+                "GlobalStoreByteD16Hi" or "GlobalStoreShortD16Hi")
+            {
+                EmitExecConditional(() =>
+                    EmitBufferSubwordStore(
+                        bindingIndex,
+                        byteAddress,
+                        ShiftRightLogical(LoadV(control.VectorData), UInt(16)),
+                        instruction.Opcode == "GlobalStoreShortD16Hi" ? 16u : 8u));
                 return true;
             }
 
@@ -2240,6 +2272,26 @@ internal static partial class Gen5SpirvTranslator
             var dwordAddress = ShiftRightLogical(byteAddress, UInt(2));
 
             if (instruction.Opcode is
+                "BufferLoadUbyteD16" or "BufferLoadUbyteD16Hi" or
+                "BufferLoadSbyteD16" or "BufferLoadSbyteD16Hi" or
+                "BufferLoadShortD16" or "BufferLoadShortD16Hi")
+            {
+                StoreV(
+                    control.VectorData,
+                    InsertD16RegisterHalf(
+                        control.VectorData,
+                        EmitBufferSubwordLoad(
+                            bindingIndex,
+                            byteAddress,
+                            instruction.Opcode.Contains("byte", StringComparison.Ordinal)
+                                ? 8u
+                                : 16u,
+                            instruction.Opcode.Contains("Sbyte", StringComparison.Ordinal)),
+                        instruction.Opcode.EndsWith("Hi", StringComparison.Ordinal)));
+                return true;
+            }
+
+            if (instruction.Opcode is
                 "BufferLoadUbyte" or "BufferLoadSbyte" or
                 "BufferLoadUshort" or "BufferLoadSshort")
             {
@@ -2252,6 +2304,18 @@ internal static partial class Gen5SpirvTranslator
                             ? 16u
                             : 8u,
                         instruction.Opcode.Contains("LoadS", StringComparison.Ordinal)));
+                return true;
+            }
+
+            if (instruction.Opcode is
+                "BufferStoreByteD16Hi" or "BufferStoreShortD16Hi")
+            {
+                EmitExecConditional(() =>
+                    EmitBufferSubwordStore(
+                        bindingIndex,
+                        byteAddress,
+                        ShiftRightLogical(LoadV(control.VectorData), UInt(16)),
+                        instruction.Opcode == "BufferStoreShortD16Hi" ? 16u : 8u));
                 return true;
             }
 
@@ -2395,6 +2459,20 @@ internal static partial class Gen5SpirvTranslator
                 bitOffset,
                 UInt(componentBits));
             return signed ? Bitcast(_uintType, value) : value;
+        }
+
+        private uint InsertD16RegisterHalf(
+            uint vectorDestination,
+            uint value,
+            bool high)
+        {
+            return _module.AddInstruction(
+                SpirvOp.BitFieldInsert,
+                _uintType,
+                LoadV(vectorDestination),
+                value,
+                UInt(high ? 16u : 0u),
+                UInt(16));
         }
 
         private void EmitBufferSubwordStore(
