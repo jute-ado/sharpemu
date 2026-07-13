@@ -262,6 +262,27 @@ internal static partial class Gen5SpirvTranslator
                         vector);
                     break;
                 }
+                case "VPackB32F16":
+                    result = BitwiseOr(
+                        GetFloat16RawSource(instruction, 0),
+                        ShiftLeftLogical(
+                            GetFloat16RawSource(instruction, 1),
+                            UInt(16)));
+                    break;
+                case "VCvtPknormI16F16":
+                case "VCvtPknormU16F16":
+                {
+                    var vector = _module.AddInstruction(
+                        SpirvOp.CompositeConstruct,
+                        _vec2Type,
+                        GetFloat16Source(instruction, 0),
+                        GetFloat16Source(instruction, 1));
+                    result = Ext(
+                        instruction.Opcode == "VCvtPknormI16F16" ? 56u : 57u,
+                        _uintType,
+                        vector);
+                    break;
+                }
                 case "VFrexpExpI32F32":
                 case "VFrexpMantF32":
                 {

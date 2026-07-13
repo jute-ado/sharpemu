@@ -617,6 +617,73 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesVectorHalfPackOperationsToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xD7110000u, 0x00020501u, // v_pack_b32_f16 v0, v1, v2
+            0xD7110803u, 0x00020B04u, // v_pack_b32_f16 v3, v4, v5 op_sel:[1,0,0]
+            0xD7110306u, 0x20021107u, // v_pack_b32_f16 v6, -|v7|, |v8|
+            0xD7110009u, 0x0002160Au, // v_pack_b32_f16 v9, s10, v11
+            0xD712000Cu, 0x00021D0Du, // v_cvt_pknorm_i16_f16 v12, v13, v14
+            0xD713080Fu, 0x00022310u, // v_cvt_pknorm_u16_f16 v15, v16, v17 op_sel:[1,0,0]
+            0xD7120312u, 0x20022913u, // v_cvt_pknorm_i16_f16 v18, -|v19|, |v20|
+            0xD7130015u, 0x00022E16u, // v_cvt_pknorm_u16_f16 v21, s22, v23
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "VPackB32F16",
+                "VPackB32F16",
+                "VPackB32F16",
+                "VPackB32F16",
+                "VCvtPknormI16F16",
+                "VCvtPknormU16F16",
+                "VCvtPknormI16F16",
+                "VCvtPknormU16F16",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        var modifiedControl = Assert.IsType<Gen5Vop3Control>(program.Instructions[2].Control);
+        Assert.Equal(3u, modifiedControl.AbsoluteMask);
+        Assert.Equal(1u, modifiedControl.NegateMask);
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ExtInst));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.CompositeConstruct));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldUExtract));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseAnd));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseXor));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftLeftLogical));
+    }
+
+    [Fact]
     public void CompilesVectorFloatUtilityOperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
