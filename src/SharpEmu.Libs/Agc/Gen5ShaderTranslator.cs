@@ -2217,10 +2217,17 @@ internal static class Gen5ShaderTranslator
                 var scalarAddress = (extra >> 16) & 0x7F;
                 var dwordCount = opcode switch
                 {
+                    "GlobalLoadUbyte" or "GlobalLoadSbyte" or
+                    "GlobalLoadUshort" or "GlobalLoadSshort" => 1u,
                     "GlobalLoadDword" => 1u,
                     "GlobalLoadDwordx2" => 2u,
                     "GlobalLoadDwordx3" => 3u,
                     "GlobalLoadDwordx4" => 4u,
+                    "GlobalStoreByte" or "GlobalStoreShort" => 1u,
+                    "GlobalStoreDword" => 1u,
+                    "GlobalStoreDwordx2" => 2u,
+                    "GlobalStoreDwordx3" => 3u,
+                    "GlobalStoreDwordx4" => 4u,
                     _ => 0u,
                 };
                 sources =
@@ -2228,10 +2235,12 @@ internal static class Gen5ShaderTranslator
                     Gen5Operand.Vector(vectorAddress),
                     Gen5Operand.Scalar(scalarAddress),
                 ];
-                destinations = Enumerable
-                    .Range((int)vectorData, checked((int)dwordCount))
-                    .Select(index => Gen5Operand.Vector((uint)index))
-                    .ToArray();
+                destinations = opcode.StartsWith("GlobalStore", StringComparison.Ordinal)
+                    ? []
+                    : Enumerable
+                        .Range((int)vectorData, checked((int)dwordCount))
+                        .Select(index => Gen5Operand.Vector((uint)index))
+                        .ToArray();
                 control = new Gen5GlobalMemoryControl(
                     dwordCount,
                     vectorAddress,
