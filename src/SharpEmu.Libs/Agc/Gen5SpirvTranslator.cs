@@ -1339,6 +1339,37 @@ internal static partial class Gen5SpirvTranslator
                     });
                     return true;
                 }
+                case "DsWrxchg2RtnB32":
+                case "DsWrxchg2St64RtnB32":
+                {
+                    if (instruction.Sources.Count < 3 ||
+                        instruction.Destinations.Count < 2)
+                    {
+                        error = "missing paired LDS exchange operand";
+                        return false;
+                    }
+
+                    var st64 = instruction.Opcode == "DsWrxchg2St64RtnB32";
+                    EmitExecConditional(() =>
+                    {
+                        for (var pair = 0; pair < 2; pair++)
+                        {
+                            var offset = EffectiveDsPairOffsetBytes(
+                                pair == 0 ? control.Offset0 : control.Offset1,
+                                st64,
+                                sizeof(uint));
+                            var original = _module.AddInstruction(
+                                SpirvOp.AtomicExchange,
+                                _uintType,
+                                LdsPointer(GetRawSource(instruction, 0), offset),
+                                UInt(2),
+                                UInt(0x108),
+                                GetRawSource(instruction, pair + 1));
+                            StoreV(instruction.Destinations[pair].Value, original);
+                        }
+                    });
+                    return true;
+                }
                 case "DsWriteB8":
                 case "DsWriteB16":
                 case "DsWriteB8D16Hi":
