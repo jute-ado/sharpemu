@@ -283,6 +283,34 @@ internal static partial class Gen5SpirvTranslator
                         vector);
                     break;
                 }
+                case "VCvtF16I16":
+                case "VCvtF16U16":
+                {
+                    var signed = instruction.Opcode == "VCvtF16I16";
+                    var source = GetInteger16Source(instruction, 0, signed);
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        _module.AddInstruction(
+                            signed ? SpirvOp.ConvertSToF : SpirvOp.ConvertUToF,
+                            _floatType,
+                            source));
+                    break;
+                }
+                case "VCvtI16F16":
+                case "VCvtU16F16":
+                    result = EmitFloat16ToInteger16(
+                        instruction,
+                        destination,
+                        instruction.Opcode == "VCvtI16F16");
+                    break;
+                case "VCvtNormI16F16":
+                case "VCvtNormU16F16":
+                    result = EmitNormalizedFloat16ToInteger16(
+                        instruction,
+                        destination,
+                        instruction.Opcode == "VCvtNormI16F16");
+                    break;
                 case "VFrexpExpI16F16":
                 case "VFrexpMantF16":
                 {
@@ -1622,6 +1650,57 @@ internal static partial class Gen5SpirvTranslator
                 instruction,
                 destination,
                 PackHalf2(value, Float(0)));
+        }
+
+        private uint EmitFloat16ToInteger16(
+            Gen5ShaderInstruction instruction,
+            uint destination,
+            bool signed)
+        {
+            var source = GetFloat16Source(instruction, 0);
+            source = _module.AddInstruction(
+                SpirvOp.Select,
+                _floatType,
+                _module.AddInstruction(SpirvOp.IsNan, _boolType, source),
+                Float(0),
+                source);
+            source = Ext(
+                43,
+                _floatType,
+                source,
+                Float(signed ? short.MinValue : ushort.MinValue),
+                Float(signed ? short.MaxValue : ushort.MaxValue));
+            var converted = _module.AddInstruction(
+                signed ? SpirvOp.ConvertFToS : SpirvOp.ConvertFToU,
+                signed ? _intType : _uintType,
+                source);
+            return Emit16BitResult(
+                instruction,
+                destination,
+                signed ? Bitcast(_uintType, converted) : converted);
+        }
+
+        private uint EmitNormalizedFloat16ToInteger16(
+            Gen5ShaderInstruction instruction,
+            uint destination,
+            bool signed)
+        {
+            var source = GetFloat16Source(instruction, 0);
+            source = _module.AddInstruction(
+                SpirvOp.Select,
+                _floatType,
+                _module.AddInstruction(SpirvOp.IsNan, _boolType, source),
+                Float(0),
+                source);
+            var vector = _module.AddInstruction(
+                SpirvOp.CompositeConstruct,
+                _vec2Type,
+                source,
+                Float(0));
+            return Emit16BitResult(
+                instruction,
+                destination,
+                Ext(signed ? 56u : 57u, _uintType, vector));
         }
 
         private uint Emit16BitResult(
