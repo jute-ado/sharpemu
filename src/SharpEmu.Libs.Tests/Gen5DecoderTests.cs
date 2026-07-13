@@ -1446,6 +1446,60 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesDynamicImageLoadMipToSpirv()
+    {
+        var ctx = CreateContext(
+        [
+            0xF0040108u, 0x00000804u, // image_load_mip v8, v[4:6], s[0:7] dmask:0x1 dim:2d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var instruction = program.Instructions[0];
+        Assert.Equal("ImageLoadMip", instruction.Opcode);
+        Assert.Equal([Gen5Operand.Vector(8)], instruction.Destinations);
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, scalarRegisters, Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.Null(Assert.Single(evaluation.ImageBindings).MipLevel);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+
+        var fetch = GetSpirvInstruction(shader.Spirv, SpirvOp.ImageFetch);
+        Assert.Equal(7u, fetch[0] >> 16);
+        Assert.Equal(2u, fetch[5]);
+        var mipBitcast = GetSpirvInstructionWithResult(
+            shader.Spirv,
+            SpirvOp.Bitcast,
+            fetch[6]);
+        var mipLoad = GetSpirvInstructionWithResult(
+            shader.Spirv,
+            SpirvOp.Load,
+            mipBitcast[3]);
+        Assert.True((mipLoad[0] >> 16) >= 4);
+    }
+
+    [Fact]
     public void CompilesImageAtomic32OperationsToSpirv()
     {
         // RDNA1 MIMG encodings for a 2D R32ui storage image. GLC requests
