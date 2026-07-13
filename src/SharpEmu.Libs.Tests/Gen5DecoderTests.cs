@@ -696,6 +696,62 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesExtendedVop1EncodingsToSpirv()
+    {
+        // E64 encodings assembled with LLVM 18 llvm-mc for gfx1030 and
+        // verified with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xD5830100u, 0x20000102u, // v_cvt_i32_f64 v0, -|v[2:3]|
+            0xD5840004u, 0x00000106u, // v_cvt_f64_i32 v[4:5], v6
+            0xD5970108u, 0x2000010Au, // v_trunc_f64 v[8:9], -|v[10:11]|
+            0xD5AF000Cu, 0x2000010Eu, // v_rcp_f64 v[12:13], -v[14:15]
+            0xD5A40110u, 0x20000111u, // v_floor_f32 v16, -|v17|
+            0xD5B80012u, 0x00000113u, // v_bfrev_b32 v18, v19
+            0xD5BC0114u, 0x00000116u, // v_frexp_exp_i32_f64 v20, |v[22:23]|
+            0xD5BD0018u, 0x2000011Au, // v_frexp_mant_f64 v[24:25], -v[26:27]
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "VCvtI32F64", "VCvtF64I32", "VTruncF64", "VRcpF64",
+                "VFloorF32", "VBfrevB32", "VFrexpExpI32F64",
+                "VFrexpMantF64", "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvCapability(shader.Spirv, SpirvCapability.Float64));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FNegate));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitReverse));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 4));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 52));
+    }
+
+    [Fact]
     public void CompilesVectorInteger64MultiplyAddToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
