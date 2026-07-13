@@ -1374,6 +1374,8 @@ internal static class Gen5ShaderTranslator
             0xA5 => "DsReadI8D16Hi",
             0xA6 => "DsReadU16D16",
             0xA7 => "DsReadU16D16Hi",
+            0xB0 => "DsWriteAddtidB32",
+            0xB1 => "DsReadAddtidB32",
             0xB2 => "DsPermuteB32",
             0xB3 => "DsBpermuteB32",
             0xDE => "DsWriteB96",
@@ -2055,6 +2057,8 @@ internal static class Gen5ShaderTranslator
                         Gen5Operand.Vector(vectorData1),
                         Gen5Operand.Vector(vectorData1 + 1),
                     ],
+                    "DsWriteAddtidB32" => [Gen5Operand.Vector(vectorData0)],
+                    "DsReadAddtidB32" => [],
                     "DsAddU32" or "DsSubU32" or
                     "DsMinI32" or "DsMaxI32" or "DsMinU32" or "DsMaxU32" or
                     "DsAndB32" or "DsOrB32" or "DsXorB32" or
@@ -2086,6 +2090,7 @@ internal static class Gen5ShaderTranslator
                     "DsReadI8D16" or "DsReadI8D16Hi" or
                     "DsReadU16D16" or "DsReadU16D16Hi" or
                     "DsReadB32" or "DsSwizzleB32" or
+                    "DsReadAddtidB32" or
                     "DsPermuteB32" or "DsBpermuteB32" => [
                         Gen5Operand.Vector(vectorDestination),
                     ],
