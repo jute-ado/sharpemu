@@ -171,7 +171,14 @@ internal static partial class Gen5SpirvTranslator
                     var source = GetFloatSource(instruction, 0);
                     if (instruction.Opcode == "VCvtRpiI32F32")
                     {
-                        source = Ext(9, _floatType, source);
+                        source = Ext(
+                            8,
+                            _floatType,
+                            _module.AddInstruction(
+                                SpirvOp.FAdd,
+                                _floatType,
+                                source,
+                                Float(0.5f)));
                     }
                     else if (instruction.Opcode == "VCvtFlrI32F32")
                     {

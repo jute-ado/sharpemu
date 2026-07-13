@@ -306,6 +306,9 @@ public sealed class Gen5DecoderTests
             4,
             CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FOrdGreaterThanEqual));
         Assert.True(ContainsGlslExtInst(shader.Spirv, 43));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 8));
+        Assert.False(ContainsGlslExtInst(shader.Spirv, 9));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FAdd));
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ConvertFToS));
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ConvertFToU));
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Select));
