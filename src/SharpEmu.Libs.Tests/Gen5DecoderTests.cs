@@ -336,6 +336,101 @@ public sealed class Gen5DecoderTests
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldUExtract));
     }
 
+    [Fact]
+    public void CompilesCommonVectorIntegerOperationsToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xD7640000u, 0x00020501u, // v_bcnt_u32_b32 v0, v1, v2
+            0x7E067304u,              // v_ffbh_u32_e32 v3, v4
+            0x7E0A7706u,              // v_ffbh_i32_e32 v5, v6
+            0xD76A0007u, 0x00021308u, // v_cvt_pk_u16_u32 v7, v8, v9
+            0xD76B000Au, 0x0002190Bu, // v_cvt_pk_i16_i32 v10, v11, v12
+            0x121A1F0Eu,              // v_mul_i32_i24_e32 v13, v14, v15
+            0x14202511u,              // v_mul_hi_i32_i24_e32 v16, v17, v18
+            0xD75E0000u, 0x040E0501u, // v_mad_i16 v0, v1, v2, v3
+            0xD7400004u, 0x041E0D05u, // v_mad_u16 v4, v5, v6, v7
+            0xD5420008u, 0x042E1509u, // v_mad_i32_i24 v8, v9, v10, v11
+            0xD56C0016u, 0x00023117u, // v_mul_hi_i32 v22, v23, v24
+            0xD5490019u, 0x0472371Au, // v_bfe_i32 v25, v26, v27, v28
+            0x3C3A3F1Eu,              // v_xnor_b32_e32 v29, v30, v31
+            0xD7650020u, 0x00024521u, // v_mbcnt_lo_u32_b32 v32, v33, v34
+            0xD7660023u, 0x00024B24u, // v_mbcnt_hi_u32_b32 v35, v36, v37
+            0xD54E0000u, 0x040E0501u, // v_alignbit_b32 v0, v1, v2, v3
+            0xD54F0004u, 0x041E0D05u, // v_alignbyte_b32 v4, v5, v6, v7
+            0xD54D0008u, 0x042E1509u, // v_lerp_u8 v8, v9, v10, v11
+            0xD571000Cu, 0x043E1D0Du, // v_msad_u8 v12, v13, v14, v15
+            0xD55B0010u, 0x044E2511u, // v_sad_hi_u8 v16, v17, v18, v19
+            0xD55C0014u, 0x045E2D15u, // v_sad_u16 v20, v21, v22, v23
+            0xD55D0018u, 0x046E3519u, // v_sad_u32 v24, v25, v26, v27
+            0xD55A001Cu, 0x047E3D1Du, // v_sad_u8 v28, v29, v30, v31
+            0xD7450020u, 0x048E4521u, // v_xad_u32 v32, v33, v34, v35
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "VBcntU32B32",
+                "VFfbhU32",
+                "VFfbhI32",
+                "VCvtPkU16U32",
+                "VCvtPkI16I32",
+                "VMulI32I24",
+                "VMulHiI32I24",
+                "VMadI16",
+                "VMadU16",
+                "VMadI32I24",
+                "VMulHiI32",
+                "VBfeI32",
+                "VXnorB32",
+                "VMbcntLoU32B32",
+                "VMbcntHiU32B32",
+                "VAlignbitB32",
+                "VAlignbyteB32",
+                "VLerpU8",
+                "VMsadU8",
+                "VSadHiU8",
+                "VSadU16",
+                "VSadU32",
+                "VSadU8",
+                "VXadU32",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitCount));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SConvert));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldSExtract));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ExtInst));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Not));
+    }
+
     private static bool ContainsSpirvOpcode(byte[] spirv, ushort opcode)
     {
         for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
