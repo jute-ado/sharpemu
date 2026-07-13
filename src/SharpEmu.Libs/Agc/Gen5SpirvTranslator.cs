@@ -2234,12 +2234,14 @@ internal static partial class Gen5SpirvTranslator
                 UInt(0),
                 dwordAddress);
 
-        private uint ScalarPointer(uint register) =>
+        private uint ScalarPointer(uint register) => ScalarPointerAt(UInt(register));
+
+        private uint ScalarPointerAt(uint index) =>
             _module.AddInstruction(
                 SpirvOp.AccessChain,
                 _privateUintPointer,
                 _scalarRegisters,
-                UInt(register));
+                index);
 
         private uint VectorPointer(uint register) => VectorPointerAt(UInt(register));
 
@@ -2251,6 +2253,8 @@ internal static partial class Gen5SpirvTranslator
                 index);
 
         private uint LoadS(uint register) => Load(_uintType, ScalarPointer(register));
+
+        private uint LoadSAt(uint index) => Load(_uintType, ScalarPointerAt(index));
 
         private uint LoadV(uint register) => Load(_uintType, VectorPointer(register));
 
@@ -2267,6 +2271,13 @@ internal static partial class Gen5SpirvTranslator
             {
                 Store(_exec, IsWaveMaskActive(LoadS64(126)));
             }
+        }
+
+        private void StoreSAt(uint index, uint value)
+        {
+            Store(ScalarPointerAt(index), value);
+            Store(_vcc, IsWaveMaskActive(LoadS64(106)));
+            Store(_exec, IsWaveMaskActive(LoadS64(126)));
         }
 
         private void StoreV(uint register, uint value, bool guardWithExec = true)

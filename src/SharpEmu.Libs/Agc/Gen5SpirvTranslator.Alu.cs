@@ -2276,6 +2276,11 @@ internal static partial class Gen5SpirvTranslator
             }
 
             var destination = instruction.Destinations[0].Value;
+            if (instruction.Opcode.StartsWith("SMovrel", StringComparison.Ordinal))
+            {
+                return TryEmitRelativeScalarMove(instruction, destination, out error);
+            }
+
             if (instruction.Encoding == Gen5ShaderEncoding.Sopk)
             {
                 var immediate = unchecked((uint)(short)(instruction.Words[0] & 0xFFFF));
@@ -2867,6 +2872,83 @@ internal static partial class Gen5SpirvTranslator
             }
 
             StoreS(destination, result);
+            return true;
+        }
+
+        private bool TryEmitRelativeScalarMove(
+            Gen5ShaderInstruction instruction,
+            uint destination,
+            out string error)
+        {
+            error = string.Empty;
+            if (instruction.Sources.Count == 0 ||
+                instruction.Sources[0].Kind != Gen5OperandKind.ScalarRegister)
+            {
+                error = $"invalid scalar relative source {instruction.Opcode}";
+                return false;
+            }
+
+            var source = instruction.Sources[0].Value;
+            var m0 = LoadS(M0Register);
+            var zero = UInt(0);
+            uint sourceOffset = zero;
+            uint destinationOffset = zero;
+            if (instruction.Opcode is "SMovrelsB32" or "SMovrelsB64")
+            {
+                sourceOffset = m0;
+            }
+            else if (instruction.Opcode is "SMovreldB32" or "SMovreldB64")
+            {
+                destinationOffset = m0;
+            }
+            else if (instruction.Opcode == "SMovrelsd2B32")
+            {
+                sourceOffset = BitwiseAnd(m0, UInt(0x3FF));
+                destinationOffset = BitwiseAnd(
+                    ShiftRightLogical(m0, UInt(16)),
+                    UInt(0x3FF));
+            }
+            else
+            {
+                error = $"unsupported scalar relative move {instruction.Opcode}";
+                return false;
+            }
+
+            var sourceIndex = IAdd(UInt(source), sourceOffset);
+            var destinationIndex = IAdd(UInt(destination), destinationOffset);
+            var relativeSource = instruction.Opcode is
+                "SMovrelsB32" or "SMovrelsB64" or "SMovrelsd2B32";
+            var relativeDestination = instruction.Opcode is
+                "SMovreldB32" or "SMovreldB64" or "SMovrelsd2B32";
+            if (instruction.Opcode.EndsWith("B64", StringComparison.Ordinal))
+            {
+                var value = relativeSource
+                    ? LoadS64At(sourceIndex)
+                    : GetRawSource64(instruction, 0);
+                if (relativeDestination)
+                {
+                    StoreS64At(destinationIndex, value);
+                }
+                else
+                {
+                    StoreS64(destination, value);
+                }
+
+                return true;
+            }
+
+            var value32 = relativeSource
+                ? LoadSAt(sourceIndex)
+                : GetRawSource(instruction, 0);
+            if (relativeDestination)
+            {
+                StoreSAt(destinationIndex, value32);
+            }
+            else
+            {
+                StoreS(destination, value32);
+            }
+
             return true;
         }
 
@@ -4032,6 +4114,20 @@ internal static partial class Gen5SpirvTranslator
             return _module.AddInstruction(SpirvOp.BitwiseOr, _ulongType, low, high);
         }
 
+        private uint LoadS64At(uint index)
+        {
+            var low = _module.AddInstruction(
+                SpirvOp.UConvert,
+                _ulongType,
+                LoadSAt(index));
+            var high = _module.AddInstruction(
+                SpirvOp.UConvert,
+                _ulongType,
+                LoadSAt(IAdd(index, UInt(1))));
+            high = ShiftLeftLogical64(high, _module.Constant64(_ulongType, 32));
+            return _module.AddInstruction(SpirvOp.BitwiseOr, _ulongType, low, high);
+        }
+
         private void StoreS64(uint register, uint value)
         {
             StoreS(
@@ -4042,6 +4138,17 @@ internal static partial class Gen5SpirvTranslator
                 _module.Constant64(_ulongType, 32));
             StoreS(
                 register + 1,
+                _module.AddInstruction(SpirvOp.UConvert, _uintType, high));
+        }
+
+        private void StoreS64At(uint index, uint value)
+        {
+            StoreSAt(index, _module.AddInstruction(SpirvOp.UConvert, _uintType, value));
+            var high = ShiftRightLogical64(
+                value,
+                _module.Constant64(_ulongType, 32));
+            StoreSAt(
+                IAdd(index, UInt(1)),
                 _module.AddInstruction(SpirvOp.UConvert, _uintType, high));
         }
 

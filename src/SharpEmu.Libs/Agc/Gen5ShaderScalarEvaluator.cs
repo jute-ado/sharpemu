@@ -10,6 +10,7 @@ namespace SharpEmu.Libs.Agc;
 internal static class Gen5ShaderScalarEvaluator
 {
     private const int ScalarRegisterCount = 256;
+    private const int M0Register = 124;
     private const int ImageDescriptorDwords = 8;
     private const int SamplerDescriptorDwords = 4;
     private const int MaxGlobalMemoryBindingBytes = 16 * 1024 * 1024;
@@ -612,6 +613,16 @@ internal static class Gen5ShaderScalarEvaluator
             return false;
         }
 
+        if (instruction.Opcode.StartsWith("SMovrel", StringComparison.Ordinal))
+        {
+            return TryExecuteRelativeScalarMove(
+                instruction,
+                destination.Value,
+                registers,
+                ref execMask,
+                out error);
+        }
+
         if (instruction.Opcode == "SMovkI32")
         {
             registers[destination.Value] = unchecked((uint)(short)instruction.Sources[0].Value);
@@ -1187,6 +1198,80 @@ internal static class Gen5ShaderScalarEvaluator
         }
 
         registers[destination.Value] = result;
+        return true;
+    }
+
+    private static bool TryExecuteRelativeScalarMove(
+        Gen5ShaderInstruction instruction,
+        uint destination,
+        uint[] registers,
+        ref ulong execMask,
+        out string error)
+    {
+        error = string.Empty;
+        if (instruction.Sources.Count == 0 ||
+            instruction.Sources[0] is not
+            {
+                Kind: Gen5OperandKind.ScalarRegister,
+                Value: < ScalarRegisterCount,
+            } source)
+        {
+            error = $"scalar-relative-source pc=0x{instruction.Pc:X} op={instruction.Opcode}";
+            return false;
+        }
+
+        var m0 = registers[M0Register];
+        uint sourceOffset = 0;
+        uint destinationOffset = 0;
+        if (instruction.Opcode is "SMovrelsB32" or "SMovrelsB64")
+        {
+            sourceOffset = m0;
+        }
+        else if (instruction.Opcode is "SMovreldB32" or "SMovreldB64")
+        {
+            destinationOffset = m0;
+        }
+        else if (instruction.Opcode == "SMovrelsd2B32")
+        {
+            sourceOffset = m0 & 0x3FFu;
+            destinationOffset = m0 >> 16 & 0x3FFu;
+        }
+        else
+        {
+            error = $"unsupported-scalar-relative pc=0x{instruction.Pc:X} op={instruction.Opcode}";
+            return false;
+        }
+
+        var sourceIndex = (ulong)source.Value + sourceOffset;
+        var destinationIndex = (ulong)destination + destinationOffset;
+        var is64Bit = instruction.Opcode.EndsWith("B64", StringComparison.Ordinal);
+        var requiredRegisters = is64Bit ? 2UL : 1UL;
+        if (sourceIndex + requiredRegisters > ScalarRegisterCount ||
+            destinationIndex + requiredRegisters > ScalarRegisterCount ||
+            is64Bit && ((sourceIndex | destinationIndex) & 1UL) != 0)
+        {
+            error = $"scalar-relative-range pc=0x{instruction.Pc:X} op={instruction.Opcode}";
+            return false;
+        }
+
+        if (is64Bit)
+        {
+            var sourceRegister = (uint)sourceIndex;
+            var value = registers[sourceRegister] |
+                ((ulong)registers[sourceRegister + 1] << 32);
+            WriteScalarPair(registers, (uint)destinationIndex, value, ref execMask);
+            return true;
+        }
+
+        registers[(uint)destinationIndex] = registers[(uint)sourceIndex];
+        if (destinationIndex is 126 or 127)
+        {
+            execMask = MaskWaveValue(
+                registers[126] | ((ulong)registers[127] << 32));
+            registers[126] = (uint)execMask;
+            registers[127] = (uint)(execMask >> 32);
+        }
+
         return true;
     }
 
