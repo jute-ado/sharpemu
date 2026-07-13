@@ -1136,6 +1136,62 @@ internal static partial class Gen5SpirvTranslator
 
             switch (instruction.Opcode)
             {
+                case "DsAddU32":
+                case "DsSubU32":
+                case "DsMinI32":
+                case "DsMaxU32":
+                case "DsAndB32":
+                case "DsOrB32":
+                case "DsXorB32":
+                case "DsAddRtnU32":
+                case "DsSubRtnU32":
+                case "DsMinRtnI32":
+                case "DsMaxRtnU32":
+                case "DsAndRtnB32":
+                case "DsOrRtnB32":
+                case "DsXorRtnB32":
+                {
+                    if (instruction.Sources.Count < 2)
+                    {
+                        error = "missing LDS atomic source";
+                        return false;
+                    }
+
+                    var operation = instruction.Opcode switch
+                    {
+                        "DsAddU32" or "DsAddRtnU32" => SpirvOp.AtomicIAdd,
+                        "DsSubU32" or "DsSubRtnU32" => SpirvOp.AtomicISub,
+                        "DsMinI32" or "DsMinRtnI32" => SpirvOp.AtomicSMin,
+                        "DsMaxU32" or "DsMaxRtnU32" => SpirvOp.AtomicUMax,
+                        "DsAndB32" or "DsAndRtnB32" => SpirvOp.AtomicAnd,
+                        "DsOrB32" or "DsOrRtnB32" => SpirvOp.AtomicOr,
+                        _ => SpirvOp.AtomicXor,
+                    };
+                    var returnsValue = instruction.Opcode.Contains("Rtn", StringComparison.Ordinal);
+                    if (returnsValue && instruction.Destinations.Count < 1)
+                    {
+                        error = "missing LDS atomic destination";
+                        return false;
+                    }
+
+                    EmitExecConditional(() =>
+                    {
+                        var original = _module.AddInstruction(
+                            operation,
+                            _uintType,
+                            LdsPointer(
+                                GetRawSource(instruction, 0),
+                                EffectiveDsOffsetBytes(control.Offset0)),
+                            UInt(2),
+                            UInt(0x108),
+                            GetRawSource(instruction, 1));
+                        if (returnsValue)
+                        {
+                            StoreV(instruction.Destinations[0].Value, original);
+                        }
+                    });
+                    return true;
+                }
                 case "DsWriteB8":
                 case "DsWriteB16":
                 {
