@@ -1271,6 +1271,8 @@ internal static partial class Gen5SpirvTranslator
                 }
                 case "DsWriteB8":
                 case "DsWriteB16":
+                case "DsWriteB8D16Hi":
+                case "DsWriteB16D16Hi":
                 {
                     if (instruction.Sources.Count < 2)
                     {
@@ -1278,7 +1280,9 @@ internal static partial class Gen5SpirvTranslator
                         return false;
                     }
 
-                    var componentBits = instruction.Opcode == "DsWriteB8" ? 8u : 16u;
+                    var componentBits = instruction.Opcode.StartsWith(
+                        "DsWriteB8",
+                        StringComparison.Ordinal) ? 8u : 16u;
                     var byteAddress = LdsByteAddress(
                         GetRawSource(instruction, 0),
                         EffectiveDsSingleOffsetBytes(control));
@@ -1286,11 +1290,17 @@ internal static partial class Gen5SpirvTranslator
                     var bitOffset = ShiftLeftLogical(
                         BitwiseAnd(byteAddress, UInt(3)),
                         UInt(3));
+                    var source = GetRawSource(instruction, 1);
+                    if (instruction.Opcode.EndsWith("D16Hi", StringComparison.Ordinal))
+                    {
+                        source = ShiftRightLogical(source, UInt(16));
+                    }
+
                     var inserted = _module.AddInstruction(
                         SpirvOp.BitFieldInsert,
                         _uintType,
                         Load(_uintType, pointer),
-                        GetRawSource(instruction, 1),
+                        source,
                         bitOffset,
                         UInt(componentBits));
                     StoreLds(pointer, inserted);
@@ -1430,6 +1440,12 @@ internal static partial class Gen5SpirvTranslator
                 case "DsReadU8":
                 case "DsReadI16":
                 case "DsReadU16":
+                case "DsReadU8D16":
+                case "DsReadU8D16Hi":
+                case "DsReadI8D16":
+                case "DsReadI8D16Hi":
+                case "DsReadU16D16":
+                case "DsReadU16D16Hi":
                 {
                     if (instruction.Destinations.Count < 1 ||
                         instruction.Sources.Count < 1)
@@ -1438,10 +1454,17 @@ internal static partial class Gen5SpirvTranslator
                         return false;
                     }
 
-                    var componentBits = instruction.Opcode.EndsWith("8", StringComparison.Ordinal)
-                        ? 8u
-                        : 16u;
-                    var signed = instruction.Opcode.Contains('I', StringComparison.Ordinal);
+                    var componentBits = instruction.Opcode.StartsWith(
+                            "DsReadI16",
+                            StringComparison.Ordinal) ||
+                        instruction.Opcode.StartsWith(
+                            "DsReadU16",
+                            StringComparison.Ordinal)
+                        ? 16u
+                        : 8u;
+                    var signed = instruction.Opcode.StartsWith(
+                        "DsReadI",
+                        StringComparison.Ordinal);
                     var byteAddress = LdsByteAddress(
                         GetRawSource(instruction, 0),
                         EffectiveDsSingleOffsetBytes(control));
@@ -1455,9 +1478,21 @@ internal static partial class Gen5SpirvTranslator
                         signed ? Bitcast(_intType, word) : word,
                         bitOffset,
                         UInt(componentBits));
-                    StoreV(
-                        instruction.Destinations[0].Value,
-                        signed ? Bitcast(_uintType, value) : value);
+                    value = signed ? Bitcast(_uintType, value) : value;
+                    if (instruction.Opcode.Contains("D16", StringComparison.Ordinal))
+                    {
+                        value = _module.AddInstruction(
+                            SpirvOp.BitFieldInsert,
+                            _uintType,
+                            LoadV(instruction.Destinations[0].Value),
+                            value,
+                            UInt(instruction.Opcode.EndsWith(
+                                "Hi",
+                                StringComparison.Ordinal) ? 16u : 0u),
+                            UInt(16));
+                    }
+
+                    StoreV(instruction.Destinations[0].Value, value);
                     return true;
                 }
                 case "DsRead2B32":
