@@ -620,6 +620,57 @@ public sealed class Gen5DecoderTests
         Assert.True(ContainsGlslExtInst(shader.Spirv, 50));
     }
 
+    [Fact]
+    public void CompilesVectorInteger64MultiplyAddToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xD5766A00u, 0x04120702u, // v_mad_u64_u32 v[0:1], vcc_lo, v2, v3, v[4:5]
+            0xD5776A06u, 0x042A1308u, // v_mad_i64_i32 v[6:7], vcc_lo, v8, v9, v[10:11]
+            0xD576280Cu, 0x04421F0Eu, // v_mad_u64_u32 v[12:13], s40, v14, v15, v[16:17]
+            0xD5772A12u, 0x045A2B14u, // v_mad_i64_i32 v[18:19], s42, v20, v21, v[22:23]
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            ["VMadU64U32", "VMadI64I32", "VMadU64U32", "VMadI64I32", "SEndpgm"],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IMul));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IAdd));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SConvert));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UConvert));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ULessThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SLessThan));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.LogicalEqual));
+    }
+
     private static bool ContainsSpirvCapability(
         byte[] spirv,
         SpirvCapability capability)
