@@ -186,8 +186,8 @@ public sealed class Gen5DecoderTests
                 localSizeX: 32,
                 localSizeY: 1,
                 localSizeZ: 1,
-            out var shader,
-            out var compileError),
+                out var shader,
+                out var compileError),
             compileError);
         Assert.True(ContainsSpirvOpcode(shader.Spirv, 345));
     }
@@ -495,6 +495,7 @@ public sealed class Gen5DecoderTests
                 out var shader,
                 out var compileError),
             compileError);
+        Assert.False(ContainsSpirvCapability(shader.Spirv, SpirvCapability.Float64));
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ExtInst));
         Assert.True(ContainsGlslExtInst(shader.Spirv, 52));
         Assert.True(ContainsGlslExtInst(shader.Spirv, 56));
@@ -551,6 +552,98 @@ public sealed class Gen5DecoderTests
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftRightLogical));
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.UGreaterThanEqual));
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Select));
+    }
+
+    [Fact]
+    public void CompilesVectorFloat64ArithmeticToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xD5640000u, 0x00020902u, // v_add_f64 v[0:1], v[2:3], v[4:5]
+            0xD5650006u, 0x00021508u, // v_mul_f64 v[6:7], v[8:9], v[10:11]
+            0xD54C000Cu, 0x044A210Eu, // v_fma_f64 v[12:13], v[14:15], v[16:17], v[18:19]
+            0xD5660014u, 0x00023116u, // v_min_f64 v[20:21], v[22:23], v[24:25]
+            0xD567001Au, 0x00023D1Cu, // v_max_f64 v[26:27], v[28:29], v[30:31]
+            0xD5640020u, 0x000244F2u, // v_add_f64 v[32:33], 1.0, v[34:35]
+            0xD5650024u, 0x00024CF5u, // v_mul_f64 v[36:37], -2.0, v[38:39]
+            0xD54C0228u, 0x23C2592Au, // v_fma_f64 v[40:41], -v[42:43], |v[44:45]|, 0.5
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "VAddF64",
+                "VMulF64",
+                "VFmaF64",
+                "VMinF64",
+                "VMaxF64",
+                "VAddF64",
+                "VMulF64",
+                "VFmaF64",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvCapability(shader.Spirv, SpirvCapability.Float64));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FAdd));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FMul));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FNegate));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 4));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 37));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 40));
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 50));
+    }
+
+    private static bool ContainsSpirvCapability(
+        byte[] spirv,
+        SpirvCapability capability)
+    {
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var instruction = BitConverter.ToUInt32(spirv, offset);
+            var wordCount = instruction >> 16;
+            if ((ushort)instruction == (ushort)SpirvOp.Capability &&
+                wordCount >= 2 &&
+                BitConverter.ToUInt32(spirv, offset + sizeof(uint)) == (uint)capability)
+            {
+                return true;
+            }
+
+            if (wordCount == 0)
+            {
+                return false;
+            }
+
+            offset += checked((int)wordCount * sizeof(uint));
+        }
+
+        return false;
     }
 
     private static bool ContainsGlslExtInst(byte[] spirv, uint operation)
