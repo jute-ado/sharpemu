@@ -151,6 +151,7 @@ internal static partial class Gen5SpirvTranslator
             uint ObjectType,
             uint ComponentType,
             uint VectorType,
+            SpirvImageFormat Format,
             ImageComponentKind ComponentKind,
             bool IsStorage);
 
@@ -537,6 +538,7 @@ internal static partial class Gen5SpirvTranslator
                         objectType,
                         componentType,
                         _module.TypeVector(componentType, 4),
+                        format,
                         componentKind,
                         isStorage));
                 _interfaces.Add(variable);
@@ -597,6 +599,7 @@ internal static partial class Gen5SpirvTranslator
                     SpirvImageFormat.Rgba32f,
                     ImageComponentKind.Float),
                 (20, _) => (SpirvImageFormat.R32ui, ImageComponentKind.Uint),
+                (21, _) => (SpirvImageFormat.R32i, ImageComponentKind.Sint),
                 (22, _) => (SpirvImageFormat.Rgba16f, ImageComponentKind.Float),
                 (29, _) => (SpirvImageFormat.R32f, ImageComponentKind.Float),
                 (36, _) => (SpirvImageFormat.R8, ImageComponentKind.Float),
@@ -1383,6 +1386,7 @@ internal static partial class Gen5SpirvTranslator
                             LdsPointer(
                                 GetRawSource(instruction, 0),
                                 EffectiveDsSingleOffsetBytes(control)),
+                            _uintType,
                             UInt(2),
                             UInt(0x102),
                             UInt(0x108),
@@ -1741,6 +1745,7 @@ internal static partial class Gen5SpirvTranslator
 
         private uint EmitAtomicCompareExchangeLoop(
             uint pointer,
+            uint valueType,
             uint scope,
             uint loadMemorySemantics,
             uint equalMemorySemantics,
@@ -1762,14 +1767,14 @@ internal static partial class Gen5SpirvTranslator
             _module.AddLabel(loopBody);
             var expected = _module.AddInstruction(
                 SpirvOp.AtomicLoad,
-                _uintType,
+                valueType,
                 pointer,
                 scope,
                 loadMemorySemantics);
             var desired = emitDesiredValue(expected);
             var observed = _module.AddInstruction(
                 SpirvOp.AtomicCompareExchange,
-                _uintType,
+                valueType,
                 pointer,
                 scope,
                 equalMemorySemantics,
@@ -2574,6 +2579,7 @@ internal static partial class Gen5SpirvTranslator
                     LoadV(vectorData + 1)),
                 "Inc" or "Dec" => EmitAtomicCompareExchangeLoop(
                     pointer,
+                    _uintType,
                     UInt(1),
                     UInt(0x42),
                     UInt(0x48),
@@ -2813,6 +2819,55 @@ internal static partial class Gen5SpirvTranslator
                 return true;
             }
 
+            if (instruction.Opcode.StartsWith("ImageAtomic", StringComparison.Ordinal))
+            {
+                if (!resource.IsStorage)
+                {
+                    error = "image atomic is not bound as storage";
+                    return false;
+                }
+
+                var hasAtomicFormat = resource.Format is
+                    SpirvImageFormat.R32ui or SpirvImageFormat.R32i;
+                var hasIntegerComponent = resource.ComponentKind is
+                    ImageComponentKind.Uint or ImageComponentKind.Sint;
+                if (!hasAtomicFormat || !hasIntegerComponent)
+                {
+                    error =
+                        $"image atomic requires an R32ui or R32i resource, got {resource.Format}";
+                    return false;
+                }
+
+                var coordinates = BuildIntegerCoordinates(image, 0);
+                var pointerType = _module.TypePointer(
+                    SpirvStorageClass.Image,
+                    resource.ComponentType);
+                var pointer = _module.AddInstruction(
+                    SpirvOp.ImageTexelPointer,
+                    pointerType,
+                    resource.Variable,
+                    coordinates,
+                    UInt(0));
+                EmitExecConditional(
+                    () =>
+                    {
+                        var original = EmitImageAtomic32(
+                            instruction.Opcode,
+                            pointer,
+                            image.VectorData,
+                            resource);
+                        if (image.Glc)
+                        {
+                            StoreV(
+                                image.VectorData,
+                                resource.ComponentKind == ImageComponentKind.Uint
+                                    ? original
+                                    : Bitcast(_uintType, original));
+                        }
+                    });
+                return true;
+            }
+
             if (resource.IsStorage)
             {
                 error = $"unsupported storage image opcode {instruction.Opcode}";
@@ -2992,6 +3047,78 @@ internal static partial class Gen5SpirvTranslator
             }
 
             return true;
+        }
+
+        private uint EmitImageAtomic32(
+            string opcode,
+            uint pointer,
+            uint vectorData,
+            SpirvImageResource resource)
+        {
+            const uint imageAcquire = 0x802;
+            const uint imageAcquireRelease = 0x808;
+            var operation = opcode[(opcode.IndexOf("Atomic", StringComparison.Ordinal) + 6)..];
+            uint LoadData(uint register)
+            {
+                var raw = LoadV(register);
+                return resource.ComponentKind == ImageComponentKind.Uint
+                    ? raw
+                    : Bitcast(_intType, raw);
+            }
+
+            return operation switch
+            {
+                "Cmpswap" => _module.AddInstruction(
+                    SpirvOp.AtomicCompareExchange,
+                    resource.ComponentType,
+                    pointer,
+                    UInt(1),
+                    UInt(imageAcquireRelease),
+                    UInt(imageAcquire),
+                    LoadData(vectorData),
+                    LoadData(vectorData + 1)),
+                "Inc" or "Dec" => EmitAtomicCompareExchangeLoop(
+                    pointer,
+                    resource.ComponentType,
+                    UInt(1),
+                    UInt(imageAcquire),
+                    UInt(imageAcquireRelease),
+                    UInt(imageAcquire),
+                    expected =>
+                    {
+                        var expectedRaw = resource.ComponentKind == ImageComponentKind.Uint
+                            ? expected
+                            : Bitcast(_uintType, expected);
+                        var desiredRaw = EmitAtomicIncDecDesiredValue(
+                            operation == "Inc",
+                            vectorData,
+                            expectedRaw);
+                        return resource.ComponentKind == ImageComponentKind.Uint
+                            ? desiredRaw
+                            : Bitcast(_intType, desiredRaw);
+                    }),
+                _ => _module.AddInstruction(
+                    operation switch
+                    {
+                        "Swap" => SpirvOp.AtomicExchange,
+                        "Add" => SpirvOp.AtomicIAdd,
+                        "Sub" => SpirvOp.AtomicISub,
+                        "Smin" => SpirvOp.AtomicSMin,
+                        "Umin" => SpirvOp.AtomicUMin,
+                        "Smax" => SpirvOp.AtomicSMax,
+                        "Umax" => SpirvOp.AtomicUMax,
+                        "And" => SpirvOp.AtomicAnd,
+                        "Or" => SpirvOp.AtomicOr,
+                        "Xor" => SpirvOp.AtomicXor,
+                        _ => throw new InvalidOperationException(
+                            $"unsupported image atomic {opcode}"),
+                    },
+                    resource.ComponentType,
+                    pointer,
+                    UInt(1),
+                    UInt(imageAcquireRelease),
+                    LoadData(vectorData)),
+            };
         }
 
         private uint EmitDepthCompareScalar(
