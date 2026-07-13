@@ -27,6 +27,11 @@ internal static partial class Gen5SpirvTranslator
                 return TryEmitVectorFloat64(instruction, out error);
             }
 
+            if (instruction.Opcode is "VMadU64U32" or "VMadI64I32")
+            {
+                return TryEmitVectorMad64(instruction, out error);
+            }
+
             if (instruction.Opcode.StartsWith("VCmp", StringComparison.Ordinal))
             {
                 return TryEmitVectorCompare(instruction, out error);
@@ -1152,20 +1157,128 @@ internal static partial class Gen5SpirvTranslator
                 high);
         }
 
-        private void StoreDouble(uint register, uint value)
+        private void StoreV64(uint register, uint value)
         {
-            var raw = Bitcast(_ulongType, value);
             StoreV(
                 register,
-                _module.AddInstruction(SpirvOp.UConvert, _uintType, raw));
+                _module.AddInstruction(SpirvOp.UConvert, _uintType, value));
             StoreV(
                 register + 1,
                 _module.AddInstruction(
                     SpirvOp.UConvert,
                     _uintType,
                     ShiftRightLogical64(
-                        raw,
+                        value,
                         _module.Constant64(_ulongType, 32))));
+        }
+
+        private void StoreDouble(uint register, uint value) =>
+            StoreV64(register, Bitcast(_ulongType, value));
+
+        private bool TryEmitVectorMad64(
+            Gen5ShaderInstruction instruction,
+            out string error)
+        {
+            error = string.Empty;
+            if (!TryGetVectorDestination(instruction, out var destination))
+            {
+                error = "missing 64-bit multiply-add destination";
+                return false;
+            }
+
+            var signed = instruction.Opcode == "VMadI64I32";
+            var left = GetRawSource(instruction, 0);
+            var right = GetRawSource(instruction, 1);
+            var addend = GetRawSource64(instruction, 2);
+            uint result;
+            uint overflow;
+            if (signed)
+            {
+                var wideLeft = _module.AddInstruction(
+                    SpirvOp.SConvert,
+                    _longType,
+                    Bitcast(_intType, left));
+                var wideRight = _module.AddInstruction(
+                    SpirvOp.SConvert,
+                    _longType,
+                    Bitcast(_intType, right));
+                var product = _module.AddInstruction(
+                    SpirvOp.IMul,
+                    _longType,
+                    wideLeft,
+                    wideRight);
+                var signedAddend = Bitcast(_longType, addend);
+                var signedResult = _module.AddInstruction(
+                    SpirvOp.IAdd,
+                    _longType,
+                    product,
+                    signedAddend);
+                overflow = SignedAddOverflow64(product, signedAddend, signedResult);
+                result = Bitcast(_ulongType, signedResult);
+            }
+            else
+            {
+                var wideLeft = _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _ulongType,
+                    left);
+                var wideRight = _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _ulongType,
+                    right);
+                var product = _module.AddInstruction(
+                    SpirvOp.IMul,
+                    _ulongType,
+                    wideLeft,
+                    wideRight);
+                result = _module.AddInstruction(
+                    SpirvOp.IAdd,
+                    _ulongType,
+                    product,
+                    addend);
+                overflow = _module.AddInstruction(
+                    SpirvOp.ULessThan,
+                    _boolType,
+                    result,
+                    addend);
+            }
+
+            StoreV64(destination, result);
+            StoreCarryOut(instruction, overflow);
+            return true;
+        }
+
+        private uint SignedAddOverflow64(uint left, uint right, uint result)
+        {
+            var zero = _module.Constant64(_longType, 0);
+            var leftNegative = _module.AddInstruction(
+                SpirvOp.SLessThan,
+                _boolType,
+                left,
+                zero);
+            var rightNegative = _module.AddInstruction(
+                SpirvOp.SLessThan,
+                _boolType,
+                right,
+                zero);
+            var resultNegative = _module.AddInstruction(
+                SpirvOp.SLessThan,
+                _boolType,
+                result,
+                zero);
+            return _module.AddInstruction(
+                SpirvOp.LogicalAnd,
+                _boolType,
+                _module.AddInstruction(
+                    SpirvOp.LogicalEqual,
+                    _boolType,
+                    leftNegative,
+                    rightNegative),
+                _module.AddInstruction(
+                    SpirvOp.LogicalNotEqual,
+                    _boolType,
+                    leftNegative,
+                    resultNegative));
         }
 
         private uint EmitDoubleResult(
@@ -3168,6 +3281,11 @@ internal static partial class Gen5SpirvTranslator
                 return LoadS64(operand.Value);
             }
 
+            if (operand.Kind == Gen5OperandKind.VectorRegister)
+            {
+                return LoadV64(operand.Value);
+            }
+
             var low = GetRawSource(instruction, sourceIndex);
             return _module.AddInstruction(SpirvOp.UConvert, _ulongType, low);
         }
@@ -3518,19 +3636,7 @@ internal static partial class Gen5SpirvTranslator
         {
             if (instruction.Control is Gen5Vop3Control { ScalarDestination: { } register })
             {
-                StoreS(
-                    register,
-                    _module.AddInstruction(
-                        SpirvOp.Select,
-                        _uintType,
-                        carry,
-                        UInt(1),
-                        UInt(0)));
-                if (register == 106)
-                {
-                    StoreWaveMask(106, carry);
-                }
-
+                StoreWaveMask(register, carry);
                 return;
             }
 
