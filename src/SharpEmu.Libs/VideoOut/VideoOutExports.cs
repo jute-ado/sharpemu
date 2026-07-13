@@ -305,6 +305,26 @@ public static class VideoOutExports
     }
 
     [SysAbiExport(
+        Nid = "w0hLuNarQxY",
+        ExportName = "sceVideoOutConfigureOutput",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutConfigureOutput(CpuContext ctx)
+    {
+        var handle = unchecked((int)ctx[CpuRegister.Rdi]);
+        var outputMode = ctx[CpuRegister.Rsi];
+        if (!TryGetPort(handle, out _))
+        {
+            return OrbisVideoOutErrorInvalidHandle;
+        }
+
+        // SharpEmu currently advertises one host-backed output mode (1080p60),
+        // so every configuration accepted for an open port resolves to that mode.
+        TraceVideoOut($"videoout.configure_output handle={handle} mode=0x{outputMode:X}");
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
         Nid = "DYhhWbJSeRg",
         ExportName = "sceVideoOutColorSettingsSetGamma_",
         Target = Generation.Gen4 | Generation.Gen5,
