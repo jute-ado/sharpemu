@@ -442,6 +442,19 @@ internal static partial class Gen5SpirvTranslator
                 case "VFmaF16":
                     result = EmitFloat16Fma(instruction, destination);
                     break;
+                case "VMin3F16":
+                case "VMax3F16":
+                case "VMed3F16":
+                    result = EmitFloat16Ternary(instruction, destination);
+                    break;
+                case "VMin3I16":
+                case "VMax3I16":
+                case "VMed3I16":
+                case "VMin3U16":
+                case "VMax3U16":
+                case "VMed3U16":
+                    result = EmitInteger16Ternary(instruction, destination);
+                    break;
                 case "VDivFmasF32":
                 {
                     var fused = Ext(
@@ -665,14 +678,18 @@ internal static partial class Gen5SpirvTranslator
                         GetRawSource(instruction, 2));
                     break;
                 }
+                case "VMadI32I16":
                 case "VMadU32U16":
                 {
-                    var left = BitwiseAnd(
-                        GetRawSource(instruction, 0),
-                        UInt(0xFFFF));
-                    var right = BitwiseAnd(
-                        GetRawSource(instruction, 1),
-                        UInt(0xFFFF));
+                    var signed = instruction.Opcode == "VMadI32I16";
+                    var left = GetInteger16Source(instruction, 0, signed);
+                    var right = GetInteger16Source(instruction, 1, signed);
+                    if (signed)
+                    {
+                        left = Bitcast(_uintType, left);
+                        right = Bitcast(_uintType, right);
+                    }
+
                     result = IAdd(
                         _module.AddInstruction(
                             SpirvOp.IMul,
@@ -684,22 +701,36 @@ internal static partial class Gen5SpirvTranslator
                 }
                 case "VMadI16":
                 case "VMadU16":
-                case "VMadI32I24":
                 {
-                    var signed = instruction.Opcode != "VMadU16";
-                    var width = instruction.Opcode == "VMadI32I24" ? 24u : 16u;
-                    var left = GetRawSource(instruction, 0);
-                    var right = GetRawSource(instruction, 1);
+                    var signed = instruction.Opcode == "VMadI16";
+                    var left = GetInteger16Source(instruction, 0, signed);
+                    var right = GetInteger16Source(instruction, 1, signed);
+                    var addend = GetInteger16Source(instruction, 2, signed);
                     if (signed)
                     {
-                        left = ExtractSignedBits(left, width);
-                        right = ExtractSignedBits(right, width);
+                        left = Bitcast(_uintType, left);
+                        right = Bitcast(_uintType, right);
+                        addend = Bitcast(_uintType, addend);
                     }
-                    else
-                    {
-                        left = BitwiseAnd(left, UInt(ushort.MaxValue));
-                        right = BitwiseAnd(right, UInt(ushort.MaxValue));
-                    }
+
+                    result = Emit16BitResult(
+                        instruction,
+                        destination,
+                        IAdd(
+                            _module.AddInstruction(
+                                SpirvOp.IMul,
+                                _uintType,
+                                left,
+                                right),
+                            addend));
+                    break;
+                }
+                case "VMadI32I24":
+                {
+                    var left = GetRawSource(instruction, 0);
+                    var right = GetRawSource(instruction, 1);
+                    left = ExtractSignedBits(left, 24);
+                    right = ExtractSignedBits(right, 24);
 
                     result = IAdd(
                         _module.AddInstruction(
@@ -1120,17 +1151,96 @@ internal static partial class Gen5SpirvTranslator
             Gen5ShaderInstruction instruction,
             uint destination)
         {
-            if (instruction.Control is not Gen5Vop3Control control)
-            {
-                throw new InvalidOperationException("V_FMA_F16 requires VOP3 control");
-            }
-
             var value = Ext(
                 50,
                 _floatType,
                 GetFloat16Source(instruction, 0),
                 GetFloat16Source(instruction, 1),
                 GetFloat16Source(instruction, 2));
+            return EmitFloat16Result(instruction, destination, value);
+        }
+
+        private uint EmitFloat16Ternary(
+            Gen5ShaderInstruction instruction,
+            uint destination)
+        {
+            var minimum = instruction.Opcode is "VMin3F16" or "VMed3F16";
+            var maximum = instruction.Opcode is "VMax3F16" or "VMed3F16";
+            var left = GetFloat16Source(instruction, 0);
+            var middle = GetFloat16Source(instruction, 1);
+            var right = GetFloat16Source(instruction, 2);
+            uint value;
+            if (minimum && maximum)
+            {
+                var low = Ext(37, _floatType, left, middle);
+                var high = Ext(40, _floatType, left, middle);
+                value = Ext(40, _floatType, low, Ext(37, _floatType, high, right));
+            }
+            else
+            {
+                var operation = minimum ? 37u : 40u;
+                value = Ext(
+                    operation,
+                    _floatType,
+                    Ext(operation, _floatType, left, middle),
+                    right);
+            }
+
+            return EmitFloat16Result(instruction, destination, value);
+        }
+
+        private uint EmitInteger16Ternary(
+            Gen5ShaderInstruction instruction,
+            uint destination)
+        {
+            var signed = instruction.Opcode.EndsWith("I16", StringComparison.Ordinal);
+            var minimum = instruction.Opcode.StartsWith("VMin", StringComparison.Ordinal) ||
+                instruction.Opcode.StartsWith("VMed", StringComparison.Ordinal);
+            var maximum = instruction.Opcode.StartsWith("VMax", StringComparison.Ordinal) ||
+                instruction.Opcode.StartsWith("VMed", StringComparison.Ordinal);
+            var integerType = signed ? _intType : _uintType;
+            var minimumOperation = signed ? 39u : 38u;
+            var maximumOperation = signed ? 42u : 41u;
+            var left = GetInteger16Source(instruction, 0, signed);
+            var middle = GetInteger16Source(instruction, 1, signed);
+            var right = GetInteger16Source(instruction, 2, signed);
+            uint value;
+            if (minimum && maximum)
+            {
+                var low = Ext(minimumOperation, integerType, left, middle);
+                var high = Ext(maximumOperation, integerType, left, middle);
+                value = Ext(
+                    maximumOperation,
+                    integerType,
+                    low,
+                    Ext(minimumOperation, integerType, high, right));
+            }
+            else
+            {
+                var operation = minimum ? minimumOperation : maximumOperation;
+                value = Ext(
+                    operation,
+                    integerType,
+                    Ext(operation, integerType, left, middle),
+                    right);
+            }
+
+            return Emit16BitResult(
+                instruction,
+                destination,
+                signed ? Bitcast(_uintType, value) : value);
+        }
+
+        private uint EmitFloat16Result(
+            Gen5ShaderInstruction instruction,
+            uint destination,
+            uint value)
+        {
+            if (instruction.Control is not Gen5Vop3Control control)
+            {
+                throw new InvalidOperationException("F16 result requires VOP3 control");
+            }
+
             value = control.OutputModifier switch
             {
                 1 => _module.AddInstruction(SpirvOp.FMul, _floatType, value, Float(2)),
@@ -1143,16 +1253,34 @@ internal static partial class Gen5SpirvTranslator
                 value = Ext(43, _floatType, value, Float(0), Float(1));
             }
 
+            return Emit16BitResult(
+                instruction,
+                destination,
+                PackHalf2(value, Float(0)));
+        }
+
+        private uint Emit16BitResult(
+            Gen5ShaderInstruction instruction,
+            uint destination,
+            uint value)
+        {
+            if (instruction.Control is not Gen5Vop3Control control)
+            {
+                throw new InvalidOperationException("16-bit result requires VOP3 control");
+            }
+
+            value = BitwiseAnd(value, UInt(0xFFFF));
+
             if ((control.OpSelectMask & 8) == 0)
             {
                 // RDNA2 clears the unused upper half when writing the low half.
-                return BitwiseAnd(PackHalf2(value, Float(0)), UInt(0xFFFF));
+                return value;
             }
 
             // A high-half write preserves the destination's low 16 bits.
             return BitwiseOr(
                 BitwiseAnd(LoadV(destination), UInt(0xFFFF)),
-                BitwiseAnd(PackHalf2(Float(0), value), UInt(0xFFFF_0000)));
+                ShiftLeftLogical(value, UInt(16)));
         }
 
         private uint EmitDivisionFixupF32(Gen5ShaderInstruction instruction)

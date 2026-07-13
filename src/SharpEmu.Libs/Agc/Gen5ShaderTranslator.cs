@@ -1230,6 +1230,15 @@ internal static class Gen5ShaderTranslator
             0x344 => "VPermB32",
             0x345 => "VXadU32",
             0x34B => "VFmaF16",
+            0x351 => "VMin3F16",
+            0x352 => "VMin3I16",
+            0x353 => "VMin3U16",
+            0x354 => "VMax3F16",
+            0x355 => "VMax3I16",
+            0x356 => "VMax3U16",
+            0x357 => "VMed3F16",
+            0x358 => "VMed3I16",
+            0x359 => "VMed3U16",
             0x35E => "VMadI16",
             // 0x360/0x361 are v_readlane_b32/v_writelane_b32 on GFX10
             // (verified against llvm-mc); v_mad_u32_u16 is 0x373.
@@ -1250,6 +1259,7 @@ internal static class Gen5ShaderTranslator
             0x371 => "VAndOrB32",
             0x372 => "VOr3B32",
             0x373 => "VMadU32U16",
+            0x375 => "VMadI32I16",
             0x377 => "VPermlane16B32",
             0x378 => "VPermlanex16B32",
             _ => Vop3FallbackName(opcode),
