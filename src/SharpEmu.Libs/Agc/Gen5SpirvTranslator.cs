@@ -2759,7 +2759,21 @@ internal static partial class Gen5SpirvTranslator
                     _module.TypeVector(_intType, 2),
                     resource.IsStorage
                         ? [queryImage]
-                        : [queryImage, UInt(0)]);
+                        :
+                        [
+                            queryImage,
+                            Bitcast(
+                                _intType,
+                                LoadV(image.GetAddressRegister(0))),
+                        ]);
+                var levels = resource.IsStorage
+                    ? UInt(1)
+                    : Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.ImageQueryLevels,
+                            _intType,
+                            queryImage));
                 uint outputIndex = 0;
                 for (uint component = 0; component < 4; component++)
                 {
@@ -2780,7 +2794,7 @@ internal static partial class Gen5SpirvTranslator
                     }
                     else
                     {
-                        value = UInt(1);
+                        value = component == 2 ? UInt(1) : levels;
                     }
 
                     StoreV(image.VectorData + outputIndex++, value);
