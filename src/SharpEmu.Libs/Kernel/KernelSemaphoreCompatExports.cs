@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Collections.Concurrent;
+using System.Text;
 using SharpEmu.HLE;
 
 namespace SharpEmu.Libs.Kernel;
@@ -60,11 +61,16 @@ public static class KernelSemaphoreCompatExports
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        if (!ctx.TryReadNullTerminatedUtf8(nameAddress, MaxSemaphoreNameLength, out var name))
+        if (!KernelMemoryCompatExports.TryReadCString(
+                ctx,
+                nameAddress,
+                MaxSemaphoreNameLength,
+                out var nameBytes))
         {
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
+        var name = Encoding.UTF8.GetString(nameBytes);
         var handle = unchecked((uint)Interlocked.Increment(ref _nextSemaphoreHandle));
         if (handle == 0)
         {
@@ -80,7 +86,7 @@ public static class KernelSemaphoreCompatExports
         };
         _semaphores[handle] = state;
 
-        if (!ctx.TryWriteUInt32(semaphoreAddress, handle))
+        if (!KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, semaphoreAddress, handle))
         {
             _semaphores.TryRemove(handle, out _);
             // Handles are sequential and guest-predictable, so a hostile guest can
@@ -131,12 +137,16 @@ public static class KernelSemaphoreCompatExports
 
             if (timeoutAddress != 0)
             {
-                if (!ctx.TryReadUInt32(timeoutAddress, out _))
+                if (!KernelMemoryCompatExports.TryReadUInt32Compat(ctx, timeoutAddress, out _))
                 {
                     return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
                 }
 
-                _ = ctx.TryWriteUInt32(timeoutAddress, 0);
+                if (!KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, timeoutAddress, 0))
+                {
+                    return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
                 TraceSemaphore($"wait-timeout handle=0x{handle:X8} name='{semaphore.Name}' need={needCount} count={semaphore.Count}");
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT);
             }
@@ -259,7 +269,11 @@ public static class KernelSemaphoreCompatExports
 
         lock (semaphore.Gate)
         {
-            if (waitingThreadsAddress != 0 && !ctx.TryWriteUInt32(waitingThreadsAddress, unchecked((uint)semaphore.WaitingThreads)))
+            if (waitingThreadsAddress != 0 &&
+                !KernelMemoryCompatExports.TryWriteUInt32Compat(
+                    ctx,
+                    waitingThreadsAddress,
+                    unchecked((uint)semaphore.WaitingThreads)))
             {
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }

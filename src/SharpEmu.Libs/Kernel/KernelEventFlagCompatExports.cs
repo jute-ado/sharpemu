@@ -54,11 +54,16 @@ public static class KernelEventFlagCompatExports
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        if (!ctx.TryReadNullTerminatedUtf8(nameAddress, MaxEventFlagNameLength + 1, out var name))
+        if (!KernelMemoryCompatExports.TryReadCString(
+                ctx,
+                nameAddress,
+                MaxEventFlagNameLength + 1,
+                out var nameBytes))
         {
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
+        var name = Encoding.UTF8.GetString(nameBytes);
         if (Encoding.UTF8.GetByteCount(name) > MaxEventFlagNameLength)
         {
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
@@ -72,7 +77,7 @@ public static class KernelEventFlagCompatExports
             Bits = initialPattern,
         };
 
-        if (!ctx.TryWriteUInt64(outAddress, handle))
+        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, outAddress, handle))
         {
             _eventFlags.TryRemove(handle, out _);
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
@@ -218,7 +223,8 @@ public static class KernelEventFlagCompatExports
         }
 
         uint timeoutUsec = 0;
-        if (timeoutAddress != 0 && !ctx.TryReadUInt32(timeoutAddress, out timeoutUsec))
+        if (timeoutAddress != 0 &&
+            !KernelMemoryCompatExports.TryReadUInt32Compat(ctx, timeoutAddress, out timeoutUsec))
         {
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -233,8 +239,16 @@ public static class KernelEventFlagCompatExports
 
             if (timeoutAddress != 0)
             {
-                _ = ctx.TryWriteUInt32(timeoutAddress, 0);
-                _ = TryWriteResultPattern(ctx, resultAddress, state.Bits);
+                if (!KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, timeoutAddress, 0))
+                {
+                    return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
+                if (!TryWriteResultPattern(ctx, resultAddress, state.Bits))
+                {
+                    return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
                 TraceEventFlag($"wait-timeout handle=0x{handle:X16} pattern=0x{pattern:X16} timeout={timeoutUsec} ret=0x{returnRip:X16}");
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT);
             }
@@ -339,7 +353,10 @@ public static class KernelEventFlagCompatExports
         lock (state.Gate)
         {
             if (waiterCountAddress != 0 &&
-                !ctx.TryWriteUInt32(waiterCountAddress, unchecked((uint)state.WaitingThreads)))
+                !KernelMemoryCompatExports.TryWriteUInt32Compat(
+                    ctx,
+                    waiterCountAddress,
+                    unchecked((uint)state.WaitingThreads)))
             {
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
@@ -450,7 +467,7 @@ public static class KernelEventFlagCompatExports
         $"event_flag:0x{handle:X16}";
 
     private static bool TryWriteResultPattern(CpuContext ctx, ulong address, ulong bits) =>
-        address == 0 || ctx.TryWriteUInt64(address, bits);
+        address == 0 || KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, address, bits);
 
     private static void TraceEventFlag(string message)
     {

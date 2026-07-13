@@ -4836,7 +4836,7 @@ public static partial class KernelMemoryCompatExports
                 normalized.StartsWith("/app0/", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static bool TryReadCString(CpuContext ctx, ulong address, ulong maxLength, out byte[] bytes)
+    internal static bool TryReadCString(CpuContext ctx, ulong address, ulong maxLength, out byte[] bytes)
     {
         return TryReadBytesUntilNull(ctx, address, maxLength, 1_048_576, out bytes);
     }
@@ -5210,7 +5210,7 @@ public static partial class KernelMemoryCompatExports
         return true;
     }
 
-    private static bool TryReadUInt32Compat(CpuContext ctx, ulong address, out uint value)
+    internal static bool TryReadUInt32Compat(CpuContext ctx, ulong address, out uint value)
     {
         Span<byte> bytes = stackalloc byte[sizeof(uint)];
         if (!TryReadCompat(ctx, address, bytes))
@@ -5276,7 +5276,7 @@ public static partial class KernelMemoryCompatExports
         return true;
     }
 
-    private static bool TryWriteUInt32Compat(CpuContext ctx, ulong address, uint value)
+    internal static bool TryWriteUInt32Compat(CpuContext ctx, ulong address, uint value)
     {
         Span<byte> bytes = stackalloc byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32LittleEndian(bytes, value);
