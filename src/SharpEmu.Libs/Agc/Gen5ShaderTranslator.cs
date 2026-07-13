@@ -1660,7 +1660,18 @@ internal static class Gen5ShaderTranslator
             0x08 => "ImageStore",
             0x09 => "ImageStoreMip",
             0x0E => "ImageGetResinfo",
+            0x0F => "ImageAtomicSwap",
             0x10 => "ImageAtomicCmpswap",
+            0x11 => "ImageAtomicAdd",
+            0x12 => "ImageAtomicSub",
+            0x14 => "ImageAtomicSmin",
+            0x15 => "ImageAtomicUmin",
+            0x16 => "ImageAtomicSmax",
+            0x17 => "ImageAtomicUmax",
+            0x18 => "ImageAtomicAnd",
+            0x19 => "ImageAtomicOr",
+            0x1A => "ImageAtomicXor",
+            0x1B => "ImageAtomicInc",
             0x1C => "ImageAtomicDec",
             0x20 => "ImageSample",
             0x22 => "ImageSampleD",
@@ -2423,10 +2434,22 @@ internal static class Gen5ShaderTranslator
                     imageSources.Add(Gen5Operand.Vector(addressRegister));
                 }
 
+                var isAtomic = opcode.StartsWith("ImageAtomic", StringComparison.Ordinal);
+                if (isAtomic)
+                {
+                    imageSources.Add(Gen5Operand.Vector(vectorData));
+                    if (opcode == "ImageAtomicCmpswap")
+                    {
+                        imageSources.Add(Gen5Operand.Vector(vectorData + 1));
+                    }
+                }
+
                 imageSources.Add(Gen5Operand.Scalar(scalarResource));
                 imageSources.Add(Gen5Operand.Scalar(scalarSampler));
                 sources = imageSources;
-                destinations = opcode.StartsWith("ImageStore", StringComparison.Ordinal)
+                var glc = ((word >> 13) & 1) != 0;
+                destinations = opcode.StartsWith("ImageStore", StringComparison.Ordinal) ||
+                    (isAtomic && !glc)
                     ? []
                     : [Gen5Operand.Vector(vectorData)];
                 var dimension = (word >> 3) & 0x7;
@@ -2439,7 +2462,7 @@ internal static class Gen5ShaderTranslator
                     scalarSampler,
                     dimension,
                     dimension is 4 or 5 or 7,
-                    ((word >> 13) & 1) != 0,
+                    glc,
                     ((word >> 25) & 1) != 0);
                 break;
             }

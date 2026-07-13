@@ -40,6 +40,7 @@ internal enum SpirvOp : ushort
     FunctionEnd = 56,
     FunctionCall = 57,
     Variable = 59,
+    ImageTexelPointer = 60,
     Load = 61,
     Store = 62,
     AccessChain = 65,

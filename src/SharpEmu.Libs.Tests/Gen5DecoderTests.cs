@@ -1088,6 +1088,223 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesImageAtomic32OperationsToSpirv()
+    {
+        // RDNA1 MIMG encodings for a 2D R32ui storage image. GLC requests
+        // the pre-operation value in VDATA; the final add deliberately omits
+        // GLC to cover the write-only form.
+        var ctx = CreateContext(
+        [
+            0xF03C2100u, 0x00000800u, // image_atomic_swap v8, v0, s[0:7] dmask:0x1 glc
+            0xF0402100u, 0x00000A00u, // image_atomic_cmpswap v[10:11], v0, s[0:7] dmask:0x1 glc
+            0xF0442100u, 0x00000C00u, // image_atomic_add v12, v0, s[0:7] dmask:0x1 glc
+            0xF0482100u, 0x00000E00u, // image_atomic_sub v14, v0, s[0:7] dmask:0x1 glc
+            0xF0502100u, 0x00001000u, // image_atomic_smin v16, v0, s[0:7] dmask:0x1 glc
+            0xF0542100u, 0x00001200u, // image_atomic_umin v18, v0, s[0:7] dmask:0x1 glc
+            0xF0582100u, 0x00001400u, // image_atomic_smax v20, v0, s[0:7] dmask:0x1 glc
+            0xF05C2100u, 0x00001600u, // image_atomic_umax v22, v0, s[0:7] dmask:0x1 glc
+            0xF0602100u, 0x00001800u, // image_atomic_and v24, v0, s[0:7] dmask:0x1 glc
+            0xF0642100u, 0x00001A00u, // image_atomic_or v26, v0, s[0:7] dmask:0x1 glc
+            0xF0682100u, 0x00001C00u, // image_atomic_xor v28, v0, s[0:7] dmask:0x1 glc
+            0xF06C2100u, 0x00001E00u, // image_atomic_inc v30, v0, s[0:7] dmask:0x1 glc
+            0xF0702100u, 0x00002000u, // image_atomic_dec v32, v0, s[0:7] dmask:0x1 glc
+            0xF0440100u, 0x00002200u, // image_atomic_add v34, v0, s[0:7] dmask:0x1
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "ImageAtomicSwap",
+                "ImageAtomicCmpswap",
+                "ImageAtomicAdd",
+                "ImageAtomicSub",
+                "ImageAtomicSmin",
+                "ImageAtomicUmin",
+                "ImageAtomicSmax",
+                "ImageAtomicUmax",
+                "ImageAtomicAnd",
+                "ImageAtomicOr",
+                "ImageAtomicXor",
+                "ImageAtomicInc",
+                "ImageAtomicDec",
+                "ImageAtomicAdd",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.All(
+            program.Instructions.Take(14),
+            instruction => Assert.Equal(
+                1u,
+                Assert.IsType<Gen5ImageControl>(instruction.Control).Dmask));
+        Assert.All(
+            program.Instructions.Take(13),
+            instruction => Assert.True(
+                Assert.IsType<Gen5ImageControl>(instruction.Control).Glc));
+        Assert.False(
+            Assert.IsType<Gen5ImageControl>(program.Instructions[13].Control).Glc);
+        Assert.Equal(
+            [8u, 10u, 12u, 14u, 16u, 18u, 20u, 22u, 24u, 26u, 28u, 30u, 32u],
+            program.Instructions.Take(13)
+                .Select(instruction => Assert.Single(instruction.Destinations).Value));
+        Assert.Empty(program.Instructions[13].Destinations);
+        Assert.Equal(5, program.Instructions[1].Sources.Count);
+        Assert.All(
+            program.Instructions.Take(14).Where(instruction =>
+                instruction.Opcode != "ImageAtomicCmpswap"),
+            instruction => Assert.Equal(4, instruction.Sources.Count));
+
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var imageBindings = program.Instructions.Take(14)
+            .Select(
+                instruction => new Gen5ImageBinding(
+                    instruction.Pc,
+                    instruction.Opcode,
+                    Assert.IsType<Gen5ImageControl>(instruction.Control),
+                    [0u, 0x0140_0000u],
+                    [],
+                    MipLevel: null))
+            .ToArray();
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            imageBindings,
+            []);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.Equal(14, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ImageTexelPointer));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicExchange));
+        Assert.Equal(3, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicCompareExchange));
+        Assert.Equal(2, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicLoad));
+        Assert.Equal(2, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicIAdd));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicISub));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicSMin));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicUMin));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicSMax));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicUMax));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicAnd));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicOr));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicXor));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 0x802));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 0x808));
+    }
+
+    [Fact]
+    public void CompilesSignedImageAtomic32OperationsToSpirv()
+    {
+        var ctx = CreateContext(
+        [
+            0xF0502100u, 0x00000800u, // image_atomic_smin v8, v0, s[0:7] dmask:0x1 glc
+            0xF06C2100u, 0x00000A00u, // image_atomic_inc v10, v0, s[0:7] dmask:0x1 glc
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var imageBindings = program.Instructions.Take(2)
+            .Select(
+                instruction => new Gen5ImageBinding(
+                    instruction.Pc,
+                    instruction.Opcode,
+                    Assert.IsType<Gen5ImageControl>(instruction.Control),
+                    [0u, 0x0150_0000u],
+                    [],
+                    MipLevel: null))
+            .ToArray();
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            imageBindings,
+            []);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.Equal(2, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ImageTexelPointer));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicSMin));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicLoad));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicCompareExchange));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Bitcast));
+    }
+
+    [Fact]
+    public void RejectsImageAtomicOnNonIntegerResource()
+    {
+        var ctx = CreateContext(
+        [
+            0xF0442100u, 0x00000800u, // image_atomic_add v8, v0, s[0:7] dmask:0x1 glc
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var instruction = program.Instructions[0];
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [
+                new Gen5ImageBinding(
+                    instruction.Pc,
+                    instruction.Opcode,
+                    Assert.IsType<Gen5ImageControl>(instruction.Control),
+                    [0u, 0x01D0_0000u],
+                    [],
+                    MipLevel: null),
+            ],
+            []);
+        Assert.False(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out _,
+                out var compileError));
+        Assert.Contains(
+            "image atomic requires an R32ui or R32i resource, got R32f",
+            compileError,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CompilesBufferSubwordMemoryOperationsToSpirv()
     {
         // The halfword cases cover both ordinary offsets and offset 3, where
