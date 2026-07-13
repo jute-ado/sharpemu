@@ -283,6 +283,131 @@ internal static partial class Gen5SpirvTranslator
                         vector);
                     break;
                 }
+                case "VFrexpExpI16F16":
+                case "VFrexpMantF16":
+                {
+                    var resultType = _module.TypeStruct(_floatType, _intType);
+                    var decomposed = Ext(
+                        52,
+                        resultType,
+                        GetFloat16Source(instruction, 0));
+                    if (instruction.Opcode == "VFrexpExpI16F16")
+                    {
+                        result = Emit16BitResult(
+                            instruction,
+                            destination,
+                            Bitcast(
+                                _uintType,
+                                _module.AddInstruction(
+                                    SpirvOp.CompositeExtract,
+                                    _intType,
+                                    decomposed,
+                                    1)));
+                    }
+                    else
+                    {
+                        result = EmitFloat16Result(
+                            instruction,
+                            destination,
+                            _module.AddInstruction(
+                                SpirvOp.CompositeExtract,
+                                _floatType,
+                                decomposed,
+                                0));
+                    }
+
+                    break;
+                }
+                case "VRcpF16":
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        _module.AddInstruction(
+                            SpirvOp.FDiv,
+                            _floatType,
+                            Float(1),
+                            GetFloat16Source(instruction, 0)));
+                    break;
+                case "VLogF16":
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        Ext(30, _floatType, GetFloat16Source(instruction, 0)));
+                    break;
+                case "VExpF16":
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        Ext(29, _floatType, GetFloat16Source(instruction, 0)));
+                    break;
+                case "VRsqF16":
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        Ext(32, _floatType, GetFloat16Source(instruction, 0)));
+                    break;
+                case "VFractF16":
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        Ext(10, _floatType, GetFloat16Source(instruction, 0)));
+                    break;
+                case "VTruncF16":
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        Ext(3, _floatType, GetFloat16Source(instruction, 0)));
+                    break;
+                case "VCeilF16":
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        Ext(9, _floatType, GetFloat16Source(instruction, 0)));
+                    break;
+                case "VRndneF16":
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        Ext(2, _floatType, GetFloat16Source(instruction, 0)));
+                    break;
+                case "VFloorF16":
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        Ext(8, _floatType, GetFloat16Source(instruction, 0)));
+                    break;
+                case "VSqrtF16":
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        Ext(31, _floatType, GetFloat16Source(instruction, 0)));
+                    break;
+                case "VSinF16":
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        Ext(
+                            13,
+                            _floatType,
+                            _module.AddInstruction(
+                                SpirvOp.FMul,
+                                _floatType,
+                                GetFloat16Source(instruction, 0),
+                                Float(MathF.Tau))));
+                    break;
+                case "VCosF16":
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        Ext(
+                            14,
+                            _floatType,
+                            _module.AddInstruction(
+                                SpirvOp.FMul,
+                                _floatType,
+                                GetFloat16Source(instruction, 0),
+                                Float(MathF.Tau))));
+                    break;
                 case "VFrexpExpI32F32":
                 case "VFrexpMantF32":
                 {
@@ -1480,19 +1605,15 @@ internal static partial class Gen5SpirvTranslator
             uint destination,
             uint value)
         {
-            if (instruction.Control is not Gen5Vop3Control control)
-            {
-                throw new InvalidOperationException("F16 result requires VOP3 control");
-            }
-
-            value = control.OutputModifier switch
+            var control = instruction.Control as Gen5Vop3Control;
+            value = (control?.OutputModifier ?? 0) switch
             {
                 1 => _module.AddInstruction(SpirvOp.FMul, _floatType, value, Float(2)),
                 2 => _module.AddInstruction(SpirvOp.FMul, _floatType, value, Float(4)),
                 3 => _module.AddInstruction(SpirvOp.FMul, _floatType, value, Float(0.5f)),
                 _ => value,
             };
-            if (control.Clamp)
+            if (control?.Clamp == true)
             {
                 value = Ext(43, _floatType, value, Float(0), Float(1));
             }
@@ -1508,14 +1629,10 @@ internal static partial class Gen5SpirvTranslator
             uint destination,
             uint value)
         {
-            if (instruction.Control is not Gen5Vop3Control control)
-            {
-                throw new InvalidOperationException("16-bit result requires VOP3 control");
-            }
-
             value = BitwiseAnd(value, UInt(0xFFFF));
 
-            if ((control.OpSelectMask & 8) == 0)
+            if (instruction.Control is not Gen5Vop3Control control ||
+                (control.OpSelectMask & 8) == 0)
             {
                 // RDNA2 clears the unused upper half when writing the low half.
                 return value;
