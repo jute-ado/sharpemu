@@ -1597,6 +1597,25 @@ internal static partial class Gen5SpirvTranslator
             return value;
         }
 
+        private uint GetInteger16Source(
+            Gen5ShaderInstruction instruction,
+            int sourceIndex,
+            bool signed)
+        {
+            var control = instruction.Control as Gen5Vop3Control;
+            var offset = ((control?.OpSelectMask ?? 0) & (1u << sourceIndex)) != 0
+                ? 16u
+                : 0u;
+            return _module.AddInstruction(
+                signed ? SpirvOp.BitFieldSExtract : SpirvOp.BitFieldUExtract,
+                signed ? _intType : _uintType,
+                signed
+                    ? Bitcast(_intType, GetRawSource(instruction, sourceIndex))
+                    : GetRawSource(instruction, sourceIndex),
+                UInt(offset),
+                UInt(16));
+        }
+
         private uint GetInteger64Source(
             Gen5ShaderInstruction instruction,
             int sourceIndex,
@@ -2221,11 +2240,13 @@ internal static partial class Gen5SpirvTranslator
             {
                 predicateOpcode = opcode[..^3] + "F32";
             }
-            else if (opcode.EndsWith("I64", StringComparison.Ordinal))
+            else if (opcode.EndsWith("I64", StringComparison.Ordinal) ||
+                opcode.EndsWith("I16", StringComparison.Ordinal))
             {
                 predicateOpcode = opcode[..^3] + "I32";
             }
-            else if (opcode.EndsWith("U64", StringComparison.Ordinal))
+            else if (opcode.EndsWith("U64", StringComparison.Ordinal) ||
+                opcode.EndsWith("U16", StringComparison.Ordinal))
             {
                 predicateOpcode = opcode[..^3] + "U32";
             }
@@ -2409,16 +2430,23 @@ internal static partial class Gen5SpirvTranslator
             else if (predicateOpcode is not ("VCmpClassF32" or "VCmpxClassF32"))
             {
                 var signed = opcode.EndsWith("I32", StringComparison.Ordinal) ||
-                    opcode.EndsWith("I64", StringComparison.Ordinal);
+                    opcode.EndsWith("I64", StringComparison.Ordinal) ||
+                    opcode.EndsWith("I16", StringComparison.Ordinal);
                 var is64Bit = opcode.EndsWith("I64", StringComparison.Ordinal) ||
                     opcode.EndsWith("U64", StringComparison.Ordinal);
+                var is16Bit = opcode.EndsWith("I16", StringComparison.Ordinal) ||
+                    opcode.EndsWith("U16", StringComparison.Ordinal);
                 var left = is64Bit
                     ? GetInteger64Source(instruction, 0, signed)
-                    : GetRawSource(instruction, 0);
+                    : is16Bit
+                        ? GetInteger16Source(instruction, 0, signed)
+                        : GetRawSource(instruction, 0);
                 var right = is64Bit
                     ? GetInteger64Source(instruction, 1, signed)
-                    : GetRawSource(instruction, 1);
-                if (signed && !is64Bit)
+                    : is16Bit
+                        ? GetInteger16Source(instruction, 1, signed)
+                        : GetRawSource(instruction, 1);
+                if (signed && !is64Bit && !is16Bit)
                 {
                     left = Bitcast(_intType, left);
                     right = Bitcast(_intType, right);
