@@ -1291,8 +1291,10 @@ internal static class Gen5ShaderTranslator
             0x372 => "VOr3B32",
             0x373 => "VMadU32U16",
             0x375 => "VMadI32I16",
+            0x376 => "VSubNcI32",
             0x377 => "VPermlane16B32",
             0x378 => "VPermlanex16B32",
+            0x37F => "VAddNcI32",
             _ => Vop3FallbackName(opcode),
         };
 
