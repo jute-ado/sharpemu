@@ -957,6 +957,92 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesBufferAtomic32OperationsToSpirv()
+    {
+        // RDNA1 MUBUF encodings with GLC set, which requests the
+        // pre-operation value in VDATA for atomics.
+        var ctx = CreateContext(
+        [
+            0xE0C04000u, 0x80000800u, // buffer_atomic_swap v8, off, s[0:3], 0 glc
+            0xE0C44000u, 0x80000A00u, // buffer_atomic_cmpswap v[10:11], off, s[0:3], 0 glc
+            0xE0C84000u, 0x80000C00u, // buffer_atomic_add v12, off, s[0:3], 0 glc
+            0xE0CC4000u, 0x80000E00u, // buffer_atomic_sub v14, off, s[0:3], 0 glc
+            0xE0D44000u, 0x80001000u, // buffer_atomic_smin v16, off, s[0:3], 0 glc
+            0xE0E04000u, 0x80001200u, // buffer_atomic_umax v18, off, s[0:3], 0 glc
+            0xE0E44000u, 0x80001400u, // buffer_atomic_and v20, off, s[0:3], 0 glc
+            0xE0E84000u, 0x80001600u, // buffer_atomic_or v22, off, s[0:3], 0 glc
+            0xE0EC4000u, 0x80001800u, // buffer_atomic_xor v24, off, s[0:3], 0 glc
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "BufferAtomicSwap",
+                "BufferAtomicCmpswap",
+                "BufferAtomicAdd",
+                "BufferAtomicSub",
+                "BufferAtomicSmin",
+                "BufferAtomicUmax",
+                "BufferAtomicAnd",
+                "BufferAtomicOr",
+                "BufferAtomicXor",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.Equal(
+            [1u, 2u, 1u, 1u, 1u, 1u, 1u, 1u, 1u],
+            program.Instructions.Take(9)
+                .Select(instruction =>
+                    Assert.IsType<Gen5BufferMemoryControl>(instruction.Control).DwordCount));
+        Assert.All(
+            program.Instructions.Take(9),
+            instruction => Assert.True(
+                Assert.IsType<Gen5BufferMemoryControl>(instruction.Control).Glc));
+
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    program.Instructions.Take(9).Select(instruction => instruction.Pc).ToArray(),
+                    new byte[64]),
+            ]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicExchange));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicCompareExchange));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicIAdd));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicISub));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicSMin));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicUMax));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicAnd));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicOr));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AtomicXor));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 0x42));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 0x48));
+    }
+
+    [Fact]
     public void CompilesPairedLdsExchange32OperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified

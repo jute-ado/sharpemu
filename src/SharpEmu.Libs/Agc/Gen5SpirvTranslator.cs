@@ -2162,17 +2162,40 @@ internal static partial class Gen5SpirvTranslator
                 _module.AddInstruction(SpirvOp.IMul, _uintType, vectorIndex, stride));
             var dwordAddress = ShiftRightLogical(byteAddress, UInt(2));
 
-            if (instruction.Opcode == "BufferAtomicAdd")
+            if (instruction.Opcode.StartsWith("BufferAtomic", StringComparison.Ordinal))
             {
                 EmitExecConditional(() =>
                 {
-                    var original = _module.AddInstruction(
-                        SpirvOp.AtomicIAdd,
-                        _uintType,
-                        BufferWordPointer(bindingIndex, dwordAddress),
-                        UInt(1),
-                        UInt(0x48),
-                        LoadV(control.VectorData));
+                    var pointer = BufferWordPointer(bindingIndex, dwordAddress);
+                    var original = instruction.Opcode == "BufferAtomicCmpswap"
+                        ? _module.AddInstruction(
+                            SpirvOp.AtomicCompareExchange,
+                            _uintType,
+                            pointer,
+                            UInt(1),
+                            UInt(0x48),
+                            UInt(0x42),
+                            LoadV(control.VectorData),
+                            LoadV(control.VectorData + 1))
+                        : _module.AddInstruction(
+                            instruction.Opcode switch
+                            {
+                                "BufferAtomicSwap" => SpirvOp.AtomicExchange,
+                                "BufferAtomicAdd" => SpirvOp.AtomicIAdd,
+                                "BufferAtomicSub" => SpirvOp.AtomicISub,
+                                "BufferAtomicSmin" => SpirvOp.AtomicSMin,
+                                "BufferAtomicUmax" => SpirvOp.AtomicUMax,
+                                "BufferAtomicAnd" => SpirvOp.AtomicAnd,
+                                "BufferAtomicOr" => SpirvOp.AtomicOr,
+                                "BufferAtomicXor" => SpirvOp.AtomicXor,
+                                _ => throw new InvalidOperationException(
+                                    $"unsupported buffer atomic {instruction.Opcode}"),
+                            },
+                            _uintType,
+                            pointer,
+                            UInt(1),
+                            UInt(0x48),
+                            LoadV(control.VectorData));
                     if (control.Glc)
                     {
                         StoreV(control.VectorData, original);
