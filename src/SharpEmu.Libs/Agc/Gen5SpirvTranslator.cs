@@ -1341,25 +1341,41 @@ internal static partial class Gen5SpirvTranslator
                 }
                 case "DsWrite2B32":
                 case "DsWrite2St64B32":
+                case "DsWrite2B64":
+                case "DsWrite2St64B64":
                 {
-                    if (instruction.Sources.Count < 3)
+                    var componentCount = instruction.Opcode.EndsWith(
+                        "B64",
+                        StringComparison.Ordinal) ? 2 : 1;
+                    if (instruction.Sources.Count < 1 + (2 * componentCount))
                     {
                         error = "missing LDS write2 source";
                         return false;
                     }
 
-                    var st64 = instruction.Opcode == "DsWrite2St64B32";
+                    var st64 = instruction.Opcode.Contains(
+                        "St64",
+                        StringComparison.Ordinal);
+                    var elementBytes = (uint)componentCount * sizeof(uint);
                     var address = GetRawSource(instruction, 0);
-                    StoreLds(
-                        LdsPointer(
-                            address,
-                            EffectiveDsPairOffsetBytes(control.Offset0, st64)),
-                        GetRawSource(instruction, 1));
-                    StoreLds(
-                        LdsPointer(
-                            address,
-                            EffectiveDsPairOffsetBytes(control.Offset1, st64)),
-                        GetRawSource(instruction, 2));
+                    for (var pair = 0; pair < 2; pair++)
+                    {
+                        var baseOffset = EffectiveDsPairOffsetBytes(
+                            pair == 0 ? control.Offset0 : control.Offset1,
+                            st64,
+                            elementBytes);
+                        for (var component = 0; component < componentCount; component++)
+                        {
+                            StoreLds(
+                                LdsPointer(
+                                    address,
+                                    baseOffset + ((uint)component * sizeof(uint))),
+                                GetRawSource(
+                                    instruction,
+                                    1 + (pair * componentCount) + component));
+                        }
+                    }
+
                     return true;
                 }
                 case "DsReadB32":
@@ -1446,28 +1462,44 @@ internal static partial class Gen5SpirvTranslator
                 }
                 case "DsRead2B32":
                 case "DsRead2St64B32":
+                case "DsRead2B64":
+                case "DsRead2St64B64":
                 {
-                    if (instruction.Destinations.Count < 2 ||
+                    var componentCount = instruction.Opcode.EndsWith(
+                        "B64",
+                        StringComparison.Ordinal) ? 2 : 1;
+                    if (instruction.Destinations.Count < 2 * componentCount ||
                         instruction.Sources.Count < 1)
                     {
                         error = "missing LDS read2 operand";
                         return false;
                     }
 
-                    var st64 = instruction.Opcode == "DsRead2St64B32";
+                    var st64 = instruction.Opcode.Contains(
+                        "St64",
+                        StringComparison.Ordinal);
+                    var elementBytes = (uint)componentCount * sizeof(uint);
                     var address = GetRawSource(instruction, 0);
-                    var first = Load(
-                        _uintType,
-                        LdsPointer(
-                            address,
-                            EffectiveDsPairOffsetBytes(control.Offset0, st64)));
-                    var second = Load(
-                        _uintType,
-                        LdsPointer(
-                            address,
-                            EffectiveDsPairOffsetBytes(control.Offset1, st64)));
-                    StoreV(instruction.Destinations[0].Value, first);
-                    StoreV(instruction.Destinations[1].Value, second);
+                    for (var pair = 0; pair < 2; pair++)
+                    {
+                        var baseOffset = EffectiveDsPairOffsetBytes(
+                            pair == 0 ? control.Offset0 : control.Offset1,
+                            st64,
+                            elementBytes);
+                        for (var component = 0; component < componentCount; component++)
+                        {
+                            StoreV(
+                                instruction.Destinations[
+                                    (pair * componentCount) + component].Value,
+                                Load(
+                                    _uintType,
+                                    LdsPointer(
+                                        address,
+                                        baseOffset +
+                                            ((uint)component * sizeof(uint)))));
+                        }
+                    }
+
                     return true;
                 }
                 default:
@@ -1548,8 +1580,11 @@ internal static partial class Gen5SpirvTranslator
         private static uint EffectiveDsSingleOffsetBytes(Gen5DataShareControl control) =>
             control.Offset0 | (control.Offset1 << 8);
 
-        private static uint EffectiveDsPairOffsetBytes(uint offset, bool st64) =>
-            offset * (st64 ? 64u * sizeof(uint) : sizeof(uint));
+        private static uint EffectiveDsPairOffsetBytes(
+            uint offset,
+            bool st64,
+            uint elementBytes) =>
+            offset * (st64 ? 64u * elementBytes : elementBytes);
 
         private uint LdsByteAddress(uint address, uint offsetBytes) =>
             offsetBytes == 0 ? address : IAdd(address, UInt(offsetBytes));
