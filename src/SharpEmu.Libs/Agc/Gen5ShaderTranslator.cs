@@ -1365,6 +1365,14 @@ internal static class Gen5ShaderTranslator
             0x76 => "DsReadB64",
             0x77 => "DsRead2B64",
             0x78 => "DsRead2St64B64",
+            0xA0 => "DsWriteB8D16Hi",
+            0xA1 => "DsWriteB16D16Hi",
+            0xA2 => "DsReadU8D16",
+            0xA3 => "DsReadU8D16Hi",
+            0xA4 => "DsReadI8D16",
+            0xA5 => "DsReadI8D16Hi",
+            0xA6 => "DsReadU16D16",
+            0xA7 => "DsReadU16D16Hi",
             0xB2 => "DsPermuteB32",
             0xB3 => "DsBpermuteB32",
             0xDE => "DsWriteB96",
@@ -2011,7 +2019,8 @@ internal static class Gen5ShaderTranslator
                     ((word >> 17) & 1) != 0);
                 sources = opcode switch
                 {
-                    "DsWriteB8" or "DsWriteB16" or "DsWriteB32" => [
+                    "DsWriteB8" or "DsWriteB16" or "DsWriteB32" or
+                    "DsWriteB8D16Hi" or "DsWriteB16D16Hi" => [
                         Gen5Operand.Vector(vectorAddress),
                         Gen5Operand.Vector(vectorData0),
                     ],
@@ -2072,6 +2081,9 @@ internal static class Gen5ShaderTranslator
                 {
                     "DsReadI8" or "DsReadU8" or
                     "DsReadI16" or "DsReadU16" or
+                    "DsReadU8D16" or "DsReadU8D16Hi" or
+                    "DsReadI8D16" or "DsReadI8D16Hi" or
+                    "DsReadU16D16" or "DsReadU16D16Hi" or
                     "DsReadB32" or "DsSwizzleB32" or "DsBpermuteB32" => [
                         Gen5Operand.Vector(vectorDestination),
                     ],

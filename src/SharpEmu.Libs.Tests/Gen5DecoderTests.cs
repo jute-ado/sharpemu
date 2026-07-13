@@ -1156,6 +1156,93 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesLdsD16SubwordOperationsToSpirv()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump.
+        var ctx = CreateContext(
+        [
+            0xDA800101u, 0x00000100u, // ds_write_b8_d16_hi v0, v1 offset:257
+            0xDA840102u, 0x00000302u, // ds_write_b16_d16_hi v2, v3 offset:258
+            0xDA880103u, 0x04000005u, // ds_read_u8_d16 v4, v5 offset:259
+            0xDA8C0104u, 0x06000007u, // ds_read_u8_d16_hi v6, v7 offset:260
+            0xDA900105u, 0x08000009u, // ds_read_i8_d16 v8, v9 offset:261
+            0xDA940106u, 0x0A00000Bu, // ds_read_i8_d16_hi v10, v11 offset:262
+            0xDA980108u, 0x0C00000Du, // ds_read_u16_d16 v12, v13 offset:264
+            0xDA9C010Au, 0x0E00000Fu, // ds_read_u16_d16_hi v14, v15 offset:266
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "DsWriteB8D16Hi",
+                "DsWriteB16D16Hi",
+                "DsReadU8D16",
+                "DsReadU8D16Hi",
+                "DsReadI8D16",
+                "DsReadI8D16Hi",
+                "DsReadU16D16",
+                "DsReadU16D16Hi",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.All(
+            program.Instructions.Take(2),
+            instruction => Assert.Equal(2, instruction.Sources.Count));
+        Assert.Equal(
+            [4u, 6u, 8u, 10u, 12u, 14u],
+            program.Instructions.Skip(2).Take(6)
+                .Select(instruction => Assert.Single(instruction.Destinations).Value));
+        Assert.Equal(
+            [257u, 258u, 259u, 260u, 261u, 262u, 264u, 266u],
+            program.Instructions.Take(8).Select(instruction =>
+            {
+                var control = Assert.IsType<Gen5DataShareControl>(instruction.Control);
+                return control.Offset0 | (control.Offset1 << 8);
+            }));
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.AccessChain));
+        Assert.True(ContainsSpirvOpcode(
+            shader.Spirv,
+            (ushort)SpirvOp.BitFieldUExtract));
+        Assert.True(ContainsSpirvOpcode(
+            shader.Spirv,
+            (ushort)SpirvOp.BitFieldSExtract));
+        Assert.Equal(
+            8,
+            CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldInsert));
+        Assert.True(ContainsSpirvOpcode(
+            shader.Spirv,
+            (ushort)SpirvOp.ShiftRightLogical));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Load));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Store));
+    }
+
+    [Fact]
     public void CompilesWideLdsReadsAndWritesToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
@@ -3989,6 +4076,29 @@ public sealed class Gen5DecoderTests
         }
 
         return false;
+    }
+
+    private static int CountSpirvOpcode(byte[] spirv, ushort opcode)
+    {
+        var count = 0;
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var instruction = BitConverter.ToUInt32(spirv, offset);
+            if ((ushort)instruction == opcode)
+            {
+                count++;
+            }
+
+            var wordCount = instruction >> 16;
+            if (wordCount == 0)
+            {
+                break;
+            }
+
+            offset += checked((int)wordCount * sizeof(uint));
+        }
+
+        return count;
     }
 
     private static CpuContext CreateContext(uint[] instructionWords)
