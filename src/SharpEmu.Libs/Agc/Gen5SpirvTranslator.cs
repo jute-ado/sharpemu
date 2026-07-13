@@ -1132,6 +1132,76 @@ internal static partial class Gen5SpirvTranslator
                 return false;
             }
 
+            if (instruction.Opcode == "DsPermuteB32")
+            {
+                if (instruction.Sources.Count < 2 ||
+                    instruction.Destinations.Count < 1)
+                {
+                    error = "missing DS forward permute operand";
+                    return false;
+                }
+
+                var targetLane = EmitDsPermuteLane(instruction, control);
+                var activeTargetLane = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    Load(_boolType, _exec),
+                    targetLane,
+                    UInt(RdnaWaveLaneCount));
+                var destinationLane = BitwiseAnd(
+                    Load(_uintType, _subgroupInvocationIdInput),
+                    UInt(RdnaWaveLaneCount - 1));
+                var winnerLane = UInt(RdnaWaveLaneCount);
+                // Scan source lanes from low to high so a later matching lane
+                // reproduces the LDS rule that the highest lane wins a collision.
+                for (uint sourceLane = 0; sourceLane < RdnaWaveLaneCount; sourceLane++)
+                {
+                    var candidateTarget = _module.AddInstruction(
+                        SpirvOp.GroupNonUniformShuffle,
+                        _uintType,
+                        UInt(3),
+                        activeTargetLane,
+                        UInt(sourceLane));
+                    var matches = _module.AddInstruction(
+                        SpirvOp.IEqual,
+                        _boolType,
+                        candidateTarget,
+                        destinationLane);
+                    winnerLane = _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        matches,
+                        UInt(sourceLane),
+                        winnerLane);
+                }
+
+                var unwritten = _module.AddInstruction(
+                    SpirvOp.IEqual,
+                    _boolType,
+                    winnerLane,
+                    UInt(RdnaWaveLaneCount));
+                var safeWinnerLane = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    unwritten,
+                    UInt(0),
+                    winnerLane);
+                var winnerValue = _module.AddInstruction(
+                    SpirvOp.GroupNonUniformShuffle,
+                    _uintType,
+                    UInt(3),
+                    GetRawSource(instruction, 1),
+                    safeWinnerLane);
+                var value = _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    unwritten,
+                    UInt(0),
+                    winnerValue);
+                StoreV(instruction.Destinations[0].Value, value);
+                return true;
+            }
+
             if (instruction.Opcode is "DsBpermuteB32" or "DsSwizzleB32")
             {
                 var sourceIndex = instruction.Opcode == "DsBpermuteB32" ? 1 : 0;
@@ -1143,7 +1213,7 @@ internal static partial class Gen5SpirvTranslator
                 }
 
                 var sourceLane = instruction.Opcode == "DsBpermuteB32"
-                    ? EmitDsBpermuteSourceLane(instruction, control)
+                    ? EmitDsPermuteLane(instruction, control)
                     : EmitDsSwizzleSourceLane(control);
                 var activeSource = _module.AddInstruction(
                     SpirvOp.Select,
@@ -1543,7 +1613,7 @@ internal static partial class Gen5SpirvTranslator
             }
         }
 
-        private uint EmitDsBpermuteSourceLane(
+        private uint EmitDsPermuteLane(
             Gen5ShaderInstruction instruction,
             Gen5DataShareControl control)
         {
@@ -2853,7 +2923,8 @@ internal static partial class Gen5SpirvTranslator
         private bool UsesLds() =>
             _state.Program.Instructions.Any(instruction =>
                 instruction.Control is Gen5DataShareControl &&
-                instruction.Opcode is not ("DsBpermuteB32" or "DsSwizzleB32"));
+                instruction.Opcode is not (
+                    "DsPermuteB32" or "DsBpermuteB32" or "DsSwizzleB32"));
 
         private bool UsesSubgroupShuffle() =>
             _state.Program.Instructions.Any(instruction =>
@@ -2862,6 +2933,7 @@ internal static partial class Gen5SpirvTranslator
                     "VReadfirstlaneB32" or
                     "VPermlane16B32" or
                     "VPermlanex16B32" or
+                    "DsPermuteB32" or
                     "DsBpermuteB32" or
                     "DsSwizzleB32");
 

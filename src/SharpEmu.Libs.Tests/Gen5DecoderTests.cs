@@ -902,6 +902,69 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesLdsForwardPermuteToDeterministicSubgroupScatter()
+    {
+        // Encoding assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump. Forward permute resolves collisions in favor of
+        // the highest active source lane and produces zero for unwritten lanes.
+        var ctx = CreateContext(
+        [
+            0xDAC801FCu, 0x03000504u, // ds_permute_b32 v3, v4, v5 offset:508
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        var instruction = Assert.Single(program.Instructions, instruction =>
+            instruction.Opcode == "DsPermuteB32");
+        Assert.Equal(
+            [Gen5Operand.Vector(4), Gen5Operand.Vector(5)],
+            instruction.Sources);
+        Assert.Equal(Gen5Operand.Vector(3), Assert.Single(instruction.Destinations));
+        var control = Assert.IsType<Gen5DataShareControl>(instruction.Control);
+        Assert.Equal(0xFCu, control.Offset0);
+        Assert.Equal(0x01u, control.Offset1);
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvCapability(
+            shader.Spirv,
+            SpirvCapability.GroupNonUniformShuffle));
+        Assert.Equal(
+            33,
+            CountSpirvOpcode(
+                shader.Spirv,
+                (ushort)SpirvOp.GroupNonUniformShuffle));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IEqual));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Select));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 508));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 32));
+        Assert.False(ContainsSpirvVariable(
+            shader.Spirv,
+            SpirvStorageClass.Workgroup));
+    }
+
+    [Fact]
     public void CompilesAllLdsSwizzleModesToSubgroupShuffle()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
