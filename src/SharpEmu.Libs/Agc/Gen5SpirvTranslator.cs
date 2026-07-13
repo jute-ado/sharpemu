@@ -2170,6 +2170,33 @@ internal static partial class Gen5SpirvTranslator
                 _module.AddInstruction(SpirvOp.IMul, _uintType, vectorIndex, stride));
             var dwordAddress = ShiftRightLogical(byteAddress, UInt(2));
 
+            if (instruction.Opcode is
+                "BufferLoadUbyte" or "BufferLoadSbyte" or
+                "BufferLoadUshort" or "BufferLoadSshort")
+            {
+                StoreV(
+                    control.VectorData,
+                    EmitBufferSubwordLoad(
+                        bindingIndex,
+                        byteAddress,
+                        instruction.Opcode.EndsWith("short", StringComparison.OrdinalIgnoreCase)
+                            ? 16u
+                            : 8u,
+                        instruction.Opcode.Contains("LoadS", StringComparison.Ordinal)));
+                return true;
+            }
+
+            if (instruction.Opcode is "BufferStoreByte" or "BufferStoreShort")
+            {
+                EmitExecConditional(() =>
+                    EmitBufferSubwordStore(
+                        bindingIndex,
+                        byteAddress,
+                        LoadV(control.VectorData),
+                        instruction.Opcode == "BufferStoreShort" ? 16u : 8u));
+                return true;
+            }
+
             if (instruction.Opcode.StartsWith("BufferAtomic", StringComparison.Ordinal))
             {
                 EmitExecConditional(() =>
@@ -2265,6 +2292,161 @@ internal static partial class Gen5SpirvTranslator
             }
 
             return true;
+        }
+
+        private uint EmitBufferSubwordLoad(
+            int binding,
+            uint byteAddress,
+            uint componentBits,
+            bool signed)
+        {
+            var dwordAddress = ShiftRightLogical(byteAddress, UInt(2));
+            var byteOffset = BitwiseAnd(byteAddress, UInt(3));
+            var bitOffset = ShiftLeftLogical(byteOffset, UInt(3));
+            var word = LoadBufferWord(binding, dwordAddress);
+            if (componentBits == 8)
+            {
+                return ExtractBufferSubword(word, bitOffset, componentBits, signed);
+            }
+
+            var regularLabel = _module.AllocateId();
+            var crossingLabel = _module.AllocateId();
+            var mergeLabel = _module.AllocateId();
+            var crossesWord = _module.AddInstruction(
+                SpirvOp.IEqual,
+                _boolType,
+                byteOffset,
+                UInt(3));
+            _module.AddStatement(SpirvOp.SelectionMerge, mergeLabel, 0);
+            _module.AddStatement(
+                SpirvOp.BranchConditional,
+                crossesWord,
+                crossingLabel,
+                regularLabel);
+
+            _module.AddLabel(regularLabel);
+            var regularValue = ExtractBufferSubword(
+                word,
+                bitOffset,
+                componentBits,
+                signed);
+            _module.AddStatement(SpirvOp.Branch, mergeLabel);
+
+            _module.AddLabel(crossingLabel);
+            var nextWord = LoadBufferWord(binding, IAdd(dwordAddress, UInt(1)));
+            var crossingWord = BitwiseOr(
+                ShiftRightLogical(word, UInt(24)),
+                ShiftLeftLogical(nextWord, UInt(8)));
+            var crossingValue = ExtractBufferSubword(
+                crossingWord,
+                UInt(0),
+                componentBits,
+                signed);
+            _module.AddStatement(SpirvOp.Branch, mergeLabel);
+
+            _module.AddLabel(mergeLabel);
+            return _module.AddInstruction(
+                SpirvOp.Phi,
+                _uintType,
+                regularValue,
+                regularLabel,
+                crossingValue,
+                crossingLabel);
+        }
+
+        private uint ExtractBufferSubword(
+            uint word,
+            uint bitOffset,
+            uint componentBits,
+            bool signed)
+        {
+            var value = _module.AddInstruction(
+                signed ? SpirvOp.BitFieldSExtract : SpirvOp.BitFieldUExtract,
+                signed ? _intType : _uintType,
+                signed ? Bitcast(_intType, word) : word,
+                bitOffset,
+                UInt(componentBits));
+            return signed ? Bitcast(_uintType, value) : value;
+        }
+
+        private void EmitBufferSubwordStore(
+            int binding,
+            uint byteAddress,
+            uint value,
+            uint componentBits)
+        {
+            var dwordAddress = ShiftRightLogical(byteAddress, UInt(2));
+            var byteOffset = BitwiseAnd(byteAddress, UInt(3));
+            var bitOffset = ShiftLeftLogical(byteOffset, UInt(3));
+            var word = LoadBufferWord(binding, dwordAddress);
+            if (componentBits == 8)
+            {
+                StoreBufferWord(
+                    binding,
+                    dwordAddress,
+                    _module.AddInstruction(
+                        SpirvOp.BitFieldInsert,
+                        _uintType,
+                        word,
+                        value,
+                        bitOffset,
+                        UInt(componentBits)));
+                return;
+            }
+
+            var regularLabel = _module.AllocateId();
+            var crossingLabel = _module.AllocateId();
+            var mergeLabel = _module.AllocateId();
+            var crossesWord = _module.AddInstruction(
+                SpirvOp.IEqual,
+                _boolType,
+                byteOffset,
+                UInt(3));
+            _module.AddStatement(SpirvOp.SelectionMerge, mergeLabel, 0);
+            _module.AddStatement(
+                SpirvOp.BranchConditional,
+                crossesWord,
+                crossingLabel,
+                regularLabel);
+
+            _module.AddLabel(regularLabel);
+            StoreBufferWord(
+                binding,
+                dwordAddress,
+                _module.AddInstruction(
+                    SpirvOp.BitFieldInsert,
+                    _uintType,
+                    word,
+                    value,
+                    bitOffset,
+                    UInt(componentBits)));
+            _module.AddStatement(SpirvOp.Branch, mergeLabel);
+
+            _module.AddLabel(crossingLabel);
+            StoreBufferWord(
+                binding,
+                dwordAddress,
+                _module.AddInstruction(
+                    SpirvOp.BitFieldInsert,
+                    _uintType,
+                    word,
+                    value,
+                    UInt(24),
+                    UInt(8)));
+            var nextAddress = IAdd(dwordAddress, UInt(1));
+            var nextWord = LoadBufferWord(binding, nextAddress);
+            StoreBufferWord(
+                binding,
+                nextAddress,
+                _module.AddInstruction(
+                    SpirvOp.BitFieldInsert,
+                    _uintType,
+                    nextWord,
+                    ShiftRightLogical(value, UInt(8)),
+                    UInt(0),
+                    UInt(8)));
+            _module.AddStatement(SpirvOp.Branch, mergeLabel);
+            _module.AddLabel(mergeLabel);
         }
 
         private uint EmitBufferCasDesiredValue(

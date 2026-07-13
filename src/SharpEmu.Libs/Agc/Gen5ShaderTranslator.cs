@@ -2255,6 +2255,8 @@ internal static class Gen5ShaderTranslator
                     "BufferLoadFormatXy" => 2u,
                     "BufferLoadFormatXyz" => 3u,
                     "BufferLoadFormatXyzw" => 4u,
+                    "BufferLoadUbyte" or "BufferLoadSbyte" or
+                    "BufferLoadUshort" or "BufferLoadSshort" => 1u,
                     "BufferLoadDword" => 1u,
                     "BufferLoadDwordx2" => 2u,
                     "BufferLoadDwordx3" => 3u,
@@ -2263,6 +2265,7 @@ internal static class Gen5ShaderTranslator
                     "BufferStoreDwordx2" => 2u,
                     "BufferStoreDwordx3" => 3u,
                     "BufferStoreDwordx4" => 4u,
+                    "BufferStoreByte" or "BufferStoreShort" => 1u,
                     "BufferAtomicCmpswap" => 2u,
                     "BufferAtomicSwap" or "BufferAtomicAdd" or
                     "BufferAtomicSub" or "BufferAtomicSmin" or
