@@ -1016,6 +1016,9 @@ public sealed class Gen5DecoderTests
             [8u, 10u, 12u, 14u, 16u, 18u, 20u, 22u, 24u, 26u, 28u, 30u, 32u],
             program.Instructions.Take(13)
                 .Select(instruction => Assert.Single(instruction.Destinations).Value));
+        Assert.Equal(
+            [4, 5, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4],
+            program.Instructions.Take(13).Select(instruction => instruction.Sources.Count));
 
         var scalarRegisters = new uint[128];
         var state = new Gen5ShaderState(program, [], Metadata: null);
@@ -1085,6 +1088,37 @@ public sealed class Gen5DecoderTests
                 .Select(instruction =>
                     Assert.IsType<Gen5BufferMemoryControl>(instruction.Control).DwordCount));
         Assert.All(program.Instructions.Take(2), instruction => Assert.Empty(instruction.Destinations));
+    }
+
+    [Fact]
+    public void ExposesImageStoreDataRegistersAsSources()
+    {
+        var ctx = CreateContext(
+        [
+            0xF0200B00u, 0x00000800u, // image_store v[8:10], v0, s[0:7] dmask:0xb
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var instruction = program.Instructions[0];
+        Assert.Equal("ImageStore", instruction.Opcode);
+        Assert.Empty(instruction.Destinations);
+        Assert.Equal(
+            [
+                Gen5Operand.Vector(0),
+                Gen5Operand.Vector(8),
+                Gen5Operand.Vector(9),
+                Gen5Operand.Vector(10),
+                Gen5Operand.Scalar(0),
+                Gen5Operand.Scalar(0),
+            ],
+            instruction.Sources);
     }
 
     [Fact]
@@ -1424,6 +1458,9 @@ public sealed class Gen5DecoderTests
         Assert.All(
             program.Instructions.Take(8),
             instruction => Assert.Empty(instruction.Destinations));
+        Assert.Equal(
+            [4, 5, 6, 7, 4, 5, 6, 7],
+            program.Instructions.Take(8).Select(instruction => instruction.Sources.Count));
 
         var scalarRegisters = new uint[128];
         var state = new Gen5ShaderState(program, [], Metadata: null);
@@ -1780,6 +1817,9 @@ public sealed class Gen5DecoderTests
             program.Instructions.Take(14)
                 .Select(instruction =>
                     Assert.IsType<Gen5GlobalMemoryControl>(instruction.Control).VectorData));
+        Assert.Equal(
+            [3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+            program.Instructions.Take(14).Select(instruction => instruction.Sources.Count));
 
         var scalarRegisters = new uint[128];
         var state = new Gen5ShaderState(program, [], Metadata: null);
