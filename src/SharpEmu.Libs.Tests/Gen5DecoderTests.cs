@@ -2585,6 +2585,92 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesScratchSubwordMemoryToPrivateSpirv()
+    {
+        var ctx = CreateContext(
+        [
+            0xDC604003u, 0x007F0800u, // scratch_store_byte v0, v8 offset:3
+            0xDC644001u, 0x007F0900u, // scratch_store_byte_d16_hi v0, v9 offset:1
+            0xDC684003u, 0x007F0A00u, // scratch_store_short v0, v10 offset:3
+            0xDC6C4003u, 0x007F0B00u, // scratch_store_short_d16_hi v0, v11 offset:3
+            0xDC204003u, 0x147F0000u, // scratch_load_ubyte v20, v0 offset:3
+            0xDC244003u, 0x157F0000u, // scratch_load_sbyte v21, v0 offset:3
+            0xDC284003u, 0x167F0000u, // scratch_load_ushort v22, v0 offset:3
+            0xDC2C4003u, 0x177F0000u, // scratch_load_sshort v23, v0 offset:3
+            0xDC804003u, 0x187F0000u, // scratch_load_ubyte_d16 v24, v0 offset:3
+            0xDC844003u, 0x197F0000u, // scratch_load_ubyte_d16_hi v25, v0 offset:3
+            0xDC884003u, 0x1A7F0000u, // scratch_load_sbyte_d16 v26, v0 offset:3
+            0xDC8C4003u, 0x1B7F0000u, // scratch_load_sbyte_d16_hi v27, v0 offset:3
+            0xDC904003u, 0x1C7F0000u, // scratch_load_short_d16 v28, v0 offset:3
+            0xDC944003u, 0x1D7F0000u, // scratch_load_short_d16_hi v29, v0 offset:3
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "ScratchStoreByte",
+                "ScratchStoreByteD16Hi",
+                "ScratchStoreShort",
+                "ScratchStoreShortD16Hi",
+                "ScratchLoadUbyte",
+                "ScratchLoadSbyte",
+                "ScratchLoadUshort",
+                "ScratchLoadSshort",
+                "ScratchLoadUbyteD16",
+                "ScratchLoadUbyteD16Hi",
+                "ScratchLoadSbyteD16",
+                "ScratchLoadSbyteD16Hi",
+                "ScratchLoadShortD16",
+                "ScratchLoadShortD16Hi",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.All(
+            program.Instructions.Take(14),
+            instruction => Assert.Equal(
+                1u,
+                Assert.IsType<Gen5GlobalMemoryControl>(instruction.Control).DwordCount));
+        Assert.All(program.Instructions.Take(4), instruction =>
+        {
+            Assert.Equal(3, instruction.Sources.Count);
+            Assert.Empty(instruction.Destinations);
+        });
+        Assert.Equal(
+            Enumerable.Range(20, 10).Select(value => (uint)value),
+            program.Instructions.Skip(4).Take(10)
+                .Select(instruction => Assert.Single(instruction.Destinations).Value));
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.Equal(4, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldSExtract));
+        Assert.Equal(6, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldUExtract));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldInsert));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Phi));
+    }
+
+    [Fact]
     public void RejectsUnsupportedFlatMemoryInsteadOfCompilingNoOp()
     {
         var ctx = CreateContext(
