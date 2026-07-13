@@ -1263,6 +1263,165 @@ public sealed class Gen5DecoderTests
                 SpirvOp.ImageSampleExplicitLod));
     }
 
+    [Theory]
+    [InlineData(0x40u, "ImageGather4")]
+    [InlineData(0x41u, "ImageGather4Cl")]
+    [InlineData(0x44u, "ImageGather4L")]
+    [InlineData(0x45u, "ImageGather4B")]
+    [InlineData(0x46u, "ImageGather4BCl")]
+    [InlineData(0x47u, "ImageGather4Lz")]
+    [InlineData(0x48u, "ImageGather4C")]
+    [InlineData(0x49u, "ImageGather4CCl")]
+    [InlineData(0x4Cu, "ImageGather4CL")]
+    [InlineData(0x4Du, "ImageGather4CB")]
+    [InlineData(0x4Eu, "ImageGather4CBCl")]
+    [InlineData(0x4Fu, "ImageGather4CLz")]
+    [InlineData(0x50u, "ImageGather4O")]
+    [InlineData(0x51u, "ImageGather4ClO")]
+    [InlineData(0x54u, "ImageGather4LO")]
+    [InlineData(0x55u, "ImageGather4BO")]
+    [InlineData(0x56u, "ImageGather4BClO")]
+    [InlineData(0x57u, "ImageGather4LzO")]
+    [InlineData(0x58u, "ImageGather4CO")]
+    [InlineData(0x59u, "ImageGather4CClO")]
+    [InlineData(0x5Cu, "ImageGather4CLO")]
+    [InlineData(0x5Du, "ImageGather4CBO")]
+    [InlineData(0x5Eu, "ImageGather4CBClO")]
+    [InlineData(0x5Fu, "ImageGather4CLzO")]
+    public void DecodesImageGatherVariants(uint opcode, string expected)
+    {
+        var ctx = CreateContext(
+        [
+            0xF0000108u | (opcode << 18), 0x00000800u,
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(expected, program.Instructions[0].Opcode);
+        Assert.Equal(4, program.Instructions[0].Destinations.Count);
+    }
+
+    [Fact]
+    public void CompilesImageGatherOffsetVariantsToSpirv()
+    {
+        var ctx = CreateContext(
+        [
+            0xF1000108u, 0x00002000u, // image_gather4 v[32:35], v[0:1]
+            0xF1200108u, 0x00002400u, // image_gather4_c v[36:39], v[0:2]
+            0xF1400108u, 0x00002800u, // image_gather4_o v[40:43], v[0:2]
+            0xF1600108u, 0x00002C00u, // image_gather4_c_o v[44:47], v[0:3]
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "ImageGather4",
+                "ImageGather4C",
+                "ImageGather4O",
+                "ImageGather4CO",
+            ],
+            program.Instructions.Take(4).Select(instruction => instruction.Opcode));
+
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var imageBindings = program.Instructions.Take(4)
+            .Select(
+                instruction => new Gen5ImageBinding(
+                    instruction.Pc,
+                    instruction.Opcode,
+                    Assert.IsType<Gen5ImageControl>(instruction.Control),
+                    [0u, 0u],
+                    [0u, 0u, 0u, 0u],
+                    MipLevel: null))
+            .ToArray();
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            imageBindings,
+            []);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompilePixelShader(
+                state,
+                evaluation,
+                Gen5PixelOutputKind.Float,
+                out var shader,
+                out var compileError),
+            compileError);
+
+        var gathers = GetSpirvInstructions(shader.Spirv, SpirvOp.ImageGather);
+        Assert.Equal(4, gathers.Count);
+        Assert.Equal([6u, 6u, 8u, 8u], gathers.Select(gather => gather[0] >> 16));
+        Assert.Equal(0x10u, gathers[2][6]);
+        Assert.Equal(0x10u, gathers[3][6]);
+    }
+
+    [Theory]
+    [InlineData(0x41u, "ImageGather4Cl", "image gather LOD clamp")]
+    [InlineData(0x44u, "ImageGather4L", "image gather LOD controls")]
+    [InlineData(0x45u, "ImageGather4B", "image gather LOD controls")]
+    [InlineData(0x47u, "ImageGather4Lz", "image gather LOD controls")]
+    [InlineData(0x4Eu, "ImageGather4CBCl", "image gather LOD clamp")]
+    public void RejectsUnsupportedImageGatherLodControls(
+        uint opcode,
+        string expectedOpcode,
+        string expectedError)
+    {
+        var ctx = CreateContext(
+        [
+            0xF0000108u | (opcode << 18), 0x00000800u,
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var instruction = program.Instructions[0];
+        Assert.Equal(expectedOpcode, instruction.Opcode);
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [
+                new Gen5ImageBinding(
+                    instruction.Pc,
+                    instruction.Opcode,
+                    Assert.IsType<Gen5ImageControl>(instruction.Control),
+                    [0u, 0u],
+                    [0u, 0u, 0u, 0u],
+                    MipLevel: null),
+            ],
+            []);
+        Assert.False(
+            Gen5SpirvTranslator.TryCompilePixelShader(
+                state,
+                evaluation,
+                Gen5PixelOutputKind.Float,
+                out _,
+                out var compileError));
+        Assert.Contains(
+            expectedError,
+            compileError,
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public void RejectsDynamicImageSampleOffsetWithoutMaintenance8()
     {
@@ -6532,6 +6691,37 @@ public sealed class Gen5DecoderTests
 
     private static uint[] GetSpirvInstruction(byte[] spirv, SpirvOp opcode) =>
         GetSpirvInstructionWithResult(spirv, opcode, resultId: null);
+
+    private static IReadOnlyList<uint[]> GetSpirvInstructions(
+        byte[] spirv,
+        SpirvOp opcode)
+    {
+        var instructions = new List<uint[]>();
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var firstWord = BitConverter.ToUInt32(spirv, offset);
+            var wordCount = firstWord >> 16;
+            if ((ushort)firstWord == (ushort)opcode)
+            {
+                instructions.Add(
+                    Enumerable
+                        .Range(0, checked((int)wordCount))
+                        .Select(index => BitConverter.ToUInt32(
+                            spirv,
+                            offset + (index * sizeof(uint))))
+                        .ToArray());
+            }
+
+            if (wordCount == 0)
+            {
+                break;
+            }
+
+            offset += checked((int)wordCount * sizeof(uint));
+        }
+
+        return instructions;
+    }
 
     private static uint[] GetSpirvInstructionWithResult(
         byte[] spirv,
