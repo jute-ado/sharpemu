@@ -1203,15 +1203,7 @@ public partial class MainWindow : Window
         _emulator?.Dispose();
         _emulator = null;
 
-        var meaning = exitCode switch
-        {
-            0 => "OK",
-            1 => "invalid arguments",
-            2 => "eboot not found",
-            3 => "runtime exception",
-            4 => "emulation error",
-            _ => "unknown",
-        };
+        var meaning = EmulatorExitCode.Describe(exitCode);
         var brush = exitCode == 0 ? SuccessLineBrush : ErrorLineBrush;
         AppendConsoleLine($"Process exited with code {exitCode} ({meaning}).", brush);
         CloseFileLogSoon();
