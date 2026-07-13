@@ -2147,6 +2147,61 @@ internal static partial class Gen5SpirvTranslator
                 dynamicOffset,
                 UInt(unchecked((uint)control.OffsetBytes)));
 
+            if (instruction.Opcode is
+                "ScratchLoadUbyteD16" or "ScratchLoadUbyteD16Hi" or
+                "ScratchLoadSbyteD16" or "ScratchLoadSbyteD16Hi" or
+                "ScratchLoadShortD16" or "ScratchLoadShortD16Hi")
+            {
+                StoreV(
+                    control.VectorDestination,
+                    InsertD16RegisterHalf(
+                        control.VectorDestination,
+                        LoadScratchSubword(
+                            byteAddress,
+                            instruction.Opcode.Contains("byte", StringComparison.Ordinal)
+                                ? 8u
+                                : 16u,
+                            instruction.Opcode.Contains("Sbyte", StringComparison.Ordinal)),
+                        instruction.Opcode.EndsWith("Hi", StringComparison.Ordinal)));
+                return true;
+            }
+
+            if (instruction.Opcode is
+                "ScratchLoadUbyte" or "ScratchLoadSbyte" or
+                "ScratchLoadUshort" or "ScratchLoadSshort")
+            {
+                StoreV(
+                    control.VectorDestination,
+                    LoadScratchSubword(
+                        byteAddress,
+                        instruction.Opcode.EndsWith(
+                            "short",
+                            StringComparison.OrdinalIgnoreCase)
+                            ? 16u
+                            : 8u,
+                        instruction.Opcode.Contains("LoadS", StringComparison.Ordinal)));
+                return true;
+            }
+
+            if (instruction.Opcode is
+                "ScratchStoreByteD16Hi" or "ScratchStoreShortD16Hi")
+            {
+                StoreScratchSubword(
+                    byteAddress,
+                    ShiftRightLogical(LoadV(control.VectorData), UInt(16)),
+                    instruction.Opcode == "ScratchStoreShortD16Hi" ? 16u : 8u);
+                return true;
+            }
+
+            if (instruction.Opcode is "ScratchStoreByte" or "ScratchStoreShort")
+            {
+                StoreScratchSubword(
+                    byteAddress,
+                    LoadV(control.VectorData),
+                    instruction.Opcode == "ScratchStoreShort" ? 16u : 8u);
+                return true;
+            }
+
             if (instruction.Opcode.StartsWith(
                     "ScratchStoreDword",
                     StringComparison.Ordinal))
@@ -2182,6 +2237,33 @@ internal static partial class Gen5SpirvTranslator
 
             error = $"unsupported scratch-memory opcode {instruction.Opcode}";
             return false;
+        }
+
+        private uint LoadScratchSubword(
+            uint byteAddress,
+            uint componentBits,
+            bool signed) =>
+            ExtractBufferSubword(
+                LoadScratchDword(byteAddress),
+                UInt(0),
+                componentBits,
+                signed);
+
+        private void StoreScratchSubword(
+            uint byteAddress,
+            uint value,
+            uint componentBits)
+        {
+            var existing = LoadScratchDword(byteAddress);
+            StoreScratchDword(
+                byteAddress,
+                _module.AddInstruction(
+                    SpirvOp.BitFieldInsert,
+                    _uintType,
+                    existing,
+                    value,
+                    UInt(0),
+                    UInt(componentBits)));
         }
 
         private uint LoadScratchDword(uint byteAddress)
