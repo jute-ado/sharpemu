@@ -1501,11 +1501,19 @@ internal static class Gen5ShaderTranslator
             0x0E => "BufferLoadDwordx4",
             0x0F => "BufferLoadDwordx3",
             0x18 => "BufferStoreByte",
+            0x19 => "BufferStoreByteD16Hi",
             0x1A => "BufferStoreShort",
+            0x1B => "BufferStoreShortD16Hi",
             0x1C => "BufferStoreDword",
             0x1D => "BufferStoreDwordx2",
             0x1E => "BufferStoreDwordx4",
             0x1F => "BufferStoreDwordx3",
+            0x20 => "BufferLoadUbyteD16",
+            0x21 => "BufferLoadUbyteD16Hi",
+            0x22 => "BufferLoadSbyteD16",
+            0x23 => "BufferLoadSbyteD16Hi",
+            0x24 => "BufferLoadShortD16",
+            0x25 => "BufferLoadShortD16Hi",
             0x30 => "BufferAtomicSwap",
             0x31 => "BufferAtomicCmpswap",
             0x32 => "BufferAtomicAdd",
@@ -1554,11 +1562,19 @@ internal static class Gen5ShaderTranslator
             0x0E => "LoadDwordx4",
             0x0F => "LoadDwordx3",
             0x18 => "StoreByte",
+            0x19 => "StoreByteD16Hi",
             0x1A => "StoreShort",
+            0x1B => "StoreShortD16Hi",
             0x1C => "StoreDword",
             0x1D => "StoreDwordx2",
             0x1E => "StoreDwordx4",
             0x1F => "StoreDwordx3",
+            0x20 => "LoadUbyteD16",
+            0x21 => "LoadUbyteD16Hi",
+            0x22 => "LoadSbyteD16",
+            0x23 => "LoadSbyteD16Hi",
+            0x24 => "LoadShortD16",
+            0x25 => "LoadShortD16Hi",
             0x30 => "AtomicSwap",
             0x31 => "AtomicCmpswap",
             0x32 => "AtomicAdd",
@@ -2230,12 +2246,16 @@ internal static class Gen5ShaderTranslator
                 var dwordCount = opcode switch
                 {
                     "GlobalLoadUbyte" or "GlobalLoadSbyte" or
-                    "GlobalLoadUshort" or "GlobalLoadSshort" => 1u,
+                    "GlobalLoadUshort" or "GlobalLoadSshort" or
+                    "GlobalLoadUbyteD16" or "GlobalLoadUbyteD16Hi" or
+                    "GlobalLoadSbyteD16" or "GlobalLoadSbyteD16Hi" or
+                    "GlobalLoadShortD16" or "GlobalLoadShortD16Hi" => 1u,
                     "GlobalLoadDword" => 1u,
                     "GlobalLoadDwordx2" => 2u,
                     "GlobalLoadDwordx3" => 3u,
                     "GlobalLoadDwordx4" => 4u,
-                    "GlobalStoreByte" or "GlobalStoreShort" => 1u,
+                    "GlobalStoreByte" or "GlobalStoreByteD16Hi" or
+                    "GlobalStoreShort" or "GlobalStoreShortD16Hi" => 1u,
                     "GlobalStoreDword" => 1u,
                     "GlobalStoreDwordx2" => 2u,
                     "GlobalStoreDwordx3" => 3u,
@@ -2282,6 +2302,7 @@ internal static class Gen5ShaderTranslator
                 var vectorData = (extra >> 8) & 0xFF;
                 var scalarResource = ((extra >> 16) & 0x1F) * 4;
                 var scalarOffset = (extra >> 24) & 0xFF;
+                var glc = ((word >> 14) & 1) != 0;
                 var dwordCount = opcode switch
                 {
                     "BufferLoadFormatX" => 1u,
@@ -2289,7 +2310,10 @@ internal static class Gen5ShaderTranslator
                     "BufferLoadFormatXyz" => 3u,
                     "BufferLoadFormatXyzw" => 4u,
                     "BufferLoadUbyte" or "BufferLoadSbyte" or
-                    "BufferLoadUshort" or "BufferLoadSshort" => 1u,
+                    "BufferLoadUshort" or "BufferLoadSshort" or
+                    "BufferLoadUbyteD16" or "BufferLoadUbyteD16Hi" or
+                    "BufferLoadSbyteD16" or "BufferLoadSbyteD16Hi" or
+                    "BufferLoadShortD16" or "BufferLoadShortD16Hi" => 1u,
                     "BufferLoadDword" => 1u,
                     "BufferLoadDwordx2" => 2u,
                     "BufferLoadDwordx3" => 3u,
@@ -2298,7 +2322,8 @@ internal static class Gen5ShaderTranslator
                     "BufferStoreDwordx2" => 2u,
                     "BufferStoreDwordx3" => 3u,
                     "BufferStoreDwordx4" => 4u,
-                    "BufferStoreByte" or "BufferStoreShort" => 1u,
+                    "BufferStoreByte" or "BufferStoreByteD16Hi" or
+                    "BufferStoreShort" or "BufferStoreShortD16Hi" => 1u,
                     "BufferAtomicCmpswap" => 2u,
                     "BufferAtomicSwap" or "BufferAtomicAdd" or
                     "BufferAtomicSub" or "BufferAtomicSmin" or
@@ -2314,10 +2339,16 @@ internal static class Gen5ShaderTranslator
                     Gen5Operand.Scalar(scalarResource),
                     Gen5Operand.Source(scalarOffset, literal),
                 ];
-                destinations = Enumerable
-                    .Range((int)vectorData, checked((int)dwordCount))
-                    .Select(index => Gen5Operand.Vector((uint)index))
-                    .ToArray();
+                var isAtomic = opcode.StartsWith("BufferAtomic", StringComparison.Ordinal);
+                destinations = opcode.StartsWith("BufferStore", StringComparison.Ordinal) ||
+                    (isAtomic && !glc)
+                    ? []
+                    : Enumerable
+                        .Range(
+                            (int)vectorData,
+                            checked((int)(isAtomic ? 1u : dwordCount)))
+                        .Select(index => Gen5Operand.Vector((uint)index))
+                        .ToArray();
                 control = new Gen5BufferMemoryControl(
                     dwordCount,
                     vectorAddress,
@@ -2326,7 +2357,7 @@ internal static class Gen5ShaderTranslator
                     (int)(word & 0xFFF),
                     ((word >> 13) & 1) != 0,
                     ((word >> 12) & 1) != 0,
-                    ((word >> 14) & 1) != 0,
+                    glc,
                     ((extra >> 22) & 1) != 0);
                 break;
             }
