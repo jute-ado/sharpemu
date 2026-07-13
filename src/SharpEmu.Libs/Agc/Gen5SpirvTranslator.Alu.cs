@@ -353,6 +353,7 @@ internal static partial class Gen5SpirvTranslator
                     result = EmitFloatBinary(instruction, SpirvOp.FMul);
                     break;
                 case "VMulLegacyF32":
+                case "VMullitF32":
                 {
                     var left = GetFloatSource(instruction, 0);
                     var right = GetFloatSource(instruction, 1);
