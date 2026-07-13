@@ -14,7 +14,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <RepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)'))</RepoRoot>
 
     <BaseIntermediateOutputPath>$(RepoRoot)artifacts/obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
-    <BaseOutputPath>$(RepoRoot)artifacts/bin/</BaseOutputPath>
+    <BaseOutputPath>$(RepoRoot)artifacts/bin/$(MSBuildProjectName)/</BaseOutputPath>
 
     <AppendConfigurationToOutputPath>true</AppendConfigurationToOutputPath>
     <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
