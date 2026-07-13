@@ -436,6 +436,9 @@ internal static partial class Gen5SpirvTranslator
                             fused));
                     break;
                 }
+                case "VDivFixupF32":
+                    result = EmitDivisionFixupF32(instruction);
+                    break;
                 case "VMacF32":
                 case "VFmacF32":
                 {
@@ -1118,6 +1121,95 @@ internal static partial class Gen5SpirvTranslator
             return BitwiseOr(
                 BitwiseAnd(LoadV(destination), UInt(0xFFFF)),
                 BitwiseAnd(PackHalf2(Float(0), value), UInt(0xFFFF_0000)));
+        }
+
+        private uint EmitDivisionFixupF32(Gen5ShaderInstruction instruction)
+        {
+            var quotient = GetFloatSource(instruction, 0);
+            var denominator = GetFloatSource(instruction, 1);
+            var numerator = GetFloatSource(instruction, 2);
+            var quotientRaw = Bitcast(_uintType, quotient);
+            var denominatorRaw = Bitcast(_uintType, denominator);
+            var numeratorRaw = Bitcast(_uintType, numerator);
+            var denominatorAbs = BitwiseAnd(denominatorRaw, UInt(0x7FFF_FFFF));
+            var numeratorAbs = BitwiseAnd(numeratorRaw, UInt(0x7FFF_FFFF));
+            var sign = BitwiseAnd(
+                BitwiseXor(denominatorRaw, numeratorRaw),
+                UInt(0x8000_0000));
+
+            uint Equal(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.IEqual, _boolType, left, right);
+            uint Both(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.LogicalAnd, _boolType, left, right);
+            uint Either(uint left, uint right) =>
+                _module.AddInstruction(SpirvOp.LogicalOr, _boolType, left, right);
+            uint Select(uint condition, uint whenTrue, uint whenFalse) =>
+                _module.AddInstruction(
+                    SpirvOp.Select,
+                    _uintType,
+                    condition,
+                    whenTrue,
+                    whenFalse);
+
+            var denominatorZero = Equal(denominatorAbs, UInt(0));
+            var numeratorZero = Equal(numeratorAbs, UInt(0));
+            var denominatorInfinity = Equal(denominatorAbs, UInt(0x7F80_0000));
+            var numeratorInfinity = Equal(numeratorAbs, UInt(0x7F80_0000));
+            var denominatorNan = _module.AddInstruction(
+                SpirvOp.IsNan,
+                _boolType,
+                denominator);
+            var numeratorNan = _module.AddInstruction(
+                SpirvOp.IsNan,
+                _boolType,
+                numerator);
+
+            var denominatorExponent = ShiftRightLogical(denominatorAbs, UInt(23));
+            var numeratorExponent = ShiftRightLogical(numeratorAbs, UInt(23));
+            var underflow = _module.AddInstruction(
+                SpirvOp.ULessThan,
+                _boolType,
+                IAdd(numeratorExponent, UInt(150)),
+                denominatorExponent);
+            var overflow = Equal(denominatorExponent, UInt(255));
+            var exactExtreme = Bitcast(
+                _uintType,
+                _module.AddInstruction(
+                    SpirvOp.FDiv,
+                    _floatType,
+                    numerator,
+                    denominator));
+
+            var value = BitwiseOr(
+                BitwiseAnd(quotientRaw, UInt(0x7FFF_FFFF)),
+                sign);
+            value = Select(overflow, exactExtreme, value);
+            value = Select(underflow, exactExtreme, value);
+            value = Select(
+                Either(denominatorInfinity, numeratorZero),
+                sign,
+                value);
+            value = Select(
+                Either(denominatorZero, numeratorInfinity),
+                BitwiseOr(sign, UInt(0x7F80_0000)),
+                value);
+            value = Select(
+                Both(denominatorInfinity, numeratorInfinity),
+                UInt(0xFFC0_0000),
+                value);
+            value = Select(
+                Both(denominatorZero, numeratorZero),
+                UInt(0xFFC0_0000),
+                value);
+            value = Select(
+                denominatorNan,
+                BitwiseOr(denominatorRaw, UInt(0x0040_0000)),
+                value);
+            value = Select(
+                numeratorNan,
+                BitwiseOr(numeratorRaw, UInt(0x0040_0000)),
+                value);
+            return EmitFloatResult(instruction, Bitcast(_floatType, value));
         }
 
         private uint GetFloat16Source(
