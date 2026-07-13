@@ -159,10 +159,10 @@ internal static partial class Gen5SpirvTranslator
                     break;
                 }
                 case "VCvtU32F32":
-                    result = _module.AddInstruction(
-                        SpirvOp.ConvertFToU,
-                        _uintType,
-                        GetFloatSource(instruction, 0));
+                    result = EmitSaturatingFloatToInteger(
+                        GetFloatSource(instruction, 0),
+                        _floatType,
+                        signed: false);
                     break;
                 case "VCvtI32F32":
                 case "VCvtRpiI32F32":
@@ -171,16 +171,24 @@ internal static partial class Gen5SpirvTranslator
                     var source = GetFloatSource(instruction, 0);
                     if (instruction.Opcode == "VCvtRpiI32F32")
                     {
-                        source = Ext(9, _floatType, source);
+                        source = Ext(
+                            8,
+                            _floatType,
+                            _module.AddInstruction(
+                                SpirvOp.FAdd,
+                                _floatType,
+                                source,
+                                Float(0.5f)));
                     }
                     else if (instruction.Opcode == "VCvtFlrI32F32")
                     {
                         source = Ext(8, _floatType, source);
                     }
 
-                    result = Bitcast(
-                        _uintType,
-                        _module.AddInstruction(SpirvOp.ConvertFToS, _intType, source));
+                    result = EmitSaturatingFloatToInteger(
+                        source,
+                        _floatType,
+                        signed: true);
                     break;
                 }
                 case "VCvtF32I32":
@@ -1752,6 +1760,68 @@ internal static partial class Gen5SpirvTranslator
                 signed ? Bitcast(_uintType, converted) : converted);
         }
 
+        private uint EmitSaturatingFloatToInteger(
+            uint source,
+            uint sourceType,
+            bool signed)
+        {
+            var isDouble = sourceType == _doubleType;
+            uint Floating(double value) =>
+                isDouble ? Double(value) : Float((float)value);
+
+            var zero = Floating(0);
+            source = _module.AddInstruction(
+                SpirvOp.Select,
+                sourceType,
+                _module.AddInstruction(SpirvOp.IsNan, _boolType, source),
+                zero,
+                source);
+
+            var lowerBound = signed ? Floating(int.MinValue) : zero;
+            var upperThreshold = signed
+                ? Floating(2147483648d)
+                : Floating(4294967296d);
+            // The largest F32 values below 2^31 and 2^32 are one ULP below
+            // those boundaries. Keeping the conversion operand within these
+            // ranges avoids SPIR-V's undefined out-of-range conversion result.
+            var safeUpperBound = signed
+                ? Floating(isDouble ? int.MaxValue : 2147483520d)
+                : Floating(isDouble ? uint.MaxValue : 4294967040d);
+            var belowRange = _module.AddInstruction(
+                SpirvOp.FOrdLessThanEqual,
+                _boolType,
+                source,
+                lowerBound);
+            var aboveRange = _module.AddInstruction(
+                SpirvOp.FOrdGreaterThanEqual,
+                _boolType,
+                source,
+                upperThreshold);
+            var safeSource = Ext(
+                43,
+                sourceType,
+                source,
+                lowerBound,
+                safeUpperBound);
+            var converted = _module.AddInstruction(
+                signed ? SpirvOp.ConvertFToS : SpirvOp.ConvertFToU,
+                signed ? _intType : _uintType,
+                safeSource);
+            var result = signed ? Bitcast(_uintType, converted) : converted;
+            result = _module.AddInstruction(
+                SpirvOp.Select,
+                _uintType,
+                belowRange,
+                UInt(signed ? unchecked((uint)int.MinValue) : 0),
+                result);
+            return _module.AddInstruction(
+                SpirvOp.Select,
+                _uintType,
+                aboveRange,
+                UInt(signed ? int.MaxValue : uint.MaxValue),
+                result);
+        }
+
         private uint EmitNormalizedFloat16ToInteger16(
             Gen5ShaderInstruction instruction,
             uint destination,
@@ -2443,16 +2513,17 @@ internal static partial class Gen5SpirvTranslator
             switch (instruction.Opcode)
             {
                 case "VCvtI32F64":
-                    result = Bitcast(
-                        _uintType,
-                        _module.AddInstruction(SpirvOp.ConvertFToS, _intType, left));
+                    result = EmitSaturatingFloatToInteger(
+                        left,
+                        _doubleType,
+                        signed: true);
                     StoreV(destination, result);
                     return true;
                 case "VCvtU32F64":
-                    result = _module.AddInstruction(
-                        SpirvOp.ConvertFToU,
-                        _uintType,
-                        left);
+                    result = EmitSaturatingFloatToInteger(
+                        left,
+                        _doubleType,
+                        signed: false);
                     StoreV(destination, result);
                     return true;
                 case "VCvtF32F64":
