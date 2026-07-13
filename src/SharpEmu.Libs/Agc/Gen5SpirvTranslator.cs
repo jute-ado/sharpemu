@@ -2906,28 +2906,46 @@ internal static partial class Gen5SpirvTranslator
                          "ImageSample",
                          StringComparison.Ordinal))
             {
-                var hasOffset =
-                    instruction.Opcode.EndsWith("O", StringComparison.Ordinal);
-                var hasBias =
-                    instruction.Opcode.Contains("SampleB", StringComparison.Ordinal);
-                var hasCompare =
-                    instruction.Opcode.Contains("SampleC", StringComparison.Ordinal);
-                var hasGradients =
-                    instruction.Opcode.Contains("SampleD", StringComparison.Ordinal);
-                var offsetIndex = 0;
+                var sampleSuffix = instruction.Opcode["ImageSample".Length..];
+                var hasOffset = sampleSuffix.EndsWith("O", StringComparison.Ordinal);
+                if (hasOffset)
+                {
+                    sampleSuffix = sampleSuffix[..^1];
+                }
+
+                var hasCompare = sampleSuffix.StartsWith("C", StringComparison.Ordinal);
+                if (hasCompare)
+                {
+                    sampleSuffix = sampleSuffix[1..];
+                }
+
+                var hasBias = sampleSuffix == "B";
+                var hasGradients = sampleSuffix == "D";
+                var isZeroLod = sampleSuffix == "Lz";
                 var biasIndex = hasOffset ? 1 : 0;
                 var compareIndex = biasIndex + (hasBias ? 1 : 0);
                 var gradientIndex = compareIndex + (hasCompare ? 1 : 0);
                 var start = gradientIndex + (hasGradients ? 4 : 0);
                 var coordinates = BuildFloatCoordinates(image, start);
-                var explicitLod =
-                    instruction.Opcode.Contains("Lz", StringComparison.Ordinal) ||
-                    instruction.Opcode.Contains("SampleL", StringComparison.Ordinal) ||
-                    hasGradients;
-                var offset = hasOffset ? BuildImageOffset(image, offsetIndex) : 0u;
+                var explicitLod = sampleSuffix == "L" || isZeroLod || hasGradients;
+                uint offset = 0;
+                if (hasOffset)
+                {
+                    var packedOffset =
+                        _evaluation.ImageBindings[bindingIndex].PackedOffset;
+                    if (!packedOffset.HasValue)
+                    {
+                        error =
+                            $"dynamic sample offset is unsupported for {instruction.Opcode}";
+                        return false;
+                    }
+
+                    offset = BuildConstantImageOffset(packedOffset.Value);
+                }
+
                 var imageOperands = (hasBias ? 1u : 0u) |
                     (hasGradients ? 4u : explicitLod ? 2u : 0u) |
-                    (hasOffset ? 0x10u : 0u);
+                    (hasOffset ? 0x8u : 0u);
                 var reference = hasCompare
                     ? Bitcast(
                         _floatType,
@@ -2958,7 +2976,7 @@ internal static partial class Gen5SpirvTranslator
                     else if (explicitLod)
                     {
                         operands.Add(
-                            instruction.Opcode.Contains("Lz", StringComparison.Ordinal)
+                            isZeroLod
                                 ? Float(0)
                                 : Bitcast(
                                     _floatType,
@@ -3412,6 +3430,19 @@ internal static partial class Gen5SpirvTranslator
                 ivec2,
                 x,
                 y);
+        }
+
+        private uint BuildConstantImageOffset(uint packed)
+        {
+            var ivec2 = _module.TypeVector(_intType, 2);
+            static int SignExtend6(uint value) => (int)(value << 26) >> 26;
+            var x = _module.Constant(
+                _intType,
+                unchecked((uint)SignExtend6(packed & 0x3Fu)));
+            var y = _module.Constant(
+                _intType,
+                unchecked((uint)SignExtend6((packed >> 8) & 0x3Fu)));
+            return _module.ConstantComposite(ivec2, x, y);
         }
 
         private bool TryEmitExport(

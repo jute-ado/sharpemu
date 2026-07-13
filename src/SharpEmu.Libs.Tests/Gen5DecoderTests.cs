@@ -1183,6 +1183,133 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesCombinedImageSampleVariantsToSpirv()
+    {
+        var ctx = CreateContext(
+        [
+            0x7E000281u,              // v_mov_b32_e32 v0, 1 (packed offset x=1, y=0)
+            0xF0A80108u, 0x00002000u, // image_sample_c_d v32, v[0:6], s[0:7], s[0:3] dmask:0x1 dim:2d
+            0xF0B00108u, 0x00002400u, // image_sample_c_l v36, v[0:3], s[0:7], s[0:3] dmask:0x1 dim:2d
+            0xF0B40108u, 0x00002800u, // image_sample_c_b v40, v[0:3], s[0:7], s[0:3] dmask:0x1 dim:2d
+            0xF0C80108u, 0x00002C00u, // image_sample_d_o v44, v[0:6], s[0:7], s[0:3] dmask:0x1 dim:2d
+            0xF0D40108u, 0x00003000u, // image_sample_b_o v48, v[0:3], s[0:7], s[0:3] dmask:0x1 dim:2d
+            0xF0E00108u, 0x00003400u, // image_sample_c_o v52, v[0:3], s[0:7], s[0:3] dmask:0x1 dim:2d
+            0xF0E80108u, 0x00003800u, // image_sample_c_d_o v56, v[0:7], s[0:7], s[0:3] dmask:0x1 dim:2d
+            0xF0F00108u, 0x00003C00u, // image_sample_c_l_o v60, v[0:4], s[0:7], s[0:3] dmask:0x1 dim:2d
+            0xF0F40108u, 0x00004000u, // image_sample_c_b_o v64, v[0:4], s[0:7], s[0:3] dmask:0x1 dim:2d
+            0xF0FC0108u, 0x00004400u, // image_sample_c_lz_o v68, v[0:3], s[0:7], s[0:3] dmask:0x1 dim:2d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "VMovB32",
+                "ImageSampleCD",
+                "ImageSampleCL",
+                "ImageSampleCB",
+                "ImageSampleDO",
+                "ImageSampleBO",
+                "ImageSampleCO",
+                "ImageSampleCDO",
+                "ImageSampleCLO",
+                "ImageSampleCBO",
+                "ImageSampleCLzO",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.All(
+            evaluation.ImageBindings.Where(binding => binding.Opcode.EndsWith("O")),
+            binding => Assert.Equal(1u, binding.PackedOffset));
+        Assert.True(
+            Gen5SpirvTranslator.TryCompilePixelShader(
+                state,
+                evaluation,
+                Gen5PixelOutputKind.Float,
+                out var shader,
+                out var compileError),
+            compileError);
+
+        Assert.Equal(
+            [(7u, 0x1u), (8u, 0x9u), (7u, 0x8u), (8u, 0x9u)],
+            GetSpirvImageInstructionShapes(
+                shader.Spirv,
+                SpirvOp.ImageSampleImplicitLod));
+        Assert.Equal(
+            [
+                (8u, 0x4u),
+                (7u, 0x2u),
+                (9u, 0xCu),
+                (9u, 0xCu),
+                (8u, 0xAu),
+                (8u, 0xAu),
+            ],
+            GetSpirvImageInstructionShapes(
+                shader.Spirv,
+                SpirvOp.ImageSampleExplicitLod));
+    }
+
+    [Fact]
+    public void RejectsDynamicImageSampleOffsetWithoutMaintenance8()
+    {
+        var ctx = CreateContext(
+        [
+            0xF0C00108u, 0x00000800u, // image_sample_o v8, v[0:2], s[0:7], s[0:3] dmask:0x1 dim:2d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var instruction = program.Instructions[0];
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [
+                new Gen5ImageBinding(
+                    instruction.Pc,
+                    instruction.Opcode,
+                    Assert.IsType<Gen5ImageControl>(instruction.Control),
+                    [0u, 0u],
+                    [0u, 0u, 0u, 0u],
+                    MipLevel: null),
+            ],
+            []);
+        Assert.False(
+            Gen5SpirvTranslator.TryCompilePixelShader(
+                state,
+                evaluation,
+                Gen5PixelOutputKind.Float,
+                out _,
+                out var compileError));
+        Assert.Contains(
+            "dynamic sample offset is unsupported for ImageSampleO",
+            compileError,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CompilesImageAtomic32OperationsToSpirv()
     {
         // RDNA1 MIMG encodings for a 2D R32ui storage image. GLC requests
@@ -6023,15 +6150,29 @@ public sealed class Gen5DecoderTests
     private static (uint WordCount, uint ImageOperands)
         GetSpirvImageInstructionShape(byte[] spirv, SpirvOp opcode)
     {
+        var shapes = GetSpirvImageInstructionShapes(spirv, opcode);
+        return shapes.Count != 0
+            ? shapes[0]
+            : throw new Xunit.Sdk.XunitException(
+                $"Missing SPIR-V instruction {opcode}.");
+    }
+
+    private static IReadOnlyList<(uint WordCount, uint ImageOperands)>
+        GetSpirvImageInstructionShapes(byte[] spirv, SpirvOp opcode)
+    {
+        var shapes = new List<(uint WordCount, uint ImageOperands)>();
         for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
         {
             var instruction = BitConverter.ToUInt32(spirv, offset);
             var wordCount = instruction >> 16;
             if ((ushort)instruction == (ushort)opcode && wordCount >= 6)
             {
-                return (
-                    wordCount,
-                    BitConverter.ToUInt32(spirv, offset + (5 * sizeof(uint))));
+                shapes.Add(
+                    (
+                        wordCount,
+                        BitConverter.ToUInt32(
+                            spirv,
+                            offset + (5 * sizeof(uint)))));
             }
 
             if (wordCount == 0)
@@ -6042,7 +6183,7 @@ public sealed class Gen5DecoderTests
             offset += checked((int)wordCount * sizeof(uint));
         }
 
-        throw new Xunit.Sdk.XunitException($"Missing SPIR-V instruction {opcode}.");
+        return shapes;
     }
 
     private static int CountSpirvOpcode(byte[] spirv, ushort opcode)
