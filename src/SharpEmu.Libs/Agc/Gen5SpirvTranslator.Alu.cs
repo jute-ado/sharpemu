@@ -787,6 +787,10 @@ internal static partial class Gen5SpirvTranslator
                 case "VLshlrevB16":
                     result = EmitInteger16Binary(instruction, destination);
                     break;
+                case "VAddNcI32":
+                case "VSubNcI32":
+                    result = EmitSignedInteger32Binary(instruction);
+                    break;
                 case "VLshrB32":
                     result = EmitIntegerBinary(instruction, SpirvOp.ShiftRightLogical);
                     break;
@@ -1426,6 +1430,48 @@ internal static partial class Gen5SpirvTranslator
             }
 
             return Emit16BitResult(instruction, destination, result);
+        }
+
+        private uint EmitSignedInteger32Binary(Gen5ShaderInstruction instruction)
+        {
+            var operation = instruction.Opcode == "VSubNcI32"
+                ? SpirvOp.ISub
+                : SpirvOp.IAdd;
+            if (instruction.Control is not Gen5Vop3Control { Clamp: true })
+            {
+                return _module.AddInstruction(
+                    operation,
+                    _uintType,
+                    GetRawSource(instruction, 0),
+                    GetRawSource(instruction, 1));
+            }
+
+            var left = _module.AddInstruction(
+                SpirvOp.SConvert,
+                _longType,
+                Bitcast(_intType, GetRawSource(instruction, 0)));
+            var right = _module.AddInstruction(
+                SpirvOp.SConvert,
+                _longType,
+                Bitcast(_intType, GetRawSource(instruction, 1)));
+            var result = _module.AddInstruction(operation, _longType, left, right);
+            var min = _module.Constant64(_longType, unchecked((ulong)int.MinValue));
+            var max = _module.Constant64(_longType, int.MaxValue);
+            result = _module.AddInstruction(
+                SpirvOp.Select,
+                _longType,
+                _module.AddInstruction(SpirvOp.SLessThan, _boolType, result, min),
+                min,
+                result);
+            result = _module.AddInstruction(
+                SpirvOp.Select,
+                _longType,
+                _module.AddInstruction(SpirvOp.SGreaterThan, _boolType, result, max),
+                max,
+                result);
+            return Bitcast(
+                _uintType,
+                _module.AddInstruction(SpirvOp.SConvert, _intType, result));
         }
 
         private uint EmitFloat16Result(
