@@ -1057,6 +1057,82 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesBufferSubwordMemoryOperationsToSpirv()
+    {
+        // The halfword cases cover both ordinary offsets and offset 3, where
+        // the access crosses the boundary between adjacent storage dwords.
+        var ctx = CreateContext(
+        [
+            0xE0200000u, 0x80000800u, // buffer_load_ubyte v8, off, s[0:3], 0 offset:0
+            0xE0240001u, 0x80000900u, // buffer_load_sbyte v9, off, s[0:3], 0 offset:1
+            0xE0280002u, 0x80000A00u, // buffer_load_ushort v10, off, s[0:3], 0 offset:2
+            0xE02C0003u, 0x80000B00u, // buffer_load_sshort v11, off, s[0:3], 0 offset:3
+            0xE0600001u, 0x80000C00u, // buffer_store_byte v12, off, s[0:3], 0 offset:1
+            0xE0680003u, 0x80000D00u, // buffer_store_short v13, off, s[0:3], 0 offset:3
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "BufferLoadUbyte",
+                "BufferLoadSbyte",
+                "BufferLoadUshort",
+                "BufferLoadSshort",
+                "BufferStoreByte",
+                "BufferStoreShort",
+                "SEndpgm",
+            ],
+            program.Instructions.Select(instruction => instruction.Opcode));
+        Assert.All(
+            program.Instructions.Take(6),
+            instruction => Assert.Equal(
+                1u,
+                Assert.IsType<Gen5BufferMemoryControl>(instruction.Control).DwordCount));
+
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    program.Instructions
+                        .Take(6)
+                        .Select(instruction => instruction.Pc)
+                        .ToArray(),
+                    new byte[64]),
+            ]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.Equal(3, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldUExtract));
+        Assert.Equal(3, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldSExtract));
+        Assert.Equal(4, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldInsert));
+        Assert.Equal(2, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Phi));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SelectionMerge));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 8));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 16));
+        Assert.True(ContainsSpirvConstant(shader.Spirv, 24));
+    }
+
+    [Fact]
     public void CompilesPairedLdsExchange32OperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
