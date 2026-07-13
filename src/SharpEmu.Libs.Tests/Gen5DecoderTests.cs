@@ -1261,6 +1261,10 @@ public sealed class Gen5DecoderTests
             GetSpirvImageInstructionShapes(
                 shader.Spirv,
                 SpirvOp.ImageSampleExplicitLod));
+        Assert.False(
+            ContainsSpirvCapability(
+                shader.Spirv,
+                SpirvCapability.ImageGatherExtended));
     }
 
     [Theory]
@@ -1423,7 +1427,7 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
-    public void RejectsDynamicImageSampleOffsetWithoutMaintenance8()
+    public void CompilesDynamicImageSampleOffsetForMaintenance8()
     {
         var ctx = CreateContext(
         [
@@ -1455,17 +1459,23 @@ public sealed class Gen5DecoderTests
                     MipLevel: null),
             ],
             []);
-        Assert.False(
+        Assert.True(
             Gen5SpirvTranslator.TryCompilePixelShader(
                 state,
                 evaluation,
                 Gen5PixelOutputKind.Float,
-                out _,
-                out var compileError));
-        Assert.Contains(
-            "dynamic sample offset is unsupported for ImageSampleO",
-            compileError,
-            StringComparison.Ordinal);
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.Equal(
+            (7u, 0x10u),
+            GetSpirvImageInstructionShape(
+                shader.Spirv,
+                SpirvOp.ImageSampleImplicitLod));
+        Assert.True(
+            ContainsSpirvCapability(
+                shader.Spirv,
+                SpirvCapability.ImageGatherExtended));
     }
 
     [Fact]
