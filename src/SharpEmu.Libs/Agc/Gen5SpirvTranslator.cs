@@ -1311,19 +1311,32 @@ internal static partial class Gen5SpirvTranslator
                     return true;
                 }
                 case "DsWriteB64":
+                case "DsWriteB96":
+                case "DsWriteB128":
                 {
-                    if (instruction.Sources.Count < 3)
+                    var dwordCount = instruction.Opcode switch
                     {
-                        error = "missing LDS write64 source";
+                        "DsWriteB96" => 3,
+                        "DsWriteB128" => 4,
+                        _ => 2,
+                    };
+                    if (instruction.Sources.Count < dwordCount + 1)
+                    {
+                        error = "missing wide LDS write source";
                         return false;
                     }
 
                     var address = GetRawSource(instruction, 0);
                     var offset = EffectiveDsSingleOffsetBytes(control);
-                    StoreLds(LdsPointer(address, offset), GetRawSource(instruction, 1));
-                    StoreLds(
-                        LdsPointer(address, offset + sizeof(uint)),
-                        GetRawSource(instruction, 2));
+                    for (var component = 0; component < dwordCount; component++)
+                    {
+                        StoreLds(
+                            LdsPointer(
+                                address,
+                                offset + ((uint)component * sizeof(uint))),
+                            GetRawSource(instruction, component + 1));
+                    }
+
                     return true;
                 }
                 case "DsWrite2B32":
@@ -1366,22 +1379,35 @@ internal static partial class Gen5SpirvTranslator
                     return true;
                 }
                 case "DsReadB64":
+                case "DsReadB96":
+                case "DsReadB128":
                 {
-                    if (instruction.Destinations.Count < 2 ||
+                    var dwordCount = instruction.Opcode switch
+                    {
+                        "DsReadB96" => 3,
+                        "DsReadB128" => 4,
+                        _ => 2,
+                    };
+                    if (instruction.Destinations.Count < dwordCount ||
                         instruction.Sources.Count < 1)
                     {
-                        error = "missing LDS read64 operand";
+                        error = "missing wide LDS read operand";
                         return false;
                     }
 
                     var address = GetRawSource(instruction, 0);
                     var offset = EffectiveDsSingleOffsetBytes(control);
-                    StoreV(
-                        instruction.Destinations[0].Value,
-                        Load(_uintType, LdsPointer(address, offset)));
-                    StoreV(
-                        instruction.Destinations[1].Value,
-                        Load(_uintType, LdsPointer(address, offset + sizeof(uint))));
+                    for (var component = 0; component < dwordCount; component++)
+                    {
+                        StoreV(
+                            instruction.Destinations[component].Value,
+                            Load(
+                                _uintType,
+                                LdsPointer(
+                                    address,
+                                    offset + ((uint)component * sizeof(uint)))));
+                    }
+
                     return true;
                 }
                 case "DsReadI8":
