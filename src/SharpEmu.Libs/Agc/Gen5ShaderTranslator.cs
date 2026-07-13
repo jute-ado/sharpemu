@@ -769,6 +769,7 @@ internal static class Gen5ShaderTranslator
         0x18 => "VCeilF64",
         0x19 => "VRndneF64",
         0x1A => "VFloorF64",
+        0x1B => "VPipeflush",
         0x20 => "VFractF32",
         0x21 => "VTruncF32",
         0x22 => "VCeilF32",
@@ -1855,7 +1856,7 @@ internal static class Gen5ShaderTranslator
                     sources = [Gen5Operand.Source(word & 0x1FF, literal)];
                 }
 
-                if (opcode == "VClrexcp")
+                if (opcode is "VNop" or "VPipeflush" or "VClrexcp")
                 {
                     sources = [];
                     destinations = [];
