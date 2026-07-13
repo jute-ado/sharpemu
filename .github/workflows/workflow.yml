@@ -38,6 +38,7 @@ jobs:
       artifact-name: ${{ steps.vars.outputs.artifact-name }}
       release-name: ${{ steps.vars.outputs.release-name }}
       release-tag: ${{ steps.vars.outputs.release-tag }}
+      sbom-name: ${{ steps.vars.outputs.sbom-name }}
       short-sha: ${{ steps.vars.outputs.short-sha }}
     steps:
       - name: Compute workflow variables
@@ -50,6 +51,7 @@ jobs:
           artifact_name="sharpemu-win64-${short_sha}"
           release_tag="win64-${safe_ref}-${short_sha}"
           release_name="SharpEmu win64 ${short_sha}"
+          sbom_name="sharpemu-win64-${short_sha}.spdx.json"
 
           {
             echo "short-sha=${short_sha}"
@@ -57,6 +59,7 @@ jobs:
             echo "artifact-name=${artifact_name}"
             echo "release-tag=${release_tag}"
             echo "release-name=${release_name}"
+            echo "sbom-name=${sbom_name}"
           } >> "$GITHUB_OUTPUT"
 
   reuse:
@@ -98,10 +101,43 @@ jobs:
         run: dotnet restore SharpEmu.slnx --locked-mode
 
       - name: Build solution
-        run: dotnet build SharpEmu.slnx -c Release --no-restore
+        run: dotnet build SharpEmu.slnx -c Release --no-restore -warnaserror
 
       - name: Publish win-x64 CLI
         run: dotnet publish src/SharpEmu.CLI/SharpEmu.CLI.csproj -c Release -r win-x64 --self-contained true --no-restore -p:PublishDir="${env:PUBLISH_DIR}"
+
+      - name: Generate SPDX SBOM
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        shell: pwsh
+        run: |
+          $tool = Join-Path $env:RUNNER_TEMP 'sbom-tool.exe'
+          Invoke-WebRequest `
+            -Uri 'https://github.com/microsoft/sbom-tool/releases/download/v4.1.5/sbom-tool-win-x64.exe' `
+            -OutFile $tool
+
+          $expectedHash = '625767b371b7fdd58f40f618b8a86da0247a33c89e419039c86b4edba1dad4b5'
+          $actualHash = (Get-FileHash -LiteralPath $tool -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+            throw "SBOM tool checksum mismatch: expected $expectedHash, received $actualHash"
+          }
+
+          & $tool generate `
+            -b $env:PUBLISH_DIR `
+            -bc $env:GITHUB_WORKSPACE `
+            -pn 'SharpEmu' `
+            -pv '${{ needs.init.outputs.short-sha }}' `
+            -ps 'SharpEmu Emulator Project' `
+            -nsb "https://github.com/${env:GITHUB_REPOSITORY}"
+
+          $manifest = Join-Path $env:PUBLISH_DIR '_manifest\spdx_2.2\manifest.spdx.json'
+          if (-not (Test-Path -LiteralPath $manifest)) {
+            throw "SBOM tool did not create $manifest"
+          }
+
+          New-Item -ItemType Directory -Path $env:RELEASE_DIR -Force | Out-Null
+          Copy-Item `
+            -LiteralPath $manifest `
+            -Destination (Join-Path $env:RELEASE_DIR '${{ needs.init.outputs.sbom-name }}')
 
       - name: Create release archive
         run: |
@@ -113,12 +149,16 @@ jobs:
           }
 
           Compress-Archive -Path (Join-Path $env:PUBLISH_DIR '*') -DestinationPath $archivePath -CompressionLevel Optimal
+          $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  ${{ needs.init.outputs.archive-name }}" | Set-Content `
+            -LiteralPath "${archivePath}.sha256" `
+            -Encoding ascii
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ needs.init.outputs.artifact-name }}
-          path: ${{ env.RELEASE_DIR }}\${{ needs.init.outputs.archive-name }}
+          path: ${{ env.RELEASE_DIR }}\*
           if-no-files-found: error
 
   release:
@@ -140,20 +180,23 @@ jobs:
       - name: Create or update release
         shell: bash
         env:
-          ARCHIVE_NAME: ${{ needs.init.outputs.archive-name }}
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_NAME: ${{ needs.init.outputs.release-name }}
           RELEASE_TAG: ${{ needs.init.outputs.release-tag }}
         run: |
-          asset_path="release/${ARCHIVE_NAME}"
           notes="Automated Windows build for commit ${GITHUB_SHA}."
+          mapfile -t assets < <(find release -maxdepth 1 -type f -print | sort)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No release assets were downloaded." >&2
+            exit 1
+          fi
 
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release upload "${RELEASE_TAG}" "${asset_path}" --clobber
+            gh release upload "${RELEASE_TAG}" "${assets[@]}" --clobber
             gh release edit "${RELEASE_TAG}" --title "${RELEASE_NAME}" --notes "${notes}"
           else
-            gh release create "${RELEASE_TAG}" "${asset_path}" \
+            gh release create "${RELEASE_TAG}" "${assets[@]}" \
               --title "${RELEASE_NAME}" \
               --notes "${notes}" \
               --target "${GITHUB_SHA}"
