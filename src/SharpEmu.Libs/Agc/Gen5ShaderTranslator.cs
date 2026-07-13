@@ -1699,6 +1699,7 @@ internal static class Gen5ShaderTranslator
             0x48 => "ImageGather4C",
             0x4E => "ImageGather4CBCl",
             0x5F => "ImageGather4CLzO",
+            0x60 => "ImageGetLod",
             _ => string.Empty,
         };
 
@@ -2504,10 +2505,20 @@ internal static class Gen5ShaderTranslator
                 imageSources.Add(Gen5Operand.Scalar(scalarSampler));
                 sources = imageSources;
                 var glc = ((word >> 13) & 1) != 0;
+                var destinationCount = opcode switch
+                {
+                    "ImageGetLod" => 2,
+                    _ when opcode.StartsWith("ImageGather4", StringComparison.Ordinal) => 4,
+                    _ when isAtomic => 1,
+                    _ => BitOperations.PopCount((word >> 8) & 0xFu),
+                };
                 destinations = opcode.StartsWith("ImageStore", StringComparison.Ordinal) ||
                     (isAtomic && !glc)
                     ? []
-                    : [Gen5Operand.Vector(vectorData)];
+                    : Enumerable
+                        .Range((int)vectorData, destinationCount)
+                        .Select(index => Gen5Operand.Vector((uint)index))
+                        .ToArray();
                 var dimension = (word >> 3) & 0x7;
                 control = new Gen5ImageControl(
                     (word >> 8) & 0xF,
