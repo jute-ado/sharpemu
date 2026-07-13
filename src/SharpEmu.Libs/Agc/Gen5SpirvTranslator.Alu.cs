@@ -1128,9 +1128,9 @@ internal static partial class Gen5SpirvTranslator
             var value = Ext(
                 50,
                 _floatType,
-                GetFloat16Source(instruction, control, 0),
-                GetFloat16Source(instruction, control, 1),
-                GetFloat16Source(instruction, control, 2));
+                GetFloat16Source(instruction, 0),
+                GetFloat16Source(instruction, 1),
+                GetFloat16Source(instruction, 2));
             value = control.OutputModifier switch
             {
                 1 => _module.AddInstruction(SpirvOp.FMul, _floatType, value, Float(2)),
@@ -1376,9 +1376,9 @@ internal static partial class Gen5SpirvTranslator
 
         private uint GetFloat16Source(
             Gen5ShaderInstruction instruction,
-            Gen5Vop3Control control,
             int sourceIndex)
         {
+            var control = instruction.Control as Gen5Vop3Control;
             uint value;
             if (!TryGetInlineFloatSource(instruction, sourceIndex, out value))
             {
@@ -1390,15 +1390,15 @@ internal static partial class Gen5SpirvTranslator
                     SpirvOp.CompositeExtract,
                     _floatType,
                     unpacked,
-                    (control.OpSelectMask >> sourceIndex) & 1);
+                    ((control?.OpSelectMask ?? 0) >> sourceIndex) & 1);
             }
 
-            if ((control.AbsoluteMask & (1u << sourceIndex)) != 0)
+            if (((control?.AbsoluteMask ?? 0) & (1u << sourceIndex)) != 0)
             {
                 value = Ext(4, _floatType, value);
             }
 
-            return (control.NegateMask & (1u << sourceIndex)) != 0
+            return ((control?.NegateMask ?? 0) & (1u << sourceIndex)) != 0
                 ? _module.AddInstruction(SpirvOp.FNegate, _floatType, value)
                 : value;
         }
@@ -2173,7 +2173,8 @@ internal static partial class Gen5SpirvTranslator
             var destination = instruction.Destinations[0].Value;
             uint condition = _module.ConstantBool(false);
             var opcode = instruction.Opcode;
-            var predicateOpcode = opcode.EndsWith("F64", StringComparison.Ordinal)
+            var predicateOpcode = opcode.EndsWith("F64", StringComparison.Ordinal) ||
+                opcode.EndsWith("F16", StringComparison.Ordinal)
                 ? opcode[..^3] + "F32"
                 : opcode;
             if (predicateOpcode is "VCmpClassF32" or "VCmpxClassF32")
@@ -2297,15 +2298,21 @@ internal static partial class Gen5SpirvTranslator
             }
             else if (predicateOpcode is not ("VCmpClassF32" or "VCmpxClassF32") &&
                      (opcode.EndsWith("F32", StringComparison.Ordinal) ||
-                      opcode.EndsWith("F64", StringComparison.Ordinal)))
+                      opcode.EndsWith("F64", StringComparison.Ordinal) ||
+                      opcode.EndsWith("F16", StringComparison.Ordinal)))
             {
                 var isFloat64 = opcode.EndsWith("F64", StringComparison.Ordinal);
+                var isFloat16 = opcode.EndsWith("F16", StringComparison.Ordinal);
                 var left = isFloat64
                     ? GetDoubleSource(instruction, 0)
-                    : GetFloatSource(instruction, 0);
+                    : isFloat16
+                        ? GetFloat16Source(instruction, 0)
+                        : GetFloatSource(instruction, 0);
                 var right = isFloat64
                     ? GetDoubleSource(instruction, 1)
-                    : GetFloatSource(instruction, 1);
+                    : isFloat16
+                        ? GetFloat16Source(instruction, 1)
+                        : GetFloatSource(instruction, 1);
                 var operation = predicateOpcode switch
                 {
                     "VCmpLtF32" or "VCmpxLtF32" => SpirvOp.FOrdLessThan,
