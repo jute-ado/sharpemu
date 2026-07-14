@@ -203,6 +203,21 @@ public sealed class NativeCpuConformanceTests
             ]
         },
         {
+            "stack-canary-xor-clears-extended-register",
+            [
+                0x49, 0xBF, 0x88, 0x77, 0x66, 0x55,
+                0x44, 0x33, 0x22, 0x11,             // mov r15, 0x1122334455667788
+                0x64, 0x4C, 0x33, 0x3C, 0x25,
+                0x28, 0x00, 0x00, 0x00,             // xor r15, fs:[0x28]
+                0x4D, 0x85, 0xFF,                   // test r15, r15
+                0x75, 0x03,                         // jne failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
             "tls-register-store-roundtrips-volatile-source",
             [
                 0x48, 0xB8, 0x88, 0x77, 0x66, 0x55,

@@ -2400,21 +2400,24 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				{
 					nint address = (nint)(ptr + i);
 					int remainingBytes = scanBytes - i;
-					if (TryPatchTlsLoadInstruction(address, ptr + i, remainingBytes))
+					if (TryPatchTlsInstruction(
+						address,
+						ptr + i,
+						remainingBytes,
+						out var tlsInstructionKind))
 					{
-						num3++;
-					}
-					else if (TryPatchTlsImmediateStoreInstruction(address, ptr + i, remainingBytes))
-					{
-						num9++;
-					}
-					else if (TryPatchTlsRegisterStoreInstruction(address, ptr + i, remainingBytes))
-					{
-						num9++;
-					}
-					else if (TryPatchStackCanaryInstruction(address, ptr + i))
-					{
-						num4++;
+						if (tlsInstructionKind == NativeTlsInstructionKind.Load)
+						{
+							num3++;
+						}
+						else if (tlsInstructionKind == NativeTlsInstructionKind.StackCanaryXor)
+						{
+							num4++;
+						}
+						else
+						{
+							num9++;
+						}
 					}
 				}
 			}
@@ -2451,137 +2454,91 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return true;
 	}
 
-	private unsafe bool TryPatchStackCanaryInstruction(nint address, byte* source)
+	private unsafe bool PatchStackCanaryInstruction(
+		nint address,
+		in NativeTlsInstruction instruction)
 	{
-		if (*source != 100)
+		var rex = 0x40;
+		if (instruction.Is64Bit)
 		{
-			return false;
+			rex |= 8;
 		}
-		byte b = 0;
-		int num = 1;
-		int num2 = 8;
-		if (source[1] >= 64 && source[1] <= 79)
+		if (instruction.Register >= 8)
 		{
-			b = source[1];
-			num = 2;
-			num2 = 9;
+			rex |= 5;
 		}
-		byte b2 = source[num];
-		if (b2 != 139 && b2 != 51)
-		{
-			return false;
-		}
-		byte b3 = source[num + 1];
-		byte b4 = source[num + 2];
-		if (b3 >> 6 != 0 || (b3 & 7) != 4 || b4 != 37)
-		{
-			return false;
-		}
-		int num3 = *(int*)(source + num + 3);
-		if (num3 != 40)
-		{
-			return false;
-		}
-		int num4 = ((b3 >> 3) & 7) | (((b & 4) != 0) ? 8 : 0);
-		bool flag = (b & 8) != 0;
-		int num5 = 64;
-		if (flag)
-		{
-			num5 |= 8;
-		}
-		if (num4 >= 8)
-		{
-			num5 |= 5;
-		}
-		byte b5 = (byte)(0xC0 | ((num4 & 7) << 3) | (num4 & 7));
+
+		var registerBits = instruction.Register & 7;
+		var modRm = (byte)(0xC0 | (registerBits << 3) | registerBits);
 		uint flNewProtect = default(uint);
-		if (!VirtualProtect((void*)address, (nuint)num2, 64u, &flNewProtect))
+		if (!VirtualProtect((void*)address, (nuint)instruction.Length, 64u, &flNewProtect))
 		{
 			return false;
 		}
 		try
 		{
-			*(byte*)address = (byte)num5;
-			*(sbyte*)(address + 1) = 49;
-			*(byte*)(address + 2) = b5;
-			for (int i = 3; i < num2; i++)
+			*(byte*)address = (byte)rex;
+			*(byte*)(address + 1) = 0x31; // xor register, register
+			*(byte*)(address + 2) = modRm;
+			for (int i = 3; i < instruction.Length; i++)
 			{
-				*(sbyte*)(address + i) = -112;
+				*(byte*)(address + i) = 0x90;
 			}
 		}
 		finally
 		{
-			VirtualProtect((void*)address, (nuint)num2, flNewProtect, &flNewProtect);
-			FlushInstructionCache(GetCurrentProcess(), (void*)address, (nuint)num2);
+			VirtualProtect((void*)address, (nuint)instruction.Length, flNewProtect, &flNewProtect);
+			FlushInstructionCache(GetCurrentProcess(), (void*)address, (nuint)instruction.Length);
 		}
 		return true;
 	}
 
-	private unsafe bool TryPatchTlsLoadInstruction(nint address, byte* source, int availableLength)
+	private unsafe bool TryPatchTlsInstruction(
+		nint address,
+		byte* source,
+		int availableLength,
+		out NativeTlsInstructionKind instructionKind)
 	{
-		if (availableLength < MinTlsPatchInstructionBytes)
+		instructionKind = default;
+		if (availableLength < MinTlsPatchInstructionBytes ||
+			(source[0] != 0x64 && source[0] != 0x66))
 		{
 			return false;
 		}
 
-		var offset = 0;
-		var hasOperandSizeOverride = false;
-		while (offset < availableLength && source[offset] == 0x66)
-		{
-			hasOperandSizeOverride = true;
-			offset++;
-		}
-
-		if (offset >= availableLength || source[offset] != 0x64)
+		var candidateLength = Math.Min(15, availableLength);
+		if (!NativeTlsInstructionDecoder.TryDecode(
+				new ReadOnlySpan<byte>(source, candidateLength),
+				out var instruction))
 		{
 			return false;
 		}
 
-		offset++;
-		if (offset >= availableLength)
+		var patched = instruction.Kind switch
 		{
-			return false;
+			NativeTlsInstructionKind.Load => PatchTlsLoadInstruction(
+				address,
+				instruction.Length,
+				instruction.Register,
+				instruction.Displacement,
+				instruction.Is64Bit),
+			NativeTlsInstructionKind.RegisterStore => PatchTlsRegisterStoreInstruction(
+				address,
+				in instruction),
+			NativeTlsInstructionKind.ImmediateStore => PatchTlsImmediateStoreInstruction(
+				address,
+				in instruction),
+			NativeTlsInstructionKind.StackCanaryXor => PatchStackCanaryInstruction(
+				address,
+				in instruction),
+			_ => false,
+		};
+		if (patched)
+		{
+			instructionKind = instruction.Kind;
 		}
 
-		var rex = (byte)0;
-		if (source[offset] >= 0x40 && source[offset] <= 0x4F)
-		{
-			rex = source[offset];
-			offset++;
-		}
-
-		if (offset + 7 > availableLength || source[offset] != 0x8B)
-		{
-			return false;
-		}
-
-		var modRm = source[offset + 1];
-		var sib = source[offset + 2];
-		if ((modRm >> 6) != 0 || (modRm & 7) != 4 || sib != 0x25)
-		{
-			return false;
-		}
-
-		var displacement = *(int*)(source + offset + 3);
-		var is64Bit = (rex & 8) != 0;
-		if (!is64Bit && hasOperandSizeOverride)
-		{
-			return false;
-		}
-
-		var destinationRegister = ((modRm >> 3) & 7) | (((rex & 4) != 0) ? 8 : 0);
-		var instructionLength = offset + 7;
-		if (instructionLength < MinTlsPatchInstructionBytes)
-		{
-			return false;
-		}
-
-		return PatchTlsLoadInstruction(
-			address,
-			instructionLength,
-			destinationRegister,
-			displacement,
-			is64Bit);
+		return patched;
 	}
 
 	private unsafe bool PatchTlsLoadInstruction(
@@ -2750,67 +2707,15 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return helper;
 	}
 
-	private unsafe bool TryPatchTlsRegisterStoreInstruction(nint address, byte* source, int availableLength)
+	private unsafe bool PatchTlsRegisterStoreInstruction(
+		nint address,
+		in NativeTlsInstruction instruction)
 	{
-		if (availableLength < MinTlsPatchInstructionBytes)
-		{
-			return false;
-		}
-
-		var offset = 0;
-		var hasOperandSizeOverride = false;
-		while (offset < availableLength && source[offset] == 0x66)
-		{
-			hasOperandSizeOverride = true;
-			offset++;
-		}
-
-		if (offset >= availableLength || source[offset] != 0x64)
-		{
-			return false;
-		}
-
-		offset++;
-		if (offset >= availableLength)
-		{
-			return false;
-		}
-
-		var rex = (byte)0;
-		if (source[offset] >= 0x40 && source[offset] <= 0x4F)
-		{
-			rex = source[offset];
-			offset++;
-		}
-
-		if (offset + 7 > availableLength || source[offset] != 0x89)
-		{
-			return false;
-		}
-
-		var modRm = source[offset + 1];
-		var sib = source[offset + 2];
-		if ((modRm >> 6) != 0 || (modRm & 7) != 4 || sib != 0x25)
-		{
-			return false;
-		}
-
-		var displacement = *(int*)(source + offset + 3);
-		var is64Bit = (rex & 8) != 0;
-		if (!is64Bit && hasOperandSizeOverride)
-		{
-			return false;
-		}
-
-		var sourceRegister = ((modRm >> 3) & 7) | (((rex & 4) != 0) ? 8 : 0);
-		var instructionLength = offset + 7;
-		if (instructionLength < MinTlsPatchInstructionBytes)
-		{
-			return false;
-		}
-
-		var helper = GetOrCreateTlsStoreHelper(sourceRegister, displacement, is64Bit);
-		return helper != 0 && PatchCallSite(address, instructionLength, helper);
+		var helper = GetOrCreateTlsStoreHelper(
+			instruction.Register,
+			instruction.Displacement,
+			instruction.Is64Bit);
+		return helper != 0 && PatchCallSite(address, instruction.Length, helper);
 	}
 
 	private unsafe nint GetOrCreateTlsStoreHelper(
@@ -2938,74 +2843,20 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return helper;
 	}
 
-	private unsafe bool TryPatchTlsImmediateStoreInstruction(
+	private unsafe bool PatchTlsImmediateStoreInstruction(
 		nint address,
-		byte* source,
-		int availableLength)
+		in NativeTlsInstruction instruction)
 	{
-		if (availableLength < MinTlsPatchInstructionBytes)
-		{
-			return false;
-		}
-
-		var offset = 0;
-		var hasOperandSizeOverride = false;
-		while (offset < availableLength && source[offset] == 0x66)
-		{
-			hasOperandSizeOverride = true;
-			offset++;
-		}
-
-		if (offset >= availableLength || source[offset] != 0x64)
-		{
-			return false;
-		}
-
-		offset++;
-		if (offset >= availableLength)
-		{
-			return false;
-		}
-
-		var rex = (byte)0;
-		if (source[offset] >= 0x40 && source[offset] <= 0x4F)
-		{
-			rex = source[offset];
-			offset++;
-		}
-
-		const int encodedOperandLength = 11;
-		if (offset + encodedOperandLength > availableLength || source[offset] != 0xC7)
-		{
-			return false;
-		}
-
-		var modRm = source[offset + 1];
-		var sib = source[offset + 2];
-		if ((modRm >> 6) != 0 || (modRm & 0x3F) != 4 || sib != 0x25)
-		{
-			return false;
-		}
-
-		var is64Bit = (rex & 8) != 0;
-		if (!is64Bit && hasOperandSizeOverride)
-		{
-			return false;
-		}
-
-		var displacement = *(int*)(source + offset + 3);
-		var immediateValue = *(int*)(source + offset + 7);
-		var instructionLength = offset + encodedOperandLength;
 		var helper = GetOrCreateTlsImmediateStoreHelper(
-			displacement,
-			immediateValue,
-			is64Bit);
+			instruction.Displacement,
+			instruction.ImmediateValue,
+			instruction.Is64Bit);
 		if (helper == 0)
 		{
 			return false;
 		}
 
-		return PatchCallSite(address, instructionLength, helper);
+		return PatchCallSite(address, instruction.Length, helper);
 	}
 
 	private unsafe nint GetOrCreateTlsImmediateStoreHelper(
