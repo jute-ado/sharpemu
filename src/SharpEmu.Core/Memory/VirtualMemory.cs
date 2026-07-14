@@ -6,7 +6,7 @@ using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Memory;
 
-public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory
+public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVirtualMemoryQuery
 {
     private readonly object _gate = new();
     private readonly List<MappedRegion> _regions = new();
@@ -111,6 +111,41 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory
         }
     }
 
+    public bool TryQueryMemoryRegion(
+        ulong address,
+        bool findNext,
+        out GuestVirtualMemoryRegion region)
+    {
+        lock (_gate)
+        {
+            MappedRegion? next = null;
+            foreach (var candidate in _regions)
+            {
+                if (address >= candidate.Region.VirtualAddress && address < candidate.EndAddress)
+                {
+                    region = ToGuestMemoryRegion(candidate);
+                    return true;
+                }
+
+                if (findNext &&
+                    candidate.Region.VirtualAddress >= address &&
+                    (next is null || candidate.Region.VirtualAddress < next.Value.Region.VirtualAddress))
+                {
+                    next = candidate;
+                }
+            }
+
+            if (next is not null)
+            {
+                region = ToGuestMemoryRegion(next.Value);
+                return true;
+            }
+        }
+
+        region = default;
+        return false;
+    }
+
     public bool TryRead(ulong virtualAddress, Span<byte> destination)
     {
         lock (_gate)
@@ -162,6 +197,30 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory
         region = default;
         offset = 0;
         return false;
+    }
+
+    private static GuestVirtualMemoryRegion ToGuestMemoryRegion(MappedRegion region)
+    {
+        var protection = 0;
+        if ((region.Region.Protection & ProgramHeaderFlags.Read) != 0)
+        {
+            protection |= 0x01;
+        }
+
+        if ((region.Region.Protection & ProgramHeaderFlags.Write) != 0)
+        {
+            protection |= 0x02;
+        }
+
+        if ((region.Region.Protection & ProgramHeaderFlags.Execute) != 0)
+        {
+            protection |= 0x04;
+        }
+
+        return new GuestVirtualMemoryRegion(
+            region.Region.VirtualAddress,
+            region.Region.MemorySize,
+            protection);
     }
 
     private readonly record struct MappedRegion(VirtualMemoryRegion Region, ulong EndAddress, byte[] BackingMemory);

@@ -3117,13 +3117,32 @@ public static partial class KernelMemoryCompatExports
 
         MappedRegion region;
         var memoryType = 0;
+        var findNext = (flags & 0x1) != 0;
+        MappedRegion trackedRegion;
+        bool hasTrackedRegion;
         lock (_memoryGate)
         {
-            if (!TryFindVirtualQueryRegionLocked(queryAddress, findNext: (flags & 0x1) != 0, out region))
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
-            }
+            hasTrackedRegion = TryFindVirtualQueryRegionLocked(queryAddress, findNext, out trackedRegion);
+        }
 
+        var hasBackingRegion = TryFindBackingVirtualQueryRegion(
+            ctx,
+            queryAddress,
+            findNext,
+            out var backingRegion);
+        if (!TrySelectVirtualQueryRegion(
+                queryAddress,
+                hasTrackedRegion,
+                trackedRegion,
+                hasBackingRegion,
+                backingRegion,
+                out region))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+        }
+
+        lock (_memoryGate)
+        {
             if (region.IsDirect && TryFindDirectAllocationLocked(region.DirectStart, out var allocation))
             {
                 memoryType = allocation.MemoryType;
@@ -3180,6 +3199,73 @@ public static partial class KernelMemoryCompatExports
 
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static bool TryFindBackingVirtualQueryRegion(
+        CpuContext ctx,
+        ulong queryAddress,
+        bool findNext,
+        out MappedRegion region)
+    {
+        if (ctx.Memory is IGuestVirtualMemoryQuery query &&
+            query.TryQueryMemoryRegion(queryAddress, findNext, out var backingRegion))
+        {
+            region = new MappedRegion(
+                backingRegion.Address,
+                backingRegion.Length,
+                backingRegion.Protection,
+                IsFlexible: false,
+                IsDirect: false,
+                DirectStart: 0);
+            return true;
+        }
+
+        region = default;
+        return false;
+    }
+
+    private static bool TrySelectVirtualQueryRegion(
+        ulong queryAddress,
+        bool hasTrackedRegion,
+        MappedRegion trackedRegion,
+        bool hasBackingRegion,
+        MappedRegion backingRegion,
+        out MappedRegion region)
+    {
+        if (hasTrackedRegion && ContainsAddress(trackedRegion, queryAddress))
+        {
+            region = trackedRegion;
+            return true;
+        }
+
+        if (hasBackingRegion && ContainsAddress(backingRegion, queryAddress))
+        {
+            region = backingRegion;
+            return true;
+        }
+
+        if (hasTrackedRegion &&
+            (!hasBackingRegion || trackedRegion.Address <= backingRegion.Address))
+        {
+            region = trackedRegion;
+            return true;
+        }
+
+        if (hasBackingRegion)
+        {
+            region = backingRegion;
+            return true;
+        }
+
+        region = default;
+        return false;
+    }
+
+    private static bool ContainsAddress(MappedRegion region, ulong address)
+    {
+        return TryAddU64(region.Address, region.Length, out var end) &&
+               address >= region.Address &&
+               address < end;
     }
 
     [SysAbiExport(
