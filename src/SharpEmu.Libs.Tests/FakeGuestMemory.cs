@@ -18,6 +18,18 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestMemoryAllocator, IGuestS
     public void AddRegion(ulong baseAddress, byte[] data)
         => _regions.Add((baseAddress, data));
 
+    public bool RemoveRegion(ulong baseAddress)
+    {
+        var index = _regions.FindIndex(region => region.Base == baseAddress);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        _regions.RemoveAt(index);
+        return true;
+    }
+
     public void RegisterStackRange(ulong start, ulong size)
         => _stackRanges.Add((start, checked(start + size)));
 
