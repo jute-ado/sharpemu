@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers.Binary;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
 using Xunit;
@@ -77,13 +78,69 @@ public sealed class PthreadConditionCompatibilityTests
         }
     }
 
-    private static CpuContext CreateContext()
+    [Theory]
+    [InlineData(-1L)]
+    [InlineData(1_000_000_000L)]
+    public void PosixTimedwaitRejectsInvalidNanoseconds(long nanoseconds)
+    {
+        var context = CreateContext(deadlineNanoseconds: nanoseconds);
+        InitializeConditionAndMutex(context);
+
+        try
+        {
+            LockMutex(context);
+            context[CpuRegister.Rdi] = CondAddress;
+            context[CpuRegister.Rsi] = MutexAddress;
+            context[CpuRegister.Rdx] = DeadlineAddress;
+
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+                KernelPthreadCompatExports.PosixPthreadCondTimedwait(context));
+
+            UnlockMutex(context);
+        }
+        finally
+        {
+            DestroyConditionAndMutex(context);
+        }
+    }
+
+    [Fact]
+    public void PosixTimedwaitTreatsNegativeSecondsAsExpired()
+    {
+        var context = CreateContext(deadlineSeconds: -1);
+        InitializeConditionAndMutex(context);
+
+        try
+        {
+            LockMutex(context);
+            context[CpuRegister.Rdi] = CondAddress;
+            context[CpuRegister.Rsi] = MutexAddress;
+            context[CpuRegister.Rdx] = DeadlineAddress;
+
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT,
+                KernelPthreadCompatExports.PosixPthreadCondTimedwait(context));
+
+            UnlockMutex(context);
+        }
+        finally
+        {
+            DestroyConditionAndMutex(context);
+        }
+    }
+
+    private static CpuContext CreateContext(
+        long deadlineSeconds = 0,
+        long deadlineNanoseconds = 0)
     {
         var memory = new FakeGuestMemory();
         memory.AddRegion(CondAddress, new byte[sizeof(ulong)]);
         memory.AddRegion(MutexAddress, new byte[sizeof(ulong)]);
-        // An all-zero timespec is an already-expired absolute deadline.
-        memory.AddRegion(DeadlineAddress, new byte[2 * sizeof(ulong)]);
+        var deadline = new byte[2 * sizeof(ulong)];
+        BinaryPrimitives.WriteInt64LittleEndian(deadline, deadlineSeconds);
+        BinaryPrimitives.WriteInt64LittleEndian(deadline.AsSpan(sizeof(ulong)), deadlineNanoseconds);
+        memory.AddRegion(DeadlineAddress, deadline);
         return new CpuContext(memory, Generation.Gen5);
     }
 
