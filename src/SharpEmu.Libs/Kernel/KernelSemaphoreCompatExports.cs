@@ -33,7 +33,6 @@ public static class KernelSemaphoreCompatExports
     {
         public required int NeedCount { get; init; }
         public required int CancelEpochAtBlock { get; init; }
-        public bool Timed { get; init; }
 
         // Written and read only under the owning semaphore's Gate.
         public int? Result { get; set; }
@@ -171,14 +170,18 @@ public static class KernelSemaphoreCompatExports
                     {
                         NeedCount = needCount,
                         CancelEpochAtBlock = semaphore.CancelEpoch,
-                        Timed = true,
                     };
                     if (GuestThreadExecution.RequestCurrentThreadBlock(
                             ctx,
                             "sceKernelWaitSema",
                             GetSemaphoreWakeKey(handle),
                             resumeHandler: () => CompleteBlockedTimedSemaWait(ctx, semaphore, timedWaiter, timeoutAddress, deadline),
-                            wakeHandler: () => TryConsumeBlockedSemaWait(semaphore, timedWaiter),
+                            wakeHandler: () => TryCompleteBlockedTimedSemaWait(
+                                ctx,
+                                semaphore,
+                                timedWaiter,
+                                timeoutAddress,
+                                deadline),
                             blockDeadlineTimestamp: deadline))
                     {
                         semaphore.WaitingThreads++;
@@ -454,39 +457,111 @@ public static class KernelSemaphoreCompatExports
         ulong timeoutAddress,
         long deadlineTimestamp)
     {
-        int result;
         lock (semaphore.Gate)
         {
-            if (waiter.Result is null && !TryConsumeBlockedSemaWaitLocked(semaphore, waiter))
+            if (waiter.Result is null &&
+                !TryCompleteBlockedTimedSemaWaitLocked(
+                    ctx,
+                    semaphore,
+                    waiter,
+                    timeoutAddress,
+                    deadlineTimestamp))
             {
-                waiter.Result = (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
+                waiter.Result = KernelMemoryCompatExports.TryWriteUInt32Compat(
+                    ctx,
+                    timeoutAddress,
+                    0)
+                    ? (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT
+                    : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
                 semaphore.WaitingThreads = Math.Max(0, semaphore.WaitingThreads - 1);
                 TraceSemaphore($"wake-timeout name='{semaphore.Name}' need={waiter.NeedCount} count={semaphore.Count} waiters={semaphore.WaitingThreads}");
             }
 
-            result = waiter.Result!.Value;
+            return waiter.Result!.Value;
+        }
+    }
+
+    private static bool TryCompleteBlockedTimedSemaWait(
+        CpuContext ctx,
+        KernelSemaphoreState semaphore,
+        SemaphoreWaiter waiter,
+        ulong timeoutAddress,
+        long deadlineTimestamp)
+    {
+        lock (semaphore.Gate)
+        {
+            return TryCompleteBlockedTimedSemaWaitLocked(
+                ctx,
+                semaphore,
+                waiter,
+                timeoutAddress,
+                deadlineTimestamp);
+        }
+    }
+
+    private static bool TryCompleteBlockedTimedSemaWaitLocked(
+        CpuContext ctx,
+        KernelSemaphoreState semaphore,
+        SemaphoreWaiter waiter,
+        ulong timeoutAddress,
+        long deadlineTimestamp)
+    {
+        if (waiter.Result is not null)
+        {
+            return true;
+        }
+
+        int result;
+        uint remainingMicros;
+        if (semaphore.Deleted)
+        {
+            result = (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED;
+            remainingMicros = 0;
+        }
+        else if (semaphore.CancelEpoch != waiter.CancelEpochAtBlock)
+        {
+            result = (int)OrbisGen2Result.ORBIS_GEN2_ERROR_CANCELED;
+            remainingMicros = 0;
+        }
+        else if (semaphore.Count >= waiter.NeedCount)
+        {
+            result = (int)OrbisGen2Result.ORBIS_GEN2_OK;
+            var remainingTicks = deadlineTimestamp - Stopwatch.GetTimestamp();
+            remainingMicros = remainingTicks <= 0
+                ? 0u
+                : (uint)Math.Min(
+                    uint.MaxValue,
+                    remainingTicks / (double)Stopwatch.Frequency * 1_000_000d);
+        }
+        else
+        {
+            return false;
+        }
+
+        if (!KernelMemoryCompatExports.TryWriteUInt32Compat(
+                ctx,
+                timeoutAddress,
+                remainingMicros))
+        {
+            waiter.Result = (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            semaphore.WaitingThreads = Math.Max(0, semaphore.WaitingThreads - 1);
+            TraceSemaphore($"wake-copyout-fault name='{semaphore.Name}' need={waiter.NeedCount} count={semaphore.Count} waiters={semaphore.WaitingThreads}");
+            return true;
         }
 
         if (result == (int)OrbisGen2Result.ORBIS_GEN2_OK)
         {
-            var remainingTicks = deadlineTimestamp - Stopwatch.GetTimestamp();
-            var remainingMicros = remainingTicks <= 0
-                ? 0u
-                : (uint)Math.Min(uint.MaxValue, remainingTicks / (double)Stopwatch.Frequency * 1_000_000d);
-            _ = KernelMemoryCompatExports.TryWriteUInt32Compat(
-                ctx,
-                timeoutAddress,
-                remainingMicros);
+            semaphore.Count -= waiter.NeedCount;
+            TraceSemaphore($"wake-consume name='{semaphore.Name}' need={waiter.NeedCount} count={semaphore.Count} waiters={Math.Max(0, semaphore.WaitingThreads - 1)}");
         }
         else
         {
-            _ = KernelMemoryCompatExports.TryWriteUInt32Compat(
-                ctx,
-                timeoutAddress,
-                0);
+            TraceSemaphore($"wake-result name='{semaphore.Name}' need={waiter.NeedCount} result=0x{result:X8}");
         }
 
-        return result;
+        waiter.Result = result;
+        semaphore.WaitingThreads = Math.Max(0, semaphore.WaitingThreads - 1);
+        return true;
     }
 
     private static void TraceSemaphore(string message)
