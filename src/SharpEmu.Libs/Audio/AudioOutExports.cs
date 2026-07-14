@@ -27,6 +27,7 @@ public static class AudioOutExports
             int channels,
             int bytesPerSample,
             bool isFloat,
+            int bufferByteLength,
             WinMmAudioPort? backend)
         {
             UserId = userId;
@@ -37,6 +38,7 @@ public static class AudioOutExports
             Channels = channels;
             BytesPerSample = bytesPerSample;
             IsFloat = isFloat;
+            BufferByteLength = bufferByteLength;
             Backend = backend;
         }
 
@@ -48,9 +50,8 @@ public static class AudioOutExports
         public int Channels { get; }
         public int BytesPerSample { get; }
         public bool IsFloat { get; }
+        public int BufferByteLength { get; }
         public WinMmAudioPort? Backend { get; }
-        public int BufferByteLength =>
-            checked((int)BufferLength * Channels * BytesPerSample);
 
         public void PaceSilence()
         {
@@ -97,8 +98,14 @@ public static class AudioOutExports
         var bufferLength = unchecked((uint)ctx[CpuRegister.Rcx]);
         var frequency = unchecked((uint)ctx[CpuRegister.R8]);
         var format = unchecked((int)ctx[CpuRegister.R9]);
-        if (bufferLength == 0 || frequency == 0 ||
-            !TryGetFormat(format, out var channels, out var bytesPerSample, out var isFloat))
+        if (frequency != 48_000 ||
+            !TryGetBufferLayout(
+                format,
+                bufferLength,
+                out var channels,
+                out var bytesPerSample,
+                out var isFloat,
+                out var bufferByteLength))
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
@@ -127,6 +134,7 @@ public static class AudioOutExports
             channels,
             bytesPerSample,
             isFloat,
+            bufferByteLength,
             backend);
         Console.Error.WriteLine(
             $"[LOADER][INFO] AudioOut port {handle}: {frequency} Hz, " +
@@ -230,5 +238,28 @@ public static class AudioOutExports
         bytesPerSample = format is >= 3 and <= 5 or 7 ? 4 : 2;
         isFloat = bytesPerSample == 4;
         return channels != 0;
+    }
+
+    internal static bool TryGetBufferLayout(
+        int rawFormat,
+        uint bufferLength,
+        out int channels,
+        out int bytesPerSample,
+        out bool isFloat,
+        out int bufferByteLength)
+    {
+        if (bufferLength is < 256 or > 2_048 ||
+            (bufferLength & 0xFF) != 0 ||
+            !TryGetFormat(rawFormat, out channels, out bytesPerSample, out isFloat))
+        {
+            channels = 0;
+            bytesPerSample = 0;
+            isFloat = false;
+            bufferByteLength = 0;
+            return false;
+        }
+
+        bufferByteLength = (int)bufferLength * channels * bytesPerSample;
+        return true;
     }
 }
