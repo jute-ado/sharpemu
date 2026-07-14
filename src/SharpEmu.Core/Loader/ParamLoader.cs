@@ -56,12 +56,17 @@ public static class Ps5ParamJsonReader
 
     private static (string? Title, string? TitleId, string? Version) TryReadPs5Param(JsonElement root)
     {
-        string? titleId = root.TryGetProperty("titleId", out var eTid) ? eTid.GetString() : null;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return default;
+        }
+
+        var titleId = TryGetString(root, "titleId");
 
         string? ver =
-            (root.TryGetProperty("contentVersion", out var cv) ? cv.GetString() : null)
-            ?? (root.TryGetProperty("masterVersion", out var mv) ? mv.GetString() : null)
-            ?? (root.TryGetProperty("targetContentVersion", out var tv) ? tv.GetString() : null);
+            TryGetString(root, "contentVersion")
+            ?? TryGetString(root, "masterVersion")
+            ?? TryGetString(root, "targetContentVersion");
 
         string? title = ExtractTitleName(root);
 
@@ -70,34 +75,51 @@ public static class Ps5ParamJsonReader
 
     private static string? ExtractTitleName(JsonElement root)
     {
-        if (!root.TryGetProperty("localizedParameters", out var lp))
+        if (!TryGetObject(root, "localizedParameters", out var lp))
         {
-            if (root.TryGetProperty("disc", out var disc) && disc.ValueKind == JsonValueKind.Object)
+            if (!TryGetObject(root, "disc", out var disc) ||
+                !TryGetObject(disc, "localizedParameters", out lp))
             {
-                disc.TryGetProperty("localizedParameters", out lp);
+                return null;
             }
         }
 
-        if (lp.ValueKind != JsonValueKind.Object)
-            return null;
-
-        string? defLang = lp.TryGetProperty("defaultLanguage", out var dl) ? dl.GetString() : null;
+        var defLang = TryGetString(lp, "defaultLanguage");
 
         if (!string.IsNullOrEmpty(defLang))
         {
-            if (lp.TryGetProperty(defLang, out var langObj) && langObj.ValueKind == JsonValueKind.Object)
+            if (TryGetObject(lp, defLang, out var langObj))
             {
-                if (langObj.TryGetProperty("titleName", out var tn))
-                    return tn.GetString();
+                var title = TryGetString(langObj, "titleName");
+                if (title is not null)
+                {
+                    return title;
+                }
             }
         }
 
-        if (lp.TryGetProperty("en-US", out var en) && en.ValueKind == JsonValueKind.Object)
+        return TryGetObject(lp, "en-US", out var english)
+            ? TryGetString(english, "titleName")
+            : null;
+    }
+
+    private static bool TryGetObject(JsonElement parent, string propertyName, out JsonElement value)
+    {
+        if (parent.ValueKind == JsonValueKind.Object &&
+            parent.TryGetProperty(propertyName, out value) &&
+            value.ValueKind == JsonValueKind.Object)
         {
-            if (en.TryGetProperty("titleName", out var tn2))
-                return tn2.GetString();
+            return true;
         }
 
-        return null;
+        value = default;
+        return false;
     }
+
+    private static string? TryGetString(JsonElement parent, string propertyName) =>
+        parent.ValueKind == JsonValueKind.Object &&
+        parent.TryGetProperty(propertyName, out var value) &&
+        value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
 }
