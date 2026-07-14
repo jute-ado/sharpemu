@@ -322,35 +322,41 @@ public static class PadExports
     private static bool WriteNeutralPadData(CpuContext ctx, ulong dataAddress)
     {
         Span<byte> data = stackalloc byte[PadDataSize];
-        data.Clear();
         var input = ReadHostInputState();
-        var buttons = input.Buttons;
-        var leftX = input.LeftX;
-        var leftY = input.LeftY;
-        var rightX = input.RightX;
-        var rightY = input.RightY;
-        var l2 = input.L2;
-        var r2 = input.R2;
-
-        BinaryPrimitives.WriteUInt32LittleEndian(data[0x00..], buttons);
-        data[0x04] = leftX;
-        data[0x05] = leftY;
-        data[0x06] = rightX;
-        data[0x07] = rightY;
-        data[0x08] = l2;
-        data[0x09] = r2;
-        BinaryPrimitives.WriteSingleLittleEndian(data[0x18..], 1.0f);
-        data[0x4C] = 1;
         var timestampTicks = Stopwatch.GetTimestamp();
         var timestampMicroseconds =
             ((ulong)(timestampTicks / Stopwatch.Frequency) * 1_000_000UL) +
             ((ulong)(timestampTicks % Stopwatch.Frequency) * 1_000_000UL / (ulong)Stopwatch.Frequency);
-        BinaryPrimitives.WriteUInt64LittleEndian(
-            data[0x50..],
-            timestampMicroseconds);
-        data[0x68] = 1;
+        EncodePadData(data, input, timestampMicroseconds);
 
         return ctx.Memory.TryWrite(dataAddress, data);
+    }
+
+    internal static void EncodePadData(
+        Span<byte> data,
+        PadState input,
+        ulong timestampMicroseconds)
+    {
+        if (data.Length < PadDataSize)
+        {
+            throw new ArgumentException(
+                $"Pad data requires at least {PadDataSize} bytes.",
+                nameof(data));
+        }
+
+        data = data[..PadDataSize];
+        data.Clear();
+        BinaryPrimitives.WriteUInt32LittleEndian(data[0x00..], input.Buttons);
+        data[0x04] = input.LeftX;
+        data[0x05] = input.LeftY;
+        data[0x06] = input.RightX;
+        data[0x07] = input.RightY;
+        data[0x08] = input.L2;
+        data[0x09] = input.R2;
+        BinaryPrimitives.WriteSingleLittleEndian(data[0x18..], 1.0f);
+        data[0x4C] = input.Connected ? (byte)1 : (byte)0;
+        BinaryPrimitives.WriteUInt64LittleEndian(data[0x50..], timestampMicroseconds);
+        data[0x68] = 1;
     }
 
     private static PadState ReadHostInputState()
@@ -417,10 +423,16 @@ public static class PadExports
     private static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);
 
     private static bool IsKeyDown(int vk) =>
+        OperatingSystem.IsWindows() &&
         (GetAsyncKeyState(vk) & 0x8000) != 0;
 
     private static bool IsEmulatorWindowFocused()
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
         var foregroundWindow = GetForegroundWindow();
         if (foregroundWindow == 0)
         {
