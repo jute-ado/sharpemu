@@ -3695,8 +3695,8 @@ internal static partial class Gen5SpirvTranslator
                     "VCmpGtF32" or "VCmpxGtF32" => SpirvOp.FOrdGreaterThan,
                     "VCmpLgF32" or "VCmpxLgF32" => SpirvOp.FOrdNotEqual,
                     "VCmpGeF32" or "VCmpxGeF32" => SpirvOp.FOrdGreaterThanEqual,
-                    "VCmpNlgF32" or "VCmpxNlgF32" => SpirvOp.FUnordEqual,
                     "VCmpNeqF32" or "VCmpxNeqF32" => SpirvOp.FUnordNotEqual,
+                    "VCmpNlgF32" or "VCmpxNlgF32" => SpirvOp.FUnordEqual,
                     "VCmpNltF32" or "VCmpxNltF32" => SpirvOp.FUnordGreaterThanEqual,
                     "VCmpNleF32" or "VCmpxNleF32" => SpirvOp.FUnordGreaterThan,
                     "VCmpNgtF32" or "VCmpxNgtF32" => SpirvOp.FUnordLessThanEqual,
@@ -3778,6 +3778,8 @@ internal static partial class Gen5SpirvTranslator
                 condition = _module.AddInstruction(operation, _boolType, left, right);
             }
 
+            // On gfx10, VCmpx writes EXEC only and preserves VCC; the sdst
+            // operand was removed from the cmpx encodings on this generation.
             if (opcode.StartsWith("VCmpx", StringComparison.Ordinal))
             {
                 var active = _module.AddInstruction(
