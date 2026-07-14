@@ -19,7 +19,9 @@ internal readonly record struct NativeTlsInstruction(
     int Register,
     int Displacement,
     int ImmediateValue,
-    bool Is64Bit);
+    bool Is64Bit,
+    int MemorySize,
+    bool SignExtend);
 
 internal static class NativeTlsInstructionDecoder
 {
@@ -63,6 +65,8 @@ internal static class NativeTlsInstructionDecoder
                         instruction.Op0Register,
                         displacement,
                         instruction.Code == Code.Mov_r64_rm64,
+                        instruction.Code == Code.Mov_r64_rm64 ? 8 : 4,
+                        signExtend: false,
                         out tlsInstruction);
 
                 case Code.Mov_rm32_r32:
@@ -73,6 +77,47 @@ internal static class NativeTlsInstructionDecoder
                         instruction.Op1Register,
                         displacement,
                         instruction.Code == Code.Mov_rm64_r64,
+                        instruction.Code == Code.Mov_rm64_r64 ? 8 : 4,
+                        signExtend: false,
+                        out tlsInstruction);
+
+                case Code.Movzx_r32_rm8:
+                case Code.Movzx_r64_rm8:
+                case Code.Movzx_r32_rm16:
+                case Code.Movzx_r64_rm16:
+                    return TryCreateRegisterInstruction(
+                        in instruction,
+                        NativeTlsInstructionKind.Load,
+                        instruction.Op0Register,
+                        displacement,
+                        instruction.Code is Code.Movzx_r64_rm8 or Code.Movzx_r64_rm16,
+                        instruction.Code is Code.Movzx_r32_rm8 or Code.Movzx_r64_rm8 ? 1 : 2,
+                        signExtend: false,
+                        out tlsInstruction);
+
+                case Code.Movsx_r32_rm8:
+                case Code.Movsx_r64_rm8:
+                case Code.Movsx_r32_rm16:
+                case Code.Movsx_r64_rm16:
+                    return TryCreateRegisterInstruction(
+                        in instruction,
+                        NativeTlsInstructionKind.Load,
+                        instruction.Op0Register,
+                        displacement,
+                        instruction.Code is Code.Movsx_r64_rm8 or Code.Movsx_r64_rm16,
+                        instruction.Code is Code.Movsx_r32_rm8 or Code.Movsx_r64_rm8 ? 1 : 2,
+                        signExtend: true,
+                        out tlsInstruction);
+
+                case Code.Movsxd_r64_rm32:
+                    return TryCreateRegisterInstruction(
+                        in instruction,
+                        NativeTlsInstructionKind.Load,
+                        instruction.Op0Register,
+                        displacement,
+                        is64Bit: true,
+                        memorySize: 4,
+                        signExtend: true,
                         out tlsInstruction);
 
                 case Code.Mov_rm32_imm32:
@@ -82,7 +127,9 @@ internal static class NativeTlsInstructionDecoder
                         Register: 0,
                         displacement,
                         unchecked((int)instruction.Immediate32),
-                        Is64Bit: false);
+                        Is64Bit: false,
+                        MemorySize: 4,
+                        SignExtend: false);
                     return true;
 
                 case Code.Mov_rm64_imm32:
@@ -92,7 +139,9 @@ internal static class NativeTlsInstructionDecoder
                         Register: 0,
                         displacement,
                         unchecked((int)instruction.Immediate32to64),
-                        Is64Bit: true);
+                        Is64Bit: true,
+                        MemorySize: 8,
+                        SignExtend: false);
                     return true;
 
                 case Code.Xor_r32_rm32:
@@ -108,6 +157,8 @@ internal static class NativeTlsInstructionDecoder
                         instruction.Op0Register,
                         displacement,
                         instruction.Code == Code.Xor_r64_rm64,
+                        instruction.Code == Code.Xor_r64_rm64 ? 8 : 4,
+                        signExtend: false,
                         out tlsInstruction);
 
                 default:
@@ -126,6 +177,8 @@ internal static class NativeTlsInstructionDecoder
         Register register,
         int displacement,
         bool is64Bit,
+        int memorySize,
+        bool signExtend,
         out NativeTlsInstruction tlsInstruction)
     {
         var expectedBase = is64Bit ? Register.RAX : Register.EAX;
@@ -141,7 +194,9 @@ internal static class NativeTlsInstructionDecoder
             register.GetNumber(),
             displacement,
             ImmediateValue: 0,
-            is64Bit);
+            is64Bit,
+            memorySize,
+            signExtend);
         return true;
     }
 

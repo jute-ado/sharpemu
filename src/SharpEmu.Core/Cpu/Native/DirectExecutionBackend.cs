@@ -210,7 +210,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private nint _sleepAddress;
 
 	private int _tlsPatchStubOffset;
-	private readonly Dictionary<(int DestinationRegister, int Displacement, bool Is64Bit), nint> _tlsLoadHelpers = new();
+	private readonly Dictionary<(int DestinationRegister, int Displacement, bool Is64Bit, int MemorySize, bool SignExtend), nint> _tlsLoadHelpers = new();
 	private readonly Dictionary<(int SourceRegister, int Displacement, bool Is64Bit), nint> _tlsStoreHelpers = new();
 	private readonly Dictionary<(int Displacement, int ImmediateValue, bool Is64Bit), nint> _tlsImmediateStoreHelpers = new();
 
@@ -2521,7 +2521,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				instruction.Length,
 				instruction.Register,
 				instruction.Displacement,
-				instruction.Is64Bit),
+				instruction.Is64Bit,
+				instruction.MemorySize,
+				instruction.SignExtend),
 			NativeTlsInstructionKind.RegisterStore => PatchTlsRegisterStoreInstruction(
 				address,
 				in instruction),
@@ -2546,9 +2548,16 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		int instructionLength,
 		int destinationRegister,
 		int displacement,
-		bool is64Bit)
+		bool is64Bit,
+		int memorySize,
+		bool signExtend)
 	{
-		var helper = GetOrCreateTlsLoadHelper(destinationRegister, displacement, is64Bit);
+		var helper = GetOrCreateTlsLoadHelper(
+			destinationRegister,
+			displacement,
+			is64Bit,
+			memorySize,
+			signExtend);
 		if (helper == 0)
 		{
 			return false;
@@ -2590,14 +2599,17 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private unsafe nint GetOrCreateTlsLoadHelper(
 		int destinationRegister,
 		int displacement,
-		bool is64Bit)
+		bool is64Bit,
+		int memorySize,
+		bool signExtend)
 	{
-		if (destinationRegister is < 0 or >= 16 or 4)
+		if (destinationRegister is < 0 or >= 16 or 4 ||
+			!IsSupportedTlsLoad(memorySize, is64Bit, signExtend))
 		{
 			return 0;
 		}
 
-		var helperKey = (destinationRegister, displacement, is64Bit);
+		var helperKey = (destinationRegister, displacement, is64Bit, memorySize, signExtend);
 		if (_tlsLoadHelpers.TryGetValue(helperKey, out var existingHelper))
 		{
 			return existingHelper;
@@ -2636,14 +2648,13 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		offset += sizeof(nint);
 		EmitByte(code, ref offset, 0xFF); // call rax
 		EmitByte(code, ref offset, 0xD0);
-		if (is64Bit)
-		{
-			EmitByte(code, ref offset, 0x48);
-		}
-		// A 32-bit load into eax zero-extends rax before it is copied into the guest destination.
-		EmitByte(code, ref offset, 0x8B);
-		EmitByte(code, ref offset, 0x80);
-		EmitUInt32(code, ref offset, unchecked((uint)displacement));
+		EmitTlsLoadInstruction(
+			code,
+			ref offset,
+			displacement,
+			memorySize,
+			is64Bit,
+			signExtend);
 		EmitByte(code, ref offset, 0x48); // add rsp, 0x28
 		EmitByte(code, ref offset, 0x83);
 		EmitByte(code, ref offset, 0xC4);
@@ -2705,6 +2716,54 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		FlushInstructionCache(GetCurrentProcess(), (void*)helper, helperSize);
 		_tlsLoadHelpers[helperKey] = helper;
 		return helper;
+	}
+
+	private static bool IsSupportedTlsLoad(
+		int memorySize,
+		bool is64Bit,
+		bool signExtend)
+	{
+		return (memorySize, is64Bit, signExtend) switch
+		{
+			(1, _, _) => true,
+			(2, _, _) => true,
+			(4, false, false) => true,
+			(4, true, true) => true,
+			(8, true, false) => true,
+			_ => false,
+		};
+	}
+
+	private unsafe static void EmitTlsLoadInstruction(
+		byte* code,
+		ref int offset,
+		int displacement,
+		int memorySize,
+		bool is64Bit,
+		bool signExtend)
+	{
+		if (is64Bit)
+		{
+			EmitByte(code, ref offset, 0x48);
+		}
+
+		if (memorySize is 1 or 2)
+		{
+			EmitByte(code, ref offset, 0x0F);
+			EmitByte(
+				code,
+				ref offset,
+				(byte)(signExtend
+					? (memorySize == 1 ? 0xBE : 0xBF)
+					: (memorySize == 1 ? 0xB6 : 0xB7)));
+		}
+		else
+		{
+			EmitByte(code, ref offset, signExtend ? (byte)0x63 : (byte)0x8B);
+		}
+
+		EmitByte(code, ref offset, 0x80);
+		EmitUInt32(code, ref offset, unchecked((uint)displacement));
 	}
 
 	private unsafe bool PatchTlsRegisterStoreInstruction(
