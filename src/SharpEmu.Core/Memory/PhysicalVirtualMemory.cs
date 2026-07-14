@@ -19,6 +19,8 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     private readonly List<StackRange> _stackRanges = new();
     private readonly Dictionary<(ulong DesiredAddress, ulong Alignment, bool Executable), ulong> _allocationSearchHints = new();
     private readonly Dictionary<ulong, ProgramHeaderFlags> _pageProtections = new();
+    private readonly Dictionary<ulong, ulong> _guestAllocations = new();
+    private readonly List<GuestFreeRange> _guestFreeRanges = new();
     private bool _disposed;
     private const ulong PageSize = 0x1000;
     private const ulong HostAllocationGranularity = 0x1_0000;
@@ -430,6 +432,12 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
         lock (_guestAllocationGate)
         {
+            if (TryAllocateFromGuestFreeRanges(size, alignment, out address))
+            {
+                _guestAllocations.Add(address, size);
+                return true;
+            }
+
             if (!TryResolveGuestAllocationOffset(size, alignment, out var alignedOffset) &&
                 !TryCreateGuestAllocationArena(size, alignment, out alignedOffset))
             {
@@ -438,8 +446,108 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
             address = _guestAllocationArenaBase + alignedOffset;
             _guestAllocationOffset = alignedOffset + size;
+            _guestAllocations.Add(address, size);
             return true;
         }
+    }
+
+    public bool TryFreeGuestMemory(ulong address)
+    {
+        ThrowIfDisposed();
+        if (address == 0)
+        {
+            return false;
+        }
+
+        lock (_guestAllocationGate)
+        {
+            if (!_guestAllocations.Remove(address, out var size))
+            {
+                return false;
+            }
+
+            InsertGuestFreeRange(address, size);
+            return true;
+        }
+    }
+
+    private bool TryAllocateFromGuestFreeRanges(
+        ulong size,
+        ulong alignment,
+        out ulong address)
+    {
+        address = 0;
+        for (var index = 0; index < _guestFreeRanges.Count; index++)
+        {
+            var range = _guestFreeRanges[index];
+            ulong alignedAddress;
+            try
+            {
+                alignedAddress = AlignUp(range.Address, alignment);
+            }
+            catch (OverflowException)
+            {
+                continue;
+            }
+
+            var rangeEnd = range.Address + range.Size;
+            if (alignedAddress < range.Address ||
+                alignedAddress > rangeEnd ||
+                size > rangeEnd - alignedAddress)
+            {
+                continue;
+            }
+
+            _guestFreeRanges.RemoveAt(index);
+            var prefixSize = alignedAddress - range.Address;
+            var allocationEnd = alignedAddress + size;
+            var suffixSize = rangeEnd - allocationEnd;
+            if (suffixSize != 0)
+            {
+                _guestFreeRanges.Insert(
+                    index,
+                    new GuestFreeRange(allocationEnd, suffixSize));
+            }
+            if (prefixSize != 0)
+            {
+                _guestFreeRanges.Insert(
+                    index,
+                    new GuestFreeRange(range.Address, prefixSize));
+            }
+
+            address = alignedAddress;
+            return true;
+        }
+
+        return false;
+    }
+
+    private void InsertGuestFreeRange(ulong address, ulong size)
+    {
+        var start = address;
+        var end = checked(address + size);
+        var index = 0;
+        while (index < _guestFreeRanges.Count)
+        {
+            var range = _guestFreeRanges[index];
+            var rangeEnd = checked(range.Address + range.Size);
+            if (rangeEnd < start)
+            {
+                index++;
+                continue;
+            }
+
+            if (range.Address > end)
+            {
+                break;
+            }
+
+            start = Math.Min(start, range.Address);
+            end = Math.Max(end, rangeEnd);
+            _guestFreeRanges.RemoveAt(index);
+        }
+
+        _guestFreeRanges.Insert(index, new GuestFreeRange(start, end - start));
     }
 
     private bool TryCreateGuestAllocationArena(ulong size, ulong alignment, out ulong alignedOffset)
@@ -524,6 +632,8 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             _guestAllocationArenaBase = 0;
             _guestAllocationArenaSize = 0;
             _guestAllocationOffset = 0;
+            _guestAllocations.Clear();
+            _guestFreeRanges.Clear();
         }
     }
 
@@ -1740,6 +1850,8 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             _ => 0,
         };
     }
+
+    private readonly record struct GuestFreeRange(ulong Address, ulong Size);
 
     private readonly record struct StackRange(ulong Start, ulong End);
 

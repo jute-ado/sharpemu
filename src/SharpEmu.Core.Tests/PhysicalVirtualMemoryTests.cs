@@ -240,6 +240,59 @@ public sealed class PhysicalVirtualMemoryTests
     }
 
     [WindowsX64Fact]
+    public void GuestAllocatorReusesFreedRangeWithRequestedAlignment()
+    {
+        using var memory = new PhysicalVirtualMemory();
+
+        Assert.True(memory.TryAllocateGuestMemory(0x80, 0x10, out var padding));
+        Assert.True(memory.TryAllocateGuestMemory(0x180, 0x10, out var freed));
+        Assert.True(memory.TryAllocateGuestMemory(0x80, 0x10, out var guard));
+        Assert.Equal(padding + 0x80, freed);
+        Assert.True(memory.TryFreeGuestMemory(freed));
+
+        Assert.True(memory.TryAllocateGuestMemory(0x80, 0x100, out var aligned));
+        Assert.True(memory.TryAllocateGuestMemory(0x40, 0x10, out var prefix));
+
+        Assert.Equal(freed + 0x80, aligned);
+        Assert.Equal(freed, prefix);
+        Assert.True(guard >= aligned + 0x80);
+        Assert.Single(memory.SnapshotRegions());
+    }
+
+    [WindowsX64Fact]
+    public void GuestAllocatorCoalescesAdjacentFreedRanges()
+    {
+        using var memory = new PhysicalVirtualMemory();
+
+        Assert.True(memory.TryAllocateGuestMemory(0x100, 0x10, out var first));
+        Assert.True(memory.TryAllocateGuestMemory(0x100, 0x10, out var second));
+        Assert.True(memory.TryAllocateGuestMemory(0x100, 0x10, out var third));
+        Assert.Equal(first + 0x100, second);
+        Assert.Equal(second + 0x100, third);
+
+        Assert.True(memory.TryFreeGuestMemory(second));
+        Assert.True(memory.TryFreeGuestMemory(first));
+        Assert.True(memory.TryAllocateGuestMemory(0x180, 0x10, out var coalesced));
+
+        Assert.Equal(first, coalesced);
+        Assert.Equal(third, coalesced + 0x200);
+    }
+
+    [WindowsX64Fact]
+    public void GuestAllocatorRejectsInteriorUnknownAndDoubleFrees()
+    {
+        using var memory = new PhysicalVirtualMemory();
+
+        Assert.True(memory.TryAllocateGuestMemory(0x100, 0x10, out var address));
+
+        Assert.False(memory.TryFreeGuestMemory(0));
+        Assert.False(memory.TryFreeGuestMemory(address + 1));
+        Assert.False(memory.TryFreeGuestMemory(address + 0x100));
+        Assert.True(memory.TryFreeGuestMemory(address));
+        Assert.False(memory.TryFreeGuestMemory(address));
+    }
+
+    [WindowsX64Fact]
     public void GuestAllocatorGrowsAfterCurrentArenaIsExhausted()
     {
         using var memory = new PhysicalVirtualMemory();

@@ -16,6 +16,67 @@ public sealed class PthreadConditionCompatibilityTests
     private const ulong CondAddress = 0x1000;
     private const ulong MutexAddress = 0x2000;
     private const ulong DeadlineAddress = 0x3000;
+    private const ulong MutexAttrAddress = 0x4000;
+
+    [Fact]
+    public void DestroyReleasesAllocatedConditionMutexAndAttributeObjects()
+    {
+        var memory = new FakeGuestMemory();
+        var condHandle = new byte[sizeof(ulong)];
+        var mutexHandle = new byte[sizeof(ulong)];
+        var attrHandle = new byte[sizeof(ulong)];
+        memory.AddRegion(CondAddress, condHandle);
+        memory.AddRegion(MutexAddress, mutexHandle);
+        memory.AddRegion(MutexAttrAddress, attrHandle);
+        var context = new CpuContext(memory, Generation.Gen5);
+
+        context[CpuRegister.Rdi] = CondAddress;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            KernelPthreadCompatExports.PosixPthreadCondInit(context));
+        context[CpuRegister.Rdi] = MutexAddress;
+        context[CpuRegister.Rsi] = 0;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            KernelPthreadCompatExports.PosixPthreadMutexInit(context));
+        context[CpuRegister.Rdi] = MutexAttrAddress;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            KernelPthreadCompatExports.PosixPthreadMutexattrInit(context));
+        Assert.Equal(3, memory.GuestAllocationCount);
+
+        context[CpuRegister.Rdi] = CondAddress;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            KernelPthreadCompatExports.PthreadCondDestroy(context));
+        context[CpuRegister.Rdi] = MutexAddress;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            KernelPthreadCompatExports.PosixPthreadMutexDestroy(context));
+        context[CpuRegister.Rdi] = MutexAttrAddress;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            KernelPthreadCompatExports.PosixPthreadMutexattrDestroy(context));
+
+        Assert.Equal(0, memory.GuestAllocationCount);
+        Assert.Equal(0UL, BinaryPrimitives.ReadUInt64LittleEndian(condHandle));
+        Assert.Equal(0UL, BinaryPrimitives.ReadUInt64LittleEndian(mutexHandle));
+        Assert.Equal(0UL, BinaryPrimitives.ReadUInt64LittleEndian(attrHandle));
+    }
+
+    [Fact]
+    public void FailedMutexInitializationReleasesAllocatedOpaqueObject()
+    {
+        var memory = new FakeGuestMemory();
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = MutexAddress;
+        context[CpuRegister.Rsi] = 0;
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            KernelPthreadCompatExports.PosixPthreadMutexInit(context));
+        Assert.Equal(0, memory.GuestAllocationCount);
+    }
 
     [Theory]
     [InlineData(false)]
