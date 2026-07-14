@@ -77,8 +77,6 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
         }
 
         var endAddress = checked(virtualAddress + memorySize);
-        var backingMemory = new byte[(int)memorySize];
-        fileData.CopyTo(backingMemory);
 
         lock (_gate)
         {
@@ -90,6 +88,8 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
                 }
             }
 
+            var backingMemory = new byte[(int)memorySize];
+            fileData.CopyTo(backingMemory);
             var mappedRegion = new MappedRegion(
                 new VirtualMemoryRegion(virtualAddress, memorySize, fileOffset, (ulong)fileData.Length, protection),
                 endAddress,
