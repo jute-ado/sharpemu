@@ -180,6 +180,8 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("0x0000000800000000", image.GetProperty("entryPoint").GetString());
         Assert.Equal(1, image.GetProperty("programHeaderCount").GetInt32());
         Assert.Equal(1, image.GetProperty("mappedRegionCount").GetInt32());
+        Assert.Empty(root.GetProperty("modules").EnumerateArray());
+        Assert.Empty(root.GetProperty("moduleLoadFailures").EnumerateArray());
     }
 
     [Fact]
@@ -189,7 +191,8 @@ public sealed class SharpEmuRuntimeTests
             [0xF4], // hlt: load-only must never dispatch this privileged instruction
             requestReport: true,
             paramJson: SyntheticParamJson,
-            loadOnly: true);
+            loadOnly: true,
+            adjacentModuleCode: [0xF4]);
 
         Assert.Equal(0, execution.ExitCode);
         Assert.NotNull(execution.ReportJson);
@@ -215,7 +218,33 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(1, image.GetProperty("mappedRegionCount").GetInt32());
         Assert.Equal(0, image.GetProperty("importStubCount").GetInt32());
         Assert.Equal("PPSA00001", root.GetProperty("application").GetProperty("titleId").GetString());
+        var module = Assert.Single(root.GetProperty("modules").EnumerateArray());
+        Assert.Equal("sce_module/synthetic.prx", module.GetProperty("path").GetString());
+        Assert.Equal("ELF", module.GetProperty("image").GetProperty("format").GetString());
+        Assert.Empty(root.GetProperty("moduleLoadFailures").EnumerateArray());
         Assert.DoesNotContain("Guest hardware exception", execution.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CliReportsAdjacentModuleLoadFailuresWithoutExecutingGuestCode()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0xF4],
+            requestReport: true,
+            loadOnly: true,
+            writeInvalidAdjacentModule: true);
+
+        Assert.Equal(0, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var document = JsonDocument.Parse(execution.ReportJson);
+        var root = document.RootElement;
+        Assert.Empty(root.GetProperty("modules").EnumerateArray());
+        var failure = Assert.Single(root.GetProperty("moduleLoadFailures").EnumerateArray());
+        Assert.Equal("sce_module/broken.sprx", failure.GetProperty("path").GetString());
+        Assert.Equal("InvalidDataException", failure.GetProperty("errorType").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(failure.GetProperty("message").GetString()));
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuSession").ValueKind);
+        Assert.Contains("module load failure", execution.StandardOutput, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -293,6 +322,8 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(JsonValueKind.Null, root.GetProperty("executableSizeBytes").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("executableSha256").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("application").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("modules").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("moduleLoadFailures").ValueKind);
     }
 
     [WindowsX64Fact]
@@ -414,7 +445,9 @@ public sealed class SharpEmuRuntimeTests
         int stallWatchdogSeconds = 0,
         int? executionTimeoutSeconds = null,
         string? paramJson = null,
-        bool loadOnly = false) =>
+        bool loadOnly = false,
+        byte[]? adjacentModuleCode = null,
+        bool writeInvalidAdjacentModule = false) =>
         SyntheticCliGuest.RunAsync(
             code,
             requestReport,
@@ -422,7 +455,9 @@ public sealed class SharpEmuRuntimeTests
             stallWatchdogSeconds,
             executionTimeoutSeconds,
             paramJson,
-            loadOnly);
+            loadOnly,
+            adjacentModuleCode,
+            writeInvalidAdjacentModule);
 
     private readonly record struct SyntheticRuntimeExecution(
         OrbisGen2Result Result,

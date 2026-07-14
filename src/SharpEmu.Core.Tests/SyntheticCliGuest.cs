@@ -17,7 +17,9 @@ internal static class SyntheticCliGuest
         int stallWatchdogSeconds = 0,
         int? executionTimeoutSeconds = null,
         string? paramJson = null,
-        bool loadOnly = false)
+        bool loadOnly = false,
+        byte[]? adjacentModuleCode = null,
+        bool writeInvalidAdjacentModule = false)
     {
         var testDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -41,6 +43,22 @@ internal static class SyntheticCliGuest
                 var systemDirectory = Path.Combine(testDirectory, "sce_sys");
                 Directory.CreateDirectory(systemDirectory);
                 File.WriteAllText(Path.Combine(systemDirectory, "param.json"), paramJson);
+            }
+            if (adjacentModuleCode is not null || writeInvalidAdjacentModule)
+            {
+                var moduleDirectory = Path.Combine(testDirectory, "sce_module");
+                Directory.CreateDirectory(moduleDirectory);
+                if (adjacentModuleCode is not null)
+                {
+                    File.WriteAllBytes(
+                        Path.Combine(moduleDirectory, "synthetic.prx"),
+                        SyntheticElfImage.CreateExecutable(adjacentModuleCode));
+                }
+
+                if (writeInvalidAdjacentModule)
+                {
+                    File.WriteAllBytes(Path.Combine(moduleDirectory, "broken.sprx"), [0x01, 0x02, 0x03]);
+                }
             }
 
             var cliAssemblyPath = GetCliAssemblyPath();
