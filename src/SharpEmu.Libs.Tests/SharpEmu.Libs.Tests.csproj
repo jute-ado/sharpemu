@@ -23,4 +23,11 @@ SPDX-License-Identifier: GPL-2.0-or-later
   <ItemGroup>
     <Content Include="Corpus\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Compile
+      Include="$(RepoRoot)tests/SharpEmu.Libs.Tests/**/*.cs"
+      Exclude="$(RepoRoot)tests/SharpEmu.Libs.Tests/bin/**/*.cs;$(RepoRoot)tests/SharpEmu.Libs.Tests/obj/**/*.cs"
+      Link="Upstream/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>

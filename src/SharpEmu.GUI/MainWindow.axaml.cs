@@ -1499,6 +1499,7 @@ public partial class MainWindow : Window
             2 => Localization.Instance.Get("Exit.EbootNotFound"),
             3 => Localization.Instance.Get("Exit.RuntimeException"),
             4 => Localization.Instance.Get("Exit.EmulationError"),
+            -1073741819 => Localization.Instance.Get("Exit.EmulationError"),
             _ => EmulatorExitCode.Describe(exitCode),
         };
         if (string.Equals(meaning, "unknown", StringComparison.Ordinal))
