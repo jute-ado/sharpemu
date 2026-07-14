@@ -98,6 +98,13 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestMemoryAllocator, IGuestS
 
     private bool TryFind(ulong address, int length, out byte[] data, out int offset)
     {
+        if (length != 0 && (ulong)(length - 1) > ulong.MaxValue - address)
+        {
+            data = [];
+            offset = 0;
+            return false;
+        }
+
         foreach (var (regionBase, regionData) in _regions)
         {
             if (address < regionBase)
