@@ -82,7 +82,13 @@ internal static partial class Program
             return childExitCode;
         }
 
-        if (!TryParseArguments(args, out var ebootPath, out var runtimeOptions, out var logLevel, out var logFilePath))
+        if (!TryParseArguments(
+                args,
+                out var ebootPath,
+                out var runtimeOptions,
+                out var logLevel,
+                out var logFilePath,
+                out var reportJsonPath))
         {
             PrintUsage();
             return 1;
@@ -104,6 +110,16 @@ internal static partial class Program
         if (!File.Exists(ebootPath))
         {
             Log.Error($"EBOOT file was not found: {ebootPath}");
+            if (!TryWriteExecutionReport(
+                    reportJsonPath,
+                    ebootPath,
+                    result: null,
+                    runtime: null,
+                    hostError: "EBOOT file was not found."))
+            {
+                return 3;
+            }
+
             return 2;
         }
 
@@ -122,6 +138,12 @@ internal static partial class Program
         {
             Console.Error.WriteLine($"[DEBUG] Exception: {ex}");
             Log.Error("SharpEmu failed to run.", ex);
+            TryWriteExecutionReport(
+                reportJsonPath,
+                ebootPath,
+                result: null,
+                runtime,
+                hostError: ex.ToString());
             return 3;
         }
 
@@ -151,6 +173,11 @@ internal static partial class Program
         {
             Log.Info("Import trace:");
             Log.Info(runtime.LastExecutionTrace);
+        }
+
+        if (!TryWriteExecutionReport(reportJsonPath, ebootPath, result, runtime, hostError: null))
+        {
+            return 3;
         }
 
         return result == OrbisGen2Result.ORBIS_GEN2_OK ? 0 : 4;
@@ -787,10 +814,82 @@ internal static partial class Program
         return builder.ToString();
     }
 
+    private static bool TryWriteExecutionReport(
+        string? reportJsonPath,
+        string executablePath,
+        OrbisGen2Result? result,
+        ISharpEmuRuntime? runtime,
+        string? hostError)
+    {
+        if (string.IsNullOrWhiteSpace(reportJsonPath))
+        {
+            return true;
+        }
+
+        string? temporaryPath = null;
+        try
+        {
+            var fullPath = Path.GetFullPath(reportJsonPath);
+            var directory = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var executionResult = result is { } completedResult
+                ? new CliExecutionResult(
+                    completedResult.ToString(),
+                    (int)completedResult,
+                    completedResult == OrbisGen2Result.ORBIS_GEN2_OK)
+                : new CliExecutionResult("HOST_ERROR", null, false);
+            var report = new CliExecutionReport(
+                SchemaVersion: 1,
+                GeneratedAtUtc: DateTimeOffset.UtcNow,
+                ExecutablePath: executablePath,
+                Result: executionResult,
+                SessionSummary: runtime?.LastSessionSummary,
+                Diagnostics: runtime?.LastExecutionDiagnostics,
+                ImportTrace: runtime?.LastExecutionTrace,
+                MilestoneLog: runtime?.LastMilestoneLog,
+                BasicBlockTrace: runtime?.LastBasicBlockTrace,
+                HostError: hostError);
+            var json = JsonSerializer.Serialize(report, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                WriteIndented = true,
+            });
+
+            temporaryPath = $"{fullPath}.{Guid.NewGuid():N}.tmp";
+            File.WriteAllText(temporaryPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            File.Move(temporaryPath, fullPath, overwrite: true);
+            temporaryPath = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Failed to write execution report '{reportJsonPath}'.", ex);
+            return false;
+        }
+        finally
+        {
+            if (temporaryPath is not null)
+            {
+                try
+                {
+                    File.Delete(temporaryPath);
+                }
+                catch (Exception)
+                {
+                    // Preserve the original report-writing error.
+                }
+            }
+        }
+    }
+
     private static void PrintUsage()
     {
-        Log.Info("Usage: SharpEmu.CLI [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--log-file[=<path>]] <path-to-eboot.bin>");
-        Log.Info(@"Example: SharpEmu.CLI --cpu-engine=native --trace-imports=64 --log-level=debug --log-file ""E:\Games\...\eboot.bin""");
+        Log.Info("Usage: SharpEmu.CLI [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--log-file[=<path>]] [--report-json=<path>] <path-to-eboot.bin>");
+        Log.Info(@"Example: SharpEmu.CLI --cpu-engine=native --trace-imports=64 --report-json execution.json ""E:\Games\...\eboot.bin""");
     }
 
     private static bool TryParseArguments(
@@ -798,8 +897,10 @@ internal static partial class Program
         out string ebootPath,
         out SharpEmuRuntimeOptions runtimeOptions,
         out LogLevel logLevel,
-        out string? logFilePath)
+        out string? logFilePath,
+        out string? reportJsonPath)
     {
+        reportJsonPath = null;
         if (args.Length == 0)
         {
             ebootPath = string.Empty;
@@ -881,6 +982,23 @@ internal static partial class Program
                 continue;
             }
 
+            if (string.Equals(argument, "--report-json", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length ||
+                    string.IsNullOrWhiteSpace(args[i + 1]) ||
+                    args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                {
+                    ebootPath = string.Empty;
+                    runtimeOptions = default;
+                    logLevel = SharpEmuLog.MinimumLevel;
+                    logFilePath = null;
+                    return false;
+                }
+
+                reportJsonPath = args[++i];
+                continue;
+            }
+
             const string logLevelPrefix = "--log-level=";
             if (argument.StartsWith(logLevelPrefix, StringComparison.OrdinalIgnoreCase))
             {
@@ -942,6 +1060,22 @@ internal static partial class Program
                 continue;
             }
 
+            const string reportJsonPrefix = "--report-json=";
+            if (argument.StartsWith(reportJsonPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                reportJsonPath = argument[reportJsonPrefix.Length..];
+                if (string.IsNullOrWhiteSpace(reportJsonPath))
+                {
+                    ebootPath = string.Empty;
+                    runtimeOptions = default;
+                    logLevel = SharpEmuLog.MinimumLevel;
+                    logFilePath = null;
+                    return false;
+                }
+
+                continue;
+            }
+
             if (argument.StartsWith("--", StringComparison.Ordinal))
             {
                 ebootPath = string.Empty;
@@ -985,6 +1119,20 @@ internal static partial class Program
         engine = CpuExecutionEngine.NativeOnly;
         return false;
     }
+
+    private sealed record CliExecutionReport(
+        int SchemaVersion,
+        DateTimeOffset GeneratedAtUtc,
+        string ExecutablePath,
+        CliExecutionResult Result,
+        string? SessionSummary,
+        string? Diagnostics,
+        string? ImportTrace,
+        string? MilestoneLog,
+        string? BasicBlockTrace,
+        string? HostError);
+
+    private sealed record CliExecutionResult(string Name, int? Code, bool Succeeded);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct STARTUPINFO

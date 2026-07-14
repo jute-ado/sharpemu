@@ -67,6 +67,9 @@ Currently the project primarily targets Windows. Cross-platform support (Linux a
 * Open Powershell.
   * Run Emulator GUI.
   * Or command: `.\SharpEmu "eboot.bin" 2>&1 | Tee-Object -FilePath "log.txt"`
+  * For automation, add `--report-json execution.json` to atomically write a
+    versioned machine-readable result. Schema version 1 includes the result
+    code, session summary, diagnostics, traces, and any host-side error.
 
 ## Games Tested
 
