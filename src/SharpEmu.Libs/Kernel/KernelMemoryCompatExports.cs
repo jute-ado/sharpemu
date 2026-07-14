@@ -1544,28 +1544,51 @@ public static partial class KernelMemoryCompatExports
     {
         var left = ctx[CpuRegister.Rdi];
         var right = ctx[CpuRegister.Rsi];
-        var count = (int)Math.Min(ctx[CpuRegister.Rdx], int.MaxValue);
-        if (count < 0)
+        var count = ctx[CpuRegister.Rdx];
+        if (count == 0)
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        Span<byte> leftByte = stackalloc byte[1];
-        Span<byte> rightByte = stackalloc byte[1];
-        for (var i = 0; i < count; i++)
+        if (count - 1 > ulong.MaxValue - left ||
+            count - 1 > ulong.MaxValue - right)
         {
-            if (!TryReadCompat(ctx, left + (ulong)i, leftByte) ||
-                !TryReadCompat(ctx, right + (ulong)i, rightByte))
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-            }
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
 
-            var diff = leftByte[0] - rightByte[0];
-            if (diff != 0)
+        var chunkCapacity = (int)Math.Min((ulong)MemsetChunkSize, count);
+        var buffer = ArrayPool<byte>.Shared.Rent(checked(chunkCapacity * 2));
+        try
+        {
+            ulong offset = 0;
+            while (offset < count)
             {
-                ctx[CpuRegister.Rax] = unchecked((ulong)diff);
-                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                var take = (int)Math.Min((ulong)chunkCapacity, count - offset);
+                var leftChunk = buffer.AsSpan(0, take);
+                var rightChunk = buffer.AsSpan(chunkCapacity, take);
+                if (!TryReadCompat(ctx, left + offset, leftChunk) ||
+                    !TryReadCompat(ctx, right + offset, rightChunk))
+                {
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                }
+
+                for (var index = 0; index < take; index++)
+                {
+                    var diff = leftChunk[index] - rightChunk[index];
+                    if (diff != 0)
+                    {
+                        ctx[CpuRegister.Rax] = unchecked((ulong)diff);
+                        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                    }
+                }
+
+                offset += (ulong)take;
             }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
         ctx[CpuRegister.Rax] = 0;
@@ -1662,20 +1685,44 @@ public static partial class KernelMemoryCompatExports
         var address = ctx[CpuRegister.Rdi];
         var needle = unchecked((byte)ctx[CpuRegister.Rsi]);
         var count = ctx[CpuRegister.Rdx];
-
-        Span<byte> current = stackalloc byte[1];
-        for (ulong index = 0; index < count; index++)
+        if (count == 0)
         {
-            if (!TryReadCompat(ctx, address + index, current))
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-            }
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
 
-            if (current[0] == needle)
+        if (count - 1 > ulong.MaxValue - address)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        var chunkCapacity = (int)Math.Min((ulong)MemsetChunkSize, count);
+        var buffer = ArrayPool<byte>.Shared.Rent(chunkCapacity);
+        try
+        {
+            ulong offset = 0;
+            while (offset < count)
             {
-                ctx[CpuRegister.Rax] = address + index;
-                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                var take = (int)Math.Min((ulong)chunkCapacity, count - offset);
+                var chunk = buffer.AsSpan(0, take);
+                if (!TryReadCompat(ctx, address + offset, chunk))
+                {
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                }
+
+                var index = chunk.IndexOf(needle);
+                if (index >= 0)
+                {
+                    ctx[CpuRegister.Rax] = address + offset + (ulong)index;
+                    return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                }
+
+                offset += (ulong)take;
             }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
         ctx[CpuRegister.Rax] = 0;
