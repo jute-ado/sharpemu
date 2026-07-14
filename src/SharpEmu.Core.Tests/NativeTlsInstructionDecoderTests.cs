@@ -12,23 +12,23 @@ public sealed class NativeTlsInstructionDecoderTests
     {
         {
             [0x64, 0x48, 0x8B, 0x04, 0x25, 0x28, 0x00, 0x00, 0x00],
-            [(int)NativeTlsInstructionKind.Load, 9, 0, 0x28, 0, 1]
+            [(int)NativeTlsInstructionKind.Load, 9, 0, 0x28, 0, 1, 8, 0]
         },
         {
             [0x64, 0x44, 0x8B, 0x04, 0x25, 0xF0, 0xFF, 0xFF, 0xFF],
-            [(int)NativeTlsInstructionKind.Load, 9, 8, -16, 0, 0]
+            [(int)NativeTlsInstructionKind.Load, 9, 8, -16, 0, 0, 4, 0]
         },
         {
             [0x66, 0x66, 0x64, 0x4C, 0x8B, 0x3C, 0x25, 0x40, 0x00, 0x00, 0x00],
-            [(int)NativeTlsInstructionKind.Load, 11, 15, 0x40, 0, 1]
+            [(int)NativeTlsInstructionKind.Load, 11, 15, 0x40, 0, 1, 8, 0]
         },
         {
             [0x64, 0x89, 0x04, 0x25, 0x50, 0x00, 0x00, 0x00],
-            [(int)NativeTlsInstructionKind.RegisterStore, 8, 0, 0x50, 0, 0]
+            [(int)NativeTlsInstructionKind.RegisterStore, 8, 0, 0x50, 0, 0, 4, 0]
         },
         {
             [0x64, 0x4C, 0x89, 0x3C, 0x25, 0x58, 0x00, 0x00, 0x00],
-            [(int)NativeTlsInstructionKind.RegisterStore, 9, 15, 0x58, 0, 1]
+            [(int)NativeTlsInstructionKind.RegisterStore, 9, 15, 0x58, 0, 1, 8, 0]
         },
         {
             [
@@ -36,7 +36,7 @@ public sealed class NativeTlsInstructionDecoderTests
                 0x60, 0x00, 0x00, 0x00,
                 0x78, 0x56, 0x34, 0x12,
             ],
-            [(int)NativeTlsInstructionKind.ImmediateStore, 12, 0, 0x60, 0x12345678, 0]
+            [(int)NativeTlsInstructionKind.ImmediateStore, 12, 0, 0x60, 0x12345678, 0, 4, 0]
         },
         {
             [
@@ -44,11 +44,31 @@ public sealed class NativeTlsInstructionDecoderTests
                 0x68, 0x00, 0x00, 0x00,
                 0x80, 0xFF, 0xFF, 0xFF,
             ],
-            [(int)NativeTlsInstructionKind.ImmediateStore, 13, 0, 0x68, -128, 1]
+            [(int)NativeTlsInstructionKind.ImmediateStore, 13, 0, 0x68, -128, 1, 8, 0]
         },
         {
             [0x64, 0x4C, 0x33, 0x3C, 0x25, 0x28, 0x00, 0x00, 0x00],
-            [(int)NativeTlsInstructionKind.StackCanaryXor, 9, 15, 0x28, 0, 1]
+            [(int)NativeTlsInstructionKind.StackCanaryXor, 9, 15, 0x28, 0, 1, 8, 0]
+        },
+        {
+            [0x64, 0x44, 0x0F, 0xB6, 0x04, 0x25, 0x74, 0x00, 0x00, 0x00],
+            [(int)NativeTlsInstructionKind.Load, 10, 8, 0x74, 0, 0, 1, 0]
+        },
+        {
+            [0x64, 0x4C, 0x0F, 0xB7, 0x3C, 0x25, 0x76, 0x00, 0x00, 0x00],
+            [(int)NativeTlsInstructionKind.Load, 10, 15, 0x76, 0, 1, 2, 0]
+        },
+        {
+            [0x64, 0x4C, 0x0F, 0xBE, 0x3C, 0x25, 0x78, 0x00, 0x00, 0x00],
+            [(int)NativeTlsInstructionKind.Load, 10, 15, 0x78, 0, 1, 1, 1]
+        },
+        {
+            [0x64, 0x0F, 0xBF, 0x04, 0x25, 0x7A, 0x00, 0x00, 0x00],
+            [(int)NativeTlsInstructionKind.Load, 9, 0, 0x7A, 0, 0, 2, 1]
+        },
+        {
+            [0x64, 0x48, 0x63, 0x04, 0x25, 0x7C, 0x00, 0x00, 0x00],
+            [(int)NativeTlsInstructionKind.Load, 9, 0, 0x7C, 0, 1, 4, 1]
         },
     };
 
@@ -77,6 +97,8 @@ public sealed class NativeTlsInstructionDecoderTests
         Assert.Equal(expected[3], actual.Displacement);
         Assert.Equal(expected[4], actual.ImmediateValue);
         Assert.Equal(expected[5] != 0, actual.Is64Bit);
+        Assert.Equal(expected[6], actual.MemorySize);
+        Assert.Equal(expected[7] != 0, actual.SignExtend);
     }
 
     [Theory]
