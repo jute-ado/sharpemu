@@ -150,7 +150,9 @@ public sealed class SelfLoader : ISelfLoader
             ? TryLoadParamJson(fs, mountRoot)
             : default;
 
-        var tlsModuleId = _nextTlsModuleId == 0 ? 1u : _nextTlsModuleId;
+        var tlsModuleId = clearVirtualMemory
+            ? 1u
+            : _nextTlsModuleId == 0 ? 1u : _nextTlsModuleId;
         Log.Debug($"TLS load_start clear={clearVirtualMemory} next={_nextTlsModuleId} assigned={tlsModuleId}");
 
         var loadContext = ParseLayout(imageData);
