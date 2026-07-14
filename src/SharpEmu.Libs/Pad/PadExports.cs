@@ -217,15 +217,27 @@ public static class PadExports
         return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
-    private static byte DecodeTriggerVibration(ReadOnlySpan<byte> command)
+    internal static byte DecodeTriggerVibration(ReadOnlySpan<byte> command)
     {
-        var mode = BinaryPrimitives.ReadUInt32LittleEndian(command);
-        var amplitude = mode switch
+        if (command.Length < sizeof(uint))
         {
-            3 when command[10] != 0 => command[9],
-            6 when command[8] != 0 => command[9..19].ToArray().Max(),
-            _ => (byte)0,
-        };
+            return 0;
+        }
+
+        var mode = BinaryPrimitives.ReadUInt32LittleEndian(command);
+        byte amplitude = 0;
+        if (mode == 3 && command.Length >= 11 && command[10] != 0)
+        {
+            amplitude = command[9];
+        }
+        else if (mode == 6 && command.Length >= 19 && command[8] != 0)
+        {
+            foreach (var zoneAmplitude in command[9..19])
+            {
+                amplitude = Math.Max(amplitude, zoneAmplitude);
+            }
+        }
+
         return (byte)(Math.Min(amplitude, (byte)8) * 255 / 8);
     }
 
