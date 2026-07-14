@@ -99,6 +99,21 @@ public sealed class VirtualMemoryAccessTests
         Assert.False(memory.TryRead(BaseAddress, contents));
     }
 
+    [Fact]
+    public void SnapshotRegionsAreAddressOrderedRegardlessOfMapOrder()
+    {
+        var memory = new VirtualMemory();
+        memory.Map(0x9000, 0x1000, 0, [], ProgramHeaderFlags.Read);
+        memory.Map(0x3000, 0x1000, 0, [], ProgramHeaderFlags.Read);
+        memory.Map(0x6000, 0x1000, 0, [], ProgramHeaderFlags.Read);
+
+        Assert.Equal(
+            new[] { 0x3000UL, 0x6000UL, 0x9000UL },
+            memory.SnapshotRegions().Select(region => region.VirtualAddress));
+        Assert.True(memory.TryQueryMemoryRegion(0x4000, findNext: true, out var next));
+        Assert.Equal(0x6000UL, next.Address);
+    }
+
     private static VirtualMemory CreateMappedMemory(byte[] fileData)
     {
         var memory = new VirtualMemory();

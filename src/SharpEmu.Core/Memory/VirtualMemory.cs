@@ -90,10 +90,18 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
                 }
             }
 
-            _regions.Add(new MappedRegion(
+            var mappedRegion = new MappedRegion(
                 new VirtualMemoryRegion(virtualAddress, memorySize, fileOffset, (ulong)fileData.Length, protection),
                 endAddress,
-                backingMemory));
+                backingMemory);
+            var insertionIndex = 0;
+            while (insertionIndex < _regions.Count &&
+                   _regions[insertionIndex].Region.VirtualAddress < virtualAddress)
+            {
+                insertionIndex++;
+            }
+
+            _regions.Insert(insertionIndex, mappedRegion);
         }
     }
 
