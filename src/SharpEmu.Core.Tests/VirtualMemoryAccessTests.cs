@@ -36,6 +36,18 @@ public sealed class VirtualMemoryAccessTests
     }
 
     [Fact]
+    public void CompareMatchesMappedBytesWithoutCrossingRegionBounds()
+    {
+        var memory = CreateMappedMemory([1, 2, 3, 4]);
+
+        Assert.True(memory.TryCompare(BaseAddress, [1, 2, 3, 4]));
+        Assert.False(memory.TryCompare(BaseAddress, [1, 2, 3, 5]));
+        Assert.False(memory.TryCompare(BaseAddress + RegionSize - 1, [0, 0]));
+        Assert.True(memory.TryCompare(BaseAddress + RegionSize, []));
+        Assert.False(memory.TryCompare(BaseAddress + RegionSize, [0]));
+    }
+
+    [Fact]
     public void AccessCannotCrossAdjacentRegionBoundary()
     {
         var memory = new VirtualMemory();

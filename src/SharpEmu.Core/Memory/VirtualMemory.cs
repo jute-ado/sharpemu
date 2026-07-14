@@ -185,6 +185,19 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
         }
     }
 
+    public bool TryCompare(ulong virtualAddress, ReadOnlySpan<byte> expected)
+    {
+        lock (_gate)
+        {
+            if (!TryResolveRegion(virtualAddress, expected.Length, out var region, out var offset))
+            {
+                return false;
+            }
+
+            return region.BackingMemory.AsSpan(offset, expected.Length).SequenceEqual(expected);
+        }
+    }
+
     public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source)
     {
         lock (_gate)
