@@ -451,14 +451,52 @@ public sealed class SelfLoaderTests
         byte symbolBinding)
     {
         const ulong originalTargetValue = 0xA5A5_5A5A_DEAD_BEEFUL;
-        var elf = CreateElfWithUnmappedDefinedSymbolRelocation(
+        var elf = CreateElfWithSymbolRelocation(
             originalTargetValue,
-            symbolBinding);
+            symbolBinding,
+            symbolType: 0,
+            symbolValue: 0x200,
+            symbolName: string.Empty,
+            addend: 0);
         var memory = new VirtualMemory();
 
         var image = new SelfLoader().Load(elf, memory);
 
         Assert.Equal(originalTargetValue, ReadSyntheticRelocationTarget(memory, image));
+    }
+
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(2, false)]
+    public void ResolvesUndefinedGlobalImportRelocation(
+        byte symbolType,
+        bool expectedDataImport)
+    {
+        const string nid = "TESTNID";
+        const long addend = 0x20;
+        var elf = CreateElfWithSymbolRelocation(
+            originalTargetValue: 0,
+            symbolBinding: 1,
+            symbolType,
+            symbolValue: 0,
+            symbolName: $"{nid}#libSceSynthetic",
+            addend);
+        var memory = new VirtualMemory();
+
+        var image = new SelfLoader().Load(elf, memory);
+
+        var importStub = Assert.Single(image.ImportStubs);
+        Assert.Equal(nid, importStub.Value);
+        Assert.Equal(
+            AddSignedForTest(importStub.Key, addend),
+            ReadSyntheticRelocationTarget(memory, image));
+        var importedRelocation = Assert.Single(image.ImportedRelocations);
+        Assert.Equal(
+            image.EntryPoint + SyntheticRelocationTargetVirtualAddress,
+            importedRelocation.TargetAddress);
+        Assert.Equal(addend, importedRelocation.Addend);
+        Assert.Equal(nid, importedRelocation.Nid);
+        Assert.Equal(expectedDataImport, importedRelocation.IsData);
     }
 
     [Fact]
@@ -812,17 +850,21 @@ public sealed class SelfLoaderTests
         return elf;
     }
 
-    private static byte[] CreateElfWithUnmappedDefinedSymbolRelocation(
+    private static byte[] CreateElfWithSymbolRelocation(
         ulong originalTargetValue,
-        byte symbolBinding)
+        byte symbolBinding,
+        byte symbolType,
+        ulong symbolValue,
+        string symbolName,
+        long addend)
     {
         const int payloadSize = 0x180;
         const int dynamicVirtualAddress = 0x20;
         const int relocationVirtualAddress = 0x90;
         const int symbolTableVirtualAddress = 0xB0;
         const int stringTableVirtualAddress = 0xE0;
-        const ulong unmappedSymbolVirtualAddress = 0x200;
         const int dynamicEntryCount = 6;
+        var symbolNameBytes = System.Text.Encoding.ASCII.GetBytes(symbolName);
         var payloadOffset = ElfHeaderSize + (2 * ProgramHeaderSize);
         var elf = CreateElf(
             programHeaderOffset: ElfHeaderSize,
@@ -862,7 +904,11 @@ public sealed class SelfLoaderTests
         WriteDynamicEntry(dynamicTable, 0, DynamicTagRela, relocationVirtualAddress);
         WriteDynamicEntry(dynamicTable, 1, DynamicTagRelaSize, ElfRelocationSize);
         WriteDynamicEntry(dynamicTable, 2, DynamicTagStringTable, stringTableVirtualAddress);
-        WriteDynamicEntry(dynamicTable, 3, DynamicTagStringTableSize, 1);
+        WriteDynamicEntry(
+            dynamicTable,
+            3,
+            DynamicTagStringTableSize,
+            checked((ulong)symbolNameBytes.Length + 2));
         WriteDynamicEntry(dynamicTable, 4, DynamicTagSymbolTable, symbolTableVirtualAddress);
 
         var relocation = elf.AsSpan(
@@ -874,14 +920,24 @@ public sealed class SelfLoaderTests
         BinaryPrimitives.WriteUInt64LittleEndian(
             relocation[sizeof(ulong)..],
             ((ulong)1 << 32) | Absolute64RelocationType);
+        BinaryPrimitives.WriteInt64LittleEndian(
+            relocation[(2 * sizeof(ulong))..],
+            addend);
 
-        var definedSymbol = elf.AsSpan(
+        var symbol = elf.AsSpan(
             payloadOffset + symbolTableVirtualAddress + 24,
             24);
-        definedSymbol[4] = checked((byte)(symbolBinding << 4));
-        BinaryPrimitives.WriteUInt16LittleEndian(definedSymbol[6..], 1);
-        BinaryPrimitives.WriteUInt64LittleEndian(definedSymbol[8..], unmappedSymbolVirtualAddress);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            symbol,
+            symbolNameBytes.Length == 0 ? 0u : 1u);
+        symbol[4] = checked((byte)((symbolBinding << 4) | symbolType));
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            symbol[6..],
+            symbolValue == 0 ? (ushort)0 : (ushort)1);
+        BinaryPrimitives.WriteUInt64LittleEndian(symbol[8..], symbolValue);
         elf[payloadOffset + stringTableVirtualAddress] = 0;
+        symbolNameBytes.CopyTo(
+            elf.AsSpan(payloadOffset + stringTableVirtualAddress + 1));
         BinaryPrimitives.WriteUInt64LittleEndian(
             elf.AsSpan(
                 payloadOffset + SyntheticRelocationTargetVirtualAddress,
