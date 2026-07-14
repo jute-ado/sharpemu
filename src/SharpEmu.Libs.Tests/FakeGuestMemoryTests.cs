@@ -31,6 +31,16 @@ public sealed class FakeGuestMemoryTests
     }
 
     [Fact]
+    public void CompareRejectsRangeCrossingAddressSpaceCeiling()
+    {
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(ulong.MaxValue, [0x11, 0x22]);
+
+        Assert.False(memory.TryCompare(ulong.MaxValue, [0x11, 0x22]));
+        Assert.Equal(1, memory.CompareCount);
+    }
+
+    [Fact]
     public void SingleByteAtAddressSpaceCeilingRemainsAccessible()
     {
         var memory = new FakeGuestMemory();
@@ -40,6 +50,8 @@ public sealed class FakeGuestMemoryTests
 
         Assert.True(memory.TryRead(ulong.MaxValue, destination));
         Assert.Equal(0x11, destination[0]);
+        Assert.True(memory.TryCompare(ulong.MaxValue, [0x11]));
+        Assert.False(memory.TryCompare(ulong.MaxValue, [0x22]));
         Assert.True(memory.TryWrite(ulong.MaxValue, [0x22]));
         Assert.Equal(0x22, backing[0]);
     }

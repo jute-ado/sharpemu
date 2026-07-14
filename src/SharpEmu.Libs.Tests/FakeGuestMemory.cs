@@ -15,6 +15,10 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestMemoryAllocator, IGuestS
     private readonly List<(ulong Start, ulong End)> _stackRanges = [];
     private ulong _nextAllocationAddress = 0x0010_0000;
 
+    public int ReadCount { get; private set; }
+
+    public int CompareCount { get; private set; }
+
     public void AddRegion(ulong baseAddress, byte[] data)
         => _regions.Add((baseAddress, data));
 
@@ -76,6 +80,7 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestMemoryAllocator, IGuestS
 
     public bool TryRead(ulong virtualAddress, Span<byte> destination)
     {
+        ReadCount++;
         if (!TryFind(virtualAddress, destination.Length, out var data, out var offset))
         {
             return false;
@@ -83,6 +88,13 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestMemoryAllocator, IGuestS
 
         data.AsSpan(offset, destination.Length).CopyTo(destination);
         return true;
+    }
+
+    public bool TryCompare(ulong virtualAddress, ReadOnlySpan<byte> expected)
+    {
+        CompareCount++;
+        return TryFind(virtualAddress, expected.Length, out var data, out var offset) &&
+               data.AsSpan(offset, expected.Length).SequenceEqual(expected);
     }
 
     public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source)
