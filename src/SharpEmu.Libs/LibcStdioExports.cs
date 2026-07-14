@@ -238,7 +238,12 @@ public static class LibcStdioExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        var totalRequested = elementSize * elementCount;
+        if (!TryGetTotalByteCount(elementSize, elementCount, out var totalRequested))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
         var buffer = ArrayPool<byte>.Shared.Rent((int)Math.Min((ulong)ReadChunkSize, totalRequested));
         ulong totalRead = 0;
 
@@ -253,7 +258,12 @@ public static class LibcStdioExports
                     break;
                 }
 
-                if (!ctx.Memory.TryWrite(destination + totalRead, buffer.AsSpan(0, read)))
+                if (!TryGetGuestRangeAddress(
+                        destination,
+                        totalRead,
+                        read,
+                        out var writeAddress) ||
+                    !ctx.Memory.TryWrite(writeAddress, buffer.AsSpan(0, read)))
                 {
                     ctx[CpuRegister.Rax] = totalRead / elementSize;
                     return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
@@ -262,7 +272,7 @@ public static class LibcStdioExports
                 totalRead += (ulong)read;
             }
         }
-        catch (IOException)
+        catch (Exception exception) when (exception is IOException or ObjectDisposedException)
         {
             ctx[CpuRegister.Rax] = totalRead / elementSize;
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
@@ -412,15 +422,49 @@ public static class LibcStdioExports
             return false;
         }
 
-        var unsignedOffset = unchecked((ulong)offset);
-        if (unsignedOffset > ulong.MaxValue - destination)
+        return TryGetGuestRangeAddress(
+                destination,
+                unchecked((ulong)offset),
+                source.Length,
+                out var address) &&
+            ctx.Memory.TryWrite(address, source);
+    }
+
+    internal static bool TryGetTotalByteCount(
+        ulong elementSize,
+        ulong elementCount,
+        out ulong totalByteCount)
+    {
+        if (elementSize != 0 && elementCount > ulong.MaxValue / elementSize)
+        {
+            totalByteCount = 0;
+            return false;
+        }
+
+        totalByteCount = elementSize * elementCount;
+        return true;
+    }
+
+    internal static bool TryGetGuestRangeAddress(
+        ulong baseAddress,
+        ulong offset,
+        int length,
+        out ulong address)
+    {
+        address = 0;
+        if (length < 0 || offset > ulong.MaxValue - baseAddress)
         {
             return false;
         }
 
-        var address = destination + unsignedOffset;
-        return (source.IsEmpty || (ulong)(source.Length - 1) <= ulong.MaxValue - address) &&
-            ctx.Memory.TryWrite(address, source);
+        var candidate = baseAddress + offset;
+        if (length != 0 && (ulong)(length - 1) > ulong.MaxValue - candidate)
+        {
+            return false;
+        }
+
+        address = candidate;
+        return true;
     }
 
     [SysAbiExport(
@@ -565,7 +609,12 @@ public static class LibcStdioExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        var totalRequested = elementSize * elementCount;
+        if (!TryGetTotalByteCount(elementSize, elementCount, out var totalRequested))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
         var buffer = ArrayPool<byte>.Shared.Rent((int)Math.Min((ulong)ReadChunkSize, totalRequested));
         ulong totalWritten = 0;
 
@@ -574,7 +623,12 @@ public static class LibcStdioExports
             while (totalWritten < totalRequested)
             {
                 var request = (int)Math.Min((ulong)buffer.Length, totalRequested - totalWritten);
-                if (!ctx.Memory.TryRead(source + totalWritten, buffer.AsSpan(0, request)))
+                if (!TryGetGuestRangeAddress(
+                        source,
+                        totalWritten,
+                        request,
+                        out var readAddress) ||
+                    !ctx.Memory.TryRead(readAddress, buffer.AsSpan(0, request)))
                 {
                     ctx[CpuRegister.Rax] = totalWritten / elementSize;
                     return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
@@ -592,7 +646,7 @@ public static class LibcStdioExports
                 totalWritten += (ulong)request;
             }
         }
-        catch (IOException)
+        catch (Exception exception) when (exception is IOException or ObjectDisposedException)
         {
             ctx[CpuRegister.Rax] = totalWritten / elementSize;
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
