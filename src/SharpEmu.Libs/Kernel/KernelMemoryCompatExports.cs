@@ -3248,7 +3248,7 @@ public static partial class KernelMemoryCompatExports
     public static int KernelDirectMemoryQuery(CpuContext ctx)
     {
         var offset = ctx[CpuRegister.Rdi];
-        _ = ctx[CpuRegister.Rsi]; // flags
+        var findNext = unchecked((int)ctx[CpuRegister.Rsi]) == 1;
         var infoAddress = ctx[CpuRegister.Rdx];
         var infoSize = ctx[CpuRegister.Rcx];
         if (infoAddress == 0 || infoSize < 24)
@@ -3258,13 +3258,8 @@ public static partial class KernelMemoryCompatExports
 
         lock (_memoryGate)
         {
-            foreach (var block in _directAllocations.Values)
+            if (TryFindDirectAllocationForQueryLocked(offset, findNext, out var block))
             {
-                if (offset < block.Start || offset >= block.Start + block.Length)
-                {
-                    continue;
-                }
-
                 if (!ctx.TryWriteUInt64(infoAddress, block.Start) ||
                     !ctx.TryWriteUInt64(infoAddress + sizeof(ulong), block.Start + block.Length) ||
                     !ctx.TryWriteInt32(infoAddress + (sizeof(ulong) * 2), block.MemoryType))
@@ -3277,6 +3272,38 @@ public static partial class KernelMemoryCompatExports
         }
 
         return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+    }
+
+    private static bool TryFindDirectAllocationForQueryLocked(
+        ulong offset,
+        bool findNext,
+        out DirectAllocation allocation)
+    {
+        allocation = default;
+        var foundNext = false;
+        foreach (var candidate in _directAllocations.Values)
+        {
+            if (TryAddU64(candidate.Start, candidate.Length, out var candidateEnd) &&
+                offset >= candidate.Start &&
+                offset < candidateEnd)
+            {
+                allocation = candidate;
+                return true;
+            }
+
+            if (!findNext || candidate.Start < offset)
+            {
+                continue;
+            }
+
+            if (!foundNext || candidate.Start < allocation.Start)
+            {
+                allocation = candidate;
+                foundNext = true;
+            }
+        }
+
+        return foundNext;
     }
 
     [SysAbiExport(
