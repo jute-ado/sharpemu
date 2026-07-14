@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Text;
 
@@ -260,22 +261,28 @@ public sealed class CpuContext(ICpuMemory memory, Generation generation)
             return false;
         }
 
-        var bytes = new byte[capacity];
-        for (var index = 0; index < bytes.Length; index++)
+        var bytes = new ArrayBufferWriter<byte>();
+        Span<byte> current = stackalloc byte[1];
+        for (var index = 0; index < capacity; index++)
         {
-            if (!Memory.TryRead(address + (ulong)index, bytes.AsSpan(index, 1)))
+            var offset = (ulong)index;
+            if (offset > ulong.MaxValue - address ||
+                !Memory.TryRead(address + offset, current))
             {
                 return false;
             }
 
-            if (bytes[index] == 0)
+            if (current[0] == 0)
             {
-                value = Encoding.UTF8.GetString(bytes, 0, index);
+                value = Encoding.UTF8.GetString(bytes.WrittenSpan);
                 return true;
             }
+
+            bytes.GetSpan(1)[0] = current[0];
+            bytes.Advance(1);
         }
 
-        value = Encoding.UTF8.GetString(bytes);
+        value = Encoding.UTF8.GetString(bytes.WrittenSpan);
         return true;
     }
 
