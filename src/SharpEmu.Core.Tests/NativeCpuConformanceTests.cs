@@ -1,7 +1,6 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using System.Runtime.InteropServices;
 using SharpEmu.Core.Cpu;
 using SharpEmu.Core.Memory;
 using SharpEmu.HLE;
@@ -195,16 +194,10 @@ public sealed class NativeCpuConformanceTests
         },
     };
 
-    [Theory]
+    [WindowsX64Theory]
     [MemberData(nameof(InstructionSequences))]
     public void ExecutesNativeInstructionSequence(string name, byte[] code)
     {
-        if (!OperatingSystem.IsWindows() ||
-            RuntimeInformation.ProcessArchitecture != Architecture.X64)
-        {
-            return;
-        }
-
         var previousWatchdog = Environment.GetEnvironmentVariable(
             "SHARPEMU_STALL_WATCHDOG_SECONDS");
         Environment.SetEnvironmentVariable("SHARPEMU_STALL_WATCHDOG_SECONDS", "0");
