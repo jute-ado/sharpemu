@@ -30,6 +30,7 @@ public static class KernelEventFlagCompatExports
         public required uint Attributes { get; init; }
         public ulong Bits { get; set; }
         public int WaitingThreads { get; set; }
+        public bool Deleted { get; set; }
         public object Gate { get; } = new();
     }
 
@@ -102,9 +103,11 @@ public static class KernelEventFlagCompatExports
 
         lock (state.Gate)
         {
+            state.Deleted = true;
             Monitor.PulseAll(state.Gate);
         }
 
+        _ = GuestThreadExecution.Scheduler?.WakeBlockedThreads(GetEventFlagWakeKey(handle));
         TraceEventFlag($"delete handle=0x{handle:X16} name='{state.Name}'");
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
@@ -126,6 +129,11 @@ public static class KernelEventFlagCompatExports
 
         lock (state.Gate)
         {
+            if (state.Deleted)
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED);
+            }
+
             state.Bits |= pattern;
             Monitor.PulseAll(state.Gate);
             TraceEventFlag($"set handle=0x{handle:X16} pattern=0x{pattern:X16} bits=0x{state.Bits:X16} ret=0x{returnRip:X16}");
@@ -151,6 +159,11 @@ public static class KernelEventFlagCompatExports
 
         lock (state.Gate)
         {
+            if (state.Deleted)
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED);
+            }
+
             state.Bits &= pattern;
             TraceEventFlag($"clear handle=0x{handle:X16} mask=0x{pattern:X16} bits=0x{state.Bits:X16}");
         }
@@ -182,6 +195,11 @@ public static class KernelEventFlagCompatExports
 
         lock (state.Gate)
         {
+            if (state.Deleted)
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED);
+            }
+
             if (!TryWriteResultPattern(ctx, resultAddress, state.Bits))
             {
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
@@ -352,6 +370,11 @@ public static class KernelEventFlagCompatExports
 
         lock (state.Gate)
         {
+            if (state.Deleted)
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED);
+            }
+
             if (waiterCountAddress != 0 &&
                 !KernelMemoryCompatExports.TryWriteUInt32Compat(
                     ctx,
@@ -416,6 +439,12 @@ public static class KernelEventFlagCompatExports
     {
         result = OrbisGen2Result.ORBIS_GEN2_OK;
 
+        if (state.Deleted)
+        {
+            result = OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED;
+            return true;
+        }
+
         if (!IsSatisfied(state.Bits, pattern, waitMode))
         {
             return false;
@@ -442,6 +471,13 @@ public static class KernelEventFlagCompatExports
         lock (state.Gate)
         {
             result = OrbisGen2Result.ORBIS_GEN2_OK;
+            if (state.Deleted)
+            {
+                state.WaitingThreads = Math.Max(0, state.WaitingThreads - 1);
+                result = OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED;
+                return true;
+            }
+
             if (!IsSatisfied(state.Bits, pattern, waitMode))
             {
                 return false;
