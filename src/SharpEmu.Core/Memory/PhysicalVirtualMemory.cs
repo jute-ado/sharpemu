@@ -793,32 +793,15 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         _gate.EnterReadLock();
         try
         {
-            MemoryRegion? next = null;
-            foreach (var candidate in _regions)
+            var regionIndex = FindQueryRegionIndex(address, findNext, out _);
+            if (regionIndex >= 0)
             {
-                if (candidate.Size > ulong.MaxValue - candidate.VirtualAddress)
-                {
-                    continue;
-                }
-
-                var candidateEnd = candidate.VirtualAddress + candidate.Size;
-                if (address >= candidate.VirtualAddress && address < candidateEnd)
-                {
-                    region = ToGuestMemoryRegion(candidate, address);
-                    return true;
-                }
-
-                if (findNext &&
-                    candidate.VirtualAddress >= address &&
-                    (next is null || candidate.VirtualAddress < next.VirtualAddress))
-                {
-                    next = candidate;
-                }
-            }
-
-            if (next is not null)
-            {
-                region = ToGuestMemoryRegion(next, next.VirtualAddress);
+                var matchedRegion = _regions[regionIndex];
+                var queryAddress = address >= matchedRegion.VirtualAddress &&
+                    address - matchedRegion.VirtualAddress < matchedRegion.Size
+                        ? address
+                        : matchedRegion.VirtualAddress;
+                region = ToGuestMemoryRegion(matchedRegion, queryAddress);
                 return true;
             }
         }
@@ -829,6 +812,60 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
         region = default;
         return false;
+    }
+
+    internal int CountRegionQueryProbes(ulong address, bool findNext)
+    {
+        ThrowIfDisposed();
+        _gate.EnterReadLock();
+        try
+        {
+            _ = FindQueryRegionIndex(address, findNext, out var probes);
+            return probes;
+        }
+        finally
+        {
+            _gate.ExitReadLock();
+        }
+    }
+
+    private int FindQueryRegionIndex(ulong address, bool findNext, out int probes)
+    {
+        probes = 0;
+        var low = 0;
+        var high = _regions.Count - 1;
+        var candidateIndex = -1;
+        while (low <= high)
+        {
+            probes++;
+            var middle = low + ((high - low) >> 1);
+            if (_regions[middle].VirtualAddress <= address)
+            {
+                candidateIndex = middle;
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle - 1;
+            }
+        }
+
+        if (candidateIndex >= 0)
+        {
+            var candidate = _regions[candidateIndex];
+            if (address - candidate.VirtualAddress < candidate.Size)
+            {
+                return candidateIndex;
+            }
+        }
+
+        if (!findNext)
+        {
+            return -1;
+        }
+
+        var nextIndex = candidateIndex + 1;
+        return nextIndex < _regions.Count ? nextIndex : -1;
     }
 
     public bool TryRead(ulong virtualAddress, Span<byte> destination)

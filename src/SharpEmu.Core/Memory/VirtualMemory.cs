@@ -143,32 +143,60 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
     {
         lock (_gate)
         {
-            MappedRegion? next = null;
-            foreach (var candidate in _regions)
+            var regionIndex = FindQueryRegionIndex(address, findNext, out _);
+            if (regionIndex >= 0)
             {
-                if (address >= candidate.Region.VirtualAddress && address < candidate.EndAddress)
-                {
-                    region = ToGuestMemoryRegion(candidate);
-                    return true;
-                }
-
-                if (findNext &&
-                    candidate.Region.VirtualAddress >= address &&
-                    (next is null || candidate.Region.VirtualAddress < next.Value.Region.VirtualAddress))
-                {
-                    next = candidate;
-                }
-            }
-
-            if (next is not null)
-            {
-                region = ToGuestMemoryRegion(next.Value);
+                region = ToGuestMemoryRegion(_regions[regionIndex]);
                 return true;
             }
         }
 
         region = default;
         return false;
+    }
+
+    internal int CountRegionQueryProbes(ulong address, bool findNext)
+    {
+        lock (_gate)
+        {
+            _ = FindQueryRegionIndex(address, findNext, out var probes);
+            return probes;
+        }
+    }
+
+    private int FindQueryRegionIndex(ulong address, bool findNext, out int probes)
+    {
+        probes = 0;
+        var low = 0;
+        var high = _regions.Count - 1;
+        var candidateIndex = -1;
+        while (low <= high)
+        {
+            probes++;
+            var middle = low + ((high - low) / 2);
+            if (_regions[middle].Region.VirtualAddress <= address)
+            {
+                candidateIndex = middle;
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle - 1;
+            }
+        }
+
+        if (candidateIndex >= 0 && address < _regions[candidateIndex].EndAddress)
+        {
+            return candidateIndex;
+        }
+
+        if (!findNext)
+        {
+            return -1;
+        }
+
+        var nextIndex = candidateIndex + 1;
+        return nextIndex < _regions.Count ? nextIndex : -1;
     }
 
     public bool TryRead(ulong virtualAddress, Span<byte> destination)
