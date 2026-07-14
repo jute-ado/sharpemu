@@ -29,6 +29,9 @@ public sealed class SelfLoaderTests
     private const uint RelativeRelocationType = 8;
     private const uint TlsModuleIdRelocationType = 16;
     private const int SyntheticRelocationTargetVirtualAddress = 0x80;
+    private const ulong SyntheticImportStubBaseAddress = 0x0000_7000_0000_0000UL;
+    private const ulong SyntheticImportStubAddressStride = 0x0100_0000UL;
+    private const ulong SyntheticImportStubSlotSize = 0x10UL;
 
     [Fact]
     public void LoadsMinimalElf64Image()
@@ -586,6 +589,79 @@ public sealed class SelfLoaderTests
         Assert.Equal(addend, importedRelocation.Addend);
         Assert.Equal(nid, importedRelocation.Nid);
         Assert.Equal(expectedDataImport, importedRelocation.IsData);
+    }
+
+    [Fact]
+    public void MapsImportStubWithExecutableTrapReturnMetadata()
+    {
+        const string nid = "TESTNID";
+        var elf = CreateElfWithSymbolRelocation(
+            originalTargetValue: 0,
+            symbolBinding: 1,
+            symbolType: 2,
+            symbolValue: 0,
+            symbolName: $"{nid}#libSceSynthetic",
+            addend: 0);
+        var memory = new VirtualMemory();
+
+        var image = new SelfLoader().Load(elf, memory);
+
+        var importStub = Assert.Single(image.ImportStubs);
+        Assert.Equal(SyntheticImportStubBaseAddress, importStub.Key);
+        Span<byte> slot = stackalloc byte[(int)SyntheticImportStubSlotSize];
+        Assert.True(memory.TryRead(importStub.Key, slot));
+        Assert.Equal(0xCC, slot[0]);
+        Assert.Equal(0xC3, slot[1]);
+        Assert.Equal(0x5457_4ED3U, BinaryPrimitives.ReadUInt32LittleEndian(slot[8..]));
+        var stubRegion = Assert.Single(
+            memory.SnapshotRegions(),
+            region => region.VirtualAddress == importStub.Key);
+        Assert.Equal(0x1000UL, stubRegion.MemorySize);
+        Assert.Equal(
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute,
+            stubRegion.Protection);
+    }
+
+    [Fact]
+    public void MovesAdditionalImageImportStubsWhenCanonicalRegionIsOccupied()
+    {
+        const string nid = "TESTNID";
+        var importElf = CreateElfWithSymbolRelocation(
+            originalTargetValue: 0,
+            symbolBinding: 1,
+            symbolType: 2,
+            symbolValue: 0,
+            symbolName: $"{nid}#libSceSynthetic",
+            addend: 0x20);
+        var memory = new VirtualMemory();
+        var moduleManager = new ModuleManager();
+        var loader = new SelfLoader();
+        _ = loader.Load(CreateElf(), memory, moduleManager);
+        var occupiedPage = Enumerable.Repeat((byte)0xA5, 0x1000).ToArray();
+        memory.Map(
+            SyntheticImportStubBaseAddress,
+            (ulong)occupiedPage.Length,
+            fileOffset: 0,
+            occupiedPage,
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+
+        var image = loader.LoadAdditional(
+            importElf,
+            memory,
+            moduleManager,
+            fs: null,
+            mountRoot: null);
+
+        var importStub = Assert.Single(image.ImportStubs);
+        Assert.Equal(
+            SyntheticImportStubBaseAddress - SyntheticImportStubAddressStride,
+            importStub.Key);
+        Assert.Equal(
+            importStub.Key + 0x20,
+            ReadSyntheticRelocationTarget(memory, image));
+        Span<byte> originalPage = stackalloc byte[0x1000];
+        Assert.True(memory.TryRead(SyntheticImportStubBaseAddress, originalPage));
+        Assert.All(originalPage.ToArray(), value => Assert.Equal(0xA5, value));
     }
 
     [Fact]
