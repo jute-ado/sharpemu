@@ -9,23 +9,40 @@ namespace SharpEmu.HLE;
 /// </summary>
 public static class HostSessionControl
 {
-    private static Action<string>? _shutdownHandler;
+    private static ShutdownRegistration? _shutdownRegistration;
 
-    public static void SetShutdownHandler(Action<string>? handler)
+    public static IDisposable RegisterShutdownHandler(Action<string> handler)
     {
-        Volatile.Write(ref _shutdownHandler, handler);
+        ArgumentNullException.ThrowIfNull(handler);
+
+        var registration = new ShutdownRegistration(handler);
+        Interlocked.Exchange(ref _shutdownRegistration, registration);
+        return registration;
     }
 
     public static void RequestShutdown(string reason)
     {
         try
         {
-            Volatile.Read(ref _shutdownHandler)?.Invoke(reason);
+            Volatile.Read(ref _shutdownRegistration)?.Invoke(reason);
         }
         catch (Exception exception)
         {
             Console.Error.WriteLine(
                 $"[LOADER][WARN] Host shutdown handler failed: {exception.Message}");
+        }
+    }
+
+    private sealed class ShutdownRegistration(Action<string> handler) : IDisposable
+    {
+        public void Invoke(string reason)
+        {
+            handler(reason);
+        }
+
+        public void Dispose()
+        {
+            Interlocked.CompareExchange(ref _shutdownRegistration, null, this);
         }
     }
 }

@@ -1053,7 +1053,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_hostShutdownRequested = false;
 		_guestTeardownRequested = false;
 		_activeSessionBackend = this;
-		HostSessionControl.SetShutdownHandler(RequestHostShutdown);
+		var shutdownRegistration = HostSessionControl.RegisterShutdownHandler(RequestHostShutdown);
 		_importLoopSignatureCount = 0;
 		_importLoopSignatureWriteIndex = 0;
 		_importLoopPatternHits = 0;
@@ -1101,7 +1101,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 		finally
 		{
-			HostSessionControl.SetShutdownHandler(null);
+			shutdownRegistration.Dispose();
 			if (ReferenceEquals(_activeSessionBackend, this))
 			{
 				_activeSessionBackend = null;
