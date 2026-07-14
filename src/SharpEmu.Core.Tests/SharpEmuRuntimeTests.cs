@@ -59,6 +59,29 @@ public sealed class SharpEmuRuntimeTests
             opcode: "CC");
     }
 
+    [WindowsX64Fact]
+    public Task CliReportsSyntheticIntegerDivideByZeroWithoutCrashingHostProcess()
+    {
+        return AssertSyntheticGuestTrapAsync(
+            [
+                0x31, 0xD2,                         // xor edx, edx
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // mov eax, 1
+                0x31, 0xC9,                         // xor ecx, ecx
+                0xF7, 0xF1,                         // div ecx
+            ],
+            exceptionCode: "C0000094",
+            opcode: "F7");
+    }
+
+    [WindowsX64Fact]
+    public Task CliReportsSyntheticPrivilegedInstructionWithoutCrashingHostProcess()
+    {
+        return AssertSyntheticGuestTrapAsync(
+            [0xF4], // hlt
+            exceptionCode: "C0000096",
+            opcode: "F4");
+    }
+
     private static async Task AssertSyntheticGuestTrapAsync(
         byte[] code,
         string exceptionCode,

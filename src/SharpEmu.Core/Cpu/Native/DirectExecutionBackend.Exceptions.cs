@@ -334,7 +334,7 @@ public sealed partial class DirectExecutionBackend
 		// runs with CET context-IP validation disabled and unwinds through the same
 		// return stub used by forced guest exits. Restrict this to a registered guest
 		// stack so a host fault can never be mistaken for an emulated CPU trap.
-		if (exceptionCode is not (0xC0000005u or 0x80000003u or 0xC000001Du) ||
+		if (!IsRecoverableGuestProcessorException(exceptionCode) ||
 			!ReferenceEquals(_activeExecutionBackend, this) ||
 			_guestReturnStub == 0 ||
 			ActiveEntryReturnSentinelRip != (ulong)_guestReturnStub ||
@@ -353,6 +353,18 @@ public sealed partial class DirectExecutionBackend
 		WriteCtxU64(contextRecord, CTX_RAX, ulong.MaxValue);
 		WriteCtxU64(contextRecord, CTX_RIP, (ulong)_guestReturnStub);
 		return true;
+	}
+
+	private static bool IsRecoverableGuestProcessorException(uint exceptionCode)
+	{
+		return exceptionCode is
+			0xC0000005u or // access violation
+			0x80000003u or // breakpoint
+			0x80000004u or // single step
+			0xC000001Du or // illegal instruction
+			>= 0xC000008Cu and <= 0xC0000096u or // bounds, floating-point, integer and privileged faults
+			0xC00002B4u or // floating-point multiple faults
+			0xC00002B5u;   // floating-point multiple traps
 	}
 
 	private static bool IsBenignHostDebugException(uint exceptionCode)
