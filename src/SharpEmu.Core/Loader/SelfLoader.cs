@@ -17,7 +17,9 @@ namespace SharpEmu.Core.Loader;
 public sealed class SelfLoader : ISelfLoader
 {
     private static readonly SharpEmuLogger Log = SharpEmuLog.For("Loader");
-    private const uint SelfMagic = 0x4F153D1D;
+    private const uint ElfMagic = 0x7F454C46;
+    private const uint Ps4SelfMagic  = 0x4F153D1D;
+    private const uint Ps5SelfMagic  = 0x5414F5EE;
     private const ulong SelfSegmentFlag = 0x800;
     private const int PageSize = 0x1000;
     private const ulong ImportStubBaseAddress = 0x0000_7000_0000_0000UL;
@@ -326,7 +328,8 @@ public sealed class SelfLoader : ISelfLoader
             throw new InvalidDataException("Input image is too small to contain an ELF header.");
         }
 
-        if (imageData.Length >= sizeof(uint) && BinaryPrimitives.ReadUInt32BigEndian(imageData[..sizeof(uint)]) == SelfMagic)
+        var magic = BinaryPrimitives.ReadUInt32BigEndian(imageData[..sizeof(uint)]);
+        if (magic is Ps4SelfMagic or Ps5SelfMagic)
         {
             var selfHeader = ReadUnmanaged<SelfHeader>(imageData, 0);
             if (!selfHeader.HasKnownLayout || selfHeader.Unknown != 0x22)
@@ -346,6 +349,12 @@ public sealed class SelfLoader : ISelfLoader
             }
 
             return new LoadContext(IsSelf: true, elfOffset, selfHeader.FileSize, segments);
+        }
+
+        if (magic != ElfMagic)
+        {
+            throw new InvalidDataException(
+                $"Unsupported executable signature 0x{magic:X8}");
         }
 
         return new LoadContext(IsSelf: false, ElfOffset: 0, SelfFileSize: 0, Array.Empty<SelfSegment>());
@@ -2592,10 +2601,14 @@ public sealed class SelfLoader : ISelfLoader
         public ulong FileSize => _fileSize;
 
         public bool HasKnownLayout =>
-            _ident0 == 0x4F &&
-            _ident1 == 0x15 &&
-            _ident2 == 0x3D &&
-            _ident3 == 0x1D &&
+            ((_ident0 == 0x4F &&
+              _ident1 == 0x15 &&
+              _ident2 == 0x3D &&
+              _ident3 == 0x1D) ||
+             (_ident0 == 0x54 &&
+              _ident1 == 0x14 &&
+              _ident2 == 0xF5 &&
+              _ident3 == 0xEE)) &&
             _ident4 == 0x00 &&
             _ident5 == 0x01 &&
             _ident6 == 0x01 &&
