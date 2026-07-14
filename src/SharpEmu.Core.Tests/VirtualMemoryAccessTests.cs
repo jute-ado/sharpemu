@@ -189,6 +189,29 @@ public sealed class VirtualMemoryAccessTests
         Assert.Equal(0x6000UL, next.Address);
     }
 
+    [Fact]
+    public void RegionLookupUsesLogarithmicProbeDepth()
+    {
+        var memory = new VirtualMemory();
+        const int regionCount = 1024;
+        const ulong stride = 0x10;
+        for (var index = 0; index < regionCount; index++)
+        {
+            memory.Map(
+                BaseAddress + ((ulong)index * stride),
+                1,
+                (ulong)index,
+                [unchecked((byte)index)],
+                ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        }
+
+        var lastAddress = BaseAddress + ((regionCount - 1) * stride);
+        Span<byte> value = stackalloc byte[1];
+        Assert.True(memory.TryRead(lastAddress, value));
+        Assert.Equal(0xFF, value[0]);
+        Assert.InRange(memory.CountRegionLookupProbes(lastAddress), 1, 11);
+    }
+
     private static VirtualMemory CreateMappedMemory(byte[] fileData)
     {
         var memory = new VirtualMemory();
