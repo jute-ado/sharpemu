@@ -823,6 +823,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public bool TryCompare(ulong virtualAddress, ReadOnlySpan<byte> expected)
     {
+        ThrowIfDisposed();
         _gate.EnterReadLock();
         try
         {

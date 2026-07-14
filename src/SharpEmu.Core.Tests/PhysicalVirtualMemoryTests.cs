@@ -39,6 +39,21 @@ public sealed class PhysicalVirtualMemoryTests
     }
 
     [WindowsX64Fact]
+    public void CompareMatchesMappedBytesWithoutCrossingRegionBounds()
+    {
+        using var memory = new PhysicalVirtualMemory();
+        var address = memory.AllocateAt(0, 0x2000, executable: false);
+        byte[] payload = [1, 2, 3, 4];
+        Assert.True(memory.TryWrite(address + 0x100, payload));
+
+        Assert.True(memory.TryCompare(address + 0x100, payload));
+        Assert.False(memory.TryCompare(address + 0x100, [1, 2, 3, 5]));
+        Assert.False(memory.TryCompare(address + 0x1FFF, [0, 0]));
+        Assert.True(memory.TryCompare(address + 0x2000, []));
+        Assert.False(memory.TryCompare(address + 0x2000, [0]));
+    }
+
+    [WindowsX64Fact]
     public void MappingCopiesPayloadZeroFillsSegmentAndPreservesAdjacentBytes()
     {
         using var memory = new PhysicalVirtualMemory();
@@ -201,6 +216,8 @@ public sealed class PhysicalVirtualMemoryTests
             memory.TryRead(0x10000, new byte[1]));
         Assert.Throws<ObjectDisposedException>(() =>
             memory.TryWrite(0x10000, new byte[1]));
+        Assert.Throws<ObjectDisposedException>(() =>
+            memory.TryCompare(0x10000, new byte[1]));
         Assert.Throws<ObjectDisposedException>(() =>
             memory.TryWriteUInt64(0x10000, 0));
         Assert.Throws<ObjectDisposedException>(() =>
