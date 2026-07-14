@@ -147,7 +147,7 @@ public sealed class SelfLoader : ISelfLoader
 
         var applicationInfo = readParamJson
             ? TryLoadParamJson(fs, mountRoot)
-            : default;
+            : new Ps5ApplicationMetadata(null, null, null, null);
 
         var tlsModuleId = clearVirtualMemory
             ? 1u
@@ -275,17 +275,18 @@ public sealed class SelfLoader : ISelfLoader
             procParamAddress,
             applicationInfo.Title,
             applicationInfo.TitleId,
-            applicationInfo.Version);
+            applicationInfo.Version,
+            applicationInfo.ContentId);
     }
 
-    private static (string? Title, string? TitleId, string? Version) TryLoadParamJson(
+    private static Ps5ApplicationMetadata TryLoadParamJson(
         IFileSystem? fs,
         string? mountRoot)
     {
         if (fs == null)
         {
             Console.WriteLine("[LOADER] param.json not found (no filesystem provided).");
-            return default;
+            return new Ps5ApplicationMetadata(null, null, null, null);
         }
 
         string[] possiblePaths = string.IsNullOrEmpty(mountRoot)
@@ -305,14 +306,15 @@ public sealed class SelfLoader : ISelfLoader
         if (foundPath == null)
         {
             Console.WriteLine("[LOADER] param.json not found (no root path / unknown layout).");
-            return default;
+            return new Ps5ApplicationMetadata(null, null, null, null);
         }
 
-        var applicationInfo = Ps5ParamJsonReader.TryReadPs5Param(fs, foundPath);
+        var applicationInfo = Ps5ParamJsonReader.TryReadApplicationMetadata(fs, foundPath);
         Console.WriteLine($"[LOADER] Loading param.json at {foundPath}");
         Console.WriteLine(
             $"[LOADER] Title: {applicationInfo.Title ?? "(unknown)"}, " +
             $"TitleId: {applicationInfo.TitleId ?? "(unknown)"}, " +
+            $"ContentId: {applicationInfo.ContentId ?? "(unknown)"}, " +
             $"Version: {applicationInfo.Version ?? "(unknown)"}");
         return applicationInfo;
     }

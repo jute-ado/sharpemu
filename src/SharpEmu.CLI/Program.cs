@@ -1,8 +1,10 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using SharpEmu.Core;
 using SharpEmu.Core.Cpu;
 using SharpEmu.Core.Cpu.Native;
+using SharpEmu.Core.Loader;
 using SharpEmu.Core.Runtime;
 using SharpEmu.GUI;
 using SharpEmu.HLE;
@@ -912,6 +914,8 @@ internal static partial class Program
                 DurationMilliseconds: GetElapsedMilliseconds(invocationStartedTimestamp),
                 Build: BuildExecutionReportBuild(),
                 Host: BuildExecutionReportHost(),
+                Application: BuildApplicationReport(
+                    runtime?.LastApplicationMetadata ?? TryReadApplicationMetadataForReport(executablePath)),
                 Result: executionResult,
                 CpuSession: BuildCpuSessionReport(runtime?.LastCpuSessionSummary),
                 CpuTrap: BuildCpuTrapReport(runtime?.LastCpuTrapInfo),
@@ -992,6 +996,50 @@ internal static partial class Program
             RuntimeInformation.FrameworkDescription,
             HostSystemInfo.CpuName,
             HostSystemInfo.GpuName);
+    }
+
+    private static CliApplicationReport? BuildApplicationReport(Ps5ApplicationMetadata? metadata)
+    {
+        return metadata is null
+            ? null
+            : new CliApplicationReport(
+                metadata.Title,
+                metadata.TitleId,
+                metadata.ContentId,
+                metadata.Version);
+    }
+
+    private static Ps5ApplicationMetadata? TryReadApplicationMetadataForReport(string executablePath)
+    {
+        string? bundleRoot;
+        try
+        {
+            bundleRoot = Path.GetDirectoryName(Path.GetFullPath(executablePath));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(bundleRoot))
+        {
+            return null;
+        }
+
+        var fileSystem = new PhysicalFileSystem();
+        foreach (var candidate in new[]
+        {
+            Path.Combine(bundleRoot, "sce_sys", "param.json"),
+            Path.Combine(bundleRoot, "param.json"),
+        })
+        {
+            if (fileSystem.Exists(candidate))
+            {
+                return Ps5ParamJsonReader.TryReadApplicationMetadata(fileSystem, candidate);
+            }
+        }
+
+        return null;
     }
 
     private static CliCpuSessionReport? BuildCpuSessionReport(CpuSessionSummary? summary)
@@ -1354,6 +1402,7 @@ internal static partial class Program
         long DurationMilliseconds,
         CliBuildReport Build,
         CliHostReport Host,
+        CliApplicationReport? Application,
         CliExecutionResult Result,
         CliCpuSessionReport? CpuSession,
         CliCpuTrapReport? CpuTrap,
@@ -1382,6 +1431,12 @@ internal static partial class Program
         string FrameworkDescription,
         string CpuName,
         string GpuName);
+
+    private sealed record CliApplicationReport(
+        string? Title,
+        string? TitleId,
+        string? ContentId,
+        string? Version);
 
     private sealed record CliCpuSessionReport(
         CliExecutionResult Result,

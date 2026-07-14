@@ -59,6 +59,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
     public CpuNotImplementedInfo? LastCpuNotImplementedInfo { get; private set; }
 
+    public Ps5ApplicationMetadata? LastApplicationMetadata { get; private set; }
+
     public SharpEmuRuntime(
         ISelfLoader selfLoader,
         IVirtualMemory virtualMemory,
@@ -149,8 +151,14 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         LastCpuTrapInfo = null;
         LastCpuMemoryFaultInfo = null;
         LastCpuNotImplementedInfo = null;
+        LastApplicationMetadata = null;
         KernelModuleRegistry.Reset();
         var image = LoadImage(normalizedEbootPath);
+        LastApplicationMetadata = new Ps5ApplicationMetadata(
+            image.Title,
+            image.TitleId,
+            image.ContentId,
+            image.Version);
         VideoOutExports.ConfigureApplicationInfo(image.Title, image.TitleId, image.Version, BuildInfo.CommitSha);
         SaveDataExports.ConfigureApplicationInfo(image.TitleId);
         LogAppBundleInfo(normalizedEbootPath, image);
@@ -398,7 +406,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         var displayName = string.IsNullOrWhiteSpace(image.Title) ? "(unknown)" : image.Title!.Trim();
         var titleId = string.IsNullOrWhiteSpace(image.TitleId) ? "(unknown)" : image.TitleId!.Trim();
         var version = string.IsNullOrWhiteSpace(image.Version) ? "(unknown)" : image.Version!.Trim();
-        var contentId = ResolveContentId(Path.GetDirectoryName(ebootPath)) ?? "(unknown)";
+        var contentId = string.IsNullOrWhiteSpace(image.ContentId) ? "(unknown)" : image.ContentId!.Trim();
 
         var builder = new StringBuilder();
         builder.AppendLine("App bundle info:");
@@ -409,42 +417,6 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         builder.AppendLine($"- Executable: {executableName}");
         builder.Append("- Platform: PlayStation 5");
         Log.Info(builder.ToString());
-    }
-
-    private static string? ResolveContentId(string? bundleRoot)
-    {
-        if (string.IsNullOrEmpty(bundleRoot))
-        {
-            return null;
-        }
-
-        foreach (var candidate in new[]
-        {
-            Path.Combine(bundleRoot, "sce_sys", "param.json"),
-            Path.Combine(bundleRoot, "param.json"),
-        })
-        {
-            if (!File.Exists(candidate))
-            {
-                continue;
-            }
-
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(candidate));
-                if (doc.RootElement.TryGetProperty("contentId", out var contentId))
-                {
-                    return contentId.GetString();
-                }
-            }
-            catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException)
-            {
-            }
-
-            break;
-        }
-
-        return null;
     }
 
     private static App0BindingScope? BindApp0Root(string normalizedEbootPath)

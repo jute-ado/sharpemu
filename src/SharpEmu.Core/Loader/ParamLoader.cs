@@ -25,23 +25,41 @@ public sealed record LocalizedLanguage(string? TitleName);
 
 public sealed record Disc(LocalizedParameters? LocalizedParameters);
 
+public sealed record Ps5ApplicationMetadata(
+    string? Title,
+    string? TitleId,
+    string? ContentId,
+    string? Version);
+
 public static class Ps5ParamJsonReader
 {
     public static (string? Title, string? TitleId, string? Version) TryReadPs5Param(IFileSystem fs, string paramJsonPath)
     {
+        var metadata = TryReadApplicationMetadata(fs, paramJsonPath);
+        return (metadata.Title, metadata.TitleId, metadata.Version);
+    }
+
+    public static Ps5ApplicationMetadata TryReadApplicationMetadata(IFileSystem fs, string paramJsonPath)
+    {
         if (!fs.Exists(paramJsonPath))
-            return (null, null, null);
+            return EmptyMetadata();
 
         if (!fs.TryReadAllBytes(paramJsonPath, out var data))
-            return (null, null, null);
+            return EmptyMetadata();
 
-        return TryReadPs5Param(data);
+        return TryReadApplicationMetadata(data);
     }
 
     public static (string? Title, string? TitleId, string? Version) TryReadPs5Param(byte[] data)
     {
+        var metadata = TryReadApplicationMetadata(data);
+        return (metadata.Title, metadata.TitleId, metadata.Version);
+    }
+
+    public static Ps5ApplicationMetadata TryReadApplicationMetadata(byte[] data)
+    {
         if (data == null || data.Length == 0)
-            return (null, null, null);
+            return EmptyMetadata();
 
         try
         {
@@ -52,29 +70,32 @@ public static class Ps5ParamJsonReader
             }
 
             using var doc = JsonDocument.Parse(json);
-            return TryReadPs5Param(doc.RootElement);
+            return TryReadApplicationMetadata(doc.RootElement);
         }
         catch (JsonException)
         {
-            return (null, null, null);
+            return EmptyMetadata();
         }
     }
 
-    private static (string? Title, string? TitleId, string? Version) TryReadPs5Param(JsonElement root)
+    private static Ps5ApplicationMetadata TryReadApplicationMetadata(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object)
         {
-            return default;
+            return EmptyMetadata();
         }
 
         var titleId = TryGetString(root, "titleId");
+        var contentId = TryGetString(root, "contentId");
         var version =
             TryGetString(root, "contentVersion")
             ?? TryGetString(root, "masterVersion")
             ?? TryGetString(root, "targetContentVersion");
 
-        return (ExtractTitleName(root), titleId, version);
+        return new Ps5ApplicationMetadata(ExtractTitleName(root), titleId, contentId, version);
     }
+
+    private static Ps5ApplicationMetadata EmptyMetadata() => new(null, null, null, null);
 
     private static string? ExtractTitleName(JsonElement root)
     {

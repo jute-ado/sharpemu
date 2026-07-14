@@ -27,6 +27,8 @@ public interface ISharpEmuRuntime : IDisposable
 
     CpuNotImplementedInfo? LastCpuNotImplementedInfo { get; }
 
+    Ps5ApplicationMetadata? LastApplicationMetadata { get; }
+
     SelfImage LoadImage(string ebootPath);
 
     OrbisGen2Result Run(string ebootPath);
