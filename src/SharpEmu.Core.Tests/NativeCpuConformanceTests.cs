@@ -102,6 +102,97 @@ public sealed class NativeCpuConformanceTests
                 0xC3,                               // ret
             ]
         },
+        {
+            "tls-load-supports-redundant-prefixes",
+            [
+                0x66, 0x66, 0x66,
+                0x64, 0x48, 0x8B, 0x04, 0x25,
+                0x00, 0x00, 0x00, 0x00,             // mov rax, fs:[0]
+                0x48, 0x85, 0xC0,                   // test rax, rax
+                0x74, 0x03,                         // jz failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
+            "tls-load-supports-extended-volatile-destinations",
+            [
+                0x48, 0xB8, 0x88, 0x77, 0x66, 0x55,
+                0x44, 0x33, 0x22, 0x11,             // mov rax, 0x1122334455667788
+                0x64, 0x4C, 0x8B, 0x04, 0x25,
+                0x00, 0x00, 0x00, 0x00,             // mov r8, fs:[0]
+                0x48, 0xB9, 0x88, 0x77, 0x66, 0x55,
+                0x44, 0x33, 0x22, 0x11,             // mov rcx, 0x1122334455667788
+                0x48, 0x39, 0xC8,                   // cmp rax, rcx
+                0x75, 0x08,                         // jne failure
+                0x4D, 0x85, 0xC0,                   // test r8, r8
+                0x74, 0x03,                         // jz failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
+            "tls-load-supports-extended-nonvolatile-destinations",
+            [
+                0x48, 0xB8, 0x88, 0x77, 0x66, 0x55,
+                0x44, 0x33, 0x22, 0x11,             // mov rax, 0x1122334455667788
+                0x64, 0x4C, 0x8B, 0x3C, 0x25,
+                0x00, 0x00, 0x00, 0x00,             // mov r15, fs:[0]
+                0x48, 0xB9, 0x88, 0x77, 0x66, 0x55,
+                0x44, 0x33, 0x22, 0x11,             // mov rcx, 0x1122334455667788
+                0x48, 0x39, 0xC8,                   // cmp rax, rcx
+                0x75, 0x08,                         // jne failure
+                0x4D, 0x85, 0xFF,                   // test r15, r15
+                0x74, 0x03,                         // jz failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
+            "tls-load-preserves-arithmetic-flags",
+            [
+                0xB8, 0xFF, 0xFF, 0xFF, 0x7F,       // mov eax, 0x7fffffff
+                0x83, 0xC0, 0x01,                   // add eax, 1
+                0x64, 0x48, 0x8B, 0x14, 0x25,
+                0x00, 0x00, 0x00, 0x00,             // mov rdx, fs:[0]
+                0x71, 0x0E,                         // jno failure
+                0x79, 0x0C,                         // jns failure
+                0x74, 0x0A,                         // jz failure
+                0x72, 0x08,                         // jc failure
+                0x48, 0x85, 0xD2,                   // test rdx, rdx
+                0x74, 0x03,                         // jz failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
+            "tls-load-inside-nested-call",
+            [
+                0xE8, 0x0D, 0x00, 0x00, 0x00,       // call helper
+                0x85, 0xC0,                         // test eax, eax
+                0x75, 0x03,                         // jne failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+                0x64, 0x48, 0x8B, 0x14, 0x25,
+                0x00, 0x00, 0x00, 0x00,             // helper: mov rdx, fs:[0]
+                0x48, 0x85, 0xD2,                   // test rdx, rdx
+                0x74, 0x03,                         // jz helperFailure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // helperFailure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
     };
 
     [Theory]
