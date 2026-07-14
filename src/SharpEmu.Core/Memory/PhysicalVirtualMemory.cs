@@ -144,14 +144,17 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         var allocationType = MEM_COMMIT | MEM_RESERVE;
         var reservedOnly = false;
         var preferReserveOnly = ShouldReserveWithoutCommit(alignedSize, executable);
+        var allocatedRequestedRange = false;
 
         void* result = null;
         if (preferReserveOnly)
         {
             result = VirtualAlloc((void*)desiredAddress, (nuint)alignedSize, MEM_RESERVE, PAGE_READWRITE);
+            allocatedRequestedRange = result != null && desiredAddress != 0;
             if (result == null && allowAlternative)
             {
                 result = VirtualAlloc(null, (nuint)alignedSize, MEM_RESERVE, PAGE_READWRITE);
+                allocatedRequestedRange = false;
             }
 
             if (result != null)
@@ -163,6 +166,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         if (result == null)
         {
             result = VirtualAlloc((void*)desiredAddress, (nuint)alignedSize, allocationType, protection);
+            allocatedRequestedRange = result != null && desiredAddress != 0;
         }
 
         if (result == null)
@@ -174,15 +178,18 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
             TraceVmem($"Could not allocate at 0x{desiredAddress:X16}, trying any address...");
             result = VirtualAlloc(null, (nuint)alignedSize, allocationType, protection);
+            allocatedRequestedRange = false;
 
             if (result == null)
             {
                 if (!executable)
                 {
                     result = VirtualAlloc((void*)desiredAddress, (nuint)alignedSize, MEM_RESERVE, PAGE_READWRITE);
+                    allocatedRequestedRange = result != null && desiredAddress != 0;
                     if (result == null && allowAlternative)
                     {
                         result = VirtualAlloc(null, (nuint)alignedSize, MEM_RESERVE, PAGE_READWRITE);
+                        allocatedRequestedRange = false;
                     }
 
                     if (result != null)
@@ -198,7 +205,18 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             }
         }
 
-        var actualAddress = (ulong)result;
+        var hostAddress = (ulong)result;
+        if (allocatedRequestedRange && hostAddress > desiredAddress)
+        {
+            VirtualFree(result, 0, MEM_RELEASE);
+            throw new InvalidOperationException(
+                $"Host allocation at 0x{hostAddress:X16} does not contain requested address 0x{desiredAddress:X16}.");
+        }
+
+        var guestAddress = allocatedRequestedRange ? desiredAddress : hostAddress;
+        var trackedSize = allocatedRequestedRange
+            ? checked(desiredAddress - hostAddress + alignedSize)
+            : alignedSize;
 
         var lazyPrimeState = "n/a";
         if (reservedOnly)
@@ -211,7 +229,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 {
                     var remaining = primeBytes - committedBytes;
                     var chunkBytes = Math.Min(remaining, LazyReservePrimeChunkBytes);
-                    var commitAddress = (void*)(actualAddress + committedBytes);
+                    var commitAddress = (void*)(hostAddress + committedBytes);
                     var committed = VirtualAlloc(commitAddress, (nuint)chunkBytes, MEM_COMMIT, PAGE_READWRITE);
                     if (committed == null)
                     {
@@ -226,12 +244,12 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                     lazyPrimeState = committedBytes == primeBytes
                         ? $"ok:{committedBytes:X}"
                         : $"partial:{committedBytes:X}/{primeBytes:X}";
-                    TraceVmem($"Primed lazy region: 0x{actualAddress:X16} - 0x{actualAddress + committedBytes:X16} ({committedBytes} bytes)");
+                    TraceVmem($"Primed lazy region: 0x{hostAddress:X16} - 0x{hostAddress + committedBytes:X16} ({committedBytes} bytes)");
                 }
                 else
                 {
                     lazyPrimeState = $"fail:{primeBytes:X}";
-                    TraceVmem($"Failed to prime lazy region at 0x{actualAddress:X16} ({primeBytes} bytes), continuing with on-demand commit");
+                    TraceVmem($"Failed to prime lazy region at 0x{hostAddress:X16} ({primeBytes} bytes), continuing with on-demand commit");
                 }
             }
             else
@@ -245,8 +263,8 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         {
             InsertRegionSorted(new MemoryRegion
             {
-                VirtualAddress = actualAddress,
-                Size = alignedSize,
+                VirtualAddress = hostAddress,
+                Size = trackedSize,
                 IsExecutable = executable,
                 IsReservedOnly = reservedOnly,
                 Protection = protection
@@ -260,9 +278,11 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         var allocationKind = reservedOnly
             ? "reserved data memory (lazy commit)"
             : (executable ? "executable memory" : "data memory");
-        TraceVmem($"Allocated {allocationKind}: 0x{actualAddress:X16} - 0x{actualAddress + alignedSize:X16} ({alignedSize} bytes) lazy_prime={lazyPrimeState}");
+        TraceVmem(
+            $"Allocated {allocationKind}: guest=0x{guestAddress:X16} host=0x{hostAddress:X16} " +
+            $"host_end=0x{hostAddress + trackedSize:X16} requested={alignedSize} tracked={trackedSize} lazy_prime={lazyPrimeState}");
 
-        return actualAddress;
+        return guestAddress;
     }
 
     public bool TryAllocateAtOrAbove(
