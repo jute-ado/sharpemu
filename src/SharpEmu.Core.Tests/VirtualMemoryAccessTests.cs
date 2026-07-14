@@ -73,6 +73,23 @@ public sealed class VirtualMemoryAccessTests
     }
 
     [Fact]
+    public void OverlapIsRejectedBeforeAllocatingMaximumSizedBackingStore()
+    {
+        var memory = CreateMappedMemory([1, 2, 3, 4]);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            memory.Map(
+                BaseAddress,
+                int.MaxValue,
+                0,
+                [],
+                ProgramHeaderFlags.Read | ProgramHeaderFlags.Write));
+
+        var region = Assert.Single(memory.SnapshotRegions());
+        Assert.Equal(RegionSize, region.MemorySize);
+    }
+
+    [Fact]
     public void WrappedMappingIsRejectedWithoutMutation()
     {
         var memory = new VirtualMemory();
