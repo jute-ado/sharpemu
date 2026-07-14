@@ -1143,6 +1143,12 @@ internal static unsafe class VulkanVideoPresenter
         {
             try
             {
+                if (PngSplashLoader.TryLoadIcon(out var iconPixels, out var iconWidth, out var iconHeight))
+                {
+                    var icon = new RawImage((int)iconWidth, (int)iconHeight, iconPixels);
+                    _window.SetWindowIcon(ref icon);
+                }
+
                 WaitForRenderDocAttachIfRequested();
                 _vk = Vk.GetApi();
                 _vulkanApiLoaded = true;
