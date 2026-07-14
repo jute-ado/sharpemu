@@ -210,8 +210,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private nint _sleepAddress;
 
 	private int _tlsPatchStubOffset;
-	private readonly Dictionary<(int DestinationRegister, int Displacement), nint> _tlsLoadHelpers = new();
-	private readonly Dictionary<(int SourceRegister, int Displacement), nint> _tlsStoreHelpers = new();
+	private readonly Dictionary<(int DestinationRegister, int Displacement, bool Is64Bit), nint> _tlsLoadHelpers = new();
+	private readonly Dictionary<(int SourceRegister, int Displacement, bool Is64Bit), nint> _tlsStoreHelpers = new();
 
 	private nint _unresolvedReturnStub;
 
@@ -632,7 +632,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private nint _selfHandlePtr;
 
-	private const int MinTlsPatchInstructionBytes = 9;
+	private const int MinTlsPatchInstructionBytes = 8;
 
 	private delegate ulong ImportGatewayDelegate(nint backendHandle, int importIndex, nint argPackPtr);
 	private delegate int RawExceptionHandlerDelegate(void* exceptionInfo);
@@ -2523,8 +2523,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 
 		var offset = 0;
+		var hasOperandSizeOverride = false;
 		while (offset < availableLength && source[offset] == 0x66)
 		{
+			hasOperandSizeOverride = true;
 			offset++;
 		}
 
@@ -2559,6 +2561,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 
 		var displacement = *(int*)(source + offset + 3);
+		var is64Bit = (rex & 8) != 0;
+		if (!is64Bit && hasOperandSizeOverride)
+		{
+			return false;
+		}
+
 		var destinationRegister = ((modRm >> 3) & 7) | (((rex & 4) != 0) ? 8 : 0);
 		var instructionLength = offset + 7;
 		if (instructionLength < MinTlsPatchInstructionBytes)
@@ -2566,16 +2574,22 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			return false;
 		}
 
-		return PatchTlsLoadInstruction(address, instructionLength, destinationRegister, displacement);
+		return PatchTlsLoadInstruction(
+			address,
+			instructionLength,
+			destinationRegister,
+			displacement,
+			is64Bit);
 	}
 
 	private unsafe bool PatchTlsLoadInstruction(
 		nint address,
 		int instructionLength,
 		int destinationRegister,
-		int displacement)
+		int displacement,
+		bool is64Bit)
 	{
-		var helper = GetOrCreateTlsLoadHelper(destinationRegister, displacement);
+		var helper = GetOrCreateTlsLoadHelper(destinationRegister, displacement, is64Bit);
 		if (helper == 0)
 		{
 			return false;
@@ -2614,14 +2628,17 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 	}
 
-	private unsafe nint GetOrCreateTlsLoadHelper(int destinationRegister, int displacement)
+	private unsafe nint GetOrCreateTlsLoadHelper(
+		int destinationRegister,
+		int displacement,
+		bool is64Bit)
 	{
 		if (destinationRegister is < 0 or >= 16 or 4)
 		{
 			return 0;
 		}
 
-		var helperKey = (destinationRegister, displacement);
+		var helperKey = (destinationRegister, displacement, is64Bit);
 		if (_tlsLoadHelpers.TryGetValue(helperKey, out var existingHelper))
 		{
 			return existingHelper;
@@ -2660,7 +2677,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		offset += sizeof(nint);
 		EmitByte(code, ref offset, 0xFF); // call rax
 		EmitByte(code, ref offset, 0xD0);
-		EmitByte(code, ref offset, 0x48); // mov rax, [rax+displacement]
+		if (is64Bit)
+		{
+			EmitByte(code, ref offset, 0x48);
+		}
+		// A 32-bit load into eax zero-extends rax before it is copied into the guest destination.
 		EmitByte(code, ref offset, 0x8B);
 		EmitByte(code, ref offset, 0x80);
 		EmitUInt32(code, ref offset, unchecked((uint)displacement));
@@ -2735,8 +2756,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 
 		var offset = 0;
+		var hasOperandSizeOverride = false;
 		while (offset < availableLength && source[offset] == 0x66)
 		{
+			hasOperandSizeOverride = true;
 			offset++;
 		}
 
@@ -2758,7 +2781,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			offset++;
 		}
 
-		if ((rex & 8) == 0 || offset + 7 > availableLength || source[offset] != 0x89)
+		if (offset + 7 > availableLength || source[offset] != 0x89)
 		{
 			return false;
 		}
@@ -2771,6 +2794,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 
 		var displacement = *(int*)(source + offset + 3);
+		var is64Bit = (rex & 8) != 0;
+		if (!is64Bit && hasOperandSizeOverride)
+		{
+			return false;
+		}
+
 		var sourceRegister = ((modRm >> 3) & 7) | (((rex & 4) != 0) ? 8 : 0);
 		var instructionLength = offset + 7;
 		if (instructionLength < MinTlsPatchInstructionBytes)
@@ -2778,18 +2807,21 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			return false;
 		}
 
-		var helper = GetOrCreateTlsStoreHelper(sourceRegister, displacement);
+		var helper = GetOrCreateTlsStoreHelper(sourceRegister, displacement, is64Bit);
 		return helper != 0 && PatchCallSite(address, instructionLength, helper);
 	}
 
-	private unsafe nint GetOrCreateTlsStoreHelper(int sourceRegister, int displacement)
+	private unsafe nint GetOrCreateTlsStoreHelper(
+		int sourceRegister,
+		int displacement,
+		bool is64Bit)
 	{
 		if (sourceRegister is < 0 or >= 16)
 		{
 			return 0;
 		}
 
-		var helperKey = (sourceRegister, displacement);
+		var helperKey = (sourceRegister, displacement, is64Bit);
 		if (_tlsStoreHelpers.TryGetValue(helperKey, out var existingHelper))
 		{
 			return existingHelper;
@@ -2867,7 +2899,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			EmitByte(code, ref offset, (byte)(0xC2 | ((sourceRegister & 7) << 3)));
 		}
 
-		EmitByte(code, ref offset, 0x48); // mov [rax+displacement], rdx
+		if (is64Bit)
+		{
+			EmitByte(code, ref offset, 0x48);
+		}
+		// Without REX.W, store only edx while preserving the adjacent TLS bytes.
 		EmitByte(code, ref offset, 0x89);
 		EmitByte(code, ref offset, 0x90);
 		EmitUInt32(code, ref offset, unchecked((uint)displacement));
