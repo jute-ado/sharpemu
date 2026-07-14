@@ -124,6 +124,38 @@ public sealed class ParamLoaderTests
         Assert.Equal((null, "PPSA00002", "03.00"), metadata);
     }
 
+    [Fact]
+    public void Utf8BomIsAccepted()
+    {
+        var json = Encoding.UTF8.GetBytes("""
+            { "titleId": "PPSA00003", "contentVersion": "04.00" }
+            """);
+        var data = new byte[3 + json.Length];
+        Encoding.UTF8.Preamble.CopyTo(data);
+        json.CopyTo(data, 3);
+
+        var metadata = Ps5ParamJsonReader.TryReadPs5Param(data);
+
+        Assert.Equal((null, "PPSA00003", "04.00"), metadata);
+    }
+
+    [Fact]
+    public void FirstAvailableLocalizationIsUsedWhenPreferredLanguagesAreMissing()
+    {
+        const string json = """
+            {
+              "localizedParameters": {
+                "defaultLanguage": "fr-FR",
+                "ja-JP": { "titleName": "Japanese fallback" }
+              }
+            }
+            """;
+
+        var metadata = Read(json);
+
+        Assert.Equal(("Japanese fallback", null, null), metadata);
+    }
+
     private static (string? Title, string? TitleId, string? Version) Read(string json) =>
         Ps5ParamJsonReader.TryReadPs5Param(Encoding.UTF8.GetBytes(json));
 

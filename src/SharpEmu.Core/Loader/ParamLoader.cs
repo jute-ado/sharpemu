@@ -45,7 +45,13 @@ public static class Ps5ParamJsonReader
 
         try
         {
-            using var doc = JsonDocument.Parse(data);
+            ReadOnlyMemory<byte> json = data;
+            if (json.Span.StartsWith("\uFEFF"u8))
+            {
+                json = json[3..];
+            }
+
+            using var doc = JsonDocument.Parse(json);
             return TryReadPs5Param(doc.RootElement);
         }
         catch (JsonException)
@@ -62,45 +68,60 @@ public static class Ps5ParamJsonReader
         }
 
         var titleId = TryGetString(root, "titleId");
-
-        string? ver =
+        var version =
             TryGetString(root, "contentVersion")
             ?? TryGetString(root, "masterVersion")
             ?? TryGetString(root, "targetContentVersion");
 
-        string? title = ExtractTitleName(root);
-
-        return (title, titleId, ver);
+        return (ExtractTitleName(root), titleId, version);
     }
 
     private static string? ExtractTitleName(JsonElement root)
     {
-        if (!TryGetObject(root, "localizedParameters", out var lp))
+        if (!TryGetObject(root, "localizedParameters", out var localizedParameters))
         {
             if (!TryGetObject(root, "disc", out var disc) ||
-                !TryGetObject(disc, "localizedParameters", out lp))
+                !TryGetObject(disc, "localizedParameters", out localizedParameters))
             {
                 return null;
             }
         }
 
-        var defLang = TryGetString(lp, "defaultLanguage");
-
-        if (!string.IsNullOrEmpty(defLang))
+        var defaultLanguage = TryGetString(localizedParameters, "defaultLanguage");
+        if (!string.IsNullOrEmpty(defaultLanguage) &&
+            TryGetObject(localizedParameters, defaultLanguage, out var defaultLanguageObject))
         {
-            if (TryGetObject(lp, defLang, out var langObj))
+            var title = TryGetString(defaultLanguageObject, "titleName");
+            if (!string.IsNullOrWhiteSpace(title))
             {
-                var title = TryGetString(langObj, "titleName");
-                if (title is not null)
-                {
-                    return title;
-                }
+                return title;
             }
         }
 
-        return TryGetObject(lp, "en-US", out var english)
-            ? TryGetString(english, "titleName")
-            : null;
+        if (TryGetObject(localizedParameters, "en-US", out var english))
+        {
+            var title = TryGetString(english, "titleName");
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                return title;
+            }
+        }
+
+        foreach (var property in localizedParameters.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var title = TryGetString(property.Value, "titleName");
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                return title;
+            }
+        }
+
+        return null;
     }
 
     private static bool TryGetObject(JsonElement parent, string propertyName, out JsonElement value)
