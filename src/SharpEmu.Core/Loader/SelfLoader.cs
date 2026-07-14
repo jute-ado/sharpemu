@@ -395,6 +395,16 @@ public sealed class SelfLoader : ISelfLoader
         for (var index = 0; index < programHeaders.Count; index++)
         {
             var header = programHeaders[index];
+            if (header.HeaderType == ProgramHeaderType.Dynamic &&
+                header.FileSize > int.MaxValue)
+            {
+                // Reject deterministic metadata-size failures before LoadCore clears
+                // or maps any guest memory. Keep the dispatch-time check as a guard
+                // against future call paths that bypass this preflight pass.
+                throw new NotSupportedException(
+                    "Dynamic metadata segments larger than 2 GB are not currently supported.");
+            }
+
             if (header.HeaderType != ProgramHeaderType.Load)
             {
                 continue;
@@ -415,6 +425,28 @@ public sealed class SelfLoader : ISelfLoader
             if (mappedAddress > ulong.MaxValue - header.MemorySize)
             {
                 throw new InvalidDataException("Mapped ELF segment address range overflows.");
+            }
+
+            if (header.MemorySize != 0)
+            {
+                var segmentEnd = header.VirtualAddress + header.MemorySize;
+                for (var previousIndex = 0; previousIndex < index; previousIndex++)
+                {
+                    var previous = programHeaders[previousIndex];
+                    if (previous.HeaderType != ProgramHeaderType.Load ||
+                        previous.MemorySize == 0)
+                    {
+                        continue;
+                    }
+
+                    var previousEnd = previous.VirtualAddress + previous.MemorySize;
+                    if (header.VirtualAddress < previousEnd &&
+                        previous.VirtualAddress < segmentEnd)
+                    {
+                        throw new InvalidDataException(
+                            "ELF load segments cannot overlap in guest memory.");
+                    }
+                }
             }
 
             if (header.FileSize == 0)

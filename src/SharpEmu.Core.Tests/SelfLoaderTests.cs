@@ -115,6 +115,97 @@ public sealed class SelfLoaderTests
     }
 
     [Fact]
+    public void RejectedOversizedDynamicMetadataDoesNotClearExistingGuestMemory()
+    {
+        var memory = new VirtualMemory();
+        memory.Map(
+            virtualAddress: 0x1000,
+            memorySize: 4,
+            fileOffset: 0,
+            fileData: new byte[] { 1, 2, 3, 4 },
+            protection: ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        var malformed = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 1);
+        Array.Resize(ref malformed, ElfHeaderSize + ProgramHeaderSize);
+        var dynamicHeader = malformed.AsSpan(ElfHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            dynamicHeader,
+            (uint)ProgramHeaderType.Dynamic);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            dynamicHeader[32..],
+            (ulong)int.MaxValue + 1);
+
+        Assert.Throws<NotSupportedException>(() =>
+            new SelfLoader().Load(malformed, memory));
+
+        var region = Assert.Single(memory.SnapshotRegions());
+        Assert.Equal(0x1000UL, region.VirtualAddress);
+        Span<byte> contents = stackalloc byte[4];
+        Assert.True(memory.TryRead(0x1000, contents));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, contents.ToArray());
+    }
+
+    [Fact]
+    public void RejectedOverlappingLoadSegmentsDoNotClearExistingGuestMemory()
+    {
+        var memory = new VirtualMemory();
+        memory.Map(
+            virtualAddress: 0x1000,
+            memorySize: 4,
+            fileOffset: 0,
+            fileData: new byte[] { 1, 2, 3, 4 },
+            protection: ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        var malformed = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 2);
+        Array.Resize(ref malformed, ElfHeaderSize + (2 * ProgramHeaderSize));
+        WriteLoadHeader(malformed.AsSpan(ElfHeaderSize, ProgramHeaderSize), 0, 0x20);
+        WriteLoadHeader(
+            malformed.AsSpan(ElfHeaderSize + ProgramHeaderSize, ProgramHeaderSize),
+            0x10,
+            0x20);
+
+        Assert.Throws<InvalidDataException>(() =>
+            new SelfLoader().Load(malformed, memory));
+
+        var region = Assert.Single(memory.SnapshotRegions());
+        Assert.Equal(0x1000UL, region.VirtualAddress);
+        Span<byte> contents = stackalloc byte[4];
+        Assert.True(memory.TryRead(0x1000, contents));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, contents.ToArray());
+    }
+
+    [Fact]
+    public void MapsAdjacentLoadSegmentsWithoutTreatingBoundaryAsOverlap()
+    {
+        var elf = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 2);
+        Array.Resize(ref elf, ElfHeaderSize + (2 * ProgramHeaderSize));
+        WriteLoadHeader(elf.AsSpan(ElfHeaderSize, ProgramHeaderSize), 0, 0x20);
+        WriteLoadHeader(
+            elf.AsSpan(ElfHeaderSize + ProgramHeaderSize, ProgramHeaderSize),
+            0x20,
+            0x20);
+
+        var image = new SelfLoader().Load(elf, new VirtualMemory());
+
+        Assert.Collection(
+            image.MappedRegions.OrderBy(region => region.VirtualAddress),
+            first =>
+            {
+                Assert.Equal(0x0000_0008_0000_0000UL, first.VirtualAddress);
+                Assert.Equal(0x20UL, first.MemorySize);
+            },
+            second =>
+            {
+                Assert.Equal(0x0000_0008_0000_0020UL, second.VirtualAddress);
+                Assert.Equal(0x20UL, second.MemorySize);
+            });
+    }
+
+    [Fact]
     public void MutatedElfHeadersNeverLeakArithmeticExceptions()
     {
         var random = new Random(0x5E1F);
@@ -329,5 +420,19 @@ public sealed class SelfLoaderTests
         BinaryPrimitives.WriteUInt64LittleEndian(header[48..], 1);
         payload.CopyTo(image.AsSpan(checked((int)fileOffset)));
         return image;
+    }
+
+    private static void WriteLoadHeader(
+        Span<byte> header,
+        ulong virtualAddress,
+        ulong memorySize)
+    {
+        BinaryPrimitives.WriteUInt32LittleEndian(header, (uint)ProgramHeaderType.Load);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            header[4..],
+            (uint)(ProgramHeaderFlags.Read | ProgramHeaderFlags.Write));
+        BinaryPrimitives.WriteUInt64LittleEndian(header[16..], virtualAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[40..], memorySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[48..], 1);
     }
 }
