@@ -11,6 +11,7 @@ using Silk.NET.Vulkan.Extensions.EXT;
 using Silk.NET.Windowing;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using VkBuffer = Silk.NET.Vulkan.Buffer;
@@ -600,7 +601,8 @@ internal static unsafe class VulkanVideoPresenter
         var traceSubmission = false;
         lock (_gate)
         {
-            var known = _availableGuestImages.ContainsKey(address);
+            // VideoOut registration does not imply a rendered Vulkan image.
+            var known = _gpuGuestImages.ContainsKey(address);
             if (ShouldTracePresentedGuestImageContentsForDiagnostics())
             {
                 Console.Error.WriteLine(
@@ -622,7 +624,7 @@ internal static unsafe class VulkanVideoPresenter
                 {
                     Console.Error.WriteLine(
                         $"[LOADER][WARN] vk.submit_guest_image_unknown addr=0x{address:X16} " +
-                        $"{width}x{height} - flip target was never registered as a render output");
+                        $"{width}x{height} - flip target has no completed GPU render output");
                 }
 
                 return false;
@@ -933,6 +935,8 @@ internal static unsafe class VulkanVideoPresenter
         private ExtDebugUtils? _debugUtils;
         private PhysicalDevice _physicalDevice;
         private Device _device;
+        private PipelineCache _pipelineCache;
+        private string? _pipelineCachePath;
         private Queue _queue;
         private uint _queueFamilyIndex;
         private SwapchainKHR _swapchain;
@@ -950,6 +954,9 @@ internal static unsafe class VulkanVideoPresenter
         private CommandBuffer _presentationCommandBuffer;
         private VkSemaphore _imageAvailable;
         private VkSemaphore _renderFinished;
+        private Fence _presentationFence;
+        private bool _presentationInFlight;
+        private TranslatedDrawResources? _pendingPresentationResources;
         private VkBuffer _stagingBuffer;
         private DeviceMemory _stagingMemory;
         private ulong _stagingSize;
@@ -969,6 +976,10 @@ internal static unsafe class VulkanVideoPresenter
         private int _directPresentationCount;
         private readonly Dictionary<ulong, GuestImageResource> _guestImages = new();
         private readonly HashSet<(ulong Address, uint Width, uint Height, Format Format)> _tracedTextureCacheHits = new();
+        private static readonly bool _dumpTextures = string.Equals(
+            Environment.GetEnvironmentVariable("SHARPEMU_DUMP_TEXTURES"),
+            "1",
+            StringComparison.Ordinal);
         private readonly HashSet<(ulong Address, uint Width, uint Height, Format Format)> _tracedTextureUploads = new();
         private readonly HashSet<(ulong Address, uint Width, uint Height, uint Format)> _dumpedTextures = new();
         private readonly HashSet<(ulong Address, int Size)> _tracedGlobalBuffers = new();
@@ -991,7 +1002,7 @@ internal static unsafe class VulkanVideoPresenter
         private readonly record struct GraphicsPipelineKey(
             string VertexShader,
             string FragmentShader,
-            ulong RenderPass,
+            Format RenderTargetFormat,
             PrimitiveTopology Topology,
             VulkanGuestBlendState Blend,
             string ResourceLayout,
@@ -1156,6 +1167,7 @@ internal static unsafe class VulkanVideoPresenter
                 CreateSurface();
                 SelectPhysicalDevice();
                 CreateDevice();
+                CreatePipelineCache();
                 CreateSwapchain();
                 CreateCommandResources();
                 CreateGuestDrawResources();
@@ -1571,8 +1583,11 @@ internal static unsafe class VulkanVideoPresenter
             }
 
             _vk.GetPhysicalDeviceProperties(_physicalDevice, out var selected);
+            var selectedName = SilkMarshal.PtrToString((nint)selected.DeviceName) ?? "unknown";
             Console.Error.WriteLine(
-                $"[LOADER][INFO] Vulkan device: {SilkMarshal.PtrToString((nint)selected.DeviceName)} ({selected.DeviceType})");
+                $"[LOADER][INFO] Vulkan device: {selectedName} ({selected.DeviceType})");
+            VideoOutExports.SetSelectedGpuName(selectedName);
+            _window.Title = VideoOutExports.GetWindowTitle();
         }
 
         private static int ScorePhysicalDevice(
@@ -1755,6 +1770,110 @@ internal static unsafe class VulkanVideoPresenter
             }
         }
 
+        private void CreatePipelineCache()
+        {
+            _vk.GetPhysicalDeviceProperties(_physicalDevice, out var properties);
+            var directory = Path.Combine(AppContext.BaseDirectory, "pipeline-cache");
+            _pipelineCachePath = Path.Combine(
+                directory,
+                $"vulkan-{properties.VendorID:X4}-{properties.DeviceID:X4}-{properties.DriverVersion:X8}.bin");
+
+            byte[] initialData = [];
+            try
+            {
+                if (File.Exists(_pipelineCachePath))
+                {
+                    initialData = File.ReadAllBytes(_pipelineCachePath);
+                }
+            }
+            catch (IOException exception)
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][WARN] Vulkan pipeline cache could not be read: {exception.Message}");
+            }
+
+            fixed (byte* initialDataPointer = initialData)
+            {
+                var createInfo = new PipelineCacheCreateInfo
+                {
+                    SType = StructureType.PipelineCacheCreateInfo,
+                    InitialDataSize = (nuint)initialData.Length,
+                    PInitialData = initialData.Length == 0 ? null : initialDataPointer,
+                };
+                var result = _vk.CreatePipelineCache(
+                    _device,
+                    &createInfo,
+                    null,
+                    out _pipelineCache);
+                if (result != Result.Success && initialData.Length != 0)
+                {
+                    createInfo.InitialDataSize = 0;
+                    createInfo.PInitialData = null;
+                    Check(
+                        _vk.CreatePipelineCache(
+                            _device,
+                            &createInfo,
+                            null,
+                            out _pipelineCache),
+                        "vkCreatePipelineCache(empty)");
+                    initialData = [];
+                }
+                else
+                {
+                    Check(result, "vkCreatePipelineCache");
+                }
+            }
+
+            Console.Error.WriteLine(
+                $"[LOADER][INFO] Vulkan pipeline cache: " +
+                $"{(initialData.Length == 0 ? "new" : $"loaded {initialData.Length} bytes")}");
+        }
+
+        private void SavePipelineCache()
+        {
+            if (_pipelineCache.Handle == 0 || string.IsNullOrWhiteSpace(_pipelineCachePath))
+            {
+                return;
+            }
+
+            try
+            {
+                nuint size = 0;
+                Check(
+                    _vk.GetPipelineCacheData(_device, _pipelineCache, &size, null),
+                    "vkGetPipelineCacheData(size)");
+                if (size == 0 || size > int.MaxValue)
+                {
+                    return;
+                }
+
+                var data = new byte[(int)size];
+                fixed (byte* dataPointer = data)
+                {
+                    Check(
+                        _vk.GetPipelineCacheData(
+                            _device,
+                            _pipelineCache,
+                            &size,
+                            dataPointer),
+                        "vkGetPipelineCacheData");
+                }
+
+                var directory = Path.GetDirectoryName(_pipelineCachePath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+                File.WriteAllBytes(_pipelineCachePath, data.AsSpan(0, (int)size).ToArray());
+            }
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][WARN] Vulkan pipeline cache could not be saved: {exception.Message}");
+            }
+        }
+
         private void CreateSwapchain()
         {
             Check(
@@ -1847,7 +1966,42 @@ internal static unsafe class VulkanVideoPresenter
             Check(_vk.CreateSemaphore(_device, &semaphoreInfo, null, out _imageAvailable), "vkCreateSemaphore");
             Check(_vk.CreateSemaphore(_device, &semaphoreInfo, null, out _renderFinished), "vkCreateSemaphore");
 
+            var fenceInfo = new FenceCreateInfo
+            {
+                SType = StructureType.FenceCreateInfo,
+            };
+            Check(
+                _vk.CreateFence(_device, &fenceInfo, null, out _presentationFence),
+                "vkCreateFence(presentation)");
+
             CreateStagingBuffer((ulong)_extent.Width * _extent.Height * 4);
+        }
+
+        private void CompletePendingPresentation(bool wait)
+        {
+            if (!_presentationInFlight)
+            {
+                return;
+            }
+
+            var fence = _presentationFence;
+            var result = wait
+                ? _vk.WaitForFences(_device, 1, &fence, true, ulong.MaxValue)
+                : _vk.GetFenceStatus(_device, fence);
+            if (!wait && result == Result.NotReady)
+            {
+                return;
+            }
+
+            Check(result, "vkWaitForFences(presentation)");
+            _presentationInFlight = false;
+            if (_pendingPresentationResources is not null)
+            {
+                MarkSampledImagesInitialized(_pendingPresentationResources);
+                MarkStorageImagesInitialized(_pendingPresentationResources);
+                DestroyTranslatedDrawResources(_pendingPresentationResources);
+                _pendingPresentationResources = null;
+            }
         }
 
         private CommandBuffer AllocateGuestCommandBuffer()
@@ -2196,7 +2350,7 @@ internal static unsafe class VulkanVideoPresenter
                 Check(
                     _vk.CreateGraphicsPipelines(
                         _device,
-                        default,
+                        _pipelineCache,
                         1,
                         &pipelineInfo,
                         null,
@@ -2231,6 +2385,7 @@ internal static unsafe class VulkanVideoPresenter
         private TranslatedDrawResources CreateTranslatedDrawResources(
             VulkanTranslatedGuestDraw draw,
             RenderPass renderPass,
+            Format renderTargetFormat,
             Extent2D extent)
         {
             var vertexSpirv = draw.VertexSpirv;
@@ -2297,7 +2452,13 @@ internal static unsafe class VulkanVideoPresenter
                 CreateTranslatedDescriptorResources(
                     resources,
                     ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit);
-                CreateTranslatedPipeline(resources, vertexSpirv, draw.PixelSpirv, renderPass, extent);
+                CreateTranslatedPipeline(
+                    resources,
+                    vertexSpirv,
+                    draw.PixelSpirv,
+                    renderPass,
+                    renderTargetFormat,
+                    extent);
                 return resources;
             }
             catch
@@ -2593,12 +2754,13 @@ internal static unsafe class VulkanVideoPresenter
             byte[] vertexSpirv,
             byte[] fragmentSpirv,
             RenderPass renderPass,
+            Format renderTargetFormat,
             Extent2D extent)
         {
             var pipelineKey = new GraphicsPipelineKey(
                 GetShaderDigest(vertexSpirv),
                 GetShaderDigest(fragmentSpirv),
-                renderPass.Handle,
+                renderTargetFormat,
                 resources.Topology,
                 resources.Blend,
                 GetResourceLayoutKey(resources),
@@ -2754,7 +2916,7 @@ internal static unsafe class VulkanVideoPresenter
                     Check(
                         _vk.CreateGraphicsPipelines(
                             _device,
-                            default,
+                            _pipelineCache,
                             1,
                             &pipelineInfo,
                             null,
@@ -2934,7 +3096,7 @@ internal static unsafe class VulkanVideoPresenter
                 Check(
                     _vk.CreateComputePipelines(
                         _device,
-                        default,
+                        _pipelineCache,
                         1,
                         &pipelineInfo,
                         null,
@@ -3460,11 +3622,36 @@ internal static unsafe class VulkanVideoPresenter
         {
             const ulong offsetBasis = 14695981039346656037;
             const ulong prime = 1099511628211;
-            var hash = offsetBasis;
-            foreach (var value in pixels)
+
+            var h0 = offsetBasis ^ (ulong)pixels.Length;
+            var h1 = offsetBasis;
+            var h2 = offsetBasis;
+            var h3 = offsetBasis;
+
+            var words = MemoryMarshal.Cast<byte, ulong>(pixels);
+            var index = 0;
+            var blockEnd = words.Length - (words.Length & 3);
+            for (; index < blockEnd; index += 4)
             {
-                hash ^= value;
-                hash *= prime;
+                h0 = (h0 ^ words[index]) * prime;
+                h1 = (h1 ^ words[index + 1]) * prime;
+                h2 = (h2 ^ words[index + 2]) * prime;
+                h3 = (h3 ^ words[index + 3]) * prime;
+            }
+
+            for (; index < words.Length; index++)
+            {
+                h0 = (h0 ^ words[index]) * prime;
+            }
+
+            var hash = h0;
+            hash = (hash ^ h1) * prime;
+            hash = (hash ^ h2) * prime;
+            hash = (hash ^ h3) * prime;
+
+            foreach (var value in pixels[(words.Length * sizeof(ulong))..])
+            {
+                hash = (hash ^ value) * prime;
             }
 
             return hash;
@@ -3477,10 +3664,7 @@ internal static unsafe class VulkanVideoPresenter
             uint width,
             uint height)
         {
-            if (!string.Equals(
-                    Environment.GetEnvironmentVariable("SHARPEMU_DUMP_TEXTURES"),
-                    "1",
-                    StringComparison.Ordinal) ||
+            if (!_dumpTextures ||
                 texture.IsFallback ||
                 texture.IsStorage ||
                 GetTextureBytesPerPixel(texture.Format) != 4 ||
@@ -4501,6 +4685,7 @@ internal static unsafe class VulkanVideoPresenter
                 resources = CreateTranslatedDrawResources(
                     work.Draw,
                     target.RenderPass,
+                    target.Format,
                     extent);
                 resources.DebugName =
                     $"SharpEmu offscreen rt=0x{work.Target.Address:X16} " +
@@ -5137,6 +5322,8 @@ internal static unsafe class VulkanVideoPresenter
                 return;
             }
 
+            CompletePendingPresentation(wait: true);
+
             byte[]? pixels = null;
             if (presentation.Pixels is { } sourcePixels)
             {
@@ -5184,6 +5371,7 @@ internal static unsafe class VulkanVideoPresenter
                     translatedResources = CreateTranslatedDrawResources(
                         translatedDraw,
                         _renderPass,
+                        _swapchainFormat,
                         _extent);
                     if (ShouldTracePresentedGuestImageContentsForDiagnostics() &&
                         !_firstGuestDrawPresented)
@@ -5315,7 +5503,16 @@ internal static unsafe class VulkanVideoPresenter
                 SignalSemaphoreCount = 1,
                 PSignalSemaphores = &renderFinished,
             };
-            Check(_vk.QueueSubmit(_queue, 1, &submitInfo, default), "vkQueueSubmit");
+            var presentationFence = _presentationFence;
+            Check(
+                _vk.ResetFences(_device, 1, &presentationFence),
+                "vkResetFences(presentation)");
+            Check(
+                _vk.QueueSubmit(_queue, 1, &submitInfo, presentationFence),
+                "vkQueueSubmit");
+            _presentationInFlight = true;
+            _pendingPresentationResources = translatedResources;
+            translatedResources = null;
 
             var swapchain = _swapchain;
             var presentInfo = new PresentInfoKHR
@@ -5331,6 +5528,7 @@ internal static unsafe class VulkanVideoPresenter
             if (presentResult == Result.ErrorOutOfDateKhr)
             {
                 Check(_vk.QueueWaitIdle(_queue), "vkQueueWaitIdle");
+                CompletePendingPresentation(wait: false);
                 CollectCompletedGuestSubmissions(waitForOldest: false);
                 if (translatedResources is not null)
                 {
@@ -5343,19 +5541,13 @@ internal static unsafe class VulkanVideoPresenter
 
             CheckSwapchainResult(presentResult, "vkQueuePresentKHR");
             recreateAfterPresent |= presentResult == Result.SuboptimalKhr;
-            Check(_vk.QueueWaitIdle(_queue), "vkQueueWaitIdle");
             VideoOutExports.ReportPresentedFrame();
             if (_swapchainReadbackPending)
             {
+                CompletePendingPresentation(wait: true);
                 TraceSwapchainReadback();
             }
             CollectCompletedGuestSubmissions(waitForOldest: false);
-            if (translatedResources is not null)
-            {
-                MarkSampledImagesInitialized(translatedResources);
-                MarkStorageImagesInitialized(translatedResources);
-                DestroyTranslatedDrawResources(translatedResources);
-            }
 
             _imageInitialized[imageIndex] = true;
             _presentedSequence = presentation.Sequence;
@@ -6621,6 +6813,9 @@ internal static unsafe class VulkanVideoPresenter
                             $"[LOADER][WARN] Vulkan device wait during cleanup returned {idleResult}.");
                     }
 
+                    CompletePendingPresentation(wait: false);
+                    CollectCompletedGuestSubmissions(waitForOldest: false);
+                    SavePipelineCache();
                     DestroyPendingGuestSubmissions();
                     foreach (var pipeline in _computePipelines.Values)
                     {
@@ -6632,6 +6827,11 @@ internal static unsafe class VulkanVideoPresenter
                         _vk.DestroyPipeline(_device, pipeline, null);
                     }
                     _graphicsPipelines.Clear();
+                    if (_pipelineCache.Handle != 0)
+                    {
+                        _vk.DestroyPipelineCache(_device, _pipelineCache, null);
+                        _pipelineCache = default;
+                    }
                     foreach (var layout in _descriptorLayouts.Values)
                     {
                         _vk.DestroyPipelineLayout(_device, layout.PipelineLayout, null);
@@ -6757,6 +6957,7 @@ internal static unsafe class VulkanVideoPresenter
             Console.Error.WriteLine(
                 $"[LOADER][INFO] Vulkan VideoOut recreating swapchain after {operation}: {result}");
             _vk.DeviceWaitIdle(_device);
+            CompletePendingPresentation(wait: false);
             CollectCompletedGuestSubmissions(waitForOldest: false);
             DestroySwapchainResources();
             CreateSwapchain();
@@ -6789,6 +6990,11 @@ internal static unsafe class VulkanVideoPresenter
             {
                 _vk.DestroySemaphore(_device, _renderFinished, null);
                 _renderFinished = default;
+            }
+            if (_presentationFence.Handle != 0)
+            {
+                _vk.DestroyFence(_device, _presentationFence, null);
+                _presentationFence = default;
             }
             if (_barycentricPipeline.Handle != 0)
             {
