@@ -62,49 +62,36 @@ public static class IcedDecoder
 
     public static bool TryReadGuestBytes(ICpuMemory memory, ulong rip, int maxLen, out byte[] bytes)
     {
+        return TryReadGuestBytesCore(memory, rip, maxLen, out bytes);
+    }
+
+    public static bool TryReadGuestBytes(IVirtualMemory memory, ulong rip, int maxLen, out byte[] bytes)
+    {
+        return TryReadGuestBytesCore(memory, rip, maxLen, out bytes);
+    }
+
+    private static bool TryReadGuestBytesCore(
+        ICpuMemory memory,
+        ulong rip,
+        int maxLen,
+        out byte[] bytes)
+    {
         ArgumentNullException.ThrowIfNull(memory);
-        var clampedLength = Math.Clamp(maxLen, 1, MaxInstructionBytes);
-        var buffer = new byte[clampedLength];
-        Span<byte> oneByte = stackalloc byte[1];
-        var readCount = 0;
-        for (var i = 0; i < clampedLength; i++)
-        {
-            if (!memory.TryRead(rip + (ulong)i, oneByte))
-            {
-                break;
-            }
-
-            buffer[readCount] = oneByte[0];
-            readCount++;
-        }
-
-        if (readCount == 0)
+        if (maxLen <= 0)
         {
             bytes = Array.Empty<byte>();
             return false;
         }
 
-        if (readCount == clampedLength)
-        {
-            bytes = buffer;
-            return true;
-        }
-
-        bytes = new byte[readCount];
-        Array.Copy(buffer, bytes, readCount);
-        return true;
-    }
-
-    public static bool TryReadGuestBytes(IVirtualMemory memory, ulong rip, int maxLen, out byte[] bytes)
-    {
-        ArgumentNullException.ThrowIfNull(memory);
-        var clampedLength = Math.Clamp(maxLen, 1, MaxInstructionBytes);
+        var clampedLength = Math.Min(maxLen, MaxInstructionBytes);
         var buffer = new byte[clampedLength];
         Span<byte> oneByte = stackalloc byte[1];
         var readCount = 0;
         for (var i = 0; i < clampedLength; i++)
         {
-            if (!memory.TryRead(rip + (ulong)i, oneByte))
+            var offset = (ulong)i;
+            if (offset > ulong.MaxValue - rip ||
+                !memory.TryRead(rip + offset, oneByte))
             {
                 break;
             }
