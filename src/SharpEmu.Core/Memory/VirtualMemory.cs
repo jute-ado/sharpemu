@@ -175,12 +175,22 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
     {
         lock (_gate)
         {
-            if (!TryResolveRegion(virtualAddress, destination.Length, out var region, out var offset))
+            if (!TryResolveRange(virtualAddress, destination.Length, out var regionIndex))
             {
                 return false;
             }
 
-            region.BackingMemory.AsSpan(offset, destination.Length).CopyTo(destination);
+            var copied = 0;
+            while (copied < destination.Length)
+            {
+                var region = _regions[regionIndex++];
+                var address = virtualAddress + (ulong)copied;
+                var offset = checked((int)(address - region.Region.VirtualAddress));
+                var length = Math.Min(destination.Length - copied, region.BackingMemory.Length - offset);
+                region.BackingMemory.AsSpan(offset, length).CopyTo(destination[copied..]);
+                copied += length;
+            }
+
             return true;
         }
     }
@@ -189,12 +199,27 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
     {
         lock (_gate)
         {
-            if (!TryResolveRegion(virtualAddress, expected.Length, out var region, out var offset))
+            if (!TryResolveRange(virtualAddress, expected.Length, out var regionIndex))
             {
                 return false;
             }
 
-            return region.BackingMemory.AsSpan(offset, expected.Length).SequenceEqual(expected);
+            var compared = 0;
+            while (compared < expected.Length)
+            {
+                var region = _regions[regionIndex++];
+                var address = virtualAddress + (ulong)compared;
+                var offset = checked((int)(address - region.Region.VirtualAddress));
+                var length = Math.Min(expected.Length - compared, region.BackingMemory.Length - offset);
+                if (!region.BackingMemory.AsSpan(offset, length).SequenceEqual(expected.Slice(compared, length)))
+                {
+                    return false;
+                }
+
+                compared += length;
+            }
+
+            return true;
         }
     }
 
@@ -202,20 +227,31 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
     {
         lock (_gate)
         {
-            if (!TryResolveRegion(virtualAddress, source.Length, out var region, out var offset))
+            if (!TryResolveRange(virtualAddress, source.Length, out var regionIndex))
             {
                 return false;
             }
 
-            source.CopyTo(region.BackingMemory.AsSpan(offset, source.Length));
+            var copied = 0;
+            while (copied < source.Length)
+            {
+                var region = _regions[regionIndex++];
+                var address = virtualAddress + (ulong)copied;
+                var offset = checked((int)(address - region.Region.VirtualAddress));
+                var length = Math.Min(source.Length - copied, region.BackingMemory.Length - offset);
+                source.Slice(copied, length).CopyTo(region.BackingMemory.AsSpan(offset, length));
+                copied += length;
+            }
+
             return true;
         }
     }
 
-    private bool TryResolveRegion(ulong virtualAddress, int length, out MappedRegion region, out int offset)
+    private bool TryResolveRange(ulong virtualAddress, int length, out int firstRegionIndex)
     {
-        foreach (var candidate in _regions)
+        for (var index = 0; index < _regions.Count; index++)
         {
+            var candidate = _regions[index];
             if (virtualAddress < candidate.Region.VirtualAddress ||
                 virtualAddress > candidate.EndAddress ||
                 (virtualAddress == candidate.EndAddress && length != 0))
@@ -223,19 +259,32 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
                 continue;
             }
 
-            var candidateOffset = checked((int)(virtualAddress - candidate.Region.VirtualAddress));
-            if (length > candidate.BackingMemory.Length - candidateOffset)
+            firstRegionIndex = index;
+            var address = virtualAddress;
+            var remaining = (ulong)length;
+            while (remaining != 0)
             {
-                break;
+                if (index >= _regions.Count)
+                {
+                    return false;
+                }
+
+                candidate = _regions[index];
+                if (address < candidate.Region.VirtualAddress || address >= candidate.EndAddress)
+                {
+                    return false;
+                }
+
+                var lengthInRegion = Math.Min(remaining, candidate.EndAddress - address);
+                remaining -= lengthInRegion;
+                address += lengthInRegion;
+                index++;
             }
 
-            region = candidate;
-            offset = candidateOffset;
             return true;
         }
 
-        region = default;
-        offset = 0;
+        firstRegionIndex = 0;
         return false;
     }
 

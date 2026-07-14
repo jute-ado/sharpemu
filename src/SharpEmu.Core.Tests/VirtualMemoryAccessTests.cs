@@ -48,20 +48,64 @@ public sealed class VirtualMemoryAccessTests
     }
 
     [Fact]
-    public void AccessCannotCrossAdjacentRegionBoundary()
+    public void AccessSpansAdjacentRegionBoundary()
     {
         var memory = new VirtualMemory();
         memory.Map(BaseAddress, 4, 0, [1, 2, 3, 4], ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
         memory.Map(BaseAddress + 4, 4, 4, [5, 6, 7, 8], ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
         Span<byte> crossingRead = stackalloc byte[2];
 
-        Assert.False(memory.TryRead(BaseAddress + 3, crossingRead));
-        Assert.False(memory.TryWrite(BaseAddress + 3, new byte[] { 0xAA, 0xBB }));
+        Assert.True(memory.TryRead(BaseAddress + 3, crossingRead));
+        Assert.Equal(new byte[] { 4, 5 }, crossingRead.ToArray());
+        Assert.True(memory.TryCompare(BaseAddress + 3, [4, 5]));
+        Assert.False(memory.TryCompare(BaseAddress + 3, [4, 6]));
+        Assert.True(memory.TryWrite(BaseAddress + 3, new byte[] { 0xAA, 0xBB }));
 
         Span<byte> contents = stackalloc byte[8];
         Assert.True(memory.TryRead(BaseAddress, contents[..4]));
         Assert.True(memory.TryRead(BaseAddress + 4, contents[4..]));
-        Assert.Equal(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, contents.ToArray());
+        Assert.Equal(new byte[] { 1, 2, 3, 0xAA, 0xBB, 6, 7, 8 }, contents.ToArray());
+    }
+
+    [Fact]
+    public void AccessAcrossMappingGapFailsWithoutPartialMutation()
+    {
+        var memory = new VirtualMemory();
+        memory.Map(BaseAddress, 4, 0, [1, 2, 3, 4], ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        memory.Map(BaseAddress + 5, 4, 4, [5, 6, 7, 8], ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        byte[] crossingRead = [0xCC, 0xCC, 0xCC];
+
+        Assert.False(memory.TryRead(BaseAddress + 3, crossingRead));
+        Assert.Equal(new byte[] { 0xCC, 0xCC, 0xCC }, crossingRead);
+        Assert.False(memory.TryCompare(BaseAddress + 3, [4, 0, 5]));
+        Assert.False(memory.TryWrite(BaseAddress + 3, [0xAA, 0xBB, 0xCC]));
+
+        Span<byte> first = stackalloc byte[4];
+        Span<byte> second = stackalloc byte[4];
+        Assert.True(memory.TryRead(BaseAddress, first));
+        Assert.True(memory.TryRead(BaseAddress + 5, second));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, first.ToArray());
+        Assert.Equal(new byte[] { 5, 6, 7, 8 }, second.ToArray());
+    }
+
+    [Fact]
+    public void AccessSpansMultipleRegionsMappedOutOfOrder()
+    {
+        var memory = new VirtualMemory();
+        memory.Map(BaseAddress + 8, 4, 8, [9, 10, 11, 12], ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        memory.Map(BaseAddress, 4, 0, [1, 2, 3, 4], ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        memory.Map(BaseAddress + 4, 4, 4, [5, 6, 7, 8], ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        Span<byte> crossingRead = stackalloc byte[6];
+
+        Assert.True(memory.TryRead(BaseAddress + 3, crossingRead));
+        Assert.Equal(new byte[] { 4, 5, 6, 7, 8, 9 }, crossingRead.ToArray());
+        Assert.True(memory.TryWrite(BaseAddress + 3, [0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8]));
+
+        Span<byte> contents = stackalloc byte[12];
+        Assert.True(memory.TryRead(BaseAddress, contents));
+        Assert.Equal(
+            new byte[] { 1, 2, 3, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 10, 11, 12 },
+            contents.ToArray());
     }
 
     [Fact]
