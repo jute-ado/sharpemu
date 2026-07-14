@@ -157,11 +157,20 @@ internal static partial class Program
             try
             {
                 Console.Error.WriteLine($"[DEBUG] Loading without execution: {ebootPath}");
-                var image = runtime.LoadImage(ebootPath);
+                var preparedApplication = runtime.PrepareApplication(ebootPath);
+                var image = preparedApplication.MainImage;
                 Log.Info(
                     $"SharpEmu image inspection completed. Format={(image.IsSelf ? "SELF" : "ELF")}, " +
                     $"entry=0x{image.EntryPoint:X16}, mappedRegions={image.MappedRegions.Count}, " +
-                    $"imports={image.ImportStubs.Count}, relocations={image.ImportedRelocations.Count}");
+                    $"imports={image.ImportStubs.Count}, relocations={image.ImportedRelocations.Count}, " +
+                    $"modules={preparedApplication.Modules.Count}, " +
+                    $"moduleFailures={preparedApplication.ModuleLoadFailures.Count}");
+                if (preparedApplication.ModuleLoadFailures.Count > 0)
+                {
+                    Log.Warn(
+                        $"Image inspection encountered {preparedApplication.ModuleLoadFailures.Count} module load failure(s). " +
+                        "See the JSON report for structured details.");
+                }
             }
             catch (Exception ex)
             {
@@ -985,6 +994,8 @@ internal static partial class Program
                 Application: BuildApplicationReport(
                     runtime?.LastApplicationMetadata ?? TryReadApplicationMetadataForReport(executablePath)),
                 Image: BuildImageReport(runtime?.LastLoadedImage),
+                Modules: BuildModuleReports(runtime?.LastPreparedApplication, executablePath),
+                ModuleLoadFailures: BuildModuleFailureReports(runtime?.LastPreparedApplication, executablePath),
                 Result: executionResult,
                 CpuSession: BuildCpuSessionReport(runtime?.LastCpuSessionSummary),
                 CpuTrap: BuildCpuTrapReport(runtime?.LastCpuTrapInfo),
@@ -1124,6 +1135,47 @@ internal static partial class Program
             InitFunctionEntryPoint: image.InitFunctionEntryPoint == 0
                 ? null
                 : FormatAddress(image.InitFunctionEntryPoint));
+    }
+
+    private static IReadOnlyList<CliModuleReport>? BuildModuleReports(
+        PreparedApplication? application,
+        string executablePath)
+    {
+        return application?.Modules
+            .Select(module => new CliModuleReport(
+                BuildBundleRelativePath(executablePath, module.Path),
+                BuildImageReport(module.Image)!))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<CliModuleLoadFailureReport>? BuildModuleFailureReports(
+        PreparedApplication? application,
+        string executablePath)
+    {
+        return application?.ModuleLoadFailures
+            .Select(failure => new CliModuleLoadFailureReport(
+                BuildBundleRelativePath(executablePath, failure.Path),
+                failure.ErrorType,
+                failure.Message))
+            .ToArray();
+    }
+
+    private static string BuildBundleRelativePath(string executablePath, string path)
+    {
+        try
+        {
+            var bundleRoot = Path.GetDirectoryName(Path.GetFullPath(executablePath));
+            if (!string.IsNullOrWhiteSpace(bundleRoot))
+            {
+                return Path.GetRelativePath(bundleRoot, path).Replace('\\', '/');
+            }
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            // Fall back to a stable filename below.
+        }
+
+        return Path.GetFileName(path);
     }
 
     private static Ps5ApplicationMetadata? TryReadApplicationMetadataForReport(string executablePath)
@@ -1541,6 +1593,8 @@ internal static partial class Program
         CliHostReport Host,
         CliApplicationReport? Application,
         CliImageReport? Image,
+        IReadOnlyList<CliModuleReport>? Modules,
+        IReadOnlyList<CliModuleLoadFailureReport>? ModuleLoadFailures,
         CliExecutionResult Result,
         CliCpuSessionReport? CpuSession,
         CliCpuTrapReport? CpuTrap,
@@ -1594,6 +1648,10 @@ internal static partial class Program
         int PreInitializerCount,
         int InitializerCount,
         string? InitFunctionEntryPoint);
+
+    private sealed record CliModuleReport(string Path, CliImageReport Image);
+
+    private sealed record CliModuleLoadFailureReport(string Path, string ErrorType, string Message);
 
     private sealed record CliCpuSessionReport(
         CliExecutionResult Result,

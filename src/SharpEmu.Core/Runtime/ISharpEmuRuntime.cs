@@ -31,7 +31,11 @@ public interface ISharpEmuRuntime : IDisposable
 
     SelfImage? LastLoadedImage { get; }
 
+    PreparedApplication? LastPreparedApplication { get; }
+
     SelfImage LoadImage(string ebootPath);
+
+    PreparedApplication PrepareApplication(string ebootPath);
 
     OrbisGen2Result Run(string ebootPath);
 
