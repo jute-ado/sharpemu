@@ -64,6 +64,29 @@ public sealed class ParamLoaderTests
     }
 
     [Fact]
+    public void TypedMetadataIncludesContentIdentity()
+    {
+        const string json = """
+            {
+              "titleId": "PPSA00001",
+              "contentId": "EP0001-PPSA00001_00-SHARPEMUTEST0001",
+              "contentVersion": "01.20",
+              "localizedParameters": {
+                "defaultLanguage": "en-US",
+                "en-US": { "titleName": "Synthetic title" }
+              }
+            }
+            """;
+
+        var metadata = Ps5ParamJsonReader.TryReadApplicationMetadata(Encoding.UTF8.GetBytes(json));
+
+        Assert.Equal("Synthetic title", metadata.Title);
+        Assert.Equal("PPSA00001", metadata.TitleId);
+        Assert.Equal("EP0001-PPSA00001_00-SHARPEMUTEST0001", metadata.ContentId);
+        Assert.Equal("01.20", metadata.Version);
+    }
+
+    [Fact]
     public void MissingDefaultLanguageTitleFallsBackToEnglish()
     {
         const string json = """

@@ -24,7 +24,8 @@ public sealed class SelfImage
         ulong procParamAddress = 0,
         string? title = null,
         string? titleId = null,
-        string? version = null)
+        string? version = null,
+        string? contentId = null)
     {
         ArgumentNullException.ThrowIfNull(programHeaders);
         ArgumentNullException.ThrowIfNull(mappedRegions);
@@ -44,6 +45,7 @@ public sealed class SelfImage
         Title = title;
         TitleId = titleId;
         Version = version;
+        ContentId = contentId;
     }
 
     public bool IsSelf { get; }
@@ -75,4 +77,6 @@ public sealed class SelfImage
     public string? TitleId { get; }
 
     public string? Version { get; }
+
+    public string? ContentId { get; }
 }

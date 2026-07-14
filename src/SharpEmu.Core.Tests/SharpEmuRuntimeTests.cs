@@ -12,6 +12,18 @@ namespace SharpEmu.Core.Tests;
 
 public sealed class SharpEmuRuntimeTests
 {
+    private const string SyntheticParamJson = """
+        {
+          "titleId": "PPSA00001",
+          "contentId": "EP0001-PPSA00001_00-SHARPEMUTEST0001",
+          "contentVersion": "01.20",
+          "localizedParameters": {
+            "defaultLanguage": "en-US",
+            "en-US": { "titleName": "Synthetic title" }
+          }
+        }
+        """;
+
     [WindowsX64Fact]
     public void DefaultRuntimeBootsContentFreeSyntheticExecutable()
     {
@@ -119,7 +131,8 @@ public sealed class SharpEmuRuntimeTests
                 0xC3,       // ret
             ],
             requestReport: true,
-            executionTimeoutSeconds: 5);
+            executionTimeoutSeconds: 5,
+            paramJson: SyntheticParamJson);
 
         Assert.Equal(0, execution.ExitCode);
         Assert.NotNull(execution.ReportJson);
@@ -146,6 +159,11 @@ public sealed class SharpEmuRuntimeTests
         Assert.False(root.GetProperty("build").GetProperty("isOfficialRelease").GetBoolean());
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("host").GetProperty("osDescription").GetString()));
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("host").GetProperty("processArchitecture").GetString()));
+        var application = root.GetProperty("application");
+        Assert.Equal("Synthetic title", application.GetProperty("title").GetString());
+        Assert.Equal("PPSA00001", application.GetProperty("titleId").GetString());
+        Assert.Equal("EP0001-PPSA00001_00-SHARPEMUTEST0001", application.GetProperty("contentId").GetString());
+        Assert.Equal("01.20", application.GetProperty("version").GetString());
     }
 
     [WindowsX64Fact]
@@ -209,6 +227,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuMemoryFault").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuNotImplemented").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("executableSizeBytes").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("application").ValueKind);
     }
 
     [WindowsX64Fact]
@@ -239,7 +258,8 @@ public sealed class SharpEmuRuntimeTests
         var execution = await RunSyntheticExecutableInCliAsync(
             [0xEB, 0xFE], // jmp $
             requestReport: true,
-            executionTimeoutSeconds: 1);
+            executionTimeoutSeconds: 1,
+            paramJson: SyntheticParamJson);
 
         Assert.Equal(7, execution.ExitCode);
         Assert.NotNull(execution.ReportJson);
@@ -254,6 +274,7 @@ public sealed class SharpEmuRuntimeTests
             StringComparison.OrdinalIgnoreCase);
         Assert.Contains("timed out after 1 second", execution.StandardError, StringComparison.OrdinalIgnoreCase);
         Assert.InRange(root.GetProperty("durationMilliseconds").GetInt64(), 900, 10_000);
+        Assert.Equal("PPSA00001", root.GetProperty("application").GetProperty("titleId").GetString());
     }
 
     [Fact]
@@ -325,7 +346,8 @@ public sealed class SharpEmuRuntimeTests
         bool requestReport = false,
         bool writeExecutable = true,
         int stallWatchdogSeconds = 0,
-        int? executionTimeoutSeconds = null)
+        int? executionTimeoutSeconds = null,
+        string? paramJson = null)
     {
         var testDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -340,6 +362,12 @@ public sealed class SharpEmuRuntimeTests
             if (writeExecutable)
             {
                 File.WriteAllBytes(executablePath, SyntheticElfImage.CreateExecutable(code));
+            }
+            if (paramJson is not null)
+            {
+                var systemDirectory = Path.Combine(testDirectory, "sce_sys");
+                Directory.CreateDirectory(systemDirectory);
+                File.WriteAllText(Path.Combine(systemDirectory, "param.json"), paramJson);
             }
             var cliAssemblyPath = GetCliAssemblyPath();
             Assert.True(File.Exists(cliAssemblyPath), $"SharpEmu CLI was not built at '{cliAssemblyPath}'.");
