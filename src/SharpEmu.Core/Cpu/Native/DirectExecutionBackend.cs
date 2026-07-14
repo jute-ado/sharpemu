@@ -601,6 +601,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	// thread entering a freed stub).
 	private volatile bool _guestTeardownRequested;
 
+	private volatile bool _hostShutdownRequested;
+
+	private static volatile DirectExecutionBackend? _activeSessionBackend;
+
 	private int _readyGuestThreadCount;
 
 	private readonly Dictionary<ulong, GuestThreadState> _guestThreads = new Dictionary<ulong, GuestThreadState>();
@@ -839,7 +843,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private bool ActiveForcedGuestExit
 	{
-		get => HasActiveExecutionThread ? _activeForcedGuestExit : _forcedGuestExit;
+		get => _hostShutdownRequested ||
+			(HasActiveExecutionThread ? _activeForcedGuestExit : _forcedGuestExit);
 		set
 		{
 			if (HasActiveExecutionThread)
@@ -1045,7 +1050,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_importLoopGuardSeconds = GetImportLoopGuardSeconds();
 		_entryReturnSentinelRip = 0uL;
 		_forcedGuestExit = false;
+		_hostShutdownRequested = false;
 		_guestTeardownRequested = false;
+		_activeSessionBackend = this;
+		HostSessionControl.SetShutdownHandler(RequestHostShutdown);
 		_importLoopSignatureCount = 0;
 		_importLoopSignatureWriteIndex = 0;
 		_importLoopPatternHits = 0;
@@ -1093,10 +1101,26 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 		finally
 		{
+			HostSessionControl.SetShutdownHandler(null);
+			if (ReferenceEquals(_activeSessionBackend, this))
+			{
+				_activeSessionBackend = null;
+			}
 			DrainDeferredBootstrapTraces();
 			GuestThreadExecution.Scheduler = previousGuestThreadScheduler;
 			Console.Error.WriteLine("[LOADER][INFO] === Execute END (LastError: " + (LastError ?? "null") + ") ===");
 		}
+	}
+
+	internal void RequestHostShutdown(string reason)
+	{
+		_hostShutdownRequested = true;
+		_forcedGuestExit = true;
+		_guestTeardownRequested = true;
+		LastError = string.IsNullOrWhiteSpace(reason)
+			? "Host shutdown requested."
+			: $"Host shutdown requested: {reason}";
+		Console.Error.WriteLine($"[LOADER][INFO] {LastError}");
 	}
 
 	private bool SetupImportStubs(IReadOnlyDictionary<ulong, string> importStubs)
@@ -4923,7 +4947,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				result = OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP;
 				if (string.IsNullOrEmpty(LastError))
 				{
-					LastError = "Detected repeating import loop and forced guest unwind to host.";
+					LastError = _hostShutdownRequested
+						? "Host shutdown requested."
+						: "Detected repeating import loop and forced guest unwind to host.";
 				}
 				Console.Error.WriteLine("[LOADER][ERROR] " + LastError);
 				RequestGuestThreadTeardown(3000);

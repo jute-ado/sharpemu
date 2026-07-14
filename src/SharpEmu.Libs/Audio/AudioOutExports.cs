@@ -221,6 +221,17 @@ public static class AudioOutExports
                 : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
     }
 
+    public static void ShutdownAllPorts()
+    {
+        foreach (var handle in Ports.Keys)
+        {
+            if (Ports.TryRemove(handle, out var port))
+            {
+                port.Dispose();
+            }
+        }
+    }
+
     private static bool TryGetFormat(
         int rawFormat,
         out int channels,

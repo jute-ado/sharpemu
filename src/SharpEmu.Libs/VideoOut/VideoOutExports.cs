@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.HLE;
+using SharpEmu.Libs.Audio;
 using SharpEmu.Libs.Kernel;
 using SharpEmu.Logging;
 using System.Buffers.Binary;
@@ -52,6 +53,8 @@ public static class VideoOutExports
     private const int VblankWaitTimeoutMilliseconds = 100;
     private static Thread? _vblankPumpThread;
     private static int _vblankPumpStarted;
+    private static volatile int _vblankPumpStopRequested;
+    private static volatile int _presentationWindowCloseNotified;
 
     private static readonly object _vblankEdgeGate = new();
     private static ulong _vblankEdgeSequence;
@@ -80,7 +83,7 @@ public static class VideoOutExports
         var intervalTicks = Math.Max(1L, (long)(Stopwatch.Frequency / VblankHz));
         var nextEdge = Stopwatch.GetTimestamp() + intervalTicks;
 
-        while (true)
+        while (_vblankPumpStopRequested == 0)
         {
             WaitUntilTimestamp(nextEdge);
             PumpVblanks();
@@ -94,6 +97,59 @@ public static class VideoOutExports
                 Interlocked.Add(ref _vblankMissedEdges, missed);
                 nextEdge = now + intervalTicks;
             }
+        }
+    }
+
+    public static void NotifyPresentationWindowClosed()
+    {
+        if (Interlocked.Exchange(ref _presentationWindowCloseNotified, 1) != 0)
+        {
+            return;
+        }
+
+        Console.Error.WriteLine("[LOADER][INFO] VideoOut presentation window closed");
+        RequestHostShutdown("videoout-window-closed");
+    }
+
+    public static void NotifyHostInterrupt()
+    {
+        if (Interlocked.Exchange(ref _presentationWindowCloseNotified, 1) != 0)
+        {
+            return;
+        }
+
+        Console.Error.WriteLine("[LOADER][INFO] Host interrupt requested");
+        RequestHostShutdown("host-interrupt");
+    }
+
+    private static void RequestHostShutdown(string reason)
+    {
+        AudioOutExports.ShutdownAllPorts();
+        StopVblankPump();
+        HostSessionControl.RequestShutdown(reason);
+        ScheduleProcessExitIfGuestDoesNotStop();
+    }
+
+    private static void ScheduleProcessExitIfGuestDoesNotStop()
+    {
+        ThreadPool.QueueUserWorkItem(static _ =>
+        {
+            Thread.Sleep(2000);
+            Environment.Exit(0);
+        });
+    }
+
+    public static void StopVblankPump()
+    {
+        if (Interlocked.Exchange(ref _vblankPumpStopRequested, 1) != 0)
+        {
+            return;
+        }
+
+        var thread = _vblankPumpThread;
+        if (thread is { IsAlive: true })
+        {
+            thread.Join(TimeSpan.FromSeconds(2));
         }
     }
 

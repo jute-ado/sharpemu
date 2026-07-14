@@ -238,6 +238,22 @@ public sealed partial class DirectExecutionBackend
 			cpuContext[CpuRegister.Rax] = 0uL;
 			return 0uL;
 		}
+		if (_hostShutdownRequested)
+		{
+			if (isGuestWorker &&
+				TryYieldGuestThreadToHostStub(argPackPtr, num, num7, importStubEntry.Nid, "host shutdown"))
+			{
+				cpuContext[CpuRegister.Rax] = 0uL;
+				return 0uL;
+			}
+
+			if (!isGuestWorker &&
+				TryAbortGuestForHostShutdown(argPackPtr, num, num7))
+			{
+				cpuContext[CpuRegister.Rax] = 1uL;
+				return 1uL;
+			}
+		}
 		bool flag0 = ShouldSuppressStrlenTrace(importStubEntry.Nid);
 		bool flag = num7 >= 2156221920u && num7 <= 2156225024u;
 		bool flag2 = num7 >= 2156351360u && num7 <= 2156352080u;
@@ -972,6 +988,31 @@ public sealed partial class DirectExecutionBackend
 		LastError = $"Detected repeating import loop at import#{dispatchIndex} ({nid}) and forced guest exit.";
 		Console.Error.WriteLine($"[LOADER][ERROR] Import-loop guard fired at import#{dispatchIndex}: nid={nid} ret=0x{returnRip:X16} -> host_exit=0x{num:X16}");
 		DumpRecentImportTrace();
+		return true;
+	}
+
+	private unsafe bool TryAbortGuestForHostShutdown(nint argPackPtr, long dispatchIndex, ulong returnRip)
+	{
+		ulong hostExit = ActiveEntryReturnSentinelRip;
+		if (hostExit < 65536 || !TryPatchActiveGuestReturnSlot(hostExit))
+		{
+			return false;
+		}
+		try
+		{
+			*(ulong*)(argPackPtr + 96) = hostExit;
+		}
+		catch
+		{
+			return false;
+		}
+		ActiveForcedGuestExit = true;
+		if (string.IsNullOrWhiteSpace(LastError))
+		{
+			LastError = "Host shutdown requested.";
+		}
+		Console.Error.WriteLine(
+			$"[LOADER][INFO] Guest unwind for host shutdown at import#{dispatchIndex} ret=0x{returnRip:X16} -> host_exit=0x{hostExit:X16}");
 		return true;
 	}
 

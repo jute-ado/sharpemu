@@ -1157,7 +1157,13 @@ internal static unsafe class VulkanVideoPresenter
             _window = Window.Create(options);
             _window.Load += Initialize;
             _window.Render += Render;
-            _window.Closing += DisposeVulkan;
+            _window.Closing += OnWindowClosing;
+        }
+
+        private void OnWindowClosing()
+        {
+            VideoOutExports.NotifyPresentationWindowClosed();
+            DisposeVulkan();
         }
 
         public void Run() => _window.Run();
