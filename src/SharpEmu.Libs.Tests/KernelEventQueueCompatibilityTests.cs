@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
+using System.Diagnostics;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
 using Xunit;
@@ -16,6 +17,128 @@ public sealed class KernelEventQueueCompatibilityTests
     private const ulong TimeoutAddress = 0x4000;
     private const ulong MissingEventAddress = 0x5000;
     private const ulong MissingCountAddress = 0x6000;
+
+    [Fact]
+    public void FailedCreateDoesNotPublishQueue()
+    {
+        var memory = new FakeGuestMemory();
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = HandleAddress;
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            KernelEventQueueCompatExports.KernelCreateEqueue(context));
+
+        var handleBytes = new byte[sizeof(ulong)];
+        memory.AddRegion(HandleAddress, handleBytes);
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            KernelEventQueueCompatExports.KernelCreateEqueue(context));
+        var handle = BinaryPrimitives.ReadUInt64LittleEndian(handleBytes);
+        try
+        {
+            Assert.False(KernelEventQueueCompatExports.IsValidEqueue(handle - 1));
+        }
+        finally
+        {
+            context[CpuRegister.Rdi] = handle;
+            _ = KernelEventQueueCompatExports.KernelDeleteEqueue(context);
+        }
+    }
+
+    [Fact]
+    public void DeleteUnknownQueueReturnsNotFound()
+    {
+        var context = new CpuContext(new FakeGuestMemory(), Generation.Gen5);
+        context[CpuRegister.Rdi] = ulong.MaxValue;
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND,
+            KernelEventQueueCompatExports.KernelDeleteEqueue(context));
+    }
+
+    [Fact]
+    public void DeleteQueueReleasesCooperativeWaitWithNotFound()
+    {
+        var fixture = CreateQueue(mapEventBuffer: true);
+        var previousGuestThread = GuestThreadExecution.EnterGuestThread(0x1234);
+        try
+        {
+            fixture.Context[CpuRegister.Rdi] = fixture.Handle;
+            fixture.Context[CpuRegister.Rsi] = EventAddress;
+            fixture.Context[CpuRegister.Rdx] = 1;
+            fixture.Context[CpuRegister.Rcx] = CountAddress;
+            fixture.Context[CpuRegister.R8] = 0;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelEventQueueCompatExports.KernelWaitEqueue(fixture.Context));
+            Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
+                out var reason,
+                out _,
+                out _,
+                out var wakeKey,
+                out var resumeHandler,
+                out var wakeHandler,
+                out _));
+            Assert.Equal("sceKernelWaitEqueue", reason);
+            Assert.Equal($"sceKernelWaitEqueue:{fixture.Handle:X16}", wakeKey);
+            Assert.NotNull(resumeHandler);
+            Assert.NotNull(wakeHandler);
+
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                DeleteQueue(fixture));
+            Assert.True(wakeHandler!());
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND,
+                resumeHandler!());
+            Assert.Equal(0u, ReadUInt32(fixture.Count));
+        }
+        finally
+        {
+            GuestThreadExecution.RestoreGuestThread(previousGuestThread);
+            if (KernelEventQueueCompatExports.IsValidEqueue(fixture.Handle))
+            {
+                _ = DeleteQueue(fixture);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DeleteQueueInterruptsHostTimedWait()
+    {
+        var fixture = CreateQueue(mapEventBuffer: true);
+        BinaryPrimitives.WriteUInt32LittleEndian(fixture.Timeout, 2_000_000);
+        var waiterContext = new CpuContext(fixture.Memory, Generation.Gen5);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            var waitTask = Task.Run(() =>
+            {
+                started.SetResult();
+                return Wait(fixture, EventAddress, context: waiterContext);
+            });
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            await Task.Delay(50);
+            var stopwatch = Stopwatch.StartNew();
+
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                DeleteQueue(fixture));
+            var waitResult = await waitTask.WaitAsync(TimeSpan.FromMilliseconds(500));
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND,
+                waitResult);
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(500));
+        }
+        finally
+        {
+            if (KernelEventQueueCompatExports.IsValidEqueue(fixture.Handle))
+            {
+                _ = DeleteQueue(fixture);
+            }
+        }
+    }
 
     [Fact]
     public void ZeroTimeoutAcceptsFourByteGuestValue()
@@ -164,7 +287,8 @@ public sealed class KernelEventQueueCompatibilityTests
             memory,
             BinaryPrimitives.ReadUInt64LittleEndian(handle),
             events,
-            count);
+            count,
+            timeout);
     }
 
     private static int AddUserEvent(QueueFixture fixture, ulong ident)
@@ -192,20 +316,22 @@ public sealed class KernelEventQueueCompatibilityTests
     private static int Wait(
         QueueFixture fixture,
         ulong eventsAddress,
-        ulong countAddress = CountAddress)
+        ulong countAddress = CountAddress,
+        CpuContext? context = null)
     {
-        fixture.Context[CpuRegister.Rdi] = fixture.Handle;
-        fixture.Context[CpuRegister.Rsi] = eventsAddress;
-        fixture.Context[CpuRegister.Rdx] = 1;
-        fixture.Context[CpuRegister.Rcx] = countAddress;
-        fixture.Context[CpuRegister.R8] = TimeoutAddress;
-        return KernelEventQueueCompatExports.KernelWaitEqueue(fixture.Context);
+        context ??= fixture.Context;
+        context[CpuRegister.Rdi] = fixture.Handle;
+        context[CpuRegister.Rsi] = eventsAddress;
+        context[CpuRegister.Rdx] = 1;
+        context[CpuRegister.Rcx] = countAddress;
+        context[CpuRegister.R8] = TimeoutAddress;
+        return KernelEventQueueCompatExports.KernelWaitEqueue(context);
     }
 
-    private static void DeleteQueue(QueueFixture fixture)
+    private static int DeleteQueue(QueueFixture fixture)
     {
         fixture.Context[CpuRegister.Rdi] = fixture.Handle;
-        _ = KernelEventQueueCompatExports.KernelDeleteEqueue(fixture.Context);
+        return KernelEventQueueCompatExports.KernelDeleteEqueue(fixture.Context);
     }
 
     private static uint ReadUInt32(byte[] value) =>
@@ -216,5 +342,6 @@ public sealed class KernelEventQueueCompatibilityTests
         FakeGuestMemory Memory,
         ulong Handle,
         byte[] Events,
-        byte[] Count);
+        byte[] Count,
+        byte[] Timeout);
 }
