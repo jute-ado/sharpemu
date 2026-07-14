@@ -12,6 +12,16 @@ namespace SharpEmu.Core.Tests;
 public sealed class VirtualMemoryQueryTests
 {
     [Fact]
+    public void EmptyVirtualMemoryHasNoContainingOrNextRegion()
+    {
+        var memory = new VirtualMemory();
+
+        Assert.False(memory.TryQueryMemoryRegion(0, findNext: false, out _));
+        Assert.False(memory.TryQueryMemoryRegion(0, findNext: true, out _));
+        Assert.Equal(0, memory.CountRegionQueryProbes(0, findNext: true));
+    }
+
+    [Fact]
     public void VirtualMemoryReportsContainingAndNextRegions()
     {
         var memory = new VirtualMemory();
@@ -28,6 +38,51 @@ public sealed class VirtualMemoryQueryTests
         Assert.True(memory.TryQueryMemoryRegion(0x2000, findNext: true, out var next));
         Assert.Equal(containing, next);
         Assert.False(memory.TryQueryMemoryRegion(0x2000, findNext: false, out _));
+    }
+
+    [Fact]
+    public void VirtualMemoryQueryHandlesOrderedBoundariesAfterOutOfOrderMappings()
+    {
+        var memory = new VirtualMemory();
+        memory.Map(0x9000, 0x100, 0, [], ProgramHeaderFlags.Read);
+        memory.Map(0x3000, 0x100, 0, [], ProgramHeaderFlags.Read);
+        memory.Map(0x6000, 0x100, 0, [], ProgramHeaderFlags.Read);
+
+        Assert.True(memory.TryQueryMemoryRegion(0x30FF, findNext: false, out var containing));
+        Assert.Equal(0x3000UL, containing.Address);
+        Assert.False(memory.TryQueryMemoryRegion(0x3100, findNext: false, out _));
+        Assert.True(memory.TryQueryMemoryRegion(0x3100, findNext: true, out var next));
+        Assert.Equal(0x6000UL, next.Address);
+        Assert.True(memory.TryQueryMemoryRegion(0x9000, findNext: true, out var last));
+        Assert.Equal(0x9000UL, last.Address);
+        Assert.False(memory.TryQueryMemoryRegion(0x9100, findNext: true, out _));
+    }
+
+    [Fact]
+    public void VirtualMemoryRegionQueryUsesLogarithmicProbeDepth()
+    {
+        var memory = new VirtualMemory();
+        const int regionCount = 1024;
+        const ulong baseAddress = 0x1_0000;
+        const ulong stride = 0x10;
+        for (var index = 0; index < regionCount; index++)
+        {
+            memory.Map(
+                baseAddress + ((ulong)index * stride),
+                1,
+                (ulong)index,
+                [],
+                ProgramHeaderFlags.Read);
+        }
+
+        var lastAddress = baseAddress + ((regionCount - 1) * stride);
+        Assert.True(memory.TryQueryMemoryRegion(lastAddress, findNext: false, out var containing));
+        Assert.Equal(lastAddress, containing.Address);
+        Assert.InRange(memory.CountRegionQueryProbes(lastAddress, findNext: false), 1, 11);
+
+        Assert.True(memory.TryQueryMemoryRegion(lastAddress - 1, findNext: true, out var next));
+        Assert.Equal(lastAddress, next.Address);
+        Assert.InRange(memory.CountRegionQueryProbes(lastAddress - 1, findNext: true), 1, 11);
     }
 
     [Fact]
@@ -51,6 +106,26 @@ public sealed class VirtualMemoryQueryTests
         Assert.Equal(address, region.Address);
         Assert.Equal(0x2000UL, region.Length);
         Assert.Equal(0x03, region.Protection);
+    }
+
+    [WindowsX64Fact]
+    public void PhysicalMemoryRegionQueryUsesLogarithmicProbeDepth()
+    {
+        using var memory = new PhysicalVirtualMemory();
+        const int regionCount = 256;
+        for (var index = 0; index < regionCount; index++)
+        {
+            _ = memory.AllocateAt(0, 0x1000, executable: false);
+        }
+
+        var last = memory.SnapshotRegions()[^1];
+        Assert.True(memory.TryQueryMemoryRegion(last.VirtualAddress, findNext: false, out var containing));
+        Assert.Equal(last.VirtualAddress, containing.Address);
+        Assert.InRange(memory.CountRegionQueryProbes(last.VirtualAddress, findNext: false), 1, 9);
+
+        Assert.True(memory.TryQueryMemoryRegion(last.VirtualAddress - 1, findNext: true, out var next));
+        Assert.Equal(last.VirtualAddress, next.Address);
+        Assert.InRange(memory.CountRegionQueryProbes(last.VirtualAddress - 1, findNext: true), 1, 9);
     }
 
     [WindowsX64Fact]
