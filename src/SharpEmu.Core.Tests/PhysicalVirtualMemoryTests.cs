@@ -12,6 +12,7 @@ public sealed class PhysicalVirtualMemoryTests
 {
     private const ulong OneGibibyte = 0x4000_0000UL;
     private const ulong HostBlockerSize = 0x2000_0000UL;
+    private const ulong HostAllocationGranularity = 0x1_0000UL;
     private const ulong GuestAllocationArenaSize = 0x0100_0000UL;
     private const uint MemCommit = 0x1000;
     private const uint MemReserve = 0x2000;
@@ -40,6 +41,108 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.False(memory.TryRead(address + 0x1FFF, crossing));
         Assert.False(memory.TryWrite(address + 0x1FFF, crossing));
         Assert.False(memory.IsAccessible(address + 0x2000, 1));
+    }
+
+    [WindowsX64Fact]
+    public void AdjacentAllocationsSupportCrossBoundaryAccess()
+    {
+        var probe = VirtualAlloc(
+            0,
+            (nuint)(2 * HostAllocationGranularity),
+            MemReserve,
+            PageNoAccess);
+        Assert.NotEqual(0, probe);
+        Assert.True(VirtualFree(probe, 0, MemRelease));
+
+        using var memory = new PhysicalVirtualMemory();
+        var firstAddress = unchecked((ulong)probe);
+        var secondAddress = firstAddress + HostAllocationGranularity;
+        Assert.Equal(
+            firstAddress,
+            memory.AllocateAt(
+                firstAddress,
+                HostAllocationGranularity,
+                executable: false,
+                allowAlternative: false));
+        Assert.Equal(
+            secondAddress,
+            memory.AllocateAt(
+                secondAddress,
+                HostAllocationGranularity,
+                executable: false,
+                allowAlternative: false));
+        Assert.True(memory.TryWrite(secondAddress - 1, [0x11]));
+        Assert.True(memory.TryWrite(secondAddress, [0x22]));
+        Span<byte> crossing = stackalloc byte[2];
+
+        Assert.True(memory.IsAccessible(secondAddress - 1, 2));
+        Assert.True(memory.TryRead(secondAddress - 1, crossing));
+        Assert.Equal(new byte[] { 0x11, 0x22 }, crossing.ToArray());
+        Assert.True(memory.TryCompare(secondAddress - 1, [0x11, 0x22]));
+        Assert.True(memory.TryWrite(secondAddress - 1, [0xAA, 0xBB]));
+        Assert.True(memory.TryRead(secondAddress - 1, crossing));
+        Assert.Equal(new byte[] { 0xAA, 0xBB }, crossing.ToArray());
+
+        memory.Map(
+            secondAddress - 0x1000,
+            0x1000,
+            fileOffset: 0,
+            fileData: [],
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+        Assert.Equal(PageExecuteRead, QueryPage(secondAddress - 1).Protect);
+        Assert.Equal(PageReadWrite, QueryPage(secondAddress).Protect);
+        Assert.True(memory.TryWrite(secondAddress - 1, [0xCC, 0xDD]));
+        Assert.Equal(PageExecuteRead, QueryPage(secondAddress - 1).Protect);
+        Assert.Equal(PageReadWrite, QueryPage(secondAddress).Protect);
+        Assert.True(memory.TryRead(secondAddress - 1, crossing));
+        Assert.Equal(new byte[] { 0xCC, 0xDD }, crossing.ToArray());
+    }
+
+    [WindowsX64Fact]
+    public void AllocationGapRejectsCrossingWriteWithoutPartialMutation()
+    {
+        var probe = VirtualAlloc(
+            0,
+            (nuint)(3 * HostAllocationGranularity),
+            MemReserve,
+            PageNoAccess);
+        Assert.NotEqual(0, probe);
+        Assert.True(VirtualFree(probe, 0, MemRelease));
+
+        using var memory = new PhysicalVirtualMemory();
+        var firstAddress = unchecked((ulong)probe);
+        var thirdAddress = firstAddress + (2 * HostAllocationGranularity);
+        Assert.Equal(
+            firstAddress,
+            memory.AllocateAt(
+                firstAddress,
+                HostAllocationGranularity,
+                executable: false,
+                allowAlternative: false));
+        Assert.Equal(
+            thirdAddress,
+            memory.AllocateAt(
+                thirdAddress,
+                HostAllocationGranularity,
+                executable: false,
+                allowAlternative: false));
+        Assert.True(memory.TryWrite(firstAddress + HostAllocationGranularity - 1, [0x11]));
+        Assert.True(memory.TryWrite(thirdAddress, [0x22]));
+        var crossing = new byte[checked((int)HostAllocationGranularity + 2)];
+        crossing.AsSpan().Fill(0xCC);
+        var readDestination = new byte[crossing.Length];
+        readDestination.AsSpan().Fill(0xDD);
+
+        Assert.False(memory.IsAccessible(firstAddress + HostAllocationGranularity - 1, (ulong)crossing.Length));
+        Assert.False(memory.TryRead(firstAddress + HostAllocationGranularity - 1, readDestination));
+        Assert.All(readDestination, value => Assert.Equal(0xDD, value));
+        Assert.False(memory.TryCompare(firstAddress + HostAllocationGranularity - 1, crossing));
+        Assert.False(memory.TryWrite(firstAddress + HostAllocationGranularity - 1, crossing));
+
+        Span<byte> edges = stackalloc byte[2];
+        Assert.True(memory.TryRead(firstAddress + HostAllocationGranularity - 1, edges[..1]));
+        Assert.True(memory.TryRead(thirdAddress, edges[1..]));
+        Assert.Equal(new byte[] { 0x11, 0x22 }, edges.ToArray());
     }
 
     [WindowsX64Fact]
