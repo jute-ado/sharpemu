@@ -48,6 +48,45 @@ public sealed class VirtualMemoryAccessTests
     }
 
     [Fact]
+    public void AccessRequiresMatchingRegionProtection()
+    {
+        var readOnly = new VirtualMemory();
+        readOnly.Map(BaseAddress, 4, 0, [1, 2, 3, 4], ProgramHeaderFlags.Read);
+
+        Assert.False(readOnly.TryWrite(BaseAddress, [0xAA]));
+        Span<byte> readOnlyContents = stackalloc byte[4];
+        Assert.True(readOnly.TryRead(BaseAddress, readOnlyContents));
+        Assert.True(readOnly.TryCompare(BaseAddress, [1, 2, 3, 4]));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, readOnlyContents.ToArray());
+
+        var inaccessible = new VirtualMemory();
+        inaccessible.Map(BaseAddress, 4, 0, [5, 6, 7, 8], ProgramHeaderFlags.None);
+        byte[] destination = [0xCC, 0xCC, 0xCC, 0xCC];
+        Assert.False(inaccessible.TryRead(BaseAddress, destination));
+        Assert.False(inaccessible.TryCompare(BaseAddress, [5, 6, 7, 8]));
+        Assert.False(inaccessible.TryWrite(BaseAddress, [0xAA]));
+        Assert.Equal(new byte[] { 0xCC, 0xCC, 0xCC, 0xCC }, destination);
+    }
+
+    [Fact]
+    public void CrossRegionAccessValidatesEveryProtectionBeforeMutation()
+    {
+        var memory = new VirtualMemory();
+        memory.Map(BaseAddress, 4, 0, [1, 2, 3, 4], ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        memory.Map(BaseAddress + 4, 4, 4, [5, 6, 7, 8], ProgramHeaderFlags.Read);
+        byte[] destination = [0xCC, 0xCC];
+
+        Assert.True(memory.TryRead(BaseAddress + 3, destination));
+        Assert.Equal(new byte[] { 4, 5 }, destination);
+        Assert.False(memory.TryWrite(BaseAddress + 3, [0xAA, 0xBB]));
+
+        Span<byte> contents = stackalloc byte[8];
+        Assert.True(memory.TryRead(BaseAddress, contents[..4]));
+        Assert.True(memory.TryRead(BaseAddress + 4, contents[4..]));
+        Assert.Equal(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, contents.ToArray());
+    }
+
+    [Fact]
     public void AccessSpansAdjacentRegionBoundary()
     {
         var memory = new VirtualMemory();
