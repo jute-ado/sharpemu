@@ -212,6 +212,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private int _tlsPatchStubOffset;
 	private readonly Dictionary<(int DestinationRegister, int Displacement, bool Is64Bit), nint> _tlsLoadHelpers = new();
 	private readonly Dictionary<(int SourceRegister, int Displacement, bool Is64Bit), nint> _tlsStoreHelpers = new();
+	private readonly Dictionary<(int Displacement, int ImmediateValue, bool Is64Bit), nint> _tlsImmediateStoreHelpers = new();
 
 	private nint _unresolvedReturnStub;
 
@@ -2034,6 +2035,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	{
 		_tlsLoadHelpers.Clear();
 		_tlsStoreHelpers.Clear();
+		_tlsImmediateStoreHelpers.Clear();
 		_tlsHandlerAddress = (nint)TryAllocateNearEntry(TlsHandlerRegionSize);
 		if (_tlsHandlerAddress == 0)
 		{
@@ -2402,7 +2404,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					{
 						num3++;
 					}
-					else if (remainingBytes >= 12 && TryPatchTlsImmediateStoreInstruction(address, ptr + i))
+					else if (TryPatchTlsImmediateStoreInstruction(address, ptr + i, remainingBytes))
 					{
 						num9++;
 					}
@@ -2936,61 +2938,131 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return helper;
 	}
 
-	private unsafe bool TryPatchTlsImmediateStoreInstruction(nint address, byte* source)
+	private unsafe bool TryPatchTlsImmediateStoreInstruction(
+		nint address,
+		byte* source,
+		int availableLength)
 	{
-		if (source[0] != 100 || source[1] != 199 || source[2] != 4 || source[3] != 37)
+		if (availableLength < MinTlsPatchInstructionBytes)
 		{
 			return false;
 		}
-		int tlsOffset = *(int*)(source + 4);
-		int immediateValue = *(int*)(source + 8);
-		nint num = CreateTlsImmediateStoreHelper(tlsOffset, immediateValue);
-		if (num == 0)
+
+		var offset = 0;
+		var hasOperandSizeOverride = false;
+		while (offset < availableLength && source[offset] == 0x66)
+		{
+			hasOperandSizeOverride = true;
+			offset++;
+		}
+
+		if (offset >= availableLength || source[offset] != 0x64)
 		{
 			return false;
 		}
-		return PatchCallSite(address, 12, num);
+
+		offset++;
+		if (offset >= availableLength)
+		{
+			return false;
+		}
+
+		var rex = (byte)0;
+		if (source[offset] >= 0x40 && source[offset] <= 0x4F)
+		{
+			rex = source[offset];
+			offset++;
+		}
+
+		const int encodedOperandLength = 11;
+		if (offset + encodedOperandLength > availableLength || source[offset] != 0xC7)
+		{
+			return false;
+		}
+
+		var modRm = source[offset + 1];
+		var sib = source[offset + 2];
+		if ((modRm >> 6) != 0 || (modRm & 0x3F) != 4 || sib != 0x25)
+		{
+			return false;
+		}
+
+		var is64Bit = (rex & 8) != 0;
+		if (!is64Bit && hasOperandSizeOverride)
+		{
+			return false;
+		}
+
+		var displacement = *(int*)(source + offset + 3);
+		var immediateValue = *(int*)(source + offset + 7);
+		var instructionLength = offset + encodedOperandLength;
+		var helper = GetOrCreateTlsImmediateStoreHelper(
+			displacement,
+			immediateValue,
+			is64Bit);
+		if (helper == 0)
+		{
+			return false;
+		}
+
+		return PatchCallSite(address, instructionLength, helper);
 	}
 
-	private unsafe nint CreateTlsImmediateStoreHelper(int tlsOffset, int immediateValue)
+	private unsafe nint GetOrCreateTlsImmediateStoreHelper(
+		int displacement,
+		int immediateValue,
+		bool is64Bit)
 	{
-		nint num = AllocateTlsPatchStub(32);
-		if (num == 0)
+		var helperKey = (displacement, immediateValue, is64Bit);
+		if (_tlsImmediateStoreHelpers.TryGetValue(helperKey, out var existingHelper))
+		{
+			return existingHelper;
+		}
+
+		const int helperSize = 32;
+		var helper = AllocateTlsPatchStub(helperSize);
+		if (helper == 0)
 		{
 			return 0;
 		}
-		byte* ptr = (byte*)num;
-		int num2 = 0;
-		ptr[num2++] = 80;
-		ptr[num2++] = 232;
-		long num3 = _tlsHandlerAddress - (num + num2 + 4);
-		if (num3 < int.MinValue || num3 > int.MaxValue)
+
+		var code = (byte*)helper;
+		var offset = 0;
+		EmitByte(code, ref offset, 0x50); // push rax
+		EmitByte(code, ref offset, 0xE8); // call TLS base handler
+		var relativeHandler = _tlsHandlerAddress - (helper + offset + sizeof(int));
+		if (relativeHandler < int.MinValue || relativeHandler > int.MaxValue)
 		{
-			Console.Error.WriteLine($"[LOADER][WARNING] TLS store helper out of rel32 range at 0x{num:X16}");
+			Console.Error.WriteLine($"[LOADER][WARNING] TLS store helper out of rel32 range at 0x{helper:X16}");
 			return 0;
 		}
-		*(int*)(ptr + num2) = (int)num3;
-		num2 += 4;
-		ptr[num2++] = 199;
-		ptr[num2++] = 128;
-		*(int*)(ptr + num2) = tlsOffset;
-		num2 += 4;
-		*(int*)(ptr + num2) = immediateValue;
-		num2 += 4;
-		ptr[num2++] = 88;
-		ptr[num2++] = 195;
-		while (num2 < 32)
+
+		EmitUInt32(code, ref offset, unchecked((uint)relativeHandler));
+		if (is64Bit)
 		{
-			ptr[num2++] = 144;
+			EmitByte(code, ref offset, 0x48);
 		}
-		uint flNewProtect = default(uint);
-		if (!VirtualProtect((void*)num, 32u, 32u, &flNewProtect))
+		EmitByte(code, ref offset, 0xC7); // mov dword/qword [rax+displacement], imm32
+		EmitByte(code, ref offset, 0x80);
+		EmitUInt32(code, ref offset, unchecked((uint)displacement));
+		EmitUInt32(code, ref offset, unchecked((uint)immediateValue));
+		EmitByte(code, ref offset, 0x58); // pop rax
+		EmitByte(code, ref offset, 0xC3); // ret
+		while (offset < helperSize)
 		{
-			Console.Error.WriteLine($"[LOADER][ERROR] VirtualProtect failed for TLS store helper at 0x{num:X16}");
+			EmitByte(code, ref offset, 0x90);
+		}
+
+		uint oldProtect = 0;
+		if (!VirtualProtect((void*)helper, helperSize, PAGE_EXECUTE_READ, &oldProtect))
+		{
+			Console.Error.WriteLine($"[LOADER][ERROR] VirtualProtect failed for TLS store helper at 0x{helper:X16}");
 			return 0;
 		}
-		FlushInstructionCache(GetCurrentProcess(), (void*)num, 32u);
-		return num;
+
+		FlushInstructionCache(GetCurrentProcess(), (void*)helper, helperSize);
+		_tlsImmediateStoreHelpers[helperKey] = helper;
+		return helper;
 	}
 
 	private unsafe nint AllocateTlsPatchStub(int size)
