@@ -179,6 +179,16 @@ public static class PadExports
     }
 
     [SysAbiExport(
+        Nid = "2JgFB2n9oUM",
+        ExportName = "scePadSetTriggerEffect",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libScePad")]
+    public static int PadSetTriggerEffect(CpuContext ctx)
+    {
+        return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
         Nid = "yFVnOdGxvZY",
         ExportName = "scePadSetVibration",
         Target = Generation.Gen4 | Generation.Gen5,

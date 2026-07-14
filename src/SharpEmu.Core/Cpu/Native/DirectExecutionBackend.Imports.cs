@@ -1076,7 +1076,9 @@ public sealed partial class DirectExecutionBackend
 	}
 
 	private static bool IsImportLoopGuardBoundary(string nid) =>
-		string.Equals(nid, "1jfXLRVzisc", StringComparison.Ordinal);
+		string.Equals(nid, "1jfXLRVzisc", StringComparison.Ordinal) ||
+		string.Equals(nid, "Zxa0VhQVTsk", StringComparison.Ordinal) ||
+		string.Equals(nid, "T72hz6ffq08", StringComparison.Ordinal);
 
 	private void ResetImportLoopPattern()
 	{
