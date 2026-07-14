@@ -405,6 +405,21 @@ public sealed class SelfLoader : ISelfLoader
                     "Dynamic metadata segments larger than 2 GB are not currently supported.");
             }
 
+            if (header.HeaderType == ProgramHeaderType.Dynamic &&
+                header.FileSize != 0 &&
+                !IsRangeMappedByLoadSegment(
+                    programHeaders,
+                    header.VirtualAddress,
+                    header.FileSize))
+            {
+                var dynamicOffset = ResolvePhysicalSegmentOffset(
+                    imageData.Length,
+                    loadContext,
+                    header,
+                    index);
+                EnsureRange(imageData.Length, dynamicOffset, header.FileSize);
+            }
+
             if (header.HeaderType != ProgramHeaderType.Load)
             {
                 continue;
@@ -461,6 +476,43 @@ public sealed class SelfLoader : ISelfLoader
                 index);
             EnsureRange(imageData.Length, sourceOffset, header.FileSize);
         }
+    }
+
+    private static bool IsRangeMappedByLoadSegment(
+        IReadOnlyList<ProgramHeader> programHeaders,
+        ulong virtualAddress,
+        ulong size)
+    {
+        if (size == 0)
+        {
+            return true;
+        }
+
+        if (virtualAddress > ulong.MaxValue - size)
+        {
+            return false;
+        }
+
+        var endAddress = virtualAddress + size;
+        for (var index = 0; index < programHeaders.Count; index++)
+        {
+            var loadHeader = programHeaders[index];
+            if (loadHeader.HeaderType != ProgramHeaderType.Load ||
+                loadHeader.MemorySize == 0 ||
+                loadHeader.VirtualAddress > ulong.MaxValue - loadHeader.MemorySize)
+            {
+                continue;
+            }
+
+            var loadEndAddress = loadHeader.VirtualAddress + loadHeader.MemorySize;
+            if (virtualAddress >= loadHeader.VirtualAddress &&
+                endAddress <= loadEndAddress)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void MapLoadSegments(
@@ -1443,8 +1495,7 @@ public sealed class SelfLoader : ISelfLoader
         int dynamicHeaderIndex,
         out ReadOnlySpan<byte> dynamicTable)
     {
-        if (TryLoadTableBytes(
-                imageData,
+        if (TryLoadGuestTableBytes(
                 virtualMemory,
                 imageBase,
                 dynamicHeader.VirtualAddress,
@@ -1928,19 +1979,13 @@ public sealed class SelfLoader : ISelfLoader
 
         Console.WriteLine($"[LOADER] TryLoadTableBytes: trying location=0x{location:X}, size=0x{size:X}, imageBase=0x{imageBase:X}");
 
-        tableBytes = GC.AllocateUninitializedArray<byte>((int)size);
-
-        var guestAddr = location + imageBase;
-        Log.Debug($"TryLoadTableBytes: trying guest address 0x{guestAddr:X}");
-        if (virtualMemory.TryRead(guestAddr, tableBytes))
+        if (TryLoadGuestTableBytes(
+                virtualMemory,
+                imageBase,
+                location,
+                size,
+                out tableBytes))
         {
-            Log.Debug($"TryLoadTableBytes: loaded from guest memory at 0x{guestAddr:X}");
-            return true;
-        }
-
-        if (virtualMemory.TryRead(location, tableBytes))
-        {
-            Log.Debug($"TryLoadTableBytes: loaded from absolute guest address 0x{location:X}");
             return true;
         }
 
@@ -1953,6 +1998,41 @@ public sealed class SelfLoader : ISelfLoader
         }
 
         Log.Warning($"TryLoadTableBytes: FAILED for location 0x{location:X}");
+        tableBytes = Array.Empty<byte>();
+        return false;
+    }
+
+    private static bool TryLoadGuestTableBytes(
+        IVirtualMemory virtualMemory,
+        ulong imageBase,
+        ulong location,
+        ulong size,
+        out byte[] tableBytes)
+    {
+        if (size == 0 || size > int.MaxValue)
+        {
+            tableBytes = Array.Empty<byte>();
+            return false;
+        }
+
+        tableBytes = GC.AllocateUninitializedArray<byte>((int)size);
+        if (location <= ulong.MaxValue - imageBase)
+        {
+            var guestAddress = location + imageBase;
+            Log.Debug($"TryLoadTableBytes: trying guest address 0x{guestAddress:X}");
+            if (virtualMemory.TryRead(guestAddress, tableBytes))
+            {
+                Log.Debug($"TryLoadTableBytes: loaded from guest memory at 0x{guestAddress:X}");
+                return true;
+            }
+        }
+
+        if (virtualMemory.TryRead(location, tableBytes))
+        {
+            Log.Debug($"TryLoadTableBytes: loaded from absolute guest address 0x{location:X}");
+            return true;
+        }
+
         tableBytes = Array.Empty<byte>();
         return false;
     }
