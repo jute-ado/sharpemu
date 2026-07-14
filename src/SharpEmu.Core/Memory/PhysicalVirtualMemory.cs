@@ -67,6 +67,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public bool TryAllocateAtExact(ulong desiredAddress, ulong size, bool executable, out ulong actualAddress)
     {
+        ThrowIfDisposed();
         actualAddress = 0;
         if (size == 0)
         {
@@ -114,6 +115,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public ulong AllocateAt(ulong desiredAddress, ulong size, bool executable = true, bool allowAlternative = true)
     {
+        ThrowIfDisposed();
         if (size == 0)
             throw new ArgumentOutOfRangeException(nameof(size), "Size must be greater than zero");
 
@@ -251,6 +253,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         ulong alignment,
         out ulong actualAddress)
     {
+        ThrowIfDisposed();
         actualAddress = 0;
         if (size == 0)
         {
@@ -351,6 +354,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public bool TryAllocateGuestMemory(ulong size, ulong alignment, out ulong address)
     {
+        ThrowIfDisposed();
         address = 0;
         if (size == 0 || alignment == 0 || (alignment & (alignment - 1)) != 0)
         {
@@ -390,6 +394,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public void Clear()
     {
+        ThrowIfDisposed();
         lock (_guestAllocationGate)
         {
             _gate.EnterWriteLock();
@@ -419,6 +424,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public void RegisterStackRange(ulong start, ulong size)
     {
+        ThrowIfDisposed();
         if (size == 0)
         {
             throw new ArgumentOutOfRangeException(nameof(size));
@@ -442,6 +448,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public bool TryGetStackRange(ulong address, out ulong start, out ulong end)
     {
+        ThrowIfDisposed();
         _gate.EnterReadLock();
         try
         {
@@ -467,6 +474,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public void Map(ulong virtualAddress, ulong memorySize, ulong fileOffset, ReadOnlySpan<byte> fileData, ProgramHeaderFlags protection)
     {
+        ThrowIfDisposed();
         if (memorySize == 0)
             throw new ArgumentOutOfRangeException(nameof(memorySize));
 
@@ -565,6 +573,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public IReadOnlyList<VirtualMemoryRegion> SnapshotRegions()
     {
+        ThrowIfDisposed();
         _gate.EnterReadLock();
         try
         {
@@ -678,6 +687,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         bool findNext,
         out GuestVirtualMemoryRegion region)
     {
+        ThrowIfDisposed();
         _gate.EnterReadLock();
         try
         {
@@ -721,6 +731,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public bool TryRead(ulong virtualAddress, Span<byte> destination)
     {
+        ThrowIfDisposed();
         var requiresExclusiveAccess = false;
         _gate.EnterReadLock();
         try
@@ -785,6 +796,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source)
     {
+        ThrowIfDisposed();
         var requiresExclusiveAccess = false;
         _gate.EnterReadLock();
         try
@@ -951,6 +963,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public bool TryWriteUInt64(ulong virtualAddress, ulong value)
     {
+        ThrowIfDisposed();
         Span<byte> buffer = stackalloc byte[sizeof(ulong)];
         BitConverter.TryWriteBytes(buffer, value);
         return TryWrite(virtualAddress, buffer);
@@ -958,6 +971,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public void* GetPointer(ulong virtualAddress)
     {
+        ThrowIfDisposed();
         _gate.EnterReadLock();
         try
         {
@@ -973,6 +987,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public bool IsAccessible(ulong virtualAddress, ulong size)
     {
+        ThrowIfDisposed();
         _gate.EnterReadLock();
         try
         {
@@ -1292,6 +1307,11 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         }
 
         Log.Debug(message);
+    }
+
+    private void ThrowIfDisposed()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
     }
 
     public void Dispose()

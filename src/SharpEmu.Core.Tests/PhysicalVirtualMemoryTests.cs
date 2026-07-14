@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Runtime.InteropServices;
+using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
 using Xunit;
 
@@ -66,5 +67,51 @@ public sealed class PhysicalVirtualMemoryTests
         {
             Assert.True(VirtualFree(blocker, 0, MemRelease));
         }
+    }
+
+    [WindowsX64Fact]
+    public void DisposedMemoryRejectsFurtherOperations()
+    {
+        var memory = new PhysicalVirtualMemory();
+        memory.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() =>
+            memory.TryAllocateAtExact(0, 0x1000, executable: false, out _));
+        Assert.Throws<ObjectDisposedException>(() =>
+            memory.AllocateAt(0, 0x1000, executable: false));
+        Assert.Throws<ObjectDisposedException>(() =>
+            memory.TryAllocateAtOrAbove(
+                0x10000,
+                0x1000,
+                executable: false,
+                alignment: 0x1000,
+                out _));
+        Assert.Throws<ObjectDisposedException>(() =>
+            memory.TryAllocateGuestMemory(0x1000, 0x1000, out _));
+        Assert.Throws<ObjectDisposedException>(() =>
+            memory.Map(
+                0x10000,
+                0x1000,
+                fileOffset: 0,
+                fileData: Array.Empty<byte>(),
+                ProgramHeaderFlags.Read));
+        Assert.Throws<ObjectDisposedException>(() =>
+            memory.RegisterStackRange(0x10000, 0x1000));
+        Assert.Throws<ObjectDisposedException>(() =>
+            memory.TryGetStackRange(0x10000, out _, out _));
+        Assert.Throws<ObjectDisposedException>(() => memory.SnapshotRegions());
+        Assert.Throws<ObjectDisposedException>(() =>
+            memory.TryQueryMemoryRegion(0x10000, findNext: false, out _));
+        Assert.Throws<ObjectDisposedException>(() =>
+            memory.TryRead(0x10000, new byte[1]));
+        Assert.Throws<ObjectDisposedException>(() =>
+            memory.TryWrite(0x10000, new byte[1]));
+        Assert.Throws<ObjectDisposedException>(() =>
+            memory.TryWriteUInt64(0x10000, 0));
+        Assert.Throws<ObjectDisposedException>(() =>
+            memory.IsAccessible(0x10000, 1));
+        Assert.Throws<ObjectDisposedException>(memory.Clear);
+
+        memory.Dispose();
     }
 }
