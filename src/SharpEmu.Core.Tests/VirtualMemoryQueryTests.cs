@@ -92,6 +92,69 @@ public sealed class VirtualMemoryQueryTests
                 ProgramHeaderFlags.Read | ProgramHeaderFlags.Write | ProgramHeaderFlags.Execute));
     }
 
+    [WindowsX64Fact]
+    public void PhysicalMemoryCoalescesUniformSegmentProtectionApplications()
+    {
+        using var memory = new PhysicalVirtualMemory();
+        var address = memory.AllocateAt(0, 0x40_0000, executable: true);
+        var applicationsBeforeMap = memory.ProtectionApplicationCount;
+
+        memory.Map(
+            address,
+            0x40_0000,
+            fileOffset: 0,
+            fileData: [],
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+
+        Assert.Equal(applicationsBeforeMap + 2, memory.ProtectionApplicationCount);
+        var region = Assert.Single(memory.SnapshotRegions());
+        AssertRegion(
+            region,
+            address,
+            0x40_0000,
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+    }
+
+    [WindowsX64Fact]
+    public void PhysicalMemoryPreservesMergedProtectionRunBoundaries()
+    {
+        using var memory = new PhysicalVirtualMemory();
+        var address = memory.AllocateAt(0, 0x4000, executable: true);
+        memory.Map(
+            address + 0x1000,
+            0x1000,
+            fileOffset: 0,
+            fileData: [],
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+        var applicationsBeforeMap = memory.ProtectionApplicationCount;
+
+        memory.Map(
+            address,
+            0x4000,
+            fileOffset: 0,
+            fileData: [],
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+
+        Assert.Equal(applicationsBeforeMap + 4, memory.ProtectionApplicationCount);
+        Assert.Collection(
+            memory.SnapshotRegions(),
+            region => AssertRegion(
+                region,
+                address,
+                0x1000,
+                ProgramHeaderFlags.Read | ProgramHeaderFlags.Write),
+            region => AssertRegion(
+                region,
+                address + 0x1000,
+                0x1000,
+                ProgramHeaderFlags.Read | ProgramHeaderFlags.Write | ProgramHeaderFlags.Execute),
+            region => AssertRegion(
+                region,
+                address + 0x2000,
+                0x2000,
+                ProgramHeaderFlags.Read | ProgramHeaderFlags.Write));
+    }
+
     private static void AssertRegion(
         VirtualMemoryRegion region,
         ulong expectedAddress,
