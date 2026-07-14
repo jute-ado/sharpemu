@@ -25,8 +25,34 @@ internal static class SyntheticNativeGuest
         Action<ModuleManager>? configureModules = null,
         ulong codeAddress = DefaultCodeAddress)
     {
+        return ExecuteModuleInitializers(
+            code,
+            generation,
+            moduleName,
+            executionCount: 1,
+            importStubs,
+            configureModules,
+            codeAddress)[0];
+    }
+
+    public static IReadOnlyList<SyntheticGuestExecutionResult> ExecuteModuleInitializers(
+        byte[] code,
+        Generation generation,
+        string moduleName,
+        int executionCount,
+        IReadOnlyDictionary<ulong, string>? importStubs = null,
+        Action<ModuleManager>? configureModules = null,
+        ulong codeAddress = DefaultCodeAddress)
+    {
         ArgumentNullException.ThrowIfNull(code);
         ArgumentException.ThrowIfNullOrWhiteSpace(moduleName);
+        if (executionCount <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(executionCount),
+                "Execution count must be greater than zero.");
+        }
+
         if ((ulong)code.Length > CodeRegionSize)
         {
             throw new ArgumentException("Synthetic guest code exceeds its mapped region.", nameof(code));
@@ -57,15 +83,23 @@ internal static class SyntheticNativeGuest
         configureModules?.Invoke(moduleManager);
         moduleManager.Freeze();
         using var dispatcher = new CpuDispatcher(memory, moduleManager);
-        var result = dispatcher.DispatchModuleInitializer(
-            entryPoint,
-            generation,
-            importStubs,
-            moduleName: moduleName);
+        var executions = new SyntheticGuestExecutionResult[executionCount];
+        for (var i = 0; i < executions.Length; i++)
+        {
+            var currentModuleName = executions.Length == 1
+                ? moduleName
+                : $"{moduleName}#{i}";
+            var result = dispatcher.DispatchModuleInitializer(
+                entryPoint,
+                generation,
+                importStubs,
+                moduleName: currentModuleName);
+            executions[i] = new SyntheticGuestExecutionResult(
+                result,
+                dispatcher.LastSessionSummary.Reason,
+                dispatcher.LastNotImplementedInfo?.Detail);
+        }
 
-        return new SyntheticGuestExecutionResult(
-            result,
-            dispatcher.LastSessionSummary.Reason,
-            dispatcher.LastNotImplementedInfo?.Detail);
+        return executions;
     }
 }

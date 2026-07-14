@@ -215,4 +215,31 @@ public sealed class NativeCpuConformanceTests
                 previousWatchdog);
         }
     }
+
+    [WindowsX64Fact]
+    public void RepeatedModuleInitializersShareNativeExecutionSession()
+    {
+        byte[] code =
+        [
+            0x31, 0xC0, // xor eax, eax
+            0xC3,       // ret
+        ];
+
+        var executions = SyntheticNativeGuest.ExecuteModuleInitializers(
+            code,
+            Generation.Gen5,
+            moduleName: "repeated-native-initializer",
+            executionCount: 24);
+
+        Assert.Equal(24, executions.Count);
+        Assert.All(
+            executions,
+            execution =>
+            {
+                Assert.True(
+                    execution.Result == OrbisGen2Result.ORBIS_GEN2_OK,
+                    execution.FailureDetail ?? $"Unexpected result: {execution.Result}");
+                Assert.Equal(CpuExitReason.ReturnedToHost, execution.ExitReason);
+            });
+    }
 }
