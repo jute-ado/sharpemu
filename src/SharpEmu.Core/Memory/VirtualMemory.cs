@@ -178,13 +178,15 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
     {
         foreach (var candidate in _regions)
         {
-            if (virtualAddress < candidate.Region.VirtualAddress || virtualAddress >= candidate.EndAddress)
+            if (virtualAddress < candidate.Region.VirtualAddress ||
+                virtualAddress > candidate.EndAddress ||
+                (virtualAddress == candidate.EndAddress && length != 0))
             {
                 continue;
             }
 
             var candidateOffset = checked((int)(virtualAddress - candidate.Region.VirtualAddress));
-            if (candidateOffset + length > candidate.BackingMemory.Length)
+            if (length > candidate.BackingMemory.Length - candidateOffset)
             {
                 break;
             }
