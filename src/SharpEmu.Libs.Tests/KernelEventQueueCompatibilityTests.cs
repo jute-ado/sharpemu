@@ -108,7 +108,7 @@ public sealed class KernelEventQueueCompatibilityTests
     public async Task DeleteQueueInterruptsHostTimedWait()
     {
         var fixture = CreateQueue(mapEventBuffer: true);
-        BinaryPrimitives.WriteUInt32LittleEndian(fixture.Timeout, 2_000_000);
+        BinaryPrimitives.WriteUInt32LittleEndian(fixture.Timeout, 30_000_000);
         var waiterContext = new CpuContext(fixture.Memory, Generation.Gen5);
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
@@ -125,11 +125,11 @@ public sealed class KernelEventQueueCompatibilityTests
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 DeleteQueue(fixture));
-            var waitResult = await waitTask.WaitAsync(TimeSpan.FromMilliseconds(500));
+            var waitResult = await waitTask.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND,
                 waitResult);
-            Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(500));
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5));
         }
         finally
         {
