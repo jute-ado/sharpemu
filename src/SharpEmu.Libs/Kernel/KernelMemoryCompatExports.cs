@@ -4245,10 +4245,9 @@ public static partial class KernelMemoryCompatExports
         return sb.ToString();
     }
 
-    private static ulong ReadStackArg(CpuContext ctx, ulong offset)
+    private static ulong ReadStackArg(CpuContext ctx, int stackIndex)
     {
-        var rsp = ctx[CpuRegister.Rsp];
-        if (!ctx.TryReadUInt64(rsp + offset + 8, out var value)) // +8 to skip return address
+        if (!ctx.TryReadStackArgumentUInt64(stackIndex, out var value))
         {
             return 0;
         }
@@ -4310,7 +4309,7 @@ public static partial class KernelMemoryCompatExports
                 };
             }
 
-            return ReadStackArg(_ctx, (ulong)(_stackIndex++) * 8);
+            return ReadStackArg(_ctx, _stackIndex++);
         }
 
         public double NextFloatArg()
@@ -4325,7 +4324,7 @@ public static partial class KernelMemoryCompatExports
             }
             else
             {
-                bits = ReadStackArg(_ctx, (ulong)(_stackIndex++) * 8);
+                bits = ReadStackArg(_ctx, _stackIndex++);
             }
 
             return BitConverter.Int64BitsToDouble(unchecked((long)bits));

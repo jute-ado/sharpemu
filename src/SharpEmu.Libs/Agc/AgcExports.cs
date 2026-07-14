@@ -1311,8 +1311,8 @@ public static class AgcExports
         var control = (uint)ctx[CpuRegister.Rcx];
         var counterMask = (uint)ctx[CpuRegister.R8] & 0xFFu;
         var resetCounters = (uint)ctx[CpuRegister.R9] & 0x1u;
-        if (!ctx.TryReadUInt64(ctx[CpuRegister.Rsp] + sizeof(ulong), out var enableRaw) ||
-            !ctx.TryReadUInt64(ctx[CpuRegister.Rsp] + (2 * sizeof(ulong)), out var counterSelectRaw) ||
+        if (!ctx.TryReadStackArgumentUInt64(0, out var enableRaw) ||
+            !ctx.TryReadStackArgumentUInt64(1, out var counterSelectRaw) ||
             commandBufferAddress == 0)
         {
             return ReturnPointer(ctx, 0);
@@ -1381,7 +1381,7 @@ public static class AgcExports
         var gcrControl = (uint)ctx[CpuRegister.Rcx];
         var baseAddress = ctx[CpuRegister.R8];
         var sizeBytes = ctx[CpuRegister.R9];
-        if (!ctx.TryReadUInt32(ctx[CpuRegister.Rsp] + sizeof(ulong), out var pollCycles))
+        if (!ctx.TryReadStackArgumentUInt32(0, out var pollCycles))
         {
             return ReturnPointer(ctx, 0);
         }

@@ -890,7 +890,7 @@ public static class FiberExports
 
     private static ulong ReadStackArg64(CpuContext ctx, int index)
     {
-        if (ctx.TryReadUInt64(ctx[CpuRegister.Rsp] + sizeof(ulong) + ((ulong)index * sizeof(ulong)), out var value))
+        if (ctx.TryReadStackArgumentUInt64(index, out var value))
         {
             return value;
         }
