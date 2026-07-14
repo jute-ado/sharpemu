@@ -32,6 +32,52 @@ public sealed class SharpEmuRuntimeTests
         Assert.Contains("image inspection", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void InspectionRuntimeRepreparesWithoutLeakingModuleState()
+    {
+        var testDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "sharpemu-runtime-tests",
+            Guid.NewGuid().ToString("N"));
+        var moduleDirectory = Path.Combine(testDirectory, "sce_module");
+        Directory.CreateDirectory(moduleDirectory);
+        var executablePath = Path.Combine(testDirectory, "eboot.bin");
+        var modulePath = Path.Combine(moduleDirectory, "synthetic.prx");
+
+        try
+        {
+            File.WriteAllBytes(executablePath, SyntheticElfImage.CreateExecutable([0xC3]));
+            File.WriteAllBytes(modulePath, SyntheticElfImage.CreateExecutable([0xC3]));
+            using var runtime = SharpEmuRuntime.CreateForInspection();
+
+            var first = runtime.PrepareApplication(executablePath);
+            var firstModule = Assert.Single(first.Modules);
+            Assert.Empty(first.ModuleLoadFailures);
+            Assert.NotEqual(first.MainImage.ImageBase, firstModule.Image.ImageBase);
+
+            File.WriteAllBytes(modulePath, [0x01, 0x02, 0x03]);
+            var second = runtime.PrepareApplication(executablePath);
+            Assert.Empty(second.Modules);
+            Assert.Single(second.ModuleLoadFailures);
+            Assert.Equal(first.MainImage.ImageBase, second.MainImage.ImageBase);
+            Assert.Single(first.Modules);
+            Assert.Empty(first.ModuleLoadFailures);
+
+            File.WriteAllBytes(modulePath, SyntheticElfImage.CreateExecutable([0xF4]));
+            var third = runtime.PrepareApplication(executablePath);
+            var thirdModule = Assert.Single(third.Modules);
+            Assert.Empty(third.ModuleLoadFailures);
+            Assert.Equal(first.MainImage.ImageBase, third.MainImage.ImageBase);
+            Assert.Equal(firstModule.Image.ImageBase, thirdModule.Image.ImageBase);
+            Assert.Same(third, runtime.LastPreparedApplication);
+            Assert.Same(third.MainImage, runtime.LastLoadedImage);
+        }
+        finally
+        {
+            Directory.Delete(testDirectory, recursive: true);
+        }
+    }
+
     [WindowsX64Fact]
     public void DefaultRuntimeBootsContentFreeSyntheticExecutable()
     {
