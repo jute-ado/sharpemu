@@ -42,6 +42,13 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
     private readonly IVirtualMemory _virtualMemory;
     private readonly IModuleManager _moduleManager;
     private INativeCpuBackend? _nativeCpuBackend;
+    private ulong _cachedMemoryResetVersion;
+    private ulong _cachedStackBaseAddress;
+    private ulong _cachedTlsBaseAddress;
+    private ulong _cachedBootstrapStubAddress;
+    private ulong _cachedBootstrapPayloadAddress;
+    private ulong _cachedDynlibFallbackStubAddress;
+    private ulong _cachedReturnToHostStubAddress;
 
     public CpuDispatcher(
         IVirtualMemory virtualMemory,
@@ -148,6 +155,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         LastRecentInstructionWindow = null;
         LastRecentControlTransferTrace = null;
         LastSessionSummary = default;
+        RefreshInfrastructureCacheForMemoryReset();
         OrbisGen2Result FailEarly(OrbisGen2Result result, CpuExitReason reason = CpuExitReason.UnhandledException)
         {
             LastSessionSummary = new CpuSessionSummary(
@@ -163,13 +171,13 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         }
 
         var stackBase = TryMapStackRegion();
-        if (stackBase == 0)
+        if (stackBase == 0 || !TryZeroRegion(stackBase, StackSize))
         {
             return FailEarly(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
         var tlsBase = TryMapTlsRegion();
-        if (tlsBase == 0)
+        if (tlsBase == 0 || !TryZeroRegion(tlsBase - TlsPrefixSize, TlsSize + TlsPrefixSize))
         {
             return FailEarly(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -322,6 +330,11 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
 
     private ulong TryMapStackRegion()
     {
+        if (_cachedStackBaseAddress != 0)
+        {
+            return _cachedStackBaseAddress;
+        }
+
         const ulong stackStride = 0x0100_0000UL;
         for (var i = 0; i < 32; i++)
         {
@@ -339,6 +352,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                     stackMemory.RegisterStackRange(candidateBase, StackSize);
                 }
 
+                _cachedStackBaseAddress = candidateBase;
                 return candidateBase;
             }
             catch (InvalidOperationException)
@@ -352,6 +366,11 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
 
     private ulong TryMapTlsRegion()
     {
+        if (_cachedTlsBaseAddress != 0)
+        {
+            return _cachedTlsBaseAddress;
+        }
+
         const ulong tlsStride = 0x0100_0000UL;
         for (var i = 0; i < 32; i++)
         {
@@ -365,6 +384,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                     fileOffset: 0,
                     fileData: ReadOnlySpan<byte>.Empty,
                     ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+                _cachedTlsBaseAddress = candidateBase;
                 return candidateBase;
             }
             catch (InvalidOperationException)
@@ -515,7 +535,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         }
 
         var payloadAddress = TryMapBootstrapPayloadRegion();
-        if (payloadAddress == 0)
+        if (payloadAddress == 0 || !TryZeroRegion(payloadAddress, BootstrapRegionSize))
         {
             return false;
         }
@@ -541,6 +561,11 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
 
     private ulong TryMapBootstrapStubRegion()
     {
+        if (_cachedBootstrapStubAddress != 0)
+        {
+            return _cachedBootstrapStubAddress;
+        }
+
         var stubData = new byte[(int)BootstrapRegionSize];
         stubData[0] = 0xCC;
         stubData[1] = 0xC3;
@@ -557,6 +582,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                     fileOffset: 0,
                     stubData,
                     ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+                _cachedBootstrapStubAddress = candidateBase;
                 return candidateBase;
             }
             catch (InvalidOperationException)
@@ -570,6 +596,11 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
 
     private ulong TryMapBootstrapPayloadRegion()
     {
+        if (_cachedBootstrapPayloadAddress != 0)
+        {
+            return _cachedBootstrapPayloadAddress;
+        }
+
         const ulong stride = 0x0100_0000UL;
         for (var i = 0; i < 16; i++)
         {
@@ -582,6 +613,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                     fileOffset: 0,
                     ReadOnlySpan<byte>.Empty,
                     ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+                _cachedBootstrapPayloadAddress = candidateBase;
                 return candidateBase;
             }
             catch (InvalidOperationException)
@@ -595,6 +627,11 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
 
     private ulong TryMapDynlibFallbackStubRegion()
     {
+        if (_cachedDynlibFallbackStubAddress != 0)
+        {
+            return _cachedDynlibFallbackStubAddress;
+        }
+
         var stubData = new byte[(int)BootstrapRegionSize];
         stubData[0] = 0x31;
         stubData[1] = 0xC0;
@@ -612,6 +649,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                     fileOffset: 0,
                     stubData,
                     ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+                _cachedDynlibFallbackStubAddress = candidateBase;
                 return candidateBase;
             }
             catch (InvalidOperationException)
@@ -625,6 +663,11 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
 
     private ulong TryMapReturnToHostStubRegion()
     {
+        if (_cachedReturnToHostStubAddress != 0)
+        {
+            return _cachedReturnToHostStubAddress;
+        }
+
         var stubData = new byte[(int)BootstrapRegionSize];
         stubData[0] = 0xF4;
         stubData[1] = 0xCC;
@@ -640,6 +683,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                     fileOffset: 0,
                     stubData,
                     ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+                _cachedReturnToHostStubAddress = candidateBase;
                 return candidateBase;
             }
             catch (InvalidOperationException)
@@ -649,6 +693,42 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         }
 
         return 0;
+    }
+
+    private void RefreshInfrastructureCacheForMemoryReset()
+    {
+        var resetVersion = _virtualMemory.ResetVersion;
+        if (resetVersion != 0 && resetVersion == _cachedMemoryResetVersion)
+        {
+            return;
+        }
+
+        _cachedMemoryResetVersion = resetVersion;
+        _cachedStackBaseAddress = 0;
+        _cachedTlsBaseAddress = 0;
+        _cachedBootstrapStubAddress = 0;
+        _cachedBootstrapPayloadAddress = 0;
+        _cachedDynlibFallbackStubAddress = 0;
+        _cachedReturnToHostStubAddress = 0;
+    }
+
+    private bool TryZeroRegion(ulong address, ulong size)
+    {
+        Span<byte> zeros = stackalloc byte[0x1000];
+        zeros.Clear();
+        while (size != 0)
+        {
+            var chunkSize = (int)Math.Min(size, (ulong)zeros.Length);
+            if (!_virtualMemory.TryWrite(address, zeros[..chunkSize]))
+            {
+                return false;
+            }
+
+            address += (ulong)chunkSize;
+            size -= (ulong)chunkSize;
+        }
+
+        return true;
     }
 
     private bool TryWriteUInt64(ulong address, ulong value)

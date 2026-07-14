@@ -21,6 +21,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     private readonly Dictionary<ulong, ProgramHeaderFlags> _pageProtections = new();
     private bool _disposed;
     private const ulong PageSize = 0x1000;
+    private const ulong HostAllocationGranularity = 0x1_0000;
     private const ulong GuestAllocationArenaAddress = 0x00006000_0000_0000;
     private const ulong GuestAllocationArenaSize = 0x0100_0000;
     private const ulong GuestAllocationArenaStartOffset = PageSize;
@@ -42,7 +43,25 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     private ulong _guestAllocationArenaBase;
     private ulong _guestAllocationOffset;
+    private ulong _resetVersion = 1;
     private static readonly ulong LazyReservePrimeBytes = ResolveLazyReservePrimeBytes();
+
+    public ulong ResetVersion
+    {
+        get
+        {
+            ThrowIfDisposed();
+            _gate.EnterReadLock();
+            try
+            {
+                return _resetVersion;
+            }
+            finally
+            {
+                _gate.ExitReadLock();
+            }
+        }
+    }
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern void* VirtualAlloc(void* lpAddress, nuint dwSize, uint flAllocationType, uint flProtect);
@@ -411,6 +430,11 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 {
                     _allocationSearchHints.Clear();
                 }
+                _resetVersion++;
+                if (_resetVersion == 0)
+                {
+                    _resetVersion = 1;
+                }
             }
             finally
             {
@@ -485,6 +509,9 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         var segmentEnd = checked(virtualAddress + memorySize);
         var mapEnd = AlignUp(segmentEnd, PageSize);
         var mapSize = checked(mapEnd - mapStart);
+        var allocationStart = AlignDown(mapStart, HostAllocationGranularity);
+        var allocationEnd = AlignUp(mapEnd, HostAllocationGranularity);
+        var allocationSize = checked(allocationEnd - allocationStart);
 
         _gate.EnterWriteLock();
         try
@@ -493,7 +520,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             if (existingRegion == null)
             {
                 var isExecutable = (protection & ProgramHeaderFlags.Execute) != 0;
-                AllocateAt(mapStart, mapSize, isExecutable, allowAlternative: false);
+                AllocateAt(allocationStart, allocationSize, isExecutable, allowAlternative: false);
             }
 
             var stageProtection = (protection & ProgramHeaderFlags.Execute) != 0

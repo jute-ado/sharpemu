@@ -11,6 +11,18 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
     private readonly object _gate = new();
     private readonly List<MappedRegion> _regions = new();
     private readonly List<StackRange> _stackRanges = new();
+    private ulong _resetVersion = 1;
+
+    public ulong ResetVersion
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _resetVersion;
+            }
+        }
+    }
 
     public void Clear()
     {
@@ -18,6 +30,11 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
         {
             _regions.Clear();
             _stackRanges.Clear();
+            _resetVersion++;
+            if (_resetVersion == 0)
+            {
+                _resetVersion = 1;
+            }
         }
     }
 
