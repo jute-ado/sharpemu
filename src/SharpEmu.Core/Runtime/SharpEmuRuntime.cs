@@ -39,6 +39,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
     private readonly ISymbolCatalog _symbolCatalog;
     private readonly CpuExecutionOptions _cpuExecutionOptions;
     private readonly IFileSystem _fileSystem;
+    private readonly bool _allowExecution;
     private bool _disposed;
 
     public string? LastExecutionDiagnostics { get; private set; }
@@ -70,7 +71,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         IModuleManager moduleManager,
         ISymbolCatalog? symbolCatalog = null,
         CpuExecutionOptions cpuExecutionOptions = default,
-        IFileSystem? fileSystem = null)
+        IFileSystem? fileSystem = null,
+        bool allowExecution = true)
     {
         _selfLoader = selfLoader ?? throw new ArgumentNullException(nameof(selfLoader));
         _virtualMemory = virtualMemory ?? throw new ArgumentNullException(nameof(virtualMemory));
@@ -84,9 +86,23 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             ImportTraceLimit = Math.Max(0, cpuExecutionOptions.ImportTraceLimit),
         };
         _fileSystem = fileSystem ?? new PhysicalFileSystem();
+        _allowExecution = allowExecution;
     }
 
     public static ISharpEmuRuntime CreateDefault(SharpEmuRuntimeOptions options = default)
+    {
+        return CreateWithMemory(new PhysicalVirtualMemory(), options, allowExecution: true);
+    }
+
+    public static ISharpEmuRuntime CreateForInspection(SharpEmuRuntimeOptions options = default)
+    {
+        return CreateWithMemory(new VirtualMemory(), options, allowExecution: false);
+    }
+
+    private static ISharpEmuRuntime CreateWithMemory(
+        IVirtualMemory virtualMemory,
+        SharpEmuRuntimeOptions options,
+        bool allowExecution)
     {
         var cpuExecutionOptions = new CpuExecutionOptions
         {
@@ -98,8 +114,6 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         moduleManager.RegisterFromAssembly(typeof(KernelExports).Assembly, Generation.Gen4 | Generation.Gen5, Aerolib.Instance);
         moduleManager.Freeze();
 
-        var virtualMemory = new PhysicalVirtualMemory();
-
         var fileSystem = new PhysicalFileSystem();
 
         return new SharpEmuRuntime(
@@ -109,7 +123,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             moduleManager,
             Aerolib.Instance,
             cpuExecutionOptions,
-            fileSystem);
+            fileSystem,
+            allowExecution);
     }
 
     public SelfImage LoadImage(string ebootPath)
@@ -151,6 +166,12 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
     public OrbisGen2Result Run(string ebootPath)
     {
+        if (!_allowExecution)
+        {
+            throw new InvalidOperationException(
+                "This runtime was created for image inspection and cannot execute guest code.");
+        }
+
         var normalizedEbootPath = Path.GetFullPath(ebootPath);
         using var app0Binding = BindApp0Root(normalizedEbootPath);
         Log.Info($"Loading: {ebootPath}");

@@ -78,8 +78,10 @@ Currently the project primarily targets Windows. Cross-platform support (Linux a
   * Add `--load-only` to validate and map the primary executable without
     dispatching guest code. Combined with `--report-json`, this records ELF/SELF
     identity, generation, addresses, mapping/import/relocation counts, and
-    application metadata for safe loader automation. Execution timeouts are not
-    accepted in load-only mode because no guest execution occurs.
+    application metadata for safe cross-platform loader automation. It uses a
+    managed inspection memory backend and does not reserve executable host
+    memory. Execution timeouts are not accepted in load-only mode because no
+    guest execution occurs.
   * On Windows, add `--timeout-seconds N` to enforce a wall-clock execution
     budget. A timeout returns exit code 7 and reports `EXECUTION_TIMED_OUT`.
 

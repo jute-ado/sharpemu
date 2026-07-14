@@ -22,6 +22,16 @@ public sealed class SharpEmuRuntimeTests
         }
         """;
 
+    [Fact]
+    public void InspectionRuntimeRejectsGuestExecution()
+    {
+        using var runtime = SharpEmuRuntime.CreateForInspection();
+
+        var exception = Assert.Throws<InvalidOperationException>(() => runtime.Run("eboot.bin"));
+
+        Assert.Contains("image inspection", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [WindowsX64Fact]
     public void DefaultRuntimeBootsContentFreeSyntheticExecutable()
     {
@@ -172,7 +182,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(1, image.GetProperty("mappedRegionCount").GetInt32());
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public async Task CliLoadsAndReportsImageWithoutExecutingGuestCode()
     {
         var execution = await RunSyntheticExecutableInCliAsync(
