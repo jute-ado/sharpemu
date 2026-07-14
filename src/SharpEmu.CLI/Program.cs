@@ -148,7 +148,9 @@ internal static partial class Program
 
         Console.Error.WriteLine("[DEBUG] Creating runtime...");
 
-        using var runtime = SharpEmuRuntime.CreateDefault(runtimeOptions);
+        using var runtime = loadOnly
+            ? SharpEmuRuntime.CreateForInspection(runtimeOptions)
+            : SharpEmuRuntime.CreateDefault(runtimeOptions);
 
         if (loadOnly)
         {
