@@ -413,8 +413,14 @@ public static class LibcStdioExports
         }
 
         var unsignedOffset = unchecked((ulong)offset);
-        return unsignedOffset <= ulong.MaxValue - destination &&
-            ctx.Memory.TryWrite(destination + unsignedOffset, source);
+        if (unsignedOffset > ulong.MaxValue - destination)
+        {
+            return false;
+        }
+
+        var address = destination + unsignedOffset;
+        return (source.IsEmpty || (ulong)(source.Length - 1) <= ulong.MaxValue - address) &&
+            ctx.Memory.TryWrite(address, source);
     }
 
     [SysAbiExport(

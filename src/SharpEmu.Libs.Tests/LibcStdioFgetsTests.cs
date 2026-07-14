@@ -139,6 +139,26 @@ public sealed class LibcStdioFgetsTests
     }
 
     [Fact]
+    public void ReadLineRejectsChunkRangeOverflowBeforeWriting()
+    {
+        var memory = new FakeGuestMemory();
+        var topBytes = new[] { Canary, Canary };
+        memory.AddRegion(ulong.MaxValue, topBytes);
+        var context = new CpuContext(memory, Generation.Gen5);
+        using var stream = new MemoryStream([(byte)'a', (byte)'b']);
+
+        AssertError(
+            LibcStdioExports.ReadLineToGuest(
+                context,
+                stream,
+                ulong.MaxValue,
+                maxCount: 3),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        Assert.All(topBytes, value => Assert.Equal(Canary, value));
+    }
+
+    [Fact]
     public void ReadLineConvertsHostIoFailureToGuestError()
     {
         var memory = new FakeGuestMemory();
