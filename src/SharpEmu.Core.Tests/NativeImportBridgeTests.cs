@@ -18,6 +18,7 @@ public sealed class NativeImportBridgeTests
     private const string FloatAddNid = "test-float-add-nid";
     private const ulong CodeAddress = 0x0000_0008_1000_0000;
     private const ulong ImportAddress = CodeAddress + 0x100;
+    private const ulong FallbackImportAddress = 0x0000_6FFF_FF00_0000;
     private const ulong NonvolatileSentinel = 0x1122_3344_5566_7788;
 
     [WindowsX64Fact]
@@ -36,6 +37,38 @@ public sealed class NativeImportBridgeTests
             0xC3,                         // ret
         ];
         var execution = ExecuteImport(code, AddNid, "synthetic-import-roundtrip");
+        AssertSuccessful(execution);
+    }
+
+    [WindowsX64Fact]
+    public void GuestCallDispatchesImportFromFallbackStubRegion()
+    {
+        var code = new List<byte>
+        {
+            0xBF, 0x14, 0x00, 0x00, 0x00, // mov edi, 20
+            0xBE, 0x16, 0x00, 0x00, 0x00, // mov esi, 22
+            0x48, 0xB8,                   // mov rax, FallbackImportAddress
+        };
+        for (var shift = 0; shift < 64; shift += 8)
+        {
+            code.Add((byte)(FallbackImportAddress >> shift));
+        }
+        code.AddRange(
+        [
+            0xFF, 0xD0,                   // call rax
+            0x83, 0xF8, 0x2A,             // cmp eax, 42
+            0x75, 0x03,                   // jne failure
+            0x31, 0xC0,                   // xor eax, eax
+            0xC3,                         // ret
+            0xB8, 0x01, 0x00, 0x00, 0x00, // failure: mov eax, 1
+            0xC3,                         // ret
+        ]);
+
+        var execution = ExecuteImport(
+            code.ToArray(),
+            AddNid,
+            "synthetic-fallback-import-roundtrip",
+            FallbackImportAddress);
         AssertSuccessful(execution);
     }
 
@@ -161,13 +194,14 @@ public sealed class NativeImportBridgeTests
     private static SyntheticGuestExecutionResult ExecuteImport(
         byte[] code,
         string nid,
-        string moduleName)
+        string moduleName,
+        ulong importAddress = ImportAddress)
     {
         return SyntheticNativeGuest.ExecuteModuleInitializer(
             code,
             Generation.Gen5,
             moduleName,
-            new Dictionary<ulong, string> { [ImportAddress] = nid },
+            new Dictionary<ulong, string> { [importAddress] = nid },
             moduleManager =>
             {
                 var registered = moduleManager.RegisterFromAssembly(
