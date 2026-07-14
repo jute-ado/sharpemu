@@ -722,29 +722,38 @@ public static class KernelEventQueueCompatExports
         ulong timeoutAddress,
         long deadlineTimestamp)
     {
-        var result = ResumeWaitEqueue(
-            ctx,
-            handle,
-            eventsAddress,
-            eventCapacity,
-            outCountAddress);
-        var remainingMicros = 0u;
-        if (result == (int)OrbisGen2Result.ORBIS_GEN2_OK)
+        lock (_eventQueueGate)
         {
-            var remainingTicks = deadlineTimestamp - Stopwatch.GetTimestamp();
-            remainingMicros = remainingTicks <= 0
-                ? 0u
-                : (uint)Math.Min(
-                    uint.MaxValue,
-                    remainingTicks / (double)Stopwatch.Frequency * 1_000_000d);
-        }
+            var hasPendingEvent =
+                _eventQueues.Contains(handle) &&
+                _pendingEvents.TryGetValue(handle, out var events) &&
+                events.Count != 0;
+            var remainingMicros = 0u;
+            if (hasPendingEvent)
+            {
+                var remainingTicks = deadlineTimestamp - Stopwatch.GetTimestamp();
+                remainingMicros = remainingTicks <= 0
+                    ? 0u
+                    : (uint)Math.Min(
+                        uint.MaxValue,
+                        remainingTicks / (double)Stopwatch.Frequency * 1_000_000d);
+            }
 
-        if (!ctx.TryWriteUInt32(timeoutAddress, remainingMicros))
-        {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-        }
+            // Commit the timeout copyout before dequeuing. If guest memory changed
+            // while this thread was parked, the caller can retry without losing
+            // the pending event.
+            if (!ctx.TryWriteUInt32(timeoutAddress, remainingMicros))
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
 
-        return result;
+            return ResumeWaitEqueue(
+                ctx,
+                handle,
+                eventsAddress,
+                eventCapacity,
+                outCountAddress);
+        }
     }
 
     private static bool HasPendingEvents(ulong handle)

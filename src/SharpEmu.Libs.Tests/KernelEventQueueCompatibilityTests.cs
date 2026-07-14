@@ -228,6 +228,63 @@ public sealed class KernelEventQueueCompatibilityTests
     }
 
     [Fact]
+    public void TimedGuestWaitTimeoutCopyoutFailurePreservesPendingEvent()
+    {
+        const uint timeoutMicros = 100_000;
+        const ulong ident = 0xBB;
+        var fixture = CreateQueue(mapEventBuffer: true);
+        BinaryPrimitives.WriteUInt32LittleEndian(fixture.Timeout, timeoutMicros);
+        try
+        {
+            var previousGuestThread = GuestThreadExecution.EnterGuestThread(0xACE0);
+            try
+            {
+                Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, AddUserEvent(fixture, ident));
+                Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, Wait(fixture, EventAddress));
+                Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
+                    out _,
+                    out _,
+                    out _,
+                    out _,
+                    out var resumeHandler,
+                    out var wakeHandler,
+                    out _));
+                Assert.NotNull(resumeHandler);
+                Assert.NotNull(wakeHandler);
+
+                Assert.True(fixture.Memory.RemoveRegion(TimeoutAddress));
+                Assert.Equal(
+                    (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                    TriggerUserEvent(fixture, ident, 0xBCDE));
+                Assert.True(wakeHandler!());
+                Assert.Equal(
+                    (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                    resumeHandler!());
+            }
+            finally
+            {
+                GuestThreadExecution.RestoreGuestThread(previousGuestThread);
+            }
+
+            fixture.Memory.AddRegion(TimeoutAddress, fixture.Timeout);
+            BinaryPrimitives.WriteUInt32LittleEndian(fixture.Timeout, 0);
+            BinaryPrimitives.WriteUInt32LittleEndian(fixture.Count, 0);
+
+            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, Wait(fixture, EventAddress));
+            Assert.Equal(1u, ReadUInt32(fixture.Count));
+            Assert.Equal(ident, BinaryPrimitives.ReadUInt64LittleEndian(fixture.Events));
+            Assert.Equal(0xBCDEUL, BinaryPrimitives.ReadUInt64LittleEndian(fixture.Events.AsSpan(0x10)));
+        }
+        finally
+        {
+            if (KernelEventQueueCompatExports.IsValidEqueue(fixture.Handle))
+            {
+                DeleteQueue(fixture);
+            }
+        }
+    }
+
+    [Fact]
     public void ZeroTimeoutAcceptsFourByteGuestValue()
     {
         var fixture = CreateQueue(mapEventBuffer: true);
