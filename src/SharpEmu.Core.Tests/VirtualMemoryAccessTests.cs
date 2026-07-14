@@ -89,6 +89,26 @@ public sealed class VirtualMemoryAccessTests
     }
 
     [Fact]
+    public void AccessSpansMultipleRegionsMappedOutOfOrder()
+    {
+        var memory = new VirtualMemory();
+        memory.Map(BaseAddress + 8, 4, 8, [9, 10, 11, 12], ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        memory.Map(BaseAddress, 4, 0, [1, 2, 3, 4], ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        memory.Map(BaseAddress + 4, 4, 4, [5, 6, 7, 8], ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        Span<byte> crossingRead = stackalloc byte[6];
+
+        Assert.True(memory.TryRead(BaseAddress + 3, crossingRead));
+        Assert.Equal(new byte[] { 4, 5, 6, 7, 8, 9 }, crossingRead.ToArray());
+        Assert.True(memory.TryWrite(BaseAddress + 3, [0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8]));
+
+        Span<byte> contents = stackalloc byte[12];
+        Assert.True(memory.TryRead(BaseAddress, contents));
+        Assert.Equal(
+            new byte[] { 1, 2, 3, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 10, 11, 12 },
+            contents.ToArray());
+    }
+
+    [Fact]
     public void RejectedOverlapLeavesExistingMappingIntact()
     {
         var memory = CreateMappedMemory([1, 2, 3, 4]);
