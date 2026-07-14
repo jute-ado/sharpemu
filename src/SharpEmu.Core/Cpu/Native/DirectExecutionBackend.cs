@@ -113,6 +113,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private const ulong GuestImageScanEnd = 36507222016uL;
 
+	private const ulong FallbackTlsScanSize = 33554432uL;
+
 	private const ulong GuestThreadStackBaseAddress = 0x7FFF_E000_0000UL;
 
 	private const ulong GuestThreadTlsBaseAddress = 0x7FFE_0000_0000UL;
@@ -2252,9 +2254,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private unsafe void PatchTlsPatterns()
 	{
-		const ulong MaxScanBytes = 33554432uL;
-		ulong num = _entryPoint;
-		ulong num2 = num + MaxScanBytes;
+		var (scanStart, scanEnd) = GetTlsPatchScanRange(_entryPoint);
+		ulong num = scanStart;
+		ulong num2 = scanEnd;
 		int num3 = 0;
 		int num4 = 0;
 		int num9 = 0;
@@ -2299,6 +2301,22 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			num = num6 > num ? num6 : num + 4096uL;
 		}
 		Console.Error.WriteLine($"[LOADER][INFO] Patched {num3} TLS loads, {num9} TLS stores, {num4} stack-canary accesses");
+	}
+
+	internal static (ulong Start, ulong End) GetTlsPatchScanRange(ulong entryPoint)
+	{
+		// PS4/PS5 executables can place their entry point well after code that is
+		// subsequently reached by guest threads. Scanning forward from the entry
+		// point missed those earlier TLS accesses and also truncated large images.
+		if (entryPoint >= GuestImageScanStart && entryPoint < GuestImageScanEnd)
+		{
+			return (GuestImageScanStart, GuestImageScanEnd);
+		}
+
+		var end = entryPoint > ulong.MaxValue - FallbackTlsScanSize
+			? ulong.MaxValue
+			: entryPoint + FallbackTlsScanSize;
+		return (entryPoint, end);
 	}
 
 	private unsafe bool IsPatternMatch(byte* ptr, byte[] pattern)
