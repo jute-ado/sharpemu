@@ -51,6 +51,14 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
     public string? LastMilestoneLog { get; private set; }
 
+    public CpuSessionSummary? LastCpuSessionSummary { get; private set; }
+
+    public CpuTrapInfo? LastCpuTrapInfo { get; private set; }
+
+    public CpuMemoryFaultInfo? LastCpuMemoryFaultInfo { get; private set; }
+
+    public CpuNotImplementedInfo? LastCpuNotImplementedInfo { get; private set; }
+
     public SharpEmuRuntime(
         ISelfLoader selfLoader,
         IVirtualMemory virtualMemory,
@@ -137,6 +145,10 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         LastSessionSummary = null;
         LastBasicBlockTrace = null;
         LastMilestoneLog = null;
+        LastCpuSessionSummary = null;
+        LastCpuTrapInfo = null;
+        LastCpuMemoryFaultInfo = null;
+        LastCpuNotImplementedInfo = null;
         KernelModuleRegistry.Reset();
         var image = LoadImage(normalizedEbootPath);
         VideoOutExports.ConfigureApplicationInfo(image.Title, image.TitleId, image.Version, BuildInfo.CommitSha);
@@ -168,6 +180,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         if (initializerResult is { } failedInitializerResult)
         {
             Log.Error($"Initializer dispatch failed: {failedInitializerResult}");
+            CaptureCpuOutcome();
             LastExecutionTrace = _cpuDispatcher.LastImportResolutionTrace;
             LastMilestoneLog = _cpuDispatcher.LastMilestoneLog;
             LastSessionSummary = BuildSessionSummary(_cpuDispatcher.LastSessionSummary);
@@ -188,6 +201,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
         Log.Info($"DispatchEntry returned: {result}");
         Log.Info($"Dispatch result: {result}");
+        CaptureCpuOutcome();
         LastExecutionTrace = _cpuDispatcher.LastImportResolutionTrace;
         LastMilestoneLog = _cpuDispatcher.LastMilestoneLog;
         LastSessionSummary = BuildSessionSummary(_cpuDispatcher.LastSessionSummary);
@@ -363,6 +377,14 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         }
 
         return result;
+    }
+
+    private void CaptureCpuOutcome()
+    {
+        LastCpuSessionSummary = _cpuDispatcher.LastSessionSummary;
+        LastCpuTrapInfo = _cpuDispatcher.LastTrapInfo;
+        LastCpuMemoryFaultInfo = _cpuDispatcher.LastMemoryFaultInfo;
+        LastCpuNotImplementedInfo = _cpuDispatcher.LastNotImplementedInfo;
     }
 
     private static void LogAppBundleInfo(string ebootPath, SelfImage image)

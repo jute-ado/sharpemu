@@ -886,16 +886,17 @@ internal static partial class Program
             }
 
             var executionResult = result is { } completedResult
-                ? new CliExecutionResult(
-                    completedResult.ToString(),
-                    (int)completedResult,
-                    completedResult == OrbisGen2Result.ORBIS_GEN2_OK)
+                ? BuildExecutionResult(completedResult)
                 : new CliExecutionResult(incompleteResultName ?? "HOST_ERROR", null, false);
             var report = new CliExecutionReport(
                 SchemaVersion: 1,
                 GeneratedAtUtc: DateTimeOffset.UtcNow,
                 ExecutablePath: executablePath,
                 Result: executionResult,
+                CpuSession: BuildCpuSessionReport(runtime?.LastCpuSessionSummary),
+                CpuTrap: BuildCpuTrapReport(runtime?.LastCpuTrapInfo),
+                CpuMemoryFault: BuildCpuMemoryFaultReport(runtime?.LastCpuMemoryFaultInfo),
+                CpuNotImplemented: BuildCpuNotImplementedReport(runtime?.LastCpuNotImplementedInfo),
                 SessionSummary: runtime?.LastSessionSummary,
                 Diagnostics: runtime?.LastExecutionDiagnostics,
                 ImportTrace: runtime?.LastExecutionTrace,
@@ -934,6 +935,81 @@ internal static partial class Program
             }
         }
     }
+
+    private static CliCpuSessionReport? BuildCpuSessionReport(CpuSessionSummary? summary)
+    {
+        if (summary is not { } value)
+        {
+            return null;
+        }
+
+        return new CliCpuSessionReport(
+            BuildExecutionResult(value.Result),
+            value.Reason.ToString(),
+            value.ExitCode,
+            FormatAddress(value.LastGuestRip),
+            FormatAddress(value.LastStubRip),
+            value.TotalInstructions,
+            value.ImportsHit,
+            value.UniqueNidsHit);
+    }
+
+    private static CliCpuTrapReport? BuildCpuTrapReport(CpuTrapInfo? trap)
+    {
+        if (trap is not { } value)
+        {
+            return null;
+        }
+
+        return new CliCpuTrapReport(
+            FormatAddress(value.InstructionPointer),
+            $"0x{value.Opcode:X2}",
+            value.ExceptionCode is { } exceptionCode ? $"0x{exceptionCode:X8}" : null,
+            value.AccessAddress is { } accessAddress ? FormatAddress(accessAddress) : null,
+            value.AccessKind?.ToString().ToLowerInvariant());
+    }
+
+    private static CliCpuMemoryFaultReport? BuildCpuMemoryFaultReport(CpuMemoryFaultInfo? fault)
+    {
+        if (fault is not { } value)
+        {
+            return null;
+        }
+
+        return new CliCpuMemoryFaultReport(
+            FormatAddress(value.InstructionPointer),
+            value.Opcode is { } opcode ? $"0x{opcode:X2}" : null,
+            new CliCpuMemoryAccessReport(
+                FormatAddress(value.Access.Address),
+                value.Access.Size,
+                value.Access.IsWrite ? "write" : "read"));
+    }
+
+    private static CliCpuNotImplementedReport? BuildCpuNotImplementedReport(CpuNotImplementedInfo? notImplemented)
+    {
+        if (notImplemented is not { } value)
+        {
+            return null;
+        }
+
+        return new CliCpuNotImplementedReport(
+            value.Source.ToString(),
+            FormatAddress(value.InstructionPointer),
+            value.Nid,
+            value.ExportName,
+            value.LibraryName,
+            value.Detail);
+    }
+
+    private static CliExecutionResult BuildExecutionResult(OrbisGen2Result result)
+    {
+        return new CliExecutionResult(
+            result.ToString(),
+            (int)result,
+            result == OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    private static string FormatAddress(ulong address) => $"0x{address:X16}";
 
     private static void PrintUsage()
     {
@@ -1217,6 +1293,10 @@ internal static partial class Program
         DateTimeOffset GeneratedAtUtc,
         string ExecutablePath,
         CliExecutionResult Result,
+        CliCpuSessionReport? CpuSession,
+        CliCpuTrapReport? CpuTrap,
+        CliCpuMemoryFaultReport? CpuMemoryFault,
+        CliCpuNotImplementedReport? CpuNotImplemented,
         string? SessionSummary,
         string? Diagnostics,
         string? ImportTrace,
@@ -1225,6 +1305,38 @@ internal static partial class Program
         string? HostError);
 
     private sealed record CliExecutionResult(string Name, int? Code, bool Succeeded);
+
+    private sealed record CliCpuSessionReport(
+        CliExecutionResult Result,
+        string Reason,
+        int? ExitCode,
+        string LastGuestRip,
+        string LastStubRip,
+        int TotalInstructions,
+        int ImportsHit,
+        int UniqueNidsHit);
+
+    private sealed record CliCpuTrapReport(
+        string InstructionPointer,
+        string Opcode,
+        string? ExceptionCode,
+        string? AccessAddress,
+        string? AccessKind);
+
+    private sealed record CliCpuMemoryFaultReport(
+        string InstructionPointer,
+        string? Opcode,
+        CliCpuMemoryAccessReport Access);
+
+    private sealed record CliCpuMemoryAccessReport(string Address, int Size, string Kind);
+
+    private sealed record CliCpuNotImplementedReport(
+        string Source,
+        string InstructionPointer,
+        string? Nid,
+        string? ExportName,
+        string? LibraryName,
+        string? Detail);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct STARTUPINFO
