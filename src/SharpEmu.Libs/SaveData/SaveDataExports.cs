@@ -244,7 +244,6 @@ public static class SaveDataExports
         }
     }
 
-    private static int _nextTransactionResource;
     [SysAbiExport(
         Nid = "gjRZNnw0JPE",
         ExportName = "sceSaveDataCreateTransactionResource",
@@ -252,24 +251,25 @@ public static class SaveDataExports
         LibraryName = "libSceSaveData")]
     public static int SaveDataCreateTransactionResource(CpuContext ctx)
     {
-        var userId = unchecked((int)ctx[CpuRegister.Rdi]);
-        var reserved = ctx[CpuRegister.Rsi];
-        var resourceAddress = ctx[CpuRegister.Rdx];
+        // Gen5 ABI: memory size, resource output, reserved.
+        var memorySize = ctx[CpuRegister.Rdi];
+        var resourceAddress = ctx[CpuRegister.Rsi];
+        var reserved = ctx[CpuRegister.Rdx];
 
         if (resourceAddress == 0)
         {
             return ctx.SetReturn(OrbisSaveDataErrorParameter);
         }
 
-        var id = (uint)Interlocked.Increment(ref _nextTransactionResource);
-
-        if (!ctx.TryWriteUInt32(resourceAddress, id))
+        // Offline HLE operations carry no transaction state.
+        if (!ctx.TryWriteUInt64(resourceAddress, 0))
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
         TraceSaveData(
-            $"create_transaction_resource user={userId} reserved=0x{reserved:X} resource_addr=0x{resourceAddress:X} id={id}");
+            $"create_transaction_resource memory_size=0x{memorySize:X} reserved=0x{reserved:X} " +
+            $"resource_addr=0x{resourceAddress:X} resource=0x0");
 
         return ctx.SetReturn(0);
     }

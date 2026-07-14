@@ -682,7 +682,9 @@ public static class PlayGoExports
         var hasMetadata = File.Exists(playGoDat) || File.Exists(scenarioJson) || File.Exists(chunkDefsXml);
         if (!hasMetadata)
         {
-            return PlayGoMetadata.Empty;
+            // Full installs may omit PlayGo sidecar metadata.
+            TracePlayGo("metadata_missing; using fully-installed default chunk");
+            return new PlayGoMetadata(true, [(ushort)0]);
         }
 
         var chunkIds = LoadChunkIds(chunkDefsXml);
