@@ -359,18 +359,29 @@ public static class KernelPthreadCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        if (!ctx.TryReadUInt64(abstimeAddress, out var deadlineSeconds) ||
-            !ctx.TryReadUInt64(abstimeAddress + 8, out var deadlineNanoseconds))
+        if (!ctx.TryReadUInt64(abstimeAddress, out var deadlineSecondsBits) ||
+            !ctx.TryReadUInt64(abstimeAddress + 8, out var deadlineNanosecondsBits))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
+        var deadlineSeconds = unchecked((long)deadlineSecondsBits);
+        var deadlineNanoseconds = unchecked((long)deadlineNanosecondsBits);
+        if (deadlineNanoseconds is < 0 or >= 1_000_000_000)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
         var nowMicroseconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1000L;
         var deadlineMicroseconds =
-            deadlineSeconds >= long.MaxValue / 1_000_000UL
+            deadlineSeconds < 0
+                ? long.MinValue
+                : deadlineSeconds >= long.MaxValue / 1_000_000L
                 ? long.MaxValue
-                : (long)(deadlineSeconds * 1_000_000UL + Math.Min(deadlineNanoseconds, 999_999_999UL) / 1000UL);
-        var remainingMicroseconds = deadlineMicroseconds - nowMicroseconds;
+                : deadlineSeconds * 1_000_000L + deadlineNanoseconds / 1000L;
+        var remainingMicroseconds = deadlineMicroseconds <= nowMicroseconds
+            ? 0
+            : deadlineMicroseconds - nowMicroseconds;
         var timeoutUsec = remainingMicroseconds <= 0
             ? 1u
             : (uint)Math.Min(remainingMicroseconds, uint.MaxValue);
