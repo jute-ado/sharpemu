@@ -14,6 +14,7 @@ public sealed class NativeImportBridgeTests
     private const string AddNid = "test-add-nid";
     private const string SixArgumentSumNid = "test-six-argument-sum-nid";
     private const string FloatReturnNid = "test-float-return-nid";
+    private const string FloatAddNid = "test-float-add-nid";
     private const ulong CodeAddress = 0x0000_0008_1000_0000;
     private const ulong ImportAddress = CodeAddress + 0x100;
 
@@ -152,6 +153,51 @@ public sealed class NativeImportBridgeTests
         Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
     }
 
+    [WindowsX64Fact]
+    public void ImportBridgeCarriesFloatingPointArgumentsAndReturnValue()
+    {
+        byte[] code =
+        [
+            0xB8, 0x00, 0x00, 0xC0, 0x3F, // mov eax, 0x3fc00000 (1.5f)
+            0x66, 0x0F, 0x6E, 0xC0,       // movd xmm0, eax
+            0xB8, 0x00, 0x00, 0x10, 0x40, // mov eax, 0x40100000 (2.25f)
+            0x66, 0x0F, 0x6E, 0xC8,       // movd xmm1, eax
+            0xE8, 0xE9, 0x00, 0x00, 0x00, // call ImportAddress
+            0x66, 0x0F, 0x7E, 0xC0,       // movd eax, xmm0
+            0x3D, 0x00, 0x00, 0x70, 0x40, // cmp eax, 0x40700000 (3.75f)
+            0x75, 0x03,                   // jne failure
+            0x31, 0xC0,                   // xor eax, eax
+            0xC3,                         // ret
+            0xB8, 0x01, 0x00, 0x00, 0x00, // failure: mov eax, 1
+            0xC3,                         // ret
+        ];
+        using var memory = new PhysicalVirtualMemory();
+        var entryPoint = memory.AllocateAt(CodeAddress, 0x1000, executable: true);
+        Assert.Equal(CodeAddress, entryPoint);
+        Assert.True(memory.TryWrite(entryPoint, code));
+        Assert.True(memory.TryWrite(ImportAddress, [0xCC, 0xC3]));
+
+        var moduleManager = new ModuleManager();
+        var registered = moduleManager.RegisterFromAssembly(
+            Assembly.GetExecutingAssembly(),
+            Generation.Gen5);
+        Assert.True(registered >= 4);
+        Assert.True(moduleManager.TryGetExport(FloatAddNid, out _));
+        moduleManager.Freeze();
+        using var dispatcher = new CpuDispatcher(memory, moduleManager);
+
+        var result = dispatcher.DispatchModuleInitializer(
+            entryPoint,
+            Generation.Gen5,
+            new Dictionary<ulong, string> { [ImportAddress] = FloatAddNid },
+            moduleName: "synthetic-float-argument-roundtrip");
+
+        Assert.True(
+            result == OrbisGen2Result.ORBIS_GEN2_OK,
+            dispatcher.LastNotImplementedInfo?.Detail ?? $"Unexpected result: {result}");
+        Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
+    }
+
     private static class SyntheticExports
     {
         [SysAbiExport(
@@ -192,6 +238,22 @@ public sealed class NativeImportBridgeTests
         public static int FloatReturn(CpuContext context)
         {
             context.SetXmmRegister(0, 0x3FC0_0000, 0);
+            return context.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+        }
+
+        [SysAbiExport(
+            Nid = FloatAddNid,
+            ExportName = "syntheticFloatAdd",
+            Target = Generation.Gen5,
+            LibraryName = "libSyntheticTest")]
+        public static int FloatAdd(CpuContext context)
+        {
+            context.GetXmmRegister(0, out var leftBits, out _);
+            context.GetXmmRegister(1, out var rightBits, out _);
+            var left = BitConverter.Int32BitsToSingle(unchecked((int)leftBits));
+            var right = BitConverter.Int32BitsToSingle(unchecked((int)rightBits));
+            var sumBits = unchecked((uint)BitConverter.SingleToInt32Bits(left + right));
+            context.SetXmmRegister(0, sumBits, 0);
             return context.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
         }
     }
