@@ -17,6 +17,8 @@ public sealed class PhysicalVirtualMemoryTests
     private const uint MemReserve = 0x2000;
     private const uint MemRelease = 0x8000;
     private const uint PageNoAccess = 0x01;
+    private const uint PageReadWrite = 0x04;
+    private const uint PageExecuteRead = 0x20;
 
     [WindowsX64Fact]
     public void AllocatedRegionSupportsBoundedReadWriteAndEmptyEndAccess()
@@ -83,6 +85,41 @@ public sealed class PhysicalVirtualMemoryTests
 
         Assert.True(memory.TryQueryMemoryRegion(address + 0x100, findNext: false, out var region));
         Assert.Equal(0x05, region.Protection);
+    }
+
+    [WindowsX64Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void HostWriteAcrossMixedPageProtectionsRestoresEveryPage(bool executableFirst)
+    {
+        using var memory = new PhysicalVirtualMemory();
+        var address = memory.AllocateAt(0, 0x2000, executable: true);
+        var executableProtection = ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute;
+        var writableProtection = ProgramHeaderFlags.Read | ProgramHeaderFlags.Write;
+        memory.Map(
+            address,
+            0x1000,
+            fileOffset: 0,
+            fileData: [],
+            executableFirst ? executableProtection : writableProtection);
+        memory.Map(
+            address + 0x1000,
+            0x1000,
+            fileOffset: 0,
+            fileData: [],
+            executableFirst ? writableProtection : executableProtection);
+        var expectedFirst = executableFirst ? PageExecuteRead : PageReadWrite;
+        var expectedSecond = executableFirst ? PageReadWrite : PageExecuteRead;
+        Assert.Equal(expectedFirst, QueryPage(address).Protect);
+        Assert.Equal(expectedSecond, QueryPage(address + 0x1000).Protect);
+
+        Assert.True(memory.TryWrite(address + 0xFFF, [0xAA, 0xBB]));
+
+        Assert.Equal(expectedFirst, QueryPage(address).Protect);
+        Assert.Equal(expectedSecond, QueryPage(address + 0x1000).Protect);
+        Span<byte> actual = stackalloc byte[2];
+        Assert.True(memory.TryRead(address + 0xFFF, actual));
+        Assert.Equal(new byte[] { 0xAA, 0xBB }, actual.ToArray());
     }
 
     [WindowsX64Fact]

@@ -1066,7 +1066,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 return true;
             }
 
-            if (!TryTemporarilyProtectForRead((ulong)srcPtr, (ulong)destination.Length, region, out var touchedPages))
+            if (!TryTemporarilyProtectForAccess((ulong)srcPtr, (ulong)destination.Length, region, out var touchedPages))
             {
                 return false;
             }
@@ -1115,7 +1115,11 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 return true;
             }
 
-            if (!VirtualProtect(destPtr, (nuint)source.Length, PAGE_EXECUTE_READWRITE, out var oldProtect))
+            if (!TryTemporarilyProtectForAccess(
+                    (ulong)destPtr,
+                    (ulong)source.Length,
+                    region,
+                    out var touchedPages))
             {
                 return false;
             }
@@ -1129,11 +1133,8 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             }
             finally
             {
-                VirtualProtect(destPtr, (nuint)source.Length, oldProtect, out _);
-                if (IsExecutableProtection(oldProtect))
-                {
-                    FlushInstructionCache(GetCurrentProcess(), destPtr, (nuint)source.Length);
-                }
+                RestorePageProtections(touchedPages);
+                FlushModifiedExecutablePages(touchedPages);
             }
 
             return true;
@@ -1421,7 +1422,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         return true;
     }
 
-    private bool TryTemporarilyProtectForRead(
+    private bool TryTemporarilyProtectForAccess(
         ulong address,
         ulong size,
         MemoryRegion region,
@@ -1453,6 +1454,19 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         foreach (var (pageAddress, protection) in touchedPages)
         {
             VirtualProtect((void*)pageAddress, (nuint)PageSize, protection, out _);
+        }
+    }
+
+    private static void FlushModifiedExecutablePages(
+        List<(ulong Address, uint Protection)> touchedPages)
+    {
+        var process = GetCurrentProcess();
+        foreach (var (pageAddress, protection) in touchedPages)
+        {
+            if (IsExecutableProtection(protection))
+            {
+                FlushInstructionCache(process, (void*)pageAddress, (nuint)PageSize);
+            }
         }
     }
 
