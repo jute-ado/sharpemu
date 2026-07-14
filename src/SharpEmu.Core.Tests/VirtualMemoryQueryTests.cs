@@ -41,14 +41,9 @@ public sealed class VirtualMemoryQueryTests
         Assert.Equal(new GuestVirtualMemoryRegion(0x8000, 0x1000, 0x03), region);
     }
 
-    [Fact]
+    [WindowsFact]
     public void PhysicalMemoryReportsAllocatedRegionProtection()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         using var memory = new PhysicalVirtualMemory();
         var address = memory.AllocateAt(0, 0x2000, executable: false);
 

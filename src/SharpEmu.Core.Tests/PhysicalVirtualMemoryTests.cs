@@ -39,15 +39,9 @@ public sealed class PhysicalVirtualMemoryTests
             PhysicalVirtualMemory.ShouldReserveWithoutCommit(alignedSize, executable));
     }
 
-    [Fact]
+    [WindowsX64Fact]
     public void AllocationSearchSkipsLargeHostReservation()
     {
-        if (!OperatingSystem.IsWindows() ||
-            RuntimeInformation.ProcessArchitecture != Architecture.X64)
-        {
-            return;
-        }
-
         var blocker = VirtualAlloc(
             0,
             (nuint)HostBlockerSize,
