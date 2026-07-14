@@ -30,6 +30,7 @@ public static class KernelEventFlagCompatExports
         public required uint Attributes { get; init; }
         public ulong Bits { get; set; }
         public int WaitingThreads { get; set; }
+        public int CancelEpoch { get; set; }
         public bool Deleted { get; set; }
         public object Gate { get; } = new();
     }
@@ -274,6 +275,7 @@ public static class KernelEventFlagCompatExports
             var currentGuestThread = GuestThreadExecution.CurrentGuestThreadHandle;
             var currentFiber = FiberExports.GetCurrentFiberAddressForDiagnostics(ctx);
             var managedThread = Environment.CurrentManagedThreadId;
+            var cancelEpochAtBlock = state.CancelEpoch;
             var blockedWaitResult = OrbisGen2Result.ORBIS_GEN2_OK;
             var requestedBlock = GuestThreadExecution.RequestCurrentThreadBlock(
                 ctx,
@@ -288,6 +290,7 @@ public static class KernelEventFlagCompatExports
                             pattern,
                             waitMode,
                             resultAddress,
+                            cancelEpochAtBlock,
                             out var preparedResult))
                     {
                         return false;
@@ -321,6 +324,13 @@ public static class KernelEventFlagCompatExports
                         finally
                         {
                             Monitor.Enter(state.Gate);
+                        }
+
+                        if (state.CancelEpoch != cancelEpochAtBlock)
+                        {
+                            state.WaitingThreads = Math.Max(0, state.WaitingThreads - 1);
+                            releaseWaiter = false;
+                            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_CANCELED);
                         }
 
                         if (TryCompleteSatisfiedWait(ctx, state, pattern, waitMode, resultAddress, out var pumpedWaitResult))
@@ -385,11 +395,12 @@ public static class KernelEventFlagCompatExports
             }
 
             state.Bits = setPattern;
-            state.WaitingThreads = 0;
+            state.CancelEpoch++;
             Monitor.PulseAll(state.Gate);
             TraceEventFlag($"cancel handle=0x{handle:X16} bits=0x{setPattern:X16}");
         }
 
+        _ = GuestThreadExecution.Scheduler?.WakeBlockedThreads(GetEventFlagWakeKey(handle));
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
@@ -466,6 +477,7 @@ public static class KernelEventFlagCompatExports
         ulong pattern,
         uint waitMode,
         ulong resultAddress,
+        int cancelEpochAtBlock,
         out OrbisGen2Result result)
     {
         lock (state.Gate)
@@ -475,6 +487,13 @@ public static class KernelEventFlagCompatExports
             {
                 state.WaitingThreads = Math.Max(0, state.WaitingThreads - 1);
                 result = OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED;
+                return true;
+            }
+
+            if (state.CancelEpoch != cancelEpochAtBlock)
+            {
+                state.WaitingThreads = Math.Max(0, state.WaitingThreads - 1);
+                result = OrbisGen2Result.ORBIS_GEN2_ERROR_CANCELED;
                 return true;
             }
 
