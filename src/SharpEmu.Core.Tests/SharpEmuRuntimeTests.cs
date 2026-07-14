@@ -165,6 +165,15 @@ public sealed class SharpEmuRuntimeTests
         Assert.True(root.GetProperty("durationMilliseconds").GetInt64() >= 0);
         Assert.True(root.GetProperty("executableSizeBytes").GetInt64() > 0);
         Assert.Equal(execution.ExecutableSha256, root.GetProperty("executableSha256").GetString());
+        var bundle = root.GetProperty("bundle");
+        Assert.Equal(1, bundle.GetProperty("manifestVersion").GetInt32());
+        Assert.Equal("SHA-256", bundle.GetProperty("algorithm").GetString());
+        Assert.Equal(64, bundle.GetProperty("sha256").GetString()!.Length);
+        var bundleFiles = bundle.GetProperty("files").EnumerateArray().ToArray();
+        Assert.Equal(2, bundleFiles.Length);
+        Assert.Equal("eboot.bin", bundleFiles[0].GetProperty("path").GetString());
+        Assert.Equal(execution.ExecutableSha256, bundleFiles[0].GetProperty("sha256").GetString());
+        Assert.Equal("sce_sys/param.json", bundleFiles[1].GetProperty("path").GetString());
         Assert.Equal("Release", root.GetProperty("build").GetProperty("configuration").GetString());
         Assert.False(root.GetProperty("build").GetProperty("isOfficialRelease").GetBoolean());
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("host").GetProperty("osDescription").GetString()));
@@ -189,6 +198,12 @@ public sealed class SharpEmuRuntimeTests
     {
         var execution = await RunSyntheticExecutableInCliAsync(
             [0xF4], // hlt: load-only must never dispatch this privileged instruction
+            requestReport: true,
+            paramJson: SyntheticParamJson,
+            loadOnly: true,
+            adjacentModuleCode: [0xF4]);
+        var repeatedExecution = await RunSyntheticExecutableInCliAsync(
+            [0xF4],
             requestReport: true,
             paramJson: SyntheticParamJson,
             loadOnly: true,
@@ -222,6 +237,22 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("sce_module/synthetic.prx", module.GetProperty("path").GetString());
         Assert.Equal("ELF", module.GetProperty("image").GetProperty("format").GetString());
         Assert.Empty(root.GetProperty("moduleLoadFailures").EnumerateArray());
+        Assert.NotNull(repeatedExecution.ReportJson);
+        using var repeatedDocument = JsonDocument.Parse(repeatedExecution.ReportJson);
+        var bundle = root.GetProperty("bundle");
+        Assert.Equal(
+            bundle.GetProperty("sha256").GetString(),
+            repeatedDocument.RootElement.GetProperty("bundle").GetProperty("sha256").GetString());
+        var bundleFiles = bundle.GetProperty("files").EnumerateArray().ToArray();
+        Assert.Equal(3, bundleFiles.Length);
+        Assert.Equal(
+            new[] { "eboot.bin", "sce_module/synthetic.prx", "sce_sys/param.json" },
+            bundleFiles.Select(file => file.GetProperty("path").GetString()).ToArray());
+        Assert.All(bundleFiles, file =>
+        {
+            Assert.True(file.GetProperty("sizeBytes").GetInt64() > 0);
+            Assert.Equal(64, file.GetProperty("sha256").GetString()!.Length);
+        });
         Assert.DoesNotContain("Guest hardware exception", execution.StandardOutput, StringComparison.Ordinal);
     }
 
@@ -321,6 +352,11 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuNotImplemented").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("executableSizeBytes").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("executableSha256").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("bundle").GetProperty("sha256").ValueKind);
+        var missingFile = Assert.Single(root.GetProperty("bundle").GetProperty("files").EnumerateArray());
+        Assert.Equal("eboot.bin", missingFile.GetProperty("path").GetString());
+        Assert.Equal(JsonValueKind.Null, missingFile.GetProperty("sizeBytes").ValueKind);
+        Assert.Equal(JsonValueKind.Null, missingFile.GetProperty("sha256").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("application").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("modules").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("moduleLoadFailures").ValueKind);

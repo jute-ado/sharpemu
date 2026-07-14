@@ -81,7 +81,10 @@ Currently the project primarily targets Windows. Cross-platform support (Linux a
     application metadata for safe cross-platform loader automation. Adjacent
     PRX/SPRX modules are prepared through the same pre-execution path as a real
     run, with module image summaries and structured load failures included in
-    the report. It uses a managed inspection memory backend and does not reserve
+    the report. A path-independent bundle manifest records file sizes and
+    SHA-256 fingerprints and derives one deterministic bundle SHA-256, allowing
+    local regression baselines to identify exact content without storing game
+    files. It uses a managed inspection memory backend and does not reserve
     executable host memory. Execution timeouts are not accepted in load-only
     mode because no guest execution occurs.
   * On Windows, add `--timeout-seconds N` to enforce a wall-clock execution
