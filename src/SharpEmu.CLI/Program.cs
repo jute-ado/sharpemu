@@ -23,6 +23,9 @@ internal static partial class Program
     private const string MitigatedChildFlag = "--sharpemu-mitigated-child";
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const uint INFINITE = 0xFFFFFFFF;
+    private const uint WAIT_TIMEOUT = 0x00000102;
+    private const int ExecutionTimeoutExitCode = 7;
+    private const int MaxExecutionTimeoutSeconds = 4_294_967;
     private const int PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY = 0x00020007;
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
     private const int JobObjectExtendedLimitInformation = 9;
@@ -84,14 +87,20 @@ internal static partial class Program
                 out var runtimeOptions,
                 out var logLevel,
                 out var logFilePath,
-                out var reportJsonPath))
+                out var reportJsonPath,
+                out var executionTimeoutSeconds))
         {
             PrintUsage();
             return 1;
         }
 
         if (!isMitigatedChild &&
-            TryRunMitigatedChild(args, ebootPath, reportJsonPath, out var childExitCode))
+            TryRunMitigatedChild(
+                args,
+                ebootPath,
+                reportJsonPath,
+                executionTimeoutSeconds,
+                out var childExitCode))
         {
             return childExitCode;
         }
@@ -310,6 +319,7 @@ internal static partial class Program
         string[] args,
         string ebootPath,
         string? reportJsonPath,
+        int? executionTimeoutSeconds,
         out int childExitCode)
     {
         childExitCode = 0;
@@ -447,9 +457,30 @@ internal static partial class Program
                 Console.CancelKeyPress += cancelHandler;
                 AppDomain.CurrentDomain.ProcessExit += processExitHandler;
 
-                _ = WaitForSingleObject(processInfo.hProcess, INFINITE);
+                var waitMilliseconds = executionTimeoutSeconds is { } timeoutSeconds
+                    ? (uint)timeoutSeconds * 1000u
+                    : INFINITE;
+                var waitResult = WaitForSingleObject(processInfo.hProcess, waitMilliseconds);
                 Console.CancelKeyPress -= cancelHandler;
                 AppDomain.CurrentDomain.ProcessExit -= processExitHandler;
+
+                if (waitResult == WAIT_TIMEOUT)
+                {
+                    var unit = executionTimeoutSeconds == 1 ? "second" : "seconds";
+                    var timeoutMessage = $"Execution timed out after {executionTimeoutSeconds} {unit}.";
+                    Console.Error.WriteLine($"[ERROR] {timeoutMessage}");
+                    _ = TerminateProcess(processInfo.hProcess, ExecutionTimeoutExitCode);
+                    _ = WaitForSingleObject(processInfo.hProcess, INFINITE);
+                    TryWriteExecutionReport(
+                        reportJsonPath,
+                        Path.GetFullPath(ebootPath),
+                        result: null,
+                        runtime: null,
+                        hostError: timeoutMessage,
+                        incompleteResultName: "EXECUTION_TIMED_OUT");
+                    childExitCode = ExecutionTimeoutExitCode;
+                    return true;
+                }
 
                 if (!GetExitCodeProcess(processInfo.hProcess, out var exitCode))
                 {
@@ -906,8 +937,8 @@ internal static partial class Program
 
     private static void PrintUsage()
     {
-        Log.Info("Usage: SharpEmu.CLI [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--log-file[=<path>]] [--report-json=<path>] <path-to-eboot.bin>");
-        Log.Info(@"Example: SharpEmu.CLI --cpu-engine=native --trace-imports=64 --report-json execution.json ""E:\Games\...\eboot.bin""");
+        Log.Info("Usage: SharpEmu.CLI [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--log-file[=<path>]] [--report-json=<path>] [--timeout-seconds=N] <path-to-eboot.bin>");
+        Log.Info(@"Example: SharpEmu.CLI --cpu-engine=native --trace-imports=64 --timeout-seconds=300 --report-json execution.json ""E:\Games\...\eboot.bin""");
     }
 
     private static bool TryParseArguments(
@@ -916,9 +947,11 @@ internal static partial class Program
         out SharpEmuRuntimeOptions runtimeOptions,
         out LogLevel logLevel,
         out string? logFilePath,
-        out string? reportJsonPath)
+        out string? reportJsonPath,
+        out int? executionTimeoutSeconds)
     {
         reportJsonPath = null;
+        executionTimeoutSeconds = null;
         if (args.Length == 0)
         {
             ebootPath = string.Empty;
@@ -1017,6 +1050,23 @@ internal static partial class Program
                 continue;
             }
 
+            if (string.Equals(argument, "--timeout-seconds", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length ||
+                    !TryParseExecutionTimeoutSeconds(args[i + 1], out var timeoutSeconds))
+                {
+                    ebootPath = string.Empty;
+                    runtimeOptions = default;
+                    logLevel = SharpEmuLog.MinimumLevel;
+                    logFilePath = null;
+                    return false;
+                }
+
+                executionTimeoutSeconds = timeoutSeconds;
+                i++;
+                continue;
+            }
+
             const string logLevelPrefix = "--log-level=";
             if (argument.StartsWith(logLevelPrefix, StringComparison.OrdinalIgnoreCase))
             {
@@ -1094,6 +1144,24 @@ internal static partial class Program
                 continue;
             }
 
+            const string timeoutSecondsPrefix = "--timeout-seconds=";
+            if (argument.StartsWith(timeoutSecondsPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!TryParseExecutionTimeoutSeconds(
+                        argument[timeoutSecondsPrefix.Length..],
+                        out var timeoutSeconds))
+                {
+                    ebootPath = string.Empty;
+                    runtimeOptions = default;
+                    logLevel = SharpEmuLog.MinimumLevel;
+                    logFilePath = null;
+                    return false;
+                }
+
+                executionTimeoutSeconds = timeoutSeconds;
+                continue;
+            }
+
             if (argument.StartsWith("--", StringComparison.Ordinal))
             {
                 ebootPath = string.Empty;
@@ -1123,6 +1191,12 @@ internal static partial class Program
             ImportTraceLimit = importTraceLimit,
         };
         return true;
+    }
+
+    private static bool TryParseExecutionTimeoutSeconds(string valueText, out int timeoutSeconds)
+    {
+        return int.TryParse(valueText, out timeoutSeconds) &&
+            timeoutSeconds is > 0 and <= MaxExecutionTimeoutSeconds;
     }
 
     private static bool TryParseCpuEngine(string valueText, out CpuExecutionEngine engine)

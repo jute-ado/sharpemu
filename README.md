@@ -72,6 +72,8 @@ Currently the project primarily targets Windows. Cross-platform support (Linux a
     code, session summary, diagnostics, traces, and any host-side error.
     Native watchdog termination returns exit code 6 and reports
     `EXECUTION_STALLED` instead of leaving automation without a result.
+  * On Windows, add `--timeout-seconds N` to enforce a wall-clock execution
+    budget. A timeout returns exit code 7 and reports `EXECUTION_TIMED_OUT`.
 
 ## Games Tested
 
