@@ -11,6 +11,7 @@ using SharpEmu.HLE;
 using SharpEmu.Libs.VideoOut;
 using SharpEmu.Logging;
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -981,13 +982,20 @@ internal static partial class Program
             var executionResult = resultOverride ?? (result is { } completedResult
                 ? BuildExecutionResult(completedResult)
                 : new CliExecutionResult(incompleteResultName ?? "HOST_ERROR", null, false));
+            var executableSizeBytes = TryGetFileSize(executablePath);
+            var executableSha256 = TryComputeFileSha256(executablePath);
             var report = new CliExecutionReport(
                 SchemaVersion: 2,
                 Mode: mode,
                 GeneratedAtUtc: DateTimeOffset.UtcNow,
                 ExecutablePath: executablePath,
-                ExecutableSizeBytes: TryGetFileSize(executablePath),
-                ExecutableSha256: TryComputeFileSha256(executablePath),
+                ExecutableSizeBytes: executableSizeBytes,
+                ExecutableSha256: executableSha256,
+                Bundle: BuildBundleReport(
+                    executablePath,
+                    executableSizeBytes,
+                    executableSha256,
+                    runtime?.LastPreparedApplication),
                 DurationMilliseconds: GetElapsedMilliseconds(invocationStartedTimestamp),
                 Build: BuildExecutionReportBuild(),
                 Host: BuildExecutionReportHost(),
@@ -1176,6 +1184,85 @@ internal static partial class Program
         }
 
         return Path.GetFileName(path);
+    }
+
+    private static CliBundleReport BuildBundleReport(
+        string executablePath,
+        long? executableSizeBytes,
+        string? executableSha256,
+        PreparedApplication? application)
+    {
+        var paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [BuildBundleRelativePath(executablePath, executablePath)] = executablePath,
+        };
+        if (application is not null)
+        {
+            foreach (var module in application.Modules)
+            {
+                paths[BuildBundleRelativePath(executablePath, module.Path)] = module.Path;
+            }
+
+            foreach (var failure in application.ModuleLoadFailures)
+            {
+                paths[BuildBundleRelativePath(executablePath, failure.Path)] = failure.Path;
+            }
+        }
+
+        var bundleRoot = Path.GetDirectoryName(executablePath);
+        if (!string.IsNullOrWhiteSpace(bundleRoot))
+        {
+            foreach (var metadataPath in new[]
+            {
+                Path.Combine(bundleRoot, "sce_sys", "param.json"),
+                Path.Combine(bundleRoot, "param.json"),
+            })
+            {
+                if (File.Exists(metadataPath))
+                {
+                    paths[BuildBundleRelativePath(executablePath, metadataPath)] = metadataPath;
+                }
+            }
+        }
+
+        var mainRelativePath = BuildBundleRelativePath(executablePath, executablePath);
+        var files = paths
+            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair => string.Equals(pair.Key, mainRelativePath, StringComparison.OrdinalIgnoreCase)
+                ? new CliFileFingerprint(pair.Key, executableSizeBytes, executableSha256)
+                : new CliFileFingerprint(
+                    pair.Key,
+                    TryGetFileSize(pair.Value),
+                    TryComputeFileSha256(pair.Value)))
+            .ToArray();
+
+        return new CliBundleReport(
+            ManifestVersion: 1,
+            Algorithm: "SHA-256",
+            Sha256: TryComputeBundleSha256(files),
+            Files: files);
+    }
+
+    private static string? TryComputeBundleSha256(IReadOnlyList<CliFileFingerprint> files)
+    {
+        if (files.Count == 0 || files.Any(file => file.SizeBytes is null || file.Sha256 is null))
+        {
+            return null;
+        }
+
+        var canonicalManifest = new StringBuilder();
+        foreach (var file in files)
+        {
+            canonicalManifest
+                .Append(file.Path)
+                .Append('\0')
+                .Append(file.SizeBytes!.Value.ToString(CultureInfo.InvariantCulture))
+                .Append('\0')
+                .Append(file.Sha256)
+                .Append('\n');
+        }
+
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonicalManifest.ToString())));
     }
 
     private static Ps5ApplicationMetadata? TryReadApplicationMetadataForReport(string executablePath)
@@ -1588,6 +1675,7 @@ internal static partial class Program
         string ExecutablePath,
         long? ExecutableSizeBytes,
         string? ExecutableSha256,
+        CliBundleReport Bundle,
         long DurationMilliseconds,
         CliBuildReport Build,
         CliHostReport Host,
@@ -1608,6 +1696,14 @@ internal static partial class Program
         string? HostError);
 
     private sealed record CliExecutionResult(string Name, int? Code, bool Succeeded);
+
+    private sealed record CliBundleReport(
+        int ManifestVersion,
+        string Algorithm,
+        string? Sha256,
+        IReadOnlyList<CliFileFingerprint> Files);
+
+    private sealed record CliFileFingerprint(string Path, long? SizeBytes, string? Sha256);
 
     private sealed record CliBuildReport(
         string? CommitSha,
