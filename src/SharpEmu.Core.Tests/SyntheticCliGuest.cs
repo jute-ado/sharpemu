@@ -20,7 +20,8 @@ internal static class SyntheticCliGuest
         bool loadOnly = false,
         byte[]? adjacentModuleCode = null,
         bool writeInvalidAdjacentModule = false,
-        bool writeSkippedCoreModule = false)
+        bool writeSkippedCoreModule = false,
+        string? expectedBundleSha256 = null)
     {
         var testDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -83,6 +84,11 @@ internal static class SyntheticCliGuest
             if (loadOnly)
             {
                 startInfo.ArgumentList.Add("--load-only");
+            }
+            if (expectedBundleSha256 is not null)
+            {
+                startInfo.ArgumentList.Add("--expect-bundle-sha256");
+                startInfo.ArgumentList.Add(expectedBundleSha256);
             }
             if (executionTimeoutSeconds is { } timeoutSeconds)
             {

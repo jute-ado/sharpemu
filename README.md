@@ -88,6 +88,9 @@ Currently the project primarily targets Windows. Cross-platform support (Linux a
     files. It uses a managed inspection memory backend and does not reserve
     executable host memory. Execution timeouts are not accepted in load-only
     mode because no guest execution occurs.
+  * Add `--expect-bundle-sha256 HASH` to load-only mode to assert the exact
+    bundle before a test proceeds. A mismatch writes the actual manifest and
+    `BUNDLE_FINGERPRINT_MISMATCH` result to the report, then exits with code 8.
   * On Windows, add `--timeout-seconds N` to enforce a wall-clock execution
     budget. A timeout returns exit code 7 and reports `EXECUTION_TIMED_OUT`.
 

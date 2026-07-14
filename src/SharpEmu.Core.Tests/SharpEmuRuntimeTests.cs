@@ -204,14 +204,6 @@ public sealed class SharpEmuRuntimeTests
             loadOnly: true,
             adjacentModuleCode: [0xF4],
             writeSkippedCoreModule: true);
-        var repeatedExecution = await RunSyntheticExecutableInCliAsync(
-            [0xF4],
-            requestReport: true,
-            paramJson: SyntheticParamJson,
-            loadOnly: true,
-            adjacentModuleCode: [0xF4],
-            writeSkippedCoreModule: true);
-
         Assert.Equal(0, execution.ExitCode);
         Assert.NotNull(execution.ReportJson);
         using var document = JsonDocument.Parse(execution.ReportJson);
@@ -243,6 +235,17 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("sce_module/libkernel.prx", skippedModule.GetProperty("path").GetString());
         Assert.Contains("HLE", skippedModule.GetProperty("reason").GetString(), StringComparison.Ordinal);
         Assert.Empty(root.GetProperty("moduleLoadFailures").EnumerateArray());
+        var expectedBundleSha256 = root.GetProperty("bundle").GetProperty("sha256").GetString();
+        Assert.NotNull(expectedBundleSha256);
+        var repeatedExecution = await RunSyntheticExecutableInCliAsync(
+            [0xF4],
+            requestReport: true,
+            paramJson: SyntheticParamJson,
+            loadOnly: true,
+            adjacentModuleCode: [0xF4],
+            writeSkippedCoreModule: true,
+            expectedBundleSha256: expectedBundleSha256);
+        Assert.Equal(0, repeatedExecution.ExitCode);
         Assert.NotNull(repeatedExecution.ReportJson);
         using var repeatedDocument = JsonDocument.Parse(repeatedExecution.ReportJson);
         var bundle = root.GetProperty("bundle");
@@ -266,6 +269,45 @@ public sealed class SharpEmuRuntimeTests
             Assert.Equal(64, file.GetProperty("sha256").GetString()!.Length);
         });
         Assert.DoesNotContain("Guest hardware exception", execution.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CliRejectsUnexpectedBundleFingerprintWithoutExecutingGuestCode()
+    {
+        const string unexpectedSha256 =
+            "0000000000000000000000000000000000000000000000000000000000000000";
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0xF4],
+            requestReport: true,
+            loadOnly: true,
+            expectedBundleSha256: unexpectedSha256);
+
+        Assert.Equal(8, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var document = JsonDocument.Parse(execution.ReportJson);
+        var root = document.RootElement;
+        Assert.Equal(
+            "BUNDLE_FINGERPRINT_MISMATCH",
+            root.GetProperty("result").GetProperty("name").GetString());
+        Assert.False(root.GetProperty("result").GetProperty("succeeded").GetBoolean());
+        Assert.NotEqual(unexpectedSha256, root.GetProperty("bundle").GetProperty("sha256").GetString());
+        Assert.Contains("fingerprint mismatch", root.GetProperty("hostError").GetString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuSession").ValueKind);
+        Assert.DoesNotContain("Guest hardware exception", execution.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("not-a-sha256", true)]
+    [InlineData("0000000000000000000000000000000000000000000000000000000000000000", false)]
+    public async Task CliRejectsInvalidBundleFingerprintAssertionUsage(string expectedSha256, bool loadOnly)
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0xF4],
+            loadOnly: loadOnly,
+            expectedBundleSha256: expectedSha256);
+
+        Assert.Equal(1, execution.ExitCode);
+        Assert.Contains("Usage: SharpEmu.CLI", execution.StandardOutput, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -497,7 +539,8 @@ public sealed class SharpEmuRuntimeTests
         bool loadOnly = false,
         byte[]? adjacentModuleCode = null,
         bool writeInvalidAdjacentModule = false,
-        bool writeSkippedCoreModule = false) =>
+        bool writeSkippedCoreModule = false,
+        string? expectedBundleSha256 = null) =>
         SyntheticCliGuest.RunAsync(
             code,
             requestReport,
@@ -508,7 +551,8 @@ public sealed class SharpEmuRuntimeTests
             loadOnly,
             adjacentModuleCode,
             writeInvalidAdjacentModule,
-            writeSkippedCoreModule);
+            writeSkippedCoreModule,
+            expectedBundleSha256);
 
     private readonly record struct SyntheticRuntimeExecution(
         OrbisGen2Result Result,

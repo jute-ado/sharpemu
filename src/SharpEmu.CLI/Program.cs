@@ -31,6 +31,7 @@ internal static partial class Program
     private const uint INFINITE = 0xFFFFFFFF;
     private const uint WAIT_TIMEOUT = 0x00000102;
     private const int ExecutionTimeoutExitCode = 7;
+    private const int BundleFingerprintMismatchExitCode = 8;
     private const int MaxExecutionTimeoutSeconds = 4_294_967;
     private const int PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY = 0x00020007;
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
@@ -97,7 +98,8 @@ internal static partial class Program
                 out var logFilePath,
                 out var reportJsonPath,
                 out var executionTimeoutSeconds,
-                out var loadOnly))
+                out var loadOnly,
+                out var expectedBundleSha256))
         {
             PrintUsage();
             return 1;
@@ -155,10 +157,11 @@ internal static partial class Program
 
         if (loadOnly)
         {
+            PreparedApplication preparedApplication;
             try
             {
                 Console.Error.WriteLine($"[DEBUG] Loading without execution: {ebootPath}");
-                var preparedApplication = runtime.PrepareApplication(ebootPath);
+                preparedApplication = runtime.PrepareApplication(ebootPath);
                 var image = preparedApplication.MainImage;
                 Log.Info(
                     $"SharpEmu image inspection completed. Format={(image.IsSelf ? "SELF" : "ELF")}, " +
@@ -189,20 +192,37 @@ internal static partial class Program
                 return 3;
             }
 
+            var reportFingerprint = BuildReportFingerprint(ebootPath, preparedApplication);
+            var fingerprintMatches = expectedBundleSha256 is null || string.Equals(
+                expectedBundleSha256,
+                reportFingerprint.Bundle.Sha256,
+                StringComparison.OrdinalIgnoreCase);
+            var fingerprintError = fingerprintMatches
+                ? null
+                : $"Bundle fingerprint mismatch: expected {expectedBundleSha256}, " +
+                  $"actual {reportFingerprint.Bundle.Sha256 ?? "unavailable"}.";
+            if (fingerprintError is not null)
+            {
+                Log.Error(fingerprintError);
+            }
+
             if (!TryWriteExecutionReport(
                     reportJsonPath,
                     ebootPath,
                     result: null,
                     runtime,
-                    hostError: null,
+                    hostError: fingerprintError,
                     invocationStartedTimestamp: invocationStartedTimestamp,
                     mode: "load-only",
-                    resultOverride: new CliExecutionResult("IMAGE_LOADED", 0, true)))
+                    resultOverride: fingerprintMatches
+                        ? new CliExecutionResult("IMAGE_LOADED", 0, true)
+                        : new CliExecutionResult("BUNDLE_FINGERPRINT_MISMATCH", null, false),
+                    fingerprintOverride: reportFingerprint))
             {
                 return 3;
             }
 
-            return 0;
+            return fingerprintMatches ? 0 : BundleFingerprintMismatchExitCode;
         }
 
         OrbisGen2Result result;
@@ -963,7 +983,8 @@ internal static partial class Program
         long invocationStartedTimestamp,
         string? incompleteResultName = null,
         string mode = "execution",
-        CliExecutionResult? resultOverride = null)
+        CliExecutionResult? resultOverride = null,
+        CliReportFingerprint? fingerprintOverride = null)
     {
         if (string.IsNullOrWhiteSpace(reportJsonPath))
         {
@@ -983,20 +1004,17 @@ internal static partial class Program
             var executionResult = resultOverride ?? (result is { } completedResult
                 ? BuildExecutionResult(completedResult)
                 : new CliExecutionResult(incompleteResultName ?? "HOST_ERROR", null, false));
-            var executableSizeBytes = TryGetFileSize(executablePath);
-            var executableSha256 = TryComputeFileSha256(executablePath);
+            var fingerprint = fingerprintOverride ?? BuildReportFingerprint(
+                executablePath,
+                runtime?.LastPreparedApplication);
             var report = new CliExecutionReport(
                 SchemaVersion: 2,
                 Mode: mode,
                 GeneratedAtUtc: DateTimeOffset.UtcNow,
                 ExecutablePath: executablePath,
-                ExecutableSizeBytes: executableSizeBytes,
-                ExecutableSha256: executableSha256,
-                Bundle: BuildBundleReport(
-                    executablePath,
-                    executableSizeBytes,
-                    executableSha256,
-                    runtime?.LastPreparedApplication),
+                ExecutableSizeBytes: fingerprint.ExecutableSizeBytes,
+                ExecutableSha256: fingerprint.ExecutableSha256,
+                Bundle: fingerprint.Bundle,
                 DurationMilliseconds: GetElapsedMilliseconds(invocationStartedTimestamp),
                 Build: BuildExecutionReportBuild(),
                 Host: BuildExecutionReportHost(),
@@ -1261,6 +1279,22 @@ internal static partial class Program
             Files: files);
     }
 
+    private static CliReportFingerprint BuildReportFingerprint(
+        string executablePath,
+        PreparedApplication? application)
+    {
+        var executableSizeBytes = TryGetFileSize(executablePath);
+        var executableSha256 = TryComputeFileSha256(executablePath);
+        return new CliReportFingerprint(
+            executableSizeBytes,
+            executableSha256,
+            BuildBundleReport(
+                executablePath,
+                executableSizeBytes,
+                executableSha256,
+                application));
+    }
+
     private static string? TryComputeBundleSha256(IReadOnlyList<CliFileFingerprint> files)
     {
         if (files.Count == 0 || files.Any(file => file.SizeBytes is null || file.Sha256 is null))
@@ -1393,9 +1427,9 @@ internal static partial class Program
 
     private static void PrintUsage()
     {
-        Log.Info("Usage: SharpEmu.CLI [--load-only] [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--log-file[=<path>]] [--report-json=<path>] [--timeout-seconds=N] <path-to-eboot.bin>");
+        Log.Info("Usage: SharpEmu.CLI [--load-only] [--expect-bundle-sha256=<hash>] [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--log-file[=<path>]] [--report-json=<path>] [--timeout-seconds=N] <path-to-eboot.bin>");
         Log.Info(@"Example: SharpEmu.CLI --cpu-engine=native --trace-imports=64 --timeout-seconds=300 --report-json execution.json ""E:\Games\...\eboot.bin""");
-        Log.Info(@"Inspect example: SharpEmu.CLI --load-only --report-json image.json ""E:\Games\...\eboot.bin""");
+        Log.Info(@"Inspect example: SharpEmu.CLI --load-only --expect-bundle-sha256 <hash> --report-json image.json ""E:\Games\...\eboot.bin""");
     }
 
     private static bool TryParseArguments(
@@ -1406,11 +1440,13 @@ internal static partial class Program
         out string? logFilePath,
         out string? reportJsonPath,
         out int? executionTimeoutSeconds,
-        out bool loadOnly)
+        out bool loadOnly,
+        out string? expectedBundleSha256)
     {
         reportJsonPath = null;
         executionTimeoutSeconds = null;
         loadOnly = false;
+        expectedBundleSha256 = null;
         if (args.Length == 0)
         {
             ebootPath = string.Empty;
@@ -1515,6 +1551,22 @@ internal static partial class Program
                 continue;
             }
 
+            if (string.Equals(argument, "--expect-bundle-sha256", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 >= args.Length ||
+                    !TryNormalizeSha256(args[i + 1], out expectedBundleSha256))
+                {
+                    ebootPath = string.Empty;
+                    runtimeOptions = default;
+                    logLevel = SharpEmuLog.MinimumLevel;
+                    logFilePath = null;
+                    return false;
+                }
+
+                i++;
+                continue;
+            }
+
             if (string.Equals(argument, "--timeout-seconds", StringComparison.OrdinalIgnoreCase))
             {
                 if (i + 1 >= args.Length ||
@@ -1609,6 +1661,23 @@ internal static partial class Program
                 continue;
             }
 
+            const string expectedBundleSha256Prefix = "--expect-bundle-sha256=";
+            if (argument.StartsWith(expectedBundleSha256Prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!TryNormalizeSha256(
+                        argument[expectedBundleSha256Prefix.Length..],
+                        out expectedBundleSha256))
+                {
+                    ebootPath = string.Empty;
+                    runtimeOptions = default;
+                    logLevel = SharpEmuLog.MinimumLevel;
+                    logFilePath = null;
+                    return false;
+                }
+
+                continue;
+            }
+
             const string timeoutSecondsPrefix = "--timeout-seconds=";
             if (argument.StartsWith(timeoutSecondsPrefix, StringComparison.OrdinalIgnoreCase))
             {
@@ -1657,6 +1726,15 @@ internal static partial class Program
             return false;
         }
 
+        if (expectedBundleSha256 is not null && !loadOnly)
+        {
+            ebootPath = string.Empty;
+            runtimeOptions = default;
+            logLevel = SharpEmuLog.MinimumLevel;
+            logFilePath = null;
+            return false;
+        }
+
         ebootPath = string.Join(' ', pathTokens);
         runtimeOptions = new SharpEmuRuntimeOptions
         {
@@ -1671,6 +1749,18 @@ internal static partial class Program
     {
         return int.TryParse(valueText, out timeoutSeconds) &&
             timeoutSeconds is > 0 and <= MaxExecutionTimeoutSeconds;
+    }
+
+    private static bool TryNormalizeSha256(string value, out string? normalized)
+    {
+        if (value.Length == 64 && value.All(Uri.IsHexDigit))
+        {
+            normalized = value.ToLowerInvariant();
+            return true;
+        }
+
+        normalized = null;
+        return false;
     }
 
     private static bool TryParseCpuEngine(string valueText, out CpuExecutionEngine engine)
@@ -1715,6 +1805,11 @@ internal static partial class Program
         string? HostError);
 
     private sealed record CliExecutionResult(string Name, int? Code, bool Succeeded);
+
+    private sealed record CliReportFingerprint(
+        long? ExecutableSizeBytes,
+        string? ExecutableSha256,
+        CliBundleReport Bundle);
 
     private sealed record CliBundleReport(
         int ManifestVersion,
