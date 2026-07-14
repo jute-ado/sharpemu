@@ -746,7 +746,7 @@ public static class VideoOutExports
         var aspectRatio = unchecked((uint)ctx[CpuRegister.Rcx]);
         var width = unchecked((uint)ctx[CpuRegister.R8]);
         var height = unchecked((uint)ctx[CpuRegister.R9]);
-        if (!TryReadStackUInt32(ctx, 0, out var pitchInPixel))
+        if (!ctx.TryReadStackArgumentUInt32(0, out var pitchInPixel))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -786,8 +786,8 @@ public static class VideoOutExports
         var width = unchecked((uint)ctx[CpuRegister.Rcx]);
         var height = unchecked((uint)ctx[CpuRegister.R8]);
         var option = ctx[CpuRegister.R9];
-        if (!TryReadStackUInt32(ctx, 0, out var dccControl) ||
-            !ctx.TryReadUInt64(ctx[CpuRegister.Rsp] + 0x10, out var dccClearColor))
+        if (!ctx.TryReadStackArgumentUInt32(0, out var dccControl) ||
+            !ctx.TryReadStackArgumentUInt64(1, out var dccClearColor))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -876,8 +876,8 @@ public static class VideoOutExports
         var buffersAddress = ctx[CpuRegister.Rcx];
         var bufferNum = unchecked((int)ctx[CpuRegister.R8]);
         var attributeAddress = ctx[CpuRegister.R9];
-        if (!ctx.TryReadUInt64(ctx[CpuRegister.Rsp] + 0x08, out var categoryRaw) ||
-            !ctx.TryReadUInt64(ctx[CpuRegister.Rsp] + 0x10, out var option))
+        if (!ctx.TryReadStackArgumentUInt64(0, out var categoryRaw) ||
+            !ctx.TryReadStackArgumentUInt64(1, out var option))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -1516,20 +1516,6 @@ public static class VideoOutExports
         }
 
         return slots;
-    }
-
-    private static bool TryReadStackUInt32(CpuContext ctx, int stackIndex, out uint value)
-    {
-        var address = ctx[CpuRegister.Rsp] + 0x08 + ((ulong)stackIndex * 0x08);
-        Span<byte> buffer = stackalloc byte[sizeof(uint)];
-        if (!ctx.Memory.TryRead(address, buffer))
-        {
-            value = 0;
-            return false;
-        }
-
-        value = BinaryPrimitives.ReadUInt32LittleEndian(buffer);
-        return true;
     }
 
     private static bool TryReadInt16(CpuContext ctx, ulong address, out short value)

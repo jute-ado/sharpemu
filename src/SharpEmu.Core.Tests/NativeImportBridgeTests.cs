@@ -13,6 +13,7 @@ public sealed class NativeImportBridgeTests
 {
     private const string AddNid = "test-add-nid";
     private const string SixArgumentSumNid = "test-six-argument-sum-nid";
+    private const string EightArgumentSumNid = "test-eight-argument-sum-nid";
     private const string FloatReturnNid = "test-float-return-nid";
     private const string FloatAddNid = "test-float-add-nid";
     private const ulong CodeAddress = 0x0000_0008_1000_0000;
@@ -105,6 +106,56 @@ public sealed class NativeImportBridgeTests
             Generation.Gen5,
             new Dictionary<ulong, string> { [ImportAddress] = SixArgumentSumNid },
             moduleName: "synthetic-six-argument-import-roundtrip");
+
+        Assert.True(
+            result == OrbisGen2Result.ORBIS_GEN2_OK,
+            dispatcher.LastNotImplementedInfo?.Detail ?? $"Unexpected result: {result}");
+        Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
+    }
+
+    [WindowsX64Fact]
+    public void ImportBridgeCarriesIntegerArgumentsFromGuestStack()
+    {
+        byte[] code =
+        [
+            0x48, 0x83, 0xEC, 0x10,       // sub rsp, 16
+            0x48, 0xC7, 0x04, 0x24, 0x40, 0x00, 0x00, 0x00, // mov qword [rsp], 64
+            0x48, 0xC7, 0x44, 0x24, 0x08, 0x80, 0x00, 0x00, 0x00, // mov qword [rsp+8], 128
+            0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1
+            0xBE, 0x02, 0x00, 0x00, 0x00, // mov esi, 2
+            0xBA, 0x04, 0x00, 0x00, 0x00, // mov edx, 4
+            0xB9, 0x08, 0x00, 0x00, 0x00, // mov ecx, 8
+            0x41, 0xB8, 0x10, 0x00, 0x00, 0x00, // mov r8d, 16
+            0x41, 0xB9, 0x20, 0x00, 0x00, 0x00, // mov r9d, 32
+            0xE8, 0xC6, 0x00, 0x00, 0x00, // call ImportAddress
+            0x48, 0x83, 0xC4, 0x10,       // add rsp, 16
+            0x3D, 0xFF, 0x00, 0x00, 0x00, // cmp eax, 255
+            0x75, 0x03,                   // jne failure
+            0x31, 0xC0,                   // xor eax, eax
+            0xC3,                         // ret
+            0xB8, 0x01, 0x00, 0x00, 0x00, // failure: mov eax, 1
+            0xC3,                         // ret
+        ];
+        using var memory = new PhysicalVirtualMemory();
+        var entryPoint = memory.AllocateAt(CodeAddress, 0x1000, executable: true);
+        Assert.Equal(CodeAddress, entryPoint);
+        Assert.True(memory.TryWrite(entryPoint, code));
+        Assert.True(memory.TryWrite(ImportAddress, [0xCC, 0xC3]));
+
+        var moduleManager = new ModuleManager();
+        var registered = moduleManager.RegisterFromAssembly(
+            Assembly.GetExecutingAssembly(),
+            Generation.Gen5);
+        Assert.True(registered >= 3);
+        Assert.True(moduleManager.TryGetExport(EightArgumentSumNid, out _));
+        moduleManager.Freeze();
+        using var dispatcher = new CpuDispatcher(memory, moduleManager);
+
+        var result = dispatcher.DispatchModuleInitializer(
+            entryPoint,
+            Generation.Gen5,
+            new Dictionary<ulong, string> { [ImportAddress] = EightArgumentSumNid },
+            moduleName: "synthetic-stack-argument-import-roundtrip");
 
         Assert.True(
             result == OrbisGen2Result.ORBIS_GEN2_OK,
@@ -227,6 +278,31 @@ public sealed class NativeImportBridgeTests
                 context[CpuRegister.Rcx] +
                 context[CpuRegister.R8] +
                 context[CpuRegister.R9]));
+            return context.SetReturn(result);
+        }
+
+        [SysAbiExport(
+            Nid = EightArgumentSumNid,
+            ExportName = "syntheticEightArgumentSum",
+            Target = Generation.Gen5,
+            LibraryName = "libSyntheticTest")]
+        public static int EightArgumentSum(CpuContext context)
+        {
+            if (!context.TryReadStackArgumentUInt64(0, out var seventh) ||
+                !context.TryReadStackArgumentUInt64(1, out var eighth))
+            {
+                return context.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            var result = checked((int)(
+                context[CpuRegister.Rdi] +
+                context[CpuRegister.Rsi] +
+                context[CpuRegister.Rdx] +
+                context[CpuRegister.Rcx] +
+                context[CpuRegister.R8] +
+                context[CpuRegister.R9] +
+                seventh +
+                eighth));
             return context.SetReturn(result);
         }
 

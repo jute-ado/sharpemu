@@ -230,6 +230,28 @@ public sealed class CpuContext(ICpuMemory memory, Generation generation)
         return Memory.TryWrite(address, buffer);
     }
 
+    public bool TryReadStackArgumentUInt32(int stackIndex, out uint value)
+    {
+        if (!TryGetStackArgumentAddress(stackIndex, out var address))
+        {
+            value = 0;
+            return false;
+        }
+
+        return TryReadUInt32(address, out value);
+    }
+
+    public bool TryReadStackArgumentUInt64(int stackIndex, out ulong value)
+    {
+        if (!TryGetStackArgumentAddress(stackIndex, out var address))
+        {
+            value = 0;
+            return false;
+        }
+
+        return TryReadUInt64(address, out value);
+    }
+
     public bool TryReadNullTerminatedUtf8(ulong address, int capacity, out string value)
     {
         value = string.Empty;
@@ -274,6 +296,27 @@ public sealed class CpuContext(ICpuMemory memory, Generation generation)
         }
 
         this[CpuRegister.Rsp] = rsp + sizeof(ulong);
+        return true;
+    }
+
+    private bool TryGetStackArgumentAddress(int stackIndex, out ulong address)
+    {
+        if (stackIndex < 0)
+        {
+            address = 0;
+            return false;
+        }
+
+        // SysV AMD64 stack arguments begin immediately after the return address.
+        var offset = sizeof(ulong) + ((ulong)stackIndex * sizeof(ulong));
+        var rsp = this[CpuRegister.Rsp];
+        if (rsp > ulong.MaxValue - offset)
+        {
+            address = 0;
+            return false;
+        }
+
+        address = rsp + offset;
         return true;
     }
 
