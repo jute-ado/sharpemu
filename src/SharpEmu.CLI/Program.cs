@@ -7,6 +7,7 @@ using SharpEmu.Core.Runtime;
 using SharpEmu.GUI;
 using SharpEmu.HLE;
 using SharpEmu.Logging;
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -70,6 +71,8 @@ internal static partial class Program
             return GuiLauncher.Run();
         }
 
+        var invocationStartedTimestamp = Stopwatch.GetTimestamp();
+
         // The executable uses the GUI subsystem, so CLI mode has to connect
         // itself to a console before the first write.
         EnsureCliConsole();
@@ -100,6 +103,7 @@ internal static partial class Program
                 ebootPath,
                 reportJsonPath,
                 executionTimeoutSeconds,
+                invocationStartedTimestamp,
                 out var childExitCode))
         {
             return childExitCode;
@@ -126,7 +130,8 @@ internal static partial class Program
                     ebootPath,
                     result: null,
                     runtime: null,
-                    hostError: "EBOOT file was not found."))
+                    hostError: "EBOOT file was not found.",
+                    invocationStartedTimestamp: invocationStartedTimestamp))
             {
                 return 3;
             }
@@ -154,7 +159,8 @@ internal static partial class Program
                 ebootPath,
                 result: null,
                 runtime,
-                hostError: ex.ToString());
+                hostError: ex.ToString(),
+                invocationStartedTimestamp: invocationStartedTimestamp);
             return 3;
         }
 
@@ -186,7 +192,13 @@ internal static partial class Program
             Log.Info(runtime.LastExecutionTrace);
         }
 
-        if (!TryWriteExecutionReport(reportJsonPath, ebootPath, result, runtime, hostError: null))
+        if (!TryWriteExecutionReport(
+                reportJsonPath,
+                ebootPath,
+                result,
+                runtime,
+                hostError: null,
+                invocationStartedTimestamp: invocationStartedTimestamp))
         {
             return 3;
         }
@@ -320,6 +332,7 @@ internal static partial class Program
         string ebootPath,
         string? reportJsonPath,
         int? executionTimeoutSeconds,
+        long invocationStartedTimestamp,
         out int childExitCode)
     {
         childExitCode = 0;
@@ -477,6 +490,7 @@ internal static partial class Program
                         result: null,
                         runtime: null,
                         hostError: timeoutMessage,
+                        invocationStartedTimestamp: invocationStartedTimestamp,
                         incompleteResultName: "EXECUTION_TIMED_OUT");
                     childExitCode = ExecutionTimeoutExitCode;
                     return true;
@@ -496,6 +510,7 @@ internal static partial class Program
                         result: null,
                         runtime: null,
                         hostError: "Execution stalled and was terminated by the native watchdog.",
+                        invocationStartedTimestamp: invocationStartedTimestamp,
                         incompleteResultName: "EXECUTION_STALLED");
                 }
 
@@ -868,6 +883,7 @@ internal static partial class Program
         OrbisGen2Result? result,
         ISharpEmuRuntime? runtime,
         string? hostError,
+        long invocationStartedTimestamp,
         string? incompleteResultName = null)
     {
         if (string.IsNullOrWhiteSpace(reportJsonPath))
@@ -892,6 +908,10 @@ internal static partial class Program
                 SchemaVersion: 1,
                 GeneratedAtUtc: DateTimeOffset.UtcNow,
                 ExecutablePath: executablePath,
+                ExecutableSizeBytes: TryGetFileSize(executablePath),
+                DurationMilliseconds: GetElapsedMilliseconds(invocationStartedTimestamp),
+                Build: BuildExecutionReportBuild(),
+                Host: BuildExecutionReportHost(),
                 Result: executionResult,
                 CpuSession: BuildCpuSessionReport(runtime?.LastCpuSessionSummary),
                 CpuTrap: BuildCpuTrapReport(runtime?.LastCpuTrapInfo),
@@ -934,6 +954,44 @@ internal static partial class Program
                 }
             }
         }
+    }
+
+    private static long? TryGetFileSize(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? new FileInfo(path).Length : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static long GetElapsedMilliseconds(long startedTimestamp)
+    {
+        return Math.Max(0, (long)Math.Round(Stopwatch.GetElapsedTime(startedTimestamp).TotalMilliseconds));
+    }
+
+    private static CliBuildReport BuildExecutionReportBuild()
+    {
+        return new CliBuildReport(
+            BuildInfo.CommitSha,
+            BuildInfo.Branch,
+            BuildInfo.Repository,
+            BuildInfo.Configuration,
+            BuildInfo.IsOfficialRelease,
+            BuildInfo.WorkflowRunUrl);
+    }
+
+    private static CliHostReport BuildExecutionReportHost()
+    {
+        return new CliHostReport(
+            RuntimeInformation.OSDescription,
+            RuntimeInformation.ProcessArchitecture.ToString(),
+            RuntimeInformation.FrameworkDescription,
+            HostSystemInfo.CpuName,
+            HostSystemInfo.GpuName);
     }
 
     private static CliCpuSessionReport? BuildCpuSessionReport(CpuSessionSummary? summary)
@@ -1292,6 +1350,10 @@ internal static partial class Program
         int SchemaVersion,
         DateTimeOffset GeneratedAtUtc,
         string ExecutablePath,
+        long? ExecutableSizeBytes,
+        long DurationMilliseconds,
+        CliBuildReport Build,
+        CliHostReport Host,
         CliExecutionResult Result,
         CliCpuSessionReport? CpuSession,
         CliCpuTrapReport? CpuTrap,
@@ -1305,6 +1367,21 @@ internal static partial class Program
         string? HostError);
 
     private sealed record CliExecutionResult(string Name, int? Code, bool Succeeded);
+
+    private sealed record CliBuildReport(
+        string? CommitSha,
+        string? Branch,
+        string? Repository,
+        string? Configuration,
+        bool IsOfficialRelease,
+        string? WorkflowRunUrl);
+
+    private sealed record CliHostReport(
+        string OsDescription,
+        string ProcessArchitecture,
+        string FrameworkDescription,
+        string CpuName,
+        string GpuName);
 
     private sealed record CliCpuSessionReport(
         CliExecutionResult Result,

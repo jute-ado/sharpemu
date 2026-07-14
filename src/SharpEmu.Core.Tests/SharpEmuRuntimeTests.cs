@@ -140,6 +140,12 @@ public sealed class SharpEmuRuntimeTests
         Assert.StartsWith("0x", cpuSession.GetProperty("lastGuestRip").GetString(), StringComparison.Ordinal);
         Assert.Equal(0, cpuSession.GetProperty("importsHit").GetInt32());
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuTrap").ValueKind);
+        Assert.True(root.GetProperty("durationMilliseconds").GetInt64() >= 0);
+        Assert.True(root.GetProperty("executableSizeBytes").GetInt64() > 0);
+        Assert.Equal("Release", root.GetProperty("build").GetProperty("configuration").GetString());
+        Assert.False(root.GetProperty("build").GetProperty("isOfficialRelease").GetBoolean());
+        Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("host").GetProperty("osDescription").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("host").GetProperty("processArchitecture").GetString()));
     }
 
     [WindowsX64Fact]
@@ -202,6 +208,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuTrap").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuMemoryFault").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuNotImplemented").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("executableSizeBytes").ValueKind);
     }
 
     [WindowsX64Fact]
@@ -246,6 +253,7 @@ public sealed class SharpEmuRuntimeTests
             root.GetProperty("hostError").GetString(),
             StringComparison.OrdinalIgnoreCase);
         Assert.Contains("timed out after 1 second", execution.StandardError, StringComparison.OrdinalIgnoreCase);
+        Assert.InRange(root.GetProperty("durationMilliseconds").GetInt64(), 900, 10_000);
     }
 
     [Fact]
