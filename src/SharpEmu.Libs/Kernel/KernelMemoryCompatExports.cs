@@ -924,39 +924,12 @@ public static partial class KernelMemoryCompatExports
         LibraryName = "libc")]
     public static int Strncpy(CpuContext ctx)
     {
-        var destination = ctx[CpuRegister.Rdi];
-        var source = ctx[CpuRegister.Rsi];
-        var count = (int)Math.Min(ctx[CpuRegister.Rdx], int.MaxValue);
-        if (count < 0)
-        {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
-        }
-
-        var payload = new byte[count];
-        Span<byte> one = stackalloc byte[1];
-        var copied = 0;
-        while (copied < count)
-        {
-            if (!TryReadCompat(ctx, source + (ulong)copied, one))
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-            }
-
-            payload[copied] = one[0];
-            copied++;
-            if (one[0] == 0)
-            {
-                break;
-            }
-        }
-
-        if (!TryWriteCompat(ctx, destination, payload))
-        {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-        }
-
-        ctx[CpuRegister.Rax] = destination;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        return CopyStringElements(
+            ctx,
+            ctx[CpuRegister.Rdi],
+            ctx[CpuRegister.Rsi],
+            ctx[CpuRegister.Rdx],
+            elementSize: 1);
     }
 
     [SysAbiExport(
@@ -971,33 +944,91 @@ public static partial class KernelMemoryCompatExports
 
     private static int WcsncpyCore(CpuContext ctx, ulong destination, ulong source, ulong countValue)
     {
-        var count = (int)Math.Min(countValue, int.MaxValue);
-        if (count < 0 || count > (int.MaxValue / WideCharSize))
+        return CopyStringElements(ctx, destination, source, countValue, WideCharSize);
+    }
+
+    private static int CopyStringElements(
+        CpuContext ctx,
+        ulong destination,
+        ulong source,
+        ulong count,
+        int elementSize)
+    {
+        if (count == 0)
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            ctx[CpuRegister.Rax] = destination;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        var payload = new byte[count * WideCharSize];
-        for (var copied = 0; copied < count; copied++)
-        {
-            if (!TryReadUInt16Compat(ctx, source + ((ulong)copied * WideCharSize), out var unit))
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-            }
-
-            BinaryPrimitives.WriteUInt16LittleEndian(
-                payload.AsSpan(copied * WideCharSize, WideCharSize),
-                unit);
-
-            if (unit == 0)
-            {
-                break;
-            }
-        }
-
-        if (!TryWriteCompat(ctx, destination, payload))
+        if (elementSize <= 0 || count > ulong.MaxValue / (ulong)elementSize)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        var totalBytes = count * (ulong)elementSize;
+        if (destination == 0 || source == 0 || totalBytes - 1 > ulong.MaxValue - destination)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        var requestedChunkBytes = (int)Math.Min((ulong)MemsetChunkSize, totalBytes);
+        var buffer = ArrayPool<byte>.Shared.Rent(requestedChunkBytes);
+        try
+        {
+            var chunkCapacity = Math.Min(buffer.Length, MemsetChunkSize);
+            chunkCapacity -= chunkCapacity % elementSize;
+            var chunkElementCapacity = chunkCapacity / elementSize;
+            ulong copiedElements = 0;
+            var padding = false;
+
+            while (copiedElements < count)
+            {
+                var elementsThisChunk = (int)Math.Min(
+                    (ulong)chunkElementCapacity,
+                    count - copiedElements);
+                var bytesThisChunk = elementsThisChunk * elementSize;
+                var chunk = buffer.AsSpan(0, bytesThisChunk);
+                chunk.Clear();
+
+                if (!padding)
+                {
+                    for (var index = 0; index < elementsThisChunk; index++)
+                    {
+                        var elementIndex = copiedElements + (ulong)index;
+                        var sourceOffset = elementIndex * (ulong)elementSize;
+                        if (sourceOffset > ulong.MaxValue - source)
+                        {
+                            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                        }
+
+                        var element = chunk.Slice(index * elementSize, elementSize);
+                        if (!TryReadCompat(ctx, source + sourceOffset, element))
+                        {
+                            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                        }
+
+                        padding = elementSize == 1
+                            ? element[0] == 0
+                            : BinaryPrimitives.ReadUInt16LittleEndian(element) == 0;
+                        if (padding)
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                var destinationOffset = copiedElements * (ulong)elementSize;
+                if (!TryWriteCompat(ctx, destination + destinationOffset, chunk))
+                {
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                }
+
+                copiedElements += (ulong)elementsThisChunk;
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
         ctx[CpuRegister.Rax] = destination;
