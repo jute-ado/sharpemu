@@ -118,7 +118,8 @@ public sealed class SharpEmuRuntimeTests
                 0x31, 0xC0, // xor eax, eax
                 0xC3,       // ret
             ],
-            requestReport: true);
+            requestReport: true,
+            executionTimeoutSeconds: 5);
 
         Assert.Equal(0, execution.ExitCode);
         Assert.NotNull(execution.ReportJson);
@@ -203,6 +204,39 @@ public sealed class SharpEmuRuntimeTests
         Assert.Contains("Execution stalled", execution.StandardError, StringComparison.Ordinal);
     }
 
+    [WindowsX64Fact]
+    public async Task CliEnforcesExecutionTimeoutAndWritesJsonReport()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0xEB, 0xFE], // jmp $
+            requestReport: true,
+            executionTimeoutSeconds: 1);
+
+        Assert.Equal(7, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var document = JsonDocument.Parse(execution.ReportJson);
+        var root = document.RootElement;
+        Assert.Equal("EXECUTION_TIMED_OUT", root.GetProperty("result").GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("result").GetProperty("code").ValueKind);
+        Assert.False(root.GetProperty("result").GetProperty("succeeded").GetBoolean());
+        Assert.Contains(
+            "1 second",
+            root.GetProperty("hostError").GetString(),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("timed out after 1 second", execution.StandardError, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CliRejectsZeroExecutionTimeout()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0xC3], // ret (must not be reached)
+            executionTimeoutSeconds: 0);
+
+        Assert.Equal(1, execution.ExitCode);
+        Assert.Contains("Usage: SharpEmu.CLI", execution.StandardOutput, StringComparison.Ordinal);
+    }
+
     private static async Task AssertSyntheticGuestTrapAsync(
         byte[] code,
         string exceptionCode,
@@ -260,7 +294,8 @@ public sealed class SharpEmuRuntimeTests
         byte[] code,
         bool requestReport = false,
         bool writeExecutable = true,
-        int stallWatchdogSeconds = 0)
+        int stallWatchdogSeconds = 0,
+        int? executionTimeoutSeconds = null)
     {
         var testDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -287,6 +322,11 @@ public sealed class SharpEmuRuntimeTests
                 RedirectStandardError = true,
             };
             startInfo.ArgumentList.Add(cliAssemblyPath);
+            if (executionTimeoutSeconds is { } timeoutSeconds)
+            {
+                startInfo.ArgumentList.Add("--timeout-seconds");
+                startInfo.ArgumentList.Add(timeoutSeconds.ToString());
+            }
             if (requestReport)
             {
                 startInfo.ArgumentList.Add("--report-json");
