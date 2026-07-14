@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
@@ -11,6 +12,8 @@ namespace SharpEmu.Libs.Kernel;
 
 internal static class KernelSocketCompatExports
 {
+    private const int ZeroChunkSize = 16 * 1024;
+
     private sealed class EmulatedSocketState
     {
         public TcpClient? Client;
@@ -306,18 +309,45 @@ internal static class KernelSocketCompatExports
     public static int Bzero(CpuContext ctx)
     {
         var address = ctx[CpuRegister.Rdi];
-        var length = unchecked((int)ctx[CpuRegister.Rsi]);
-        if (length > 0 && address != 0)
+        var length = ctx[CpuRegister.Rsi];
+        return ZeroGuestMemory(ctx, address, length);
+    }
+
+    internal static int ZeroGuestMemory(CpuContext ctx, ulong address, ulong length)
+    {
+        if (length == 0)
         {
-            var zeros = new byte[length];
-            if (!ctx.Memory.TryWrite(address, zeros))
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-            }
+            return ctx.SetReturn(0);
         }
 
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        if (address == 0 || length - 1 > ulong.MaxValue - address)
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var zeros = ArrayPool<byte>.Shared.Rent(
+            (int)Math.Min((ulong)ZeroChunkSize, length));
+        zeros.AsSpan().Clear();
+        try
+        {
+            ulong written = 0;
+            while (written < length)
+            {
+                var count = (int)Math.Min((ulong)zeros.Length, length - written);
+                if (!ctx.Memory.TryWrite(address + written, zeros.AsSpan(0, count)))
+                {
+                    return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
+                written += (ulong)count;
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(zeros);
+        }
+
+        return ctx.SetReturn(0);
     }
 
     [SysAbiExport(
