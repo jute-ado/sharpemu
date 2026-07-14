@@ -110,6 +110,15 @@ public static partial class KernelMemoryCompatExports
     private static readonly HashSet<string> _negativeStatCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, ulong> _aprFileSizeCache = new(StringComparer.OrdinalIgnoreCase);
     private static long _nextFileDescriptor = 2;
+
+    internal static int AllocateGuestFileDescriptor()
+    {
+        lock (_fdGate)
+        {
+            return (int)Interlocked.Increment(ref _nextFileDescriptor);
+        }
+    }
+
     private static ulong _nextPhysicalAddress;
     private static ulong _nextVirtualAddress;
     private static ulong _mainDirectMemoryPoolBase = UnsetMainDirectMemoryPoolBase;
@@ -1560,9 +1569,10 @@ public static partial class KernelMemoryCompatExports
                     return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
                 }
 
-                var directoryFd = (int)Interlocked.Increment(ref _nextFileDescriptor);
+                int directoryFd;
                 lock (_fdGate)
                 {
+                    directoryFd = AllocateGuestFileDescriptor();
                     _openDirectories[directoryFd] = new OpenDirectory
                     {
                         Path = hostPath,
@@ -1583,9 +1593,10 @@ public static partial class KernelMemoryCompatExports
                 stream.Seek(0, SeekOrigin.End);
             }
 
-            var fd = (int)Interlocked.Increment(ref _nextFileDescriptor);
+            int fd;
             lock (_fdGate)
             {
+                fd = AllocateGuestFileDescriptor();
                 _openFiles[fd] = stream;
             }
 
@@ -1979,6 +1990,12 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
+        if (KernelSocketCompatExports.TryCloseSocketFd(fd))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
         FileStream? stream;
         lock (_fdGate)
         {
@@ -2019,6 +2036,17 @@ public static partial class KernelMemoryCompatExports
         if (requested == 0 || fd == 0)
         {
             ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        if (KernelSocketCompatExports.TryReadSocketFd(ctx, fd, bufferAddress, requested, out var socketBytesRead, out var socketError))
+        {
+            if (socketError != OrbisGen2Result.ORBIS_GEN2_OK)
+            {
+                return (int)socketError;
+            }
+
+            ctx[CpuRegister.Rax] = socketBytesRead;
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
@@ -2245,6 +2273,17 @@ public static partial class KernelMemoryCompatExports
             {
                 Console.Error.Write(text);
                 Console.Error.Flush();
+            }
+
+            ctx[CpuRegister.Rax] = unchecked((ulong)requested);
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        if (KernelSocketCompatExports.TryWriteSocketFd(ctx, fd, payload, out var socketError))
+        {
+            if (socketError != OrbisGen2Result.ORBIS_GEN2_OK)
+            {
+                return (int)socketError;
             }
 
             ctx[CpuRegister.Rax] = unchecked((ulong)requested);
