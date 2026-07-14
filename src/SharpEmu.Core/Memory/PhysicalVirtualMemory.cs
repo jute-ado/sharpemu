@@ -47,6 +47,8 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     private ulong _resetVersion = 1;
     private static readonly ulong LazyReservePrimeBytes = ResolveLazyReservePrimeBytes();
 
+    internal ulong ProtectionApplicationCount { get; private set; }
+
     public ulong ResetVersion
     {
         get
@@ -609,17 +611,36 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     private void ApplySegmentProtection(ulong mapStart, ulong mapEnd, ProgramHeaderFlags flags)
     {
+        var runStart = mapStart;
+        var runFlags = ProgramHeaderFlags.None;
         for (var pageAddress = mapStart; pageAddress < mapEnd; pageAddress += PageSize)
         {
             _pageProtections.TryGetValue(pageAddress, out var existingFlags);
             var mergedFlags = existingFlags | flags;
             _pageProtections[pageAddress] = mergedFlags;
-            SetProtection(pageAddress, PageSize, mergedFlags);
+
+            if (pageAddress == mapStart)
+            {
+                runFlags = mergedFlags;
+                continue;
+            }
+
+            if (mergedFlags == runFlags)
+            {
+                continue;
+            }
+
+            SetProtection(runStart, pageAddress - runStart, runFlags);
+            runStart = pageAddress;
+            runFlags = mergedFlags;
         }
+
+        SetProtection(runStart, mapEnd - runStart, runFlags);
     }
 
     private void SetProtection(ulong address, ulong size, ProgramHeaderFlags flags)
     {
+        ProtectionApplicationCount++;
         uint protection;
 
         if (flags == ProgramHeaderFlags.None)
