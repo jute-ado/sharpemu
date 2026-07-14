@@ -1064,9 +1064,13 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         _gate.EnterReadLock();
         try
         {
-            return FindRegion(virtualAddress, 1) is not null
-                ? (void*)virtualAddress
-                : null;
+            var region = FindRegion(virtualAddress, 1);
+            if (region is null || !EnsureRangeCommitted(virtualAddress, 1, region))
+            {
+                return null;
+            }
+
+            return (void*)virtualAddress;
         }
         finally
         {
