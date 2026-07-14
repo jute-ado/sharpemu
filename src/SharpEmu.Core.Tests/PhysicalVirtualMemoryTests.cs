@@ -16,6 +16,99 @@ public sealed class PhysicalVirtualMemoryTests
     private const uint MemRelease = 0x8000;
     private const uint PageNoAccess = 0x01;
 
+    [WindowsX64Fact]
+    public void AllocatedRegionSupportsBoundedReadWriteAndEmptyEndAccess()
+    {
+        using var memory = new PhysicalVirtualMemory();
+        var address = memory.AllocateAt(0, 0x2000, executable: false);
+        var payload = new byte[] { 1, 2, 3, 4 };
+
+        Assert.True(memory.TryWrite(address + 0x100, payload));
+        Span<byte> read = stackalloc byte[payload.Length];
+        Assert.True(memory.TryRead(address + 0x100, read));
+        Assert.Equal(payload, read.ToArray());
+        Assert.True(memory.IsAccessible(address, 0x2000));
+        Assert.True(memory.IsAccessible(address + 0x2000, 0));
+        Assert.True(memory.TryRead(address + 0x2000, Span<byte>.Empty));
+        Assert.True(memory.TryWrite(address + 0x2000, ReadOnlySpan<byte>.Empty));
+
+        Span<byte> crossing = stackalloc byte[2];
+        Assert.False(memory.TryRead(address + 0x1FFF, crossing));
+        Assert.False(memory.TryWrite(address + 0x1FFF, crossing));
+        Assert.False(memory.IsAccessible(address + 0x2000, 1));
+    }
+
+    [WindowsX64Fact]
+    public void MappingCopiesPayloadZeroFillsSegmentAndPreservesAdjacentBytes()
+    {
+        using var memory = new PhysicalVirtualMemory();
+        var address = memory.AllocateAt(0, 0x2000, executable: false);
+        var initial = Enumerable.Repeat((byte)0xCC, 0x2000).ToArray();
+        Assert.True(memory.TryWrite(address, initial));
+
+        memory.Map(
+            address + 0x100,
+            0x500,
+            fileOffset: 0x80,
+            fileData: new byte[] { 1, 2, 3, 4 },
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+
+        Span<byte> prefix = stackalloc byte[1];
+        Assert.True(memory.TryRead(address + 0xFF, prefix));
+        Assert.Equal(0xCC, prefix[0]);
+        Span<byte> segment = stackalloc byte[0x500];
+        Assert.True(memory.TryRead(address + 0x100, segment));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, segment[..4].ToArray());
+        Assert.All(segment[4..].ToArray(), value => Assert.Equal(0, value));
+        Span<byte> suffix = stackalloc byte[1];
+        Assert.True(memory.TryRead(address + 0x600, suffix));
+        Assert.Equal(0xCC, suffix[0]);
+
+        Assert.True(memory.TryQueryMemoryRegion(address + 0x100, findNext: false, out var region));
+        Assert.Equal(0x05, region.Protection);
+    }
+
+    [WindowsX64Fact]
+    public void GuestAllocatorHonorsAlignmentAndReturnsDistinctRanges()
+    {
+        using var memory = new PhysicalVirtualMemory();
+
+        Assert.True(memory.TryAllocateGuestMemory(3, 0x1000, out var first));
+        Assert.True(memory.TryAllocateGuestMemory(5, 0x4000, out var second));
+        Assert.Equal(0UL, first & 0xFFF);
+        Assert.Equal(0UL, second & 0x3FFF);
+        Assert.True(second >= first + 3);
+        Assert.True(memory.TryWrite(first, new byte[] { 1, 2, 3 }));
+        Assert.True(memory.TryWrite(second, new byte[] { 4, 5, 6, 7, 8 }));
+    }
+
+    [WindowsX64Fact]
+    public void GuestAllocatorRejectsInvalidRequests()
+    {
+        using var memory = new PhysicalVirtualMemory();
+
+        Assert.False(memory.TryAllocateGuestMemory(0, 0x1000, out _));
+        Assert.False(memory.TryAllocateGuestMemory(1, 0, out _));
+        Assert.False(memory.TryAllocateGuestMemory(1, 3, out _));
+    }
+
+    [WindowsX64Fact]
+    public void ClearReleasesRegionsAndAllowsFreshAllocation()
+    {
+        using var memory = new PhysicalVirtualMemory();
+        var address = memory.AllocateAt(0, 0x1000, executable: false);
+        Assert.True(memory.TryWrite(address, new byte[] { 1 }));
+
+        memory.Clear();
+
+        Assert.Empty(memory.SnapshotRegions());
+        Span<byte> one = stackalloc byte[1];
+        Assert.False(memory.TryRead(address, one));
+        var nextAddress = memory.AllocateAt(0, 0x1000, executable: false);
+        Assert.True(memory.TryRead(nextAddress, one));
+        Assert.Equal(0, one[0]);
+    }
+
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern nint VirtualAlloc(nint address, nuint size, uint allocationType, uint protection);
 
