@@ -211,6 +211,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private int _tlsPatchStubOffset;
 	private readonly Dictionary<(int DestinationRegister, int Displacement), nint> _tlsLoadHelpers = new();
+	private readonly Dictionary<(int SourceRegister, int Displacement), nint> _tlsStoreHelpers = new();
 
 	private nint _unresolvedReturnStub;
 
@@ -2032,6 +2033,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private unsafe void CreateTlsHandler()
 	{
 		_tlsLoadHelpers.Clear();
+		_tlsStoreHelpers.Clear();
 		_tlsHandlerAddress = (nint)TryAllocateNearEntry(TlsHandlerRegionSize);
 		if (_tlsHandlerAddress == 0)
 		{
@@ -2404,6 +2406,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					{
 						num9++;
 					}
+					else if (TryPatchTlsRegisterStoreInstruction(address, ptr + i, remainingBytes))
+					{
+						num9++;
+					}
 					else if (TryPatchStackCanaryInstruction(address, ptr + i))
 					{
 						num4++;
@@ -2718,6 +2724,179 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 		FlushInstructionCache(GetCurrentProcess(), (void*)helper, helperSize);
 		_tlsLoadHelpers[helperKey] = helper;
+		return helper;
+	}
+
+	private unsafe bool TryPatchTlsRegisterStoreInstruction(nint address, byte* source, int availableLength)
+	{
+		if (availableLength < MinTlsPatchInstructionBytes)
+		{
+			return false;
+		}
+
+		var offset = 0;
+		while (offset < availableLength && source[offset] == 0x66)
+		{
+			offset++;
+		}
+
+		if (offset >= availableLength || source[offset] != 0x64)
+		{
+			return false;
+		}
+
+		offset++;
+		if (offset >= availableLength)
+		{
+			return false;
+		}
+
+		var rex = (byte)0;
+		if (source[offset] >= 0x40 && source[offset] <= 0x4F)
+		{
+			rex = source[offset];
+			offset++;
+		}
+
+		if ((rex & 8) == 0 || offset + 7 > availableLength || source[offset] != 0x89)
+		{
+			return false;
+		}
+
+		var modRm = source[offset + 1];
+		var sib = source[offset + 2];
+		if ((modRm >> 6) != 0 || (modRm & 7) != 4 || sib != 0x25)
+		{
+			return false;
+		}
+
+		var displacement = *(int*)(source + offset + 3);
+		var sourceRegister = ((modRm >> 3) & 7) | (((rex & 4) != 0) ? 8 : 0);
+		var instructionLength = offset + 7;
+		if (instructionLength < MinTlsPatchInstructionBytes)
+		{
+			return false;
+		}
+
+		var helper = GetOrCreateTlsStoreHelper(sourceRegister, displacement);
+		return helper != 0 && PatchCallSite(address, instructionLength, helper);
+	}
+
+	private unsafe nint GetOrCreateTlsStoreHelper(int sourceRegister, int displacement)
+	{
+		if (sourceRegister is < 0 or >= 16)
+		{
+			return 0;
+		}
+
+		var helperKey = (sourceRegister, displacement);
+		if (_tlsStoreHelpers.TryGetValue(helperKey, out var existingHelper))
+		{
+			return existingHelper;
+		}
+
+		const int helperSize = 128;
+		var helper = AllocateTlsPatchStub(helperSize);
+		if (helper == 0)
+		{
+			return 0;
+		}
+
+		var code = (byte*)helper;
+		var offset = 0;
+		EmitByte(code, ref offset, 0x9C); // pushfq
+		EmitByte(code, ref offset, 0x50); // push rax
+		EmitByte(code, ref offset, 0x51); // push rcx
+		EmitByte(code, ref offset, 0x52); // push rdx
+		EmitByte(code, ref offset, 0x41); // push r8
+		EmitByte(code, ref offset, 0x50);
+		EmitByte(code, ref offset, 0x41); // push r9
+		EmitByte(code, ref offset, 0x51);
+		EmitByte(code, ref offset, 0x41); // push r10
+		EmitByte(code, ref offset, 0x52);
+		EmitByte(code, ref offset, 0x41); // push r11
+		EmitByte(code, ref offset, 0x53);
+		EmitByte(code, ref offset, 0x48); // sub rsp, 0x28
+		EmitByte(code, ref offset, 0x83);
+		EmitByte(code, ref offset, 0xEC);
+		EmitByte(code, ref offset, 0x28);
+		EmitByte(code, ref offset, 0xB9); // mov ecx, TLS index
+		EmitUInt32(code, ref offset, _guestTlsBaseTlsIndex);
+		EmitByte(code, ref offset, 0x48); // mov rax, TlsGetValue
+		EmitByte(code, ref offset, 0xB8);
+		*(nint*)(code + offset) = _tlsGetValueAddress;
+		offset += sizeof(nint);
+		EmitByte(code, ref offset, 0xFF); // call rax
+		EmitByte(code, ref offset, 0xD0);
+		EmitByte(code, ref offset, 0x48); // add rsp, 0x28
+		EmitByte(code, ref offset, 0x83);
+		EmitByte(code, ref offset, 0xC4);
+		EmitByte(code, ref offset, 0x28);
+
+		var savedSlot = sourceRegister switch
+		{
+			0 => 48,
+			1 => 40,
+			2 => 32,
+			8 => 24,
+			9 => 16,
+			10 => 8,
+			11 => 0,
+			_ => -1,
+		};
+		if (sourceRegister == 4)
+		{
+			EmitByte(code, ref offset, 0x48); // lea rdx, [rsp+0x48] (guest rsp before patched call)
+			EmitByte(code, ref offset, 0x8D);
+			EmitByte(code, ref offset, 0x54);
+			EmitByte(code, ref offset, 0x24);
+			EmitByte(code, ref offset, 0x48);
+		}
+		else if (savedSlot >= 0)
+		{
+			EmitByte(code, ref offset, 0x48); // mov rdx, [rsp+slot]
+			EmitByte(code, ref offset, 0x8B);
+			EmitByte(code, ref offset, 0x54);
+			EmitByte(code, ref offset, 0x24);
+			EmitByte(code, ref offset, (byte)savedSlot);
+		}
+		else
+		{
+			EmitByte(code, ref offset, (byte)(0x48 | (sourceRegister >= 8 ? 4 : 0)));
+			EmitByte(code, ref offset, 0x89); // mov rdx, source
+			EmitByte(code, ref offset, (byte)(0xC2 | ((sourceRegister & 7) << 3)));
+		}
+
+		EmitByte(code, ref offset, 0x48); // mov [rax+displacement], rdx
+		EmitByte(code, ref offset, 0x89);
+		EmitByte(code, ref offset, 0x90);
+		EmitUInt32(code, ref offset, unchecked((uint)displacement));
+		EmitByte(code, ref offset, 0x41); // pop r11
+		EmitByte(code, ref offset, 0x5B);
+		EmitByte(code, ref offset, 0x41); // pop r10
+		EmitByte(code, ref offset, 0x5A);
+		EmitByte(code, ref offset, 0x41); // pop r9
+		EmitByte(code, ref offset, 0x59);
+		EmitByte(code, ref offset, 0x41); // pop r8
+		EmitByte(code, ref offset, 0x58);
+		EmitByte(code, ref offset, 0x5A); // pop rdx
+		EmitByte(code, ref offset, 0x59); // pop rcx
+		EmitByte(code, ref offset, 0x58); // pop rax
+		EmitByte(code, ref offset, 0x9D); // popfq
+		EmitByte(code, ref offset, 0xC3); // ret
+		while (offset < helperSize)
+		{
+			EmitByte(code, ref offset, 0x90);
+		}
+
+		uint oldProtect = 0;
+		if (!VirtualProtect((void*)helper, helperSize, PAGE_EXECUTE_READ, &oldProtect))
+		{
+			return 0;
+		}
+
+		FlushInstructionCache(GetCurrentProcess(), (void*)helper, helperSize);
+		_tlsStoreHelpers[helperKey] = helper;
 		return helper;
 	}
 

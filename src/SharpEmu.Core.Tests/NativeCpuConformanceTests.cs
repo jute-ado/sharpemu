@@ -202,6 +202,81 @@ public sealed class NativeCpuConformanceTests
             ]
         },
         {
+            "tls-register-store-roundtrips-volatile-source",
+            [
+                0x48, 0xB8, 0x88, 0x77, 0x66, 0x55,
+                0x44, 0x33, 0x22, 0x11,             // mov rax, 0x1122334455667788
+                0x64, 0x48, 0x89, 0x04, 0x25,
+                0x38, 0x00, 0x00, 0x00,             // mov fs:[0x38], rax
+                0x31, 0xC0,                         // xor eax, eax
+                0x64, 0x48, 0x8B, 0x04, 0x25,
+                0x38, 0x00, 0x00, 0x00,             // mov rax, fs:[0x38]
+                0x48, 0xB9, 0x88, 0x77, 0x66, 0x55,
+                0x44, 0x33, 0x22, 0x11,             // mov rcx, 0x1122334455667788
+                0x48, 0x39, 0xC8,                   // cmp rax, rcx
+                0x75, 0x03,                         // jne failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
+            "tls-register-store-preserves-nonvolatile-source",
+            [
+                0x49, 0xBF, 0x11, 0x22, 0x33, 0x44,
+                0x55, 0x66, 0x77, 0x08,             // mov r15, 0x0877665544332211
+                0x64, 0x4C, 0x89, 0x3C, 0x25,
+                0x40, 0x00, 0x00, 0x00,             // mov fs:[0x40], r15
+                0x64, 0x48, 0x8B, 0x04, 0x25,
+                0x40, 0x00, 0x00, 0x00,             // mov rax, fs:[0x40]
+                0x49, 0xBA, 0x11, 0x22, 0x33, 0x44,
+                0x55, 0x66, 0x77, 0x08,             // mov r10, 0x0877665544332211
+                0x4C, 0x39, 0xD0,                   // cmp rax, r10
+                0x75, 0x08,                         // jne failure
+                0x4D, 0x39, 0xD7,                   // cmp r15, r10
+                0x75, 0x03,                         // jne failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
+            "tls-register-store-preserves-arithmetic-flags",
+            [
+                0x48, 0xBA, 0x88, 0x77, 0x66, 0x55,
+                0x44, 0x33, 0x22, 0x11,             // mov rdx, 0x1122334455667788
+                0xB8, 0xFF, 0xFF, 0xFF, 0x7F,       // mov eax, 0x7fffffff
+                0x83, 0xC0, 0x01,                   // add eax, 1
+                0x64, 0x48, 0x89, 0x14, 0x25,
+                0x48, 0x00, 0x00, 0x00,             // mov fs:[0x48], rdx
+                0x71, 0x09,                         // jno failure
+                0x79, 0x07,                         // jns failure
+                0x74, 0x05,                         // jz failure
+                0x72, 0x03,                         // jc failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
+            "tls-register-store-captures-guest-stack-pointer",
+            [
+                0x64, 0x48, 0x89, 0x24, 0x25,
+                0x50, 0x00, 0x00, 0x00,             // mov fs:[0x50], rsp
+                0x64, 0x48, 0x8B, 0x04, 0x25,
+                0x50, 0x00, 0x00, 0x00,             // mov rax, fs:[0x50]
+                0x48, 0x39, 0xE0,                   // cmp rax, rsp
+                0x75, 0x03,                         // jne failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
             "tls-load-inside-nested-call",
             [
                 0xE8, 0x0D, 0x00, 0x00, 0x00,       // call helper
