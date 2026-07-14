@@ -126,6 +126,7 @@ public sealed partial class DirectExecutionBackend
 			}
 			if (TryRedirectActiveGuestExceptionToHost(
 				contextRecord,
+				exceptionRecord,
 				exceptionCode,
 				exceptionAddress,
 				rip,
@@ -325,6 +326,7 @@ public sealed partial class DirectExecutionBackend
 
 	private unsafe bool TryRedirectActiveGuestExceptionToHost(
 		void* contextRecord,
+		EXCEPTION_RECORD* exceptionRecord,
 		uint exceptionCode,
 		ulong exceptionAddress,
 		ulong rip,
@@ -349,6 +351,14 @@ public sealed partial class DirectExecutionBackend
 			? exceptionAddress
 			: rip;
 		_activeGuestHardwareExceptionCode = exceptionCode;
+		_activeGuestHardwareExceptionAccessType = exceptionCode == 0xC0000005u &&
+			exceptionRecord->NumberParameters >= 1
+				? *exceptionRecord->ExceptionInformation
+				: 0;
+		_activeGuestHardwareExceptionAccessAddress = exceptionCode == 0xC0000005u &&
+			exceptionRecord->NumberParameters >= 2
+				? exceptionRecord->ExceptionInformation[1]
+				: 0;
 		_activeForcedGuestExit = true;
 		WriteCtxU64(contextRecord, CTX_RAX, ulong.MaxValue);
 		WriteCtxU64(contextRecord, CTX_RIP, (ulong)_guestReturnStub);

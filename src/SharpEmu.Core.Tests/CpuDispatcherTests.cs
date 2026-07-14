@@ -44,6 +44,38 @@ public sealed class CpuDispatcherTests
     }
 
     [Fact]
+    public void NativeBackendTrapPreservesStructuredExceptionInfo()
+    {
+        const ulong entryPoint = 0x0000_0008_0000_0000;
+        const ulong trapRip = entryPoint + 0x24;
+        var backend = new FailingNativeBackend(
+            OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP,
+            new CpuTrapInfo(
+                trapRip,
+                0xF7,
+                exceptionCode: 0xC0000005,
+                accessAddress: 0,
+                accessKind: CpuMemoryAccessKind.Read));
+        using var dispatcher = new CpuDispatcher(
+            new VirtualMemory(),
+            new ModuleManager(),
+            backend);
+
+        var result = dispatcher.DispatchModuleInitializer(
+            entryPoint,
+            Generation.Gen5,
+            moduleName: "structured-trap-test");
+
+        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP, result);
+        Assert.Equal(trapRip, dispatcher.LastTrapInfo?.InstructionPointer);
+        Assert.Equal((byte)0xF7, dispatcher.LastTrapInfo?.Opcode);
+        Assert.Equal(0xC0000005u, dispatcher.LastTrapInfo?.ExceptionCode);
+        Assert.Equal(0uL, dispatcher.LastTrapInfo?.AccessAddress);
+        Assert.Equal(CpuMemoryAccessKind.Read, dispatcher.LastTrapInfo?.AccessKind);
+        Assert.Equal(trapRip, dispatcher.LastSessionSummary.LastGuestRip);
+    }
+
+    [Fact]
     public void RepeatedModuleInitializersReuseDispatcherMemoryRegions()
     {
         var memory = new VirtualMemory();
@@ -192,11 +224,15 @@ public sealed class CpuDispatcherTests
         Assert.Equal(regionCountAfterFirstEntry, memory.SnapshotRegions().Count);
     }
 
-    private sealed class FailingNativeBackend(OrbisGen2Result result) : INativeCpuBackend
+    private sealed class FailingNativeBackend(
+        OrbisGen2Result result,
+        CpuTrapInfo? lastTrapInfo = null) : INativeCpuBackend
     {
         public string BackendName => "synthetic-backend";
 
         public string? LastError => "synthetic backend failure";
+
+        public CpuTrapInfo? LastTrapInfo => lastTrapInfo;
 
         public bool TryExecute(
             CpuContext context,
@@ -207,6 +243,10 @@ public sealed class CpuDispatcherTests
             CpuExecutionOptions executionOptions,
             out OrbisGen2Result executionResult)
         {
+            if (lastTrapInfo is { } trapInfo)
+            {
+                context.Rip = trapInfo.InstructionPointer;
+            }
             executionResult = result;
             return false;
         }

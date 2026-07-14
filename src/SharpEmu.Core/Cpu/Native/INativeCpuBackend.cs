@@ -11,6 +11,8 @@ public interface INativeCpuBackend
 
     string? LastError { get; }
 
+    CpuTrapInfo? LastTrapInfo => null;
+
     bool TryExecute(
         CpuContext context,
         ulong entryPoint,

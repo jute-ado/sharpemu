@@ -213,6 +213,13 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             var longModeHint = IsInvalidLongModeOpcode(trapInfo.Opcode)
                 ? ", hint=invalid opcode for x64 long mode; likely wrong jump target or decode desync"
                 : string.Empty;
+            var exceptionText = trapInfo.ExceptionCode is { } exceptionCode
+                ? $", exception=0x{exceptionCode:X8}"
+                : string.Empty;
+            var accessText = trapInfo.AccessAddress is { } accessAddress &&
+                trapInfo.AccessKind is { } accessKind
+                    ? $", access={accessKind.ToString().ToLowerInvariant()}@0x{accessAddress:X16}"
+                    : string.Empty;
 
             var hint = string.Empty;
             if (image.IsSelf &&
@@ -240,7 +247,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 : string.Empty;
             var diagnosticsBuilder = new StringBuilder(1024);
             diagnosticsBuilder.Append(
-                $"CPU trap at RIP=0x{trapInfo.InstructionPointer:X16}, opcode=0x{trapInfo.Opcode:X2}, bytes={opcodeBytes}{decodedTrapText}, import_stubs={activeImportStubs.Count}{ud2Hint}{longModeHint}{hint}{ripStubText}{transferText}");
+                $"CPU trap at RIP=0x{trapInfo.InstructionPointer:X16}, opcode=0x{trapInfo.Opcode:X2}, bytes={opcodeBytes}{decodedTrapText}{exceptionText}{accessText}, import_stubs={activeImportStubs.Count}{ud2Hint}{longModeHint}{hint}{ripStubText}{transferText}");
             if (!string.IsNullOrWhiteSpace(_cpuDispatcher.LastRecentControlTransferTrace))
             {
                 diagnosticsBuilder.AppendLine();
