@@ -328,10 +328,14 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         };
         if (nativeResult == OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP)
         {
-            Span<byte> opcode = stackalloc byte[1];
-            LastTrapInfo = new CpuTrapInfo(
-                context.Rip,
-                context.Memory.TryRead(context.Rip, opcode) ? opcode[0] : (byte)0);
+            LastTrapInfo = _nativeCpuBackend.LastTrapInfo;
+            if (LastTrapInfo is null)
+            {
+                Span<byte> opcode = stackalloc byte[1];
+                LastTrapInfo = new CpuTrapInfo(
+                    context.Rip,
+                    context.Memory.TryRead(context.Rip, opcode) ? opcode[0] : (byte)0);
+            }
         }
         return FailEarly(
             nativeResult,

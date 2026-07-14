@@ -47,7 +47,34 @@ public sealed class SharpEmuRuntimeTests
                 0x48, 0x8B, 0x00, // mov rax, [rax]
             ],
             exceptionCode: "C0000005",
-            opcode: "48");
+            opcode: "48",
+            access: "read@0x0000000000000000");
+    }
+
+    [WindowsX64Fact]
+    public Task CliReportsSyntheticWriteAccessViolationWithoutCrashingHostProcess()
+    {
+        return AssertSyntheticGuestTrapAsync(
+            [
+                0x31, 0xC0,       // xor eax, eax
+                0xC6, 0x00, 0x01, // mov byte ptr [rax], 1
+            ],
+            exceptionCode: "C0000005",
+            opcode: "C6",
+            access: "write@0x0000000000000000");
+    }
+
+    [WindowsX64Fact]
+    public Task CliReportsSyntheticExecuteAccessViolationAtZeroWithoutCrashingHostProcess()
+    {
+        return AssertSyntheticGuestTrapAsync(
+            [
+                0x31, 0xC0, // xor eax, eax
+                0xFF, 0xD0, // call rax
+            ],
+            exceptionCode: "C0000005",
+            opcode: "00",
+            access: "execute@0x0000000000000000");
     }
 
     [WindowsX64Fact]
@@ -86,7 +113,8 @@ public sealed class SharpEmuRuntimeTests
         byte[] code,
         string exceptionCode,
         string opcode,
-        string? diagnostic = null)
+        string? diagnostic = null,
+        string? access = null)
     {
         var execution = await RunSyntheticExecutableInCliAsync(code);
 
@@ -94,7 +122,12 @@ public sealed class SharpEmuRuntimeTests
         Assert.Contains("Result=ORBIS_GEN2_ERROR_CPU_TRAP", execution.StandardOutput, StringComparison.Ordinal);
         Assert.Contains($"Guest hardware exception 0x{exceptionCode}", execution.StandardOutput, StringComparison.Ordinal);
         Assert.Contains("CPU trap at RIP=", execution.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains($"exception=0x{exceptionCode}", execution.StandardOutput, StringComparison.Ordinal);
         Assert.Contains($"opcode=0x{opcode}", execution.StandardOutput, StringComparison.Ordinal);
+        if (access is not null)
+        {
+            Assert.Contains($"access={access}", execution.StandardOutput, StringComparison.Ordinal);
+        }
         if (diagnostic is not null)
         {
             Assert.Contains(diagnostic, execution.StandardOutput, StringComparison.Ordinal);
