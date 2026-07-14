@@ -308,9 +308,16 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
             Environment.NewLine,
             $"CpuEngine native-only failed: {backendError}");
         Log.Error($"Native backend FAILED: {backendError}");
+        var failureReason = nativeResult switch
+        {
+            OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP => CpuExitReason.CpuTrap,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_IMPLEMENTED =>
+                CpuExitReason.NativeBackendUnavailable,
+            _ => CpuExitReason.UnhandledException,
+        };
         return FailEarly(
-            OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_IMPLEMENTED,
-            CpuExitReason.NativeBackendUnavailable);
+            nativeResult,
+            failureReason);
     }
 
     private ulong TryMapStackRegion()
