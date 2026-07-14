@@ -6,6 +6,7 @@ using SharpEmu.Core.Cpu;
 using SharpEmu.GUI;
 using SharpEmu.HLE;
 using SharpEmu.Logging;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -295,11 +296,30 @@ internal static partial class Program
             return false;
         }
 
-        var childArgs = new string[args.Length + 1];
-        childArgs[0] = MitigatedChildFlag;
+        var hostedByDotnet = string.Equals(
+            Path.GetFileNameWithoutExtension(processPath),
+            "dotnet",
+            StringComparison.OrdinalIgnoreCase);
+        // Assembly.Location is unavailable in a single-file app, but this branch is
+        // reached only when dotnet.exe is hosting a loose managed assembly.
+#pragma warning disable IL3000
+        var entryAssemblyPath = hostedByDotnet ? Assembly.GetEntryAssembly()?.Location : null;
+#pragma warning restore IL3000
+        if (hostedByDotnet && string.IsNullOrWhiteSpace(entryAssemblyPath))
+        {
+            return false;
+        }
+
+        var hostArgumentCount = hostedByDotnet ? 1 : 0;
+        var childArgs = new string[args.Length + hostArgumentCount + 1];
+        if (entryAssemblyPath is not null)
+        {
+            childArgs[0] = entryAssemblyPath;
+        }
+        childArgs[hostArgumentCount] = MitigatedChildFlag;
         for (var i = 0; i < args.Length; i++)
         {
-            childArgs[i + 1] = args[i];
+            childArgs[i + hostArgumentCount + 1] = args[i];
         }
 
         var commandLine = BuildCommandLine(processPath, childArgs);

@@ -61,6 +61,8 @@ public sealed partial class DirectExecutionBackend
 		var worker = RentNativeGuestExecutor();
 		if (worker is null)
 		{
+			_activeGuestHardwareExceptionRip = 0;
+			_activeGuestHardwareExceptionCode = 0;
 			TlsSetValue(_hostRspSlotTlsIndex, (nint)hostRspSlot);
 			return CallNativeEntry(entryStub);
 		}
@@ -78,10 +80,14 @@ public sealed partial class DirectExecutionBackend
 				state?.AffinityMask ?? 0,
 				out var yieldRequested,
 				out var yieldReason,
-				out var forcedExit);
+				out var forcedExit,
+				out var hardwareExceptionRip,
+				out var hardwareExceptionCode);
 			_activeGuestThreadYieldRequested = yieldRequested;
 			_activeGuestThreadYieldReason = yieldReason;
 			_activeForcedGuestExit = forcedExit;
+			_activeGuestHardwareExceptionRip = hardwareExceptionRip;
+			_activeGuestHardwareExceptionCode = hardwareExceptionCode;
 			return nativeReturn;
 		}
 		finally
@@ -206,6 +212,8 @@ public sealed partial class DirectExecutionBackend
 		private bool _runYieldRequested;
 		private string? _runYieldReason;
 		private bool _runForcedExit;
+		private ulong _runHardwareExceptionRip;
+		private uint _runHardwareExceptionCode;
 		private bool _runPrologueFailed;
 
 		// Prologue -> epilogue carry, only touched on the worker thread.
@@ -216,6 +224,10 @@ public sealed partial class DirectExecutionBackend
 		private bool _prevForcedExit;
 		private bool _prevYieldRequested;
 		private string? _prevYieldReason;
+		private ulong _prevGuestStackStart;
+		private ulong _prevGuestStackEnd;
+		private ulong _prevHardwareExceptionRip;
+		private uint _prevHardwareExceptionCode;
 		private GuestThreadState? _prevState;
 		private ulong _prevGuestThreadHandle;
 		private nint _prevHostRspSlot;
@@ -383,7 +395,9 @@ public sealed partial class DirectExecutionBackend
 			ulong affinityMask,
 			out bool yieldRequested,
 			out string? yieldReason,
-			out bool forcedExit)
+			out bool forcedExit,
+			out ulong hardwareExceptionRip,
+			out uint hardwareExceptionCode)
 		{
 			_runContext = context;
 			_runState = state;
@@ -397,6 +411,8 @@ public sealed partial class DirectExecutionBackend
 			_runYieldRequested = false;
 			_runYieldReason = null;
 			_runForcedExit = false;
+			_runHardwareExceptionRip = 0;
+			_runHardwareExceptionCode = 0;
 			_workAvailable.Set();
 			_workCompleted.WaitOne();
 			_runContext = null;
@@ -404,6 +420,8 @@ public sealed partial class DirectExecutionBackend
 			yieldRequested = _runYieldRequested;
 			yieldReason = _runYieldReason;
 			forcedExit = _runForcedExit;
+			hardwareExceptionRip = _runHardwareExceptionRip;
+			hardwareExceptionCode = _runHardwareExceptionCode;
 			if (_runPrologueFailed)
 			{
 				throw new InvalidOperationException("Native guest worker failed to bind the run ambient (prologue fault)");
@@ -464,6 +482,10 @@ public sealed partial class DirectExecutionBackend
 			_prevForcedExit = _activeForcedGuestExit;
 			_prevYieldRequested = _activeGuestThreadYieldRequested;
 			_prevYieldReason = _activeGuestThreadYieldReason;
+			_prevGuestStackStart = _activeGuestStackStart;
+			_prevGuestStackEnd = _activeGuestStackEnd;
+			_prevHardwareExceptionRip = _activeGuestHardwareExceptionRip;
+			_prevHardwareExceptionCode = _activeGuestHardwareExceptionCode;
 			_prevState = _activeGuestThreadState;
 			_prevHostRspSlot = TlsGetValue(backend._hostRspSlotTlsIndex);
 			_prevGuestThreadHandle = GuestThreadExecution.EnterGuestThread(_runGuestThreadHandle);
@@ -476,6 +498,9 @@ public sealed partial class DirectExecutionBackend
 			_activeGuestThreadYieldRequested = false;
 			_activeGuestThreadYieldReason = null;
 			_activeGuestThreadState = _runState;
+			_activeGuestHardwareExceptionRip = 0;
+			_activeGuestHardwareExceptionCode = 0;
+			BindActiveGuestStackRange(_runContext!);
 			backend.BindTlsBase(_runContext!);
 			TlsSetValue(backend._hostRspSlotTlsIndex, _runHostRspSlot);
 			if (_runState is { } state)
@@ -502,6 +527,8 @@ public sealed partial class DirectExecutionBackend
 			_runYieldRequested = _activeGuestThreadYieldRequested;
 			_runYieldReason = _activeGuestThreadYieldReason;
 			_runForcedExit = _activeForcedGuestExit;
+			_runHardwareExceptionRip = _activeGuestHardwareExceptionRip;
+			_runHardwareExceptionCode = _activeGuestHardwareExceptionCode;
 			if (!_entered)
 			{
 				return;
@@ -520,6 +547,10 @@ public sealed partial class DirectExecutionBackend
 			_activeForcedGuestExit = _prevForcedExit;
 			_activeGuestThreadYieldRequested = _prevYieldRequested;
 			_activeGuestThreadYieldReason = _prevYieldReason;
+			_activeGuestStackStart = _prevGuestStackStart;
+			_activeGuestStackEnd = _prevGuestStackEnd;
+			_activeGuestHardwareExceptionRip = _prevHardwareExceptionRip;
+			_activeGuestHardwareExceptionCode = _prevHardwareExceptionCode;
 			_activeGuestThreadState = _prevState;
 			_prevBackend = null;
 			_prevContext = null;

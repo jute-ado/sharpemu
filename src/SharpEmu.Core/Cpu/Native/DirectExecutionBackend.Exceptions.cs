@@ -124,6 +124,15 @@ public sealed partial class DirectExecutionBackend
 			{
 				return 0;
 			}
+			if (TryRedirectActiveGuestExceptionToHost(
+				contextRecord,
+				exceptionCode,
+				exceptionAddress,
+				rip,
+				rsp))
+			{
+				return -1;
+			}
 
 			switch (exceptionCode)
 			{
@@ -312,6 +321,38 @@ public sealed partial class DirectExecutionBackend
 		{
 			_vectoredHandlerDepth--;
 		}
+	}
+
+	private unsafe bool TryRedirectActiveGuestExceptionToHost(
+		void* contextRecord,
+		uint exceptionCode,
+		ulong exceptionAddress,
+		ulong rip,
+		ulong rsp)
+	{
+		// Guest code has no Windows unwind metadata. The emulator child therefore
+		// runs with CET context-IP validation disabled and unwinds through the same
+		// return stub used by forced guest exits. Restrict this to a registered guest
+		// stack so a host fault can never be mistaken for an emulated CPU trap.
+		if (exceptionCode is not (0xC0000005u or 0x80000003u or 0xC000001Du) ||
+			!ReferenceEquals(_activeExecutionBackend, this) ||
+			_guestReturnStub == 0 ||
+			ActiveEntryReturnSentinelRip != (ulong)_guestReturnStub ||
+			_activeGuestStackStart == 0 ||
+			rsp < _activeGuestStackStart ||
+			rsp >= _activeGuestStackEnd)
+		{
+			return false;
+		}
+
+		_activeGuestHardwareExceptionRip = exceptionCode == 0x80000003u
+			? exceptionAddress
+			: rip;
+		_activeGuestHardwareExceptionCode = exceptionCode;
+		_activeForcedGuestExit = true;
+		WriteCtxU64(contextRecord, CTX_RAX, ulong.MaxValue);
+		WriteCtxU64(contextRecord, CTX_RIP, (ulong)_guestReturnStub);
+		return true;
 	}
 
 	private static bool IsBenignHostDebugException(uint exceptionCode)
