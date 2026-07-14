@@ -442,6 +442,51 @@ public sealed class PhysicalVirtualMemoryTests
     }
 
     [WindowsX64Fact]
+    public void AllocationSearchRejectsNonPowerOfTwoAlignmentWithoutMutation()
+    {
+        using var memory = new PhysicalVirtualMemory();
+
+        Assert.False(memory.TryAllocateAtOrAbove(
+            0x0000_0008_4000_0000,
+            size: 0x1000,
+            executable: false,
+            alignment: 0x1800,
+            out _));
+        Assert.Empty(memory.SnapshotRegions());
+    }
+
+    [WindowsX64Fact]
+    public void AllocationSearchReturnsFalseInsteadOfThrowingOnOverflow()
+    {
+        using var memory = new PhysicalVirtualMemory();
+        var result = true;
+
+        var addressException = Record.Exception(() =>
+            result = memory.TryAllocateAtOrAbove(
+                ulong.MaxValue - 0x100,
+                size: 0x1000,
+                executable: false,
+                alignment: 0x1000,
+                out _));
+
+        Assert.Null(addressException);
+        Assert.False(result);
+
+        result = true;
+        var sizeException = Record.Exception(() =>
+            result = memory.TryAllocateAtOrAbove(
+                0x1_0000,
+                size: ulong.MaxValue,
+                executable: false,
+                alignment: 0x1000,
+                out _));
+
+        Assert.Null(sizeException);
+        Assert.False(result);
+        Assert.Empty(memory.SnapshotRegions());
+    }
+
+    [WindowsX64Fact]
     public void UnalignedRequestedAllocationPreservesGuestAddressAndTail()
     {
         var probe = VirtualAlloc(

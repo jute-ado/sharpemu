@@ -297,11 +297,36 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     {
         ThrowIfDisposed();
         actualAddress = 0;
-        if (size == 0)
+        if (size == 0 ||
+            (alignment != 0 && (alignment & (alignment - 1)) != 0))
         {
             return false;
         }
 
+        try
+        {
+            return TryAllocateAtOrAboveCore(
+                desiredAddress,
+                size,
+                executable,
+                alignment,
+                out actualAddress);
+        }
+        catch (OverflowException)
+        {
+            actualAddress = 0;
+            return false;
+        }
+    }
+
+    private bool TryAllocateAtOrAboveCore(
+        ulong desiredAddress,
+        ulong size,
+        bool executable,
+        ulong alignment,
+        out ulong actualAddress)
+    {
+        actualAddress = 0;
         var alignedSize = AlignUp(size, PageSize);
         var effectiveAlignment = Math.Max(PageSize, alignment == 0 ? PageSize : alignment);
         var requestedCursor = AlignUp(desiredAddress, effectiveAlignment);
