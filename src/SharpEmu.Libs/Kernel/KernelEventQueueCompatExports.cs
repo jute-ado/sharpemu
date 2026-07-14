@@ -57,6 +57,7 @@ public static class KernelEventQueueCompatExports
 
         if (!ctx.TryWriteUInt64(outAddress, handle))
         {
+            _ = RemoveEventQueue(handle);
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
@@ -72,11 +73,9 @@ public static class KernelEventQueueCompatExports
     public static int KernelDeleteEqueue(CpuContext ctx)
     {
         var handle = ctx[CpuRegister.Rdi];
-        lock (_eventQueueGate)
+        if (!RemoveEventQueue(handle))
         {
-            _eventQueues.Remove(handle);
-            _pendingEvents.Remove(handle);
-            _registeredEvents.Remove(handle);
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
         }
 
         TraceEventQueue(ctx, "delete", handle);
@@ -338,6 +337,11 @@ public static class KernelEventQueueCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
+        if (!IsValidEqueue(handle))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+        }
+
         if (deliveredCount > 0)
         {
             TraceEventQueue(ctx, "wait-deliver", handle);
@@ -350,7 +354,7 @@ public static class KernelEventQueueCompatExports
                 "sceKernelWaitEqueue",
                 GetEventQueueWakeKey(handle),
                 () => ResumeWaitEqueue(ctx, handle, eventsAddress, eventCapacity, outCountAddress),
-                () => HasPendingEvents(handle)))
+                () => !IsValidEqueue(handle) || HasPendingEvents(handle)))
         {
             TraceEventQueue(ctx, "wait-block", handle);
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
@@ -362,7 +366,7 @@ public static class KernelEventQueueCompatExports
                 Math.Max(1L, Math.Min((long)timeoutUsec / 1000, int.MaxValue));
             lock (_eventQueueGate)
             {
-                while (!HasPendingEvents(handle))
+                while (IsValidEqueue(handle) && !HasPendingEvents(handle))
                 {
                     var remaining = deadline - Environment.TickCount64;
                     if (remaining <= 0)
@@ -386,6 +390,11 @@ public static class KernelEventQueueCompatExports
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
             }
 
+            if (!IsValidEqueue(handle))
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+            }
+
             if (deliveredCount > 0)
             {
                 TraceEventQueue(ctx, "wait-timed-deliver", handle);
@@ -406,6 +415,23 @@ public static class KernelEventQueueCompatExports
         {
             return _eventQueues.Contains(handle);
         }
+    }
+
+    private static bool RemoveEventQueue(ulong handle)
+    {
+        lock (_eventQueueGate)
+        {
+            if (!_eventQueues.Remove(handle))
+            {
+                return false;
+            }
+
+            _pendingEvents.Remove(handle);
+            _registeredEvents.Remove(handle);
+        }
+
+        WakeEventQueue(handle);
+        return true;
     }
 
     public static bool EnqueueEvent(ulong handle, KernelQueuedEvent queuedEvent)
@@ -650,6 +676,11 @@ public static class KernelEventQueueCompatExports
         if (eventCopyFaulted)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        if (!IsValidEqueue(handle))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
         }
 
         return deliveredCount > 0
