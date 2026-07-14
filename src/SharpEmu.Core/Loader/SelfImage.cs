@@ -70,6 +70,8 @@ public sealed class SelfImage
 
     public ulong EntryPoint => ElfHeader.EntryPoint + _imageBase;
 
+    public ulong ImageBase => _imageBase;
+
     public ulong ProcParamAddress { get; }
 
     public string? Title { get; }

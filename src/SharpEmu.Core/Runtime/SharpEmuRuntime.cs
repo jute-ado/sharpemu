@@ -61,6 +61,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
     public Ps5ApplicationMetadata? LastApplicationMetadata { get; private set; }
 
+    public SelfImage? LastLoadedImage { get; private set; }
+
     public SharpEmuRuntime(
         ISelfLoader selfLoader,
         IVirtualMemory virtualMemory,
@@ -114,6 +116,9 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(ebootPath);
 
+        LastLoadedImage = null;
+        LastApplicationMetadata = null;
+
         var fullPath = Path.GetFullPath(ebootPath);
         if (!File.Exists(fullPath))
         {
@@ -134,7 +139,14 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
         var mountRoot = Path.GetDirectoryName(fullPath);
 
-        return _selfLoader.Load(bytes.AsSpan(), _virtualMemory, _moduleManager, _fileSystem, mountRoot);
+        var image = _selfLoader.Load(bytes.AsSpan(), _virtualMemory, _moduleManager, _fileSystem, mountRoot);
+        LastLoadedImage = image;
+        LastApplicationMetadata = new Ps5ApplicationMetadata(
+            image.Title,
+            image.TitleId,
+            image.ContentId,
+            image.Version);
+        return image;
     }
 
     public OrbisGen2Result Run(string ebootPath)
@@ -152,13 +164,9 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         LastCpuMemoryFaultInfo = null;
         LastCpuNotImplementedInfo = null;
         LastApplicationMetadata = null;
+        LastLoadedImage = null;
         KernelModuleRegistry.Reset();
         var image = LoadImage(normalizedEbootPath);
-        LastApplicationMetadata = new Ps5ApplicationMetadata(
-            image.Title,
-            image.TitleId,
-            image.ContentId,
-            image.Version);
         VideoOutExports.ConfigureApplicationInfo(image.Title, image.TitleId, image.Version, BuildInfo.CommitSha);
         SaveDataExports.ConfigureApplicationInfo(image.TitleId);
         LogAppBundleInfo(normalizedEbootPath, image);

@@ -16,7 +16,8 @@ internal static class SyntheticCliGuest
         bool writeExecutable = true,
         int stallWatchdogSeconds = 0,
         int? executionTimeoutSeconds = null,
-        string? paramJson = null)
+        string? paramJson = null,
+        bool loadOnly = false)
     {
         var testDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -53,6 +54,10 @@ internal static class SyntheticCliGuest
                 RedirectStandardError = true,
             };
             startInfo.ArgumentList.Add(cliAssemblyPath);
+            if (loadOnly)
+            {
+                startInfo.ArgumentList.Add("--load-only");
+            }
             if (executionTimeoutSeconds is { } timeoutSeconds)
             {
                 startInfo.ArgumentList.Add("--timeout-seconds");
