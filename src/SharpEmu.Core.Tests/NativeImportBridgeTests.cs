@@ -3,7 +3,6 @@
 
 using System.Reflection;
 using SharpEmu.Core.Cpu;
-using SharpEmu.Core.Memory;
 using SharpEmu.HLE;
 using Xunit;
 
@@ -36,31 +35,8 @@ public sealed class NativeImportBridgeTests
             0xB8, 0x01, 0x00, 0x00, 0x00, // failure: mov eax, 1
             0xC3,                         // ret
         ];
-        using var memory = new PhysicalVirtualMemory();
-        var entryPoint = memory.AllocateAt(CodeAddress, 0x1000, executable: true);
-        Assert.Equal(CodeAddress, entryPoint);
-        Assert.True(memory.TryWrite(entryPoint, code));
-        Assert.True(memory.TryWrite(ImportAddress, [0xCC, 0xC3]));
-
-        var moduleManager = new ModuleManager();
-        var registered = moduleManager.RegisterFromAssembly(
-            Assembly.GetExecutingAssembly(),
-            Generation.Gen5);
-        Assert.True(registered >= 1);
-        Assert.True(moduleManager.TryGetExport(AddNid, out _));
-        moduleManager.Freeze();
-        using var dispatcher = new CpuDispatcher(memory, moduleManager);
-
-        var result = dispatcher.DispatchModuleInitializer(
-            entryPoint,
-            Generation.Gen5,
-            new Dictionary<ulong, string> { [ImportAddress] = AddNid },
-            moduleName: "synthetic-import-roundtrip");
-
-        Assert.True(
-            result == OrbisGen2Result.ORBIS_GEN2_OK,
-            dispatcher.LastNotImplementedInfo?.Detail ?? $"Unexpected result: {result}");
-        Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
+        var execution = ExecuteImport(code, AddNid, "synthetic-import-roundtrip");
+        AssertSuccessful(execution);
     }
 
     [WindowsX64Fact]
@@ -88,31 +64,11 @@ public sealed class NativeImportBridgeTests
             0xB8, 0x01, 0x00, 0x00, 0x00, // failure: mov eax, 1
             0xC3,                         // ret
         ];
-        using var memory = new PhysicalVirtualMemory();
-        var entryPoint = memory.AllocateAt(CodeAddress, 0x1000, executable: true);
-        Assert.Equal(CodeAddress, entryPoint);
-        Assert.True(memory.TryWrite(entryPoint, code));
-        Assert.True(memory.TryWrite(ImportAddress, [0xCC, 0xC3]));
-
-        var moduleManager = new ModuleManager();
-        var registered = moduleManager.RegisterFromAssembly(
-            Assembly.GetExecutingAssembly(),
-            Generation.Gen5);
-        Assert.True(registered >= 2);
-        Assert.True(moduleManager.TryGetExport(SixArgumentSumNid, out _));
-        moduleManager.Freeze();
-        using var dispatcher = new CpuDispatcher(memory, moduleManager);
-
-        var result = dispatcher.DispatchModuleInitializer(
-            entryPoint,
-            Generation.Gen5,
-            new Dictionary<ulong, string> { [ImportAddress] = SixArgumentSumNid },
-            moduleName: "synthetic-six-argument-import-roundtrip");
-
-        Assert.True(
-            result == OrbisGen2Result.ORBIS_GEN2_OK,
-            dispatcher.LastNotImplementedInfo?.Detail ?? $"Unexpected result: {result}");
-        Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
+        var execution = ExecuteImport(
+            code,
+            SixArgumentSumNid,
+            "synthetic-six-argument-import-roundtrip");
+        AssertSuccessful(execution);
     }
 
     [WindowsX64Fact]
@@ -138,62 +94,22 @@ public sealed class NativeImportBridgeTests
             0xB8, 0x01, 0x00, 0x00, 0x00, // failure: mov eax, 1
             0xC3,                         // ret
         ];
-        using var memory = new PhysicalVirtualMemory();
-        var entryPoint = memory.AllocateAt(CodeAddress, 0x1000, executable: true);
-        Assert.Equal(CodeAddress, entryPoint);
-        Assert.True(memory.TryWrite(entryPoint, code));
-        Assert.True(memory.TryWrite(ImportAddress, [0xCC, 0xC3]));
-
-        var moduleManager = new ModuleManager();
-        var registered = moduleManager.RegisterFromAssembly(
-            Assembly.GetExecutingAssembly(),
-            Generation.Gen5);
-        Assert.True(registered >= 3);
-        Assert.True(moduleManager.TryGetExport(EightArgumentSumNid, out _));
-        moduleManager.Freeze();
-        using var dispatcher = new CpuDispatcher(memory, moduleManager);
-
-        var result = dispatcher.DispatchModuleInitializer(
-            entryPoint,
-            Generation.Gen5,
-            new Dictionary<ulong, string> { [ImportAddress] = EightArgumentSumNid },
-            moduleName: "synthetic-stack-argument-import-roundtrip");
-
-        Assert.True(
-            result == OrbisGen2Result.ORBIS_GEN2_OK,
-            dispatcher.LastNotImplementedInfo?.Detail ?? $"Unexpected result: {result}");
-        Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
+        var execution = ExecuteImport(
+            code,
+            EightArgumentSumNid,
+            "synthetic-stack-argument-import-roundtrip");
+        AssertSuccessful(execution);
     }
 
     [WindowsX64Fact]
     public void ImportBridgePreservesGuestNonvolatileRegistersAcrossManagedHandler()
     {
         var code = CreateNonvolatileRegisterProbe();
-        using var memory = new PhysicalVirtualMemory();
-        var entryPoint = memory.AllocateAt(CodeAddress, 0x1000, executable: true);
-        Assert.Equal(CodeAddress, entryPoint);
-        Assert.True(memory.TryWrite(entryPoint, code));
-        Assert.True(memory.TryWrite(ImportAddress, [0xCC, 0xC3]));
-
-        var moduleManager = new ModuleManager();
-        var registered = moduleManager.RegisterFromAssembly(
-            Assembly.GetExecutingAssembly(),
-            Generation.Gen5);
-        Assert.True(registered >= 4);
-        Assert.True(moduleManager.TryGetExport(ClobberNonvolatileNid, out _));
-        moduleManager.Freeze();
-        using var dispatcher = new CpuDispatcher(memory, moduleManager);
-
-        var result = dispatcher.DispatchModuleInitializer(
-            entryPoint,
-            Generation.Gen5,
-            new Dictionary<ulong, string> { [ImportAddress] = ClobberNonvolatileNid },
-            moduleName: "synthetic-nonvolatile-import-roundtrip");
-
-        Assert.True(
-            result == OrbisGen2Result.ORBIS_GEN2_OK,
-            dispatcher.LastNotImplementedInfo?.Detail ?? $"Unexpected result: {result}");
-        Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
+        var execution = ExecuteImport(
+            code,
+            ClobberNonvolatileNid,
+            "synthetic-nonvolatile-import-roundtrip");
+        AssertSuccessful(execution);
     }
 
     [WindowsX64Fact]
@@ -210,31 +126,11 @@ public sealed class NativeImportBridgeTests
             0xB8, 0x01, 0x00, 0x00, 0x00, // failure: mov eax, 1
             0xC3,                         // ret
         ];
-        using var memory = new PhysicalVirtualMemory();
-        var entryPoint = memory.AllocateAt(CodeAddress, 0x1000, executable: true);
-        Assert.Equal(CodeAddress, entryPoint);
-        Assert.True(memory.TryWrite(entryPoint, code));
-        Assert.True(memory.TryWrite(ImportAddress, [0xCC, 0xC3]));
-
-        var moduleManager = new ModuleManager();
-        var registered = moduleManager.RegisterFromAssembly(
-            Assembly.GetExecutingAssembly(),
-            Generation.Gen5);
-        Assert.True(registered >= 3);
-        Assert.True(moduleManager.TryGetExport(FloatReturnNid, out _));
-        moduleManager.Freeze();
-        using var dispatcher = new CpuDispatcher(memory, moduleManager);
-
-        var result = dispatcher.DispatchModuleInitializer(
-            entryPoint,
-            Generation.Gen5,
-            new Dictionary<ulong, string> { [ImportAddress] = FloatReturnNid },
-            moduleName: "synthetic-float-import-roundtrip");
-
-        Assert.True(
-            result == OrbisGen2Result.ORBIS_GEN2_OK,
-            dispatcher.LastNotImplementedInfo?.Detail ?? $"Unexpected result: {result}");
-        Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
+        var execution = ExecuteImport(
+            code,
+            FloatReturnNid,
+            "synthetic-float-import-roundtrip");
+        AssertSuccessful(execution);
     }
 
     [WindowsX64Fact]
@@ -255,31 +151,40 @@ public sealed class NativeImportBridgeTests
             0xB8, 0x01, 0x00, 0x00, 0x00, // failure: mov eax, 1
             0xC3,                         // ret
         ];
-        using var memory = new PhysicalVirtualMemory();
-        var entryPoint = memory.AllocateAt(CodeAddress, 0x1000, executable: true);
-        Assert.Equal(CodeAddress, entryPoint);
-        Assert.True(memory.TryWrite(entryPoint, code));
-        Assert.True(memory.TryWrite(ImportAddress, [0xCC, 0xC3]));
+        var execution = ExecuteImport(
+            code,
+            FloatAddNid,
+            "synthetic-float-argument-roundtrip");
+        AssertSuccessful(execution);
+    }
 
-        var moduleManager = new ModuleManager();
-        var registered = moduleManager.RegisterFromAssembly(
-            Assembly.GetExecutingAssembly(),
-            Generation.Gen5);
-        Assert.True(registered >= 4);
-        Assert.True(moduleManager.TryGetExport(FloatAddNid, out _));
-        moduleManager.Freeze();
-        using var dispatcher = new CpuDispatcher(memory, moduleManager);
-
-        var result = dispatcher.DispatchModuleInitializer(
-            entryPoint,
+    private static SyntheticGuestExecutionResult ExecuteImport(
+        byte[] code,
+        string nid,
+        string moduleName)
+    {
+        return SyntheticNativeGuest.ExecuteModuleInitializer(
+            code,
             Generation.Gen5,
-            new Dictionary<ulong, string> { [ImportAddress] = FloatAddNid },
-            moduleName: "synthetic-float-argument-roundtrip");
+            moduleName,
+            new Dictionary<ulong, string> { [ImportAddress] = nid },
+            moduleManager =>
+            {
+                var registered = moduleManager.RegisterFromAssembly(
+                    Assembly.GetExecutingAssembly(),
+                    Generation.Gen5);
+                Assert.True(registered > 0);
+                Assert.True(moduleManager.TryGetExport(nid, out _));
+            },
+            CodeAddress);
+    }
 
+    private static void AssertSuccessful(SyntheticGuestExecutionResult execution)
+    {
         Assert.True(
-            result == OrbisGen2Result.ORBIS_GEN2_OK,
-            dispatcher.LastNotImplementedInfo?.Detail ?? $"Unexpected result: {result}");
-        Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
+            execution.Result == OrbisGen2Result.ORBIS_GEN2_OK,
+            execution.FailureDetail ?? $"Unexpected result: {execution.Result}");
+        Assert.Equal(CpuExitReason.ReturnedToHost, execution.ExitReason);
     }
 
     private static class SyntheticExports
