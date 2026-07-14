@@ -17,6 +17,8 @@ public sealed class SelfLoaderTests
     private const int SelfHeaderSize = 32;
     private const int SelfSegmentSize = 32;
     private const int SyntheticSelfPayloadOffset = 0x200;
+    private const int DynamicEntrySize = 16;
+    private const long DynamicTagInit = 0x0C;
 
     [Fact]
     public void LoadsMinimalElf64Image()
@@ -150,6 +152,38 @@ public sealed class SelfLoaderTests
     }
 
     [Fact]
+    public void RejectedOutOfRangeDynamicMetadataDoesNotClearExistingGuestMemory()
+    {
+        var memory = new VirtualMemory();
+        memory.Map(
+            virtualAddress: 0x1000,
+            memorySize: 4,
+            fileOffset: 0,
+            fileData: new byte[] { 1, 2, 3, 4 },
+            protection: ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        var malformed = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 1);
+        Array.Resize(ref malformed, ElfHeaderSize + ProgramHeaderSize);
+        var dynamicHeader = malformed.AsSpan(ElfHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            dynamicHeader,
+            (uint)ProgramHeaderType.Dynamic);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[8..], ulong.MaxValue);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[16..], 0x5000);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[32..], DynamicEntrySize);
+
+        Assert.Throws<InvalidDataException>(() =>
+            new SelfLoader().Load(malformed, memory));
+
+        var region = Assert.Single(memory.SnapshotRegions());
+        Assert.Equal(0x1000UL, region.VirtualAddress);
+        Span<byte> contents = stackalloc byte[4];
+        Assert.True(memory.TryRead(0x1000, contents));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, contents.ToArray());
+    }
+
+    [Fact]
     public void RejectedOverlappingLoadSegmentsDoNotClearExistingGuestMemory()
     {
         var memory = new VirtualMemory();
@@ -258,6 +292,75 @@ public sealed class SelfLoaderTests
         Span<byte> mapped = stackalloc byte[8];
         Assert.True(memory.TryRead(region.VirtualAddress, mapped));
         Assert.Equal(new byte[] { 1, 2, 3, 4, 0, 0, 0, 0 }, mapped.ToArray());
+    }
+
+    [Fact]
+    public void LoadsDynamicMetadataFromProgramHeaderFileOffset()
+    {
+        var dynamicOffset = ElfHeaderSize + ProgramHeaderSize;
+        var elf = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 1);
+        Array.Resize(ref elf, dynamicOffset + (2 * DynamicEntrySize));
+
+        var header = elf.AsSpan(ElfHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(header, (uint)ProgramHeaderType.Dynamic);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[4..], (uint)ProgramHeaderFlags.Read);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[8..], (ulong)dynamicOffset);
+        // Deliberately points inside the ELF header table. The loader must not
+        // reinterpret this virtual address as a raw file offset.
+        BinaryPrimitives.WriteUInt64LittleEndian(header[16..], ElfHeaderSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[32..], 2 * DynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[40..], 2 * DynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[48..], 8);
+
+        var dynamicTable = elf.AsSpan(dynamicOffset, 2 * DynamicEntrySize);
+        BinaryPrimitives.WriteInt64LittleEndian(dynamicTable, DynamicTagInit);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicTable[sizeof(long)..], 0x20_000);
+
+        var image = new SelfLoader().Load(elf, new VirtualMemory());
+
+        Assert.Equal(0x20_000UL, image.InitFunctionEntryPoint);
+        Assert.Equal(new[] { 0x20_000UL }, image.InitializerFunctions);
+    }
+
+    [Fact]
+    public void LoadsDynamicMetadataFromMappedSegmentBeforePhysicalFallback()
+    {
+        var dynamicOffset = ElfHeaderSize + (2 * ProgramHeaderSize);
+        var elf = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 2);
+        Array.Resize(ref elf, dynamicOffset + (2 * DynamicEntrySize));
+
+        var loadHeader = elf.AsSpan(ElfHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(loadHeader, (uint)ProgramHeaderType.Load);
+        BinaryPrimitives.WriteUInt32LittleEndian(loadHeader[4..], (uint)ProgramHeaderFlags.Read);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[8..], (ulong)dynamicOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[16..], 0x3000);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[32..], 2 * DynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[40..], 2 * DynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[48..], 8);
+
+        var dynamicHeader = elf.AsSpan(
+            ElfHeaderSize + ProgramHeaderSize,
+            ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(dynamicHeader, (uint)ProgramHeaderType.Dynamic);
+        BinaryPrimitives.WriteUInt32LittleEndian(dynamicHeader[4..], (uint)ProgramHeaderFlags.Read);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[8..], ulong.MaxValue);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[16..], 0x3000);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[32..], 2 * DynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[40..], 2 * DynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[48..], 8);
+
+        var dynamicTable = elf.AsSpan(dynamicOffset, 2 * DynamicEntrySize);
+        BinaryPrimitives.WriteInt64LittleEndian(dynamicTable, DynamicTagInit);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicTable[sizeof(long)..], 0x20_000);
+
+        var image = new SelfLoader().Load(elf, new VirtualMemory());
+
+        Assert.Equal(0x20_000UL, image.InitFunctionEntryPoint);
+        Assert.Equal(new[] { 0x20_000UL }, image.InitializerFunctions);
     }
 
     [Fact]
