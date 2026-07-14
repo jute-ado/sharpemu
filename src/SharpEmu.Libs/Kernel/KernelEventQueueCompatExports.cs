@@ -3,6 +3,7 @@
 
 using SharpEmu.HLE;
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Threading;
 
 namespace SharpEmu.Libs.Kernel;
@@ -360,6 +361,30 @@ public static class KernelEventQueueCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
+        if (timeoutAddress != 0 && timeoutUsec > 0)
+        {
+            var deadlineTimestamp = GuestThreadExecution.ComputeDeadlineTimestamp(
+                TimeSpan.FromTicks((long)timeoutUsec * 10L));
+            if (GuestThreadExecution.RequestCurrentThreadBlock(
+                    ctx,
+                    "sceKernelWaitEqueue",
+                    GetEventQueueWakeKey(handle),
+                    () => ResumeTimedWaitEqueue(
+                        ctx,
+                        handle,
+                        eventsAddress,
+                        eventCapacity,
+                        outCountAddress,
+                        timeoutAddress,
+                        deadlineTimestamp),
+                    () => !IsValidEqueue(handle) || HasPendingEvents(handle),
+                    deadlineTimestamp))
+            {
+                TraceEventQueue(ctx, "wait-block-timed", handle);
+                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+            }
+        }
+
         if (timeoutAddress != 0)
         {
             var deadline = Environment.TickCount64 +
@@ -686,6 +711,40 @@ public static class KernelEventQueueCompatExports
         return deliveredCount > 0
             ? (int)OrbisGen2Result.ORBIS_GEN2_OK
             : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
+    }
+
+    private static int ResumeTimedWaitEqueue(
+        CpuContext ctx,
+        ulong handle,
+        ulong eventsAddress,
+        int eventCapacity,
+        ulong outCountAddress,
+        ulong timeoutAddress,
+        long deadlineTimestamp)
+    {
+        var result = ResumeWaitEqueue(
+            ctx,
+            handle,
+            eventsAddress,
+            eventCapacity,
+            outCountAddress);
+        var remainingMicros = 0u;
+        if (result == (int)OrbisGen2Result.ORBIS_GEN2_OK)
+        {
+            var remainingTicks = deadlineTimestamp - Stopwatch.GetTimestamp();
+            remainingMicros = remainingTicks <= 0
+                ? 0u
+                : (uint)Math.Min(
+                    uint.MaxValue,
+                    remainingTicks / (double)Stopwatch.Frequency * 1_000_000d);
+        }
+
+        if (!ctx.TryWriteUInt32(timeoutAddress, remainingMicros))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        return result;
     }
 
     private static bool HasPendingEvents(ulong handle)
