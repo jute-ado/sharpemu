@@ -95,13 +95,15 @@ internal static partial class Program
                 out var logLevel,
                 out var logFilePath,
                 out var reportJsonPath,
-                out var executionTimeoutSeconds))
+                out var executionTimeoutSeconds,
+                out var loadOnly))
         {
             PrintUsage();
             return 1;
         }
 
-        if (!isMitigatedChild &&
+        if (!loadOnly &&
+            !isMitigatedChild &&
             TryRunMitigatedChild(
                 args,
                 ebootPath,
@@ -135,7 +137,8 @@ internal static partial class Program
                     result: null,
                     runtime: null,
                     hostError: "EBOOT file was not found.",
-                    invocationStartedTimestamp: invocationStartedTimestamp))
+                    invocationStartedTimestamp: invocationStartedTimestamp,
+                    mode: loadOnly ? "load-only" : "execution"))
             {
                 return 3;
             }
@@ -146,6 +149,48 @@ internal static partial class Program
         Console.Error.WriteLine("[DEBUG] Creating runtime...");
 
         using var runtime = SharpEmuRuntime.CreateDefault(runtimeOptions);
+
+        if (loadOnly)
+        {
+            try
+            {
+                Console.Error.WriteLine($"[DEBUG] Loading without execution: {ebootPath}");
+                var image = runtime.LoadImage(ebootPath);
+                Log.Info(
+                    $"SharpEmu image inspection completed. Format={(image.IsSelf ? "SELF" : "ELF")}, " +
+                    $"entry=0x{image.EntryPoint:X16}, mappedRegions={image.MappedRegions.Count}, " +
+                    $"imports={image.ImportStubs.Count}, relocations={image.ImportedRelocations.Count}");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[DEBUG] Exception: {ex}");
+                Log.Error("SharpEmu failed to load the image.", ex);
+                TryWriteExecutionReport(
+                    reportJsonPath,
+                    ebootPath,
+                    result: null,
+                    runtime,
+                    hostError: ex.ToString(),
+                    invocationStartedTimestamp: invocationStartedTimestamp,
+                    mode: "load-only");
+                return 3;
+            }
+
+            if (!TryWriteExecutionReport(
+                    reportJsonPath,
+                    ebootPath,
+                    result: null,
+                    runtime,
+                    hostError: null,
+                    invocationStartedTimestamp: invocationStartedTimestamp,
+                    mode: "load-only",
+                    resultOverride: new CliExecutionResult("IMAGE_LOADED", 0, true)))
+            {
+                return 3;
+            }
+
+            return 0;
+        }
 
         OrbisGen2Result result;
         ConsoleCancelEventHandler? cancelHandler = null;
@@ -903,7 +948,9 @@ internal static partial class Program
         ISharpEmuRuntime? runtime,
         string? hostError,
         long invocationStartedTimestamp,
-        string? incompleteResultName = null)
+        string? incompleteResultName = null,
+        string mode = "execution",
+        CliExecutionResult? resultOverride = null)
     {
         if (string.IsNullOrWhiteSpace(reportJsonPath))
         {
@@ -920,11 +967,12 @@ internal static partial class Program
                 Directory.CreateDirectory(directory);
             }
 
-            var executionResult = result is { } completedResult
+            var executionResult = resultOverride ?? (result is { } completedResult
                 ? BuildExecutionResult(completedResult)
-                : new CliExecutionResult(incompleteResultName ?? "HOST_ERROR", null, false);
+                : new CliExecutionResult(incompleteResultName ?? "HOST_ERROR", null, false));
             var report = new CliExecutionReport(
-                SchemaVersion: 1,
+                SchemaVersion: 2,
+                Mode: mode,
                 GeneratedAtUtc: DateTimeOffset.UtcNow,
                 ExecutablePath: executablePath,
                 ExecutableSizeBytes: TryGetFileSize(executablePath),
@@ -934,6 +982,7 @@ internal static partial class Program
                 Host: BuildExecutionReportHost(),
                 Application: BuildApplicationReport(
                     runtime?.LastApplicationMetadata ?? TryReadApplicationMetadataForReport(executablePath)),
+                Image: BuildImageReport(runtime?.LastLoadedImage),
                 Result: executionResult,
                 CpuSession: BuildCpuSessionReport(runtime?.LastCpuSessionSummary),
                 CpuTrap: BuildCpuTrapReport(runtime?.LastCpuTrapInfo),
@@ -1046,6 +1095,35 @@ internal static partial class Program
                 metadata.Version);
     }
 
+    private static CliImageReport? BuildImageReport(SelfImage? image)
+    {
+        if (image is null)
+        {
+            return null;
+        }
+
+        return new CliImageReport(
+            Format: image.IsSelf ? "SELF" : "ELF",
+            Generation: image.ElfHeader.AbiVersion == 2 ? "Gen5" : "Gen4",
+            ElfType: image.ElfHeader.Type,
+            ElfMachine: image.ElfHeader.Machine,
+            ElfAbi: image.ElfHeader.Abi,
+            ElfAbiVersion: image.ElfHeader.AbiVersion,
+            EntryPoint: FormatAddress(image.EntryPoint),
+            ImageBase: FormatAddress(image.ImageBase),
+            ProcParamAddress: FormatAddress(image.ProcParamAddress),
+            ProgramHeaderCount: image.ProgramHeaders.Count,
+            MappedRegionCount: image.MappedRegions.Count,
+            ImportStubCount: image.ImportStubs.Count,
+            RuntimeSymbolCount: image.RuntimeSymbols.Count,
+            ImportedRelocationCount: image.ImportedRelocations.Count,
+            PreInitializerCount: image.PreInitializerFunctions.Count,
+            InitializerCount: image.InitializerFunctions.Count,
+            InitFunctionEntryPoint: image.InitFunctionEntryPoint == 0
+                ? null
+                : FormatAddress(image.InitFunctionEntryPoint));
+    }
+
     private static Ps5ApplicationMetadata? TryReadApplicationMetadataForReport(string executablePath)
     {
         string? bundleRoot;
@@ -1156,8 +1234,9 @@ internal static partial class Program
 
     private static void PrintUsage()
     {
-        Log.Info("Usage: SharpEmu.CLI [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--log-file[=<path>]] [--report-json=<path>] [--timeout-seconds=N] <path-to-eboot.bin>");
+        Log.Info("Usage: SharpEmu.CLI [--load-only] [--strict] [--trace-imports[=N]] [--cpu-engine=<native>] [--log-level=<level>] [--log-file[=<path>]] [--report-json=<path>] [--timeout-seconds=N] <path-to-eboot.bin>");
         Log.Info(@"Example: SharpEmu.CLI --cpu-engine=native --trace-imports=64 --timeout-seconds=300 --report-json execution.json ""E:\Games\...\eboot.bin""");
+        Log.Info(@"Inspect example: SharpEmu.CLI --load-only --report-json image.json ""E:\Games\...\eboot.bin""");
     }
 
     private static bool TryParseArguments(
@@ -1167,10 +1246,12 @@ internal static partial class Program
         out LogLevel logLevel,
         out string? logFilePath,
         out string? reportJsonPath,
-        out int? executionTimeoutSeconds)
+        out int? executionTimeoutSeconds,
+        out bool loadOnly)
     {
         reportJsonPath = null;
         executionTimeoutSeconds = null;
+        loadOnly = false;
         if (args.Length == 0)
         {
             ebootPath = string.Empty;
@@ -1189,6 +1270,12 @@ internal static partial class Program
         for (var i = 0; i < args.Length; i++)
         {
             var argument = args[i];
+            if (string.Equals(argument, "--load-only", StringComparison.OrdinalIgnoreCase))
+            {
+                loadOnly = true;
+                continue;
+            }
+
             if (string.Equals(argument, "--strict", StringComparison.OrdinalIgnoreCase))
             {
                 strictDynlibResolution = true;
@@ -1402,6 +1489,15 @@ internal static partial class Program
             return false;
         }
 
+        if (loadOnly && executionTimeoutSeconds is not null)
+        {
+            ebootPath = string.Empty;
+            runtimeOptions = default;
+            logLevel = SharpEmuLog.MinimumLevel;
+            logFilePath = null;
+            return false;
+        }
+
         ebootPath = string.Join(' ', pathTokens);
         runtimeOptions = new SharpEmuRuntimeOptions
         {
@@ -1433,6 +1529,7 @@ internal static partial class Program
 
     private sealed record CliExecutionReport(
         int SchemaVersion,
+        string Mode,
         DateTimeOffset GeneratedAtUtc,
         string ExecutablePath,
         long? ExecutableSizeBytes,
@@ -1441,6 +1538,7 @@ internal static partial class Program
         CliBuildReport Build,
         CliHostReport Host,
         CliApplicationReport? Application,
+        CliImageReport? Image,
         CliExecutionResult Result,
         CliCpuSessionReport? CpuSession,
         CliCpuTrapReport? CpuTrap,
@@ -1475,6 +1573,25 @@ internal static partial class Program
         string? TitleId,
         string? ContentId,
         string? Version);
+
+    private sealed record CliImageReport(
+        string Format,
+        string Generation,
+        ushort ElfType,
+        ushort ElfMachine,
+        byte ElfAbi,
+        byte ElfAbiVersion,
+        string EntryPoint,
+        string ImageBase,
+        string ProcParamAddress,
+        int ProgramHeaderCount,
+        int MappedRegionCount,
+        int ImportStubCount,
+        int RuntimeSymbolCount,
+        int ImportedRelocationCount,
+        int PreInitializerCount,
+        int InitializerCount,
+        string? InitFunctionEntryPoint);
 
     private sealed record CliCpuSessionReport(
         CliExecutionResult Result,

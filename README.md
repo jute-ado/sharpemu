@@ -68,12 +68,18 @@ Currently the project primarily targets Windows. Cross-platform support (Linux a
   * Run Emulator GUI.
   * Or command: `.\SharpEmu "eboot.bin" 2>&1 | Tee-Object -FilePath "log.txt"`
   * For automation, add `--report-json execution.json` to atomically write a
-    versioned machine-readable result. Schema version 1 includes the result
+    versioned machine-readable result. Schema version 2 includes the execution
+    mode, loaded-image summary, result
     code, typed CPU session/fault objects with hex-safe addresses, diagnostics,
     traces, application identity, an executable SHA-256 fingerprint, elapsed
     time, build/host provenance, and any host-side error.
     Native watchdog termination returns exit code 6 and reports
     `EXECUTION_STALLED` instead of leaving automation without a result.
+  * Add `--load-only` to validate and map the primary executable without
+    dispatching guest code. Combined with `--report-json`, this records ELF/SELF
+    identity, generation, addresses, mapping/import/relocation counts, and
+    application metadata for safe loader automation. Execution timeouts are not
+    accepted in load-only mode because no guest execution occurs.
   * On Windows, add `--timeout-seconds N` to enforce a wall-clock execution
     budget. A timeout returns exit code 7 and reports `EXECUTION_TIMED_OUT`.
 

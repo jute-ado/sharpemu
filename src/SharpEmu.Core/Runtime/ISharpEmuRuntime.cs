@@ -29,6 +29,8 @@ public interface ISharpEmuRuntime : IDisposable
 
     Ps5ApplicationMetadata? LastApplicationMetadata { get; }
 
+    SelfImage? LastLoadedImage { get; }
+
     SelfImage LoadImage(string ebootPath);
 
     OrbisGen2Result Run(string ebootPath);

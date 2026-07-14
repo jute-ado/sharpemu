@@ -136,7 +136,8 @@ public sealed class SharpEmuRuntimeTests
         Assert.NotNull(execution.ReportJson);
         using var document = JsonDocument.Parse(execution.ReportJson);
         var root = document.RootElement;
-        Assert.Equal(1, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal("execution", root.GetProperty("mode").GetString());
         Assert.Equal("ORBIS_GEN2_OK", root.GetProperty("result").GetProperty("name").GetString());
         Assert.Equal(0, root.GetProperty("result").GetProperty("code").GetInt32());
         Assert.True(root.GetProperty("result").GetProperty("succeeded").GetBoolean());
@@ -163,6 +164,60 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("PPSA00001", application.GetProperty("titleId").GetString());
         Assert.Equal("EP0001-PPSA00001_00-SHARPEMUTEST0001", application.GetProperty("contentId").GetString());
         Assert.Equal("01.20", application.GetProperty("version").GetString());
+        var image = root.GetProperty("image");
+        Assert.Equal("ELF", image.GetProperty("format").GetString());
+        Assert.Equal("Gen5", image.GetProperty("generation").GetString());
+        Assert.Equal("0x0000000800000000", image.GetProperty("entryPoint").GetString());
+        Assert.Equal(1, image.GetProperty("programHeaderCount").GetInt32());
+        Assert.Equal(1, image.GetProperty("mappedRegionCount").GetInt32());
+    }
+
+    [WindowsX64Fact]
+    public async Task CliLoadsAndReportsImageWithoutExecutingGuestCode()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0xF4], // hlt: load-only must never dispatch this privileged instruction
+            requestReport: true,
+            paramJson: SyntheticParamJson,
+            loadOnly: true);
+
+        Assert.Equal(0, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var document = JsonDocument.Parse(execution.ReportJson);
+        var root = document.RootElement;
+        Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal("load-only", root.GetProperty("mode").GetString());
+        Assert.Equal("IMAGE_LOADED", root.GetProperty("result").GetProperty("name").GetString());
+        Assert.Equal(0, root.GetProperty("result").GetProperty("code").GetInt32());
+        Assert.True(root.GetProperty("result").GetProperty("succeeded").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuSession").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuTrap").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("hostError").ValueKind);
+
+        var image = root.GetProperty("image");
+        Assert.Equal("ELF", image.GetProperty("format").GetString());
+        Assert.Equal("Gen5", image.GetProperty("generation").GetString());
+        Assert.Equal(2, image.GetProperty("elfType").GetInt32());
+        Assert.Equal(0x3E, image.GetProperty("elfMachine").GetInt32());
+        Assert.Equal("0x0000000800000000", image.GetProperty("entryPoint").GetString());
+        Assert.Equal("0x0000000800000000", image.GetProperty("imageBase").GetString());
+        Assert.Equal(1, image.GetProperty("programHeaderCount").GetInt32());
+        Assert.Equal(1, image.GetProperty("mappedRegionCount").GetInt32());
+        Assert.Equal(0, image.GetProperty("importStubCount").GetInt32());
+        Assert.Equal("PPSA00001", root.GetProperty("application").GetProperty("titleId").GetString());
+        Assert.DoesNotContain("Guest hardware exception", execution.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CliRejectsExecutionTimeoutInLoadOnlyMode()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0xF4],
+            executionTimeoutSeconds: 1,
+            loadOnly: true);
+
+        Assert.Equal(1, execution.ExitCode);
+        Assert.Contains("Usage: SharpEmu.CLI", execution.StandardOutput, StringComparison.Ordinal);
     }
 
     [WindowsX64Fact]
@@ -348,14 +403,16 @@ public sealed class SharpEmuRuntimeTests
         bool writeExecutable = true,
         int stallWatchdogSeconds = 0,
         int? executionTimeoutSeconds = null,
-        string? paramJson = null) =>
+        string? paramJson = null,
+        bool loadOnly = false) =>
         SyntheticCliGuest.RunAsync(
             code,
             requestReport,
             writeExecutable,
             stallWatchdogSeconds,
             executionTimeoutSeconds,
-            paramJson);
+            paramJson,
+            loadOnly);
 
     private readonly record struct SyntheticRuntimeExecution(
         OrbisGen2Result Result,
