@@ -113,12 +113,16 @@ public sealed class KernelEventQueueCompatibilityTests
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
-            var waitTask = Task.Run(() =>
-            {
-                started.SetResult();
-                return Wait(fixture, EventAddress, context: waiterContext);
-            });
-            await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            var waitTask = Task.Factory.StartNew(
+                () =>
+                {
+                    started.SetResult();
+                    return Wait(fixture, EventAddress, context: waiterContext);
+                },
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await Task.Delay(50);
             var stopwatch = Stopwatch.StartNew();
 
