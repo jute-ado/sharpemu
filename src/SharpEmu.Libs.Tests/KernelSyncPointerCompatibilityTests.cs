@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -328,6 +329,87 @@ public sealed class KernelSyncPointerCompatibilityTests
             FreeTrackedBuffer(context, timeoutAddress);
             FreeTrackedBuffer(context, handleAddress);
             FreeTrackedBuffer(context, nameAddress);
+        }
+    }
+
+    [Fact]
+    public void TimedSemaphoreTimeoutCopyoutFailurePreservesSignalCount()
+    {
+        const ulong nameAddress = 0x1000;
+        const ulong handleAddress = 0x2000;
+        const ulong timeoutAddress = 0x3000;
+        var memory = new FakeGuestMemory();
+        var handleBytes = new byte[sizeof(uint)];
+        var timeoutBytes = new byte[sizeof(uint)];
+        memory.AddRegion(nameAddress, Encoding.UTF8.GetBytes("timed-copyout-semaphore\0"));
+        memory.AddRegion(handleAddress, handleBytes);
+        memory.AddRegion(timeoutAddress, timeoutBytes);
+        var context = new CpuContext(memory, Generation.Gen5);
+        uint handle = 0;
+
+        try
+        {
+            context[CpuRegister.Rdi] = handleAddress;
+            context[CpuRegister.Rsi] = nameAddress;
+            context[CpuRegister.Rdx] = 0;
+            context[CpuRegister.Rcx] = 0;
+            context[CpuRegister.R8] = 1;
+            context[CpuRegister.R9] = 0;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelSemaphoreCompatExports.KernelCreateSema(context));
+            handle = BinaryPrimitives.ReadUInt32LittleEndian(handleBytes);
+
+            BinaryPrimitives.WriteUInt32LittleEndian(timeoutBytes, 100_000);
+            var previousGuestThread = GuestThreadExecution.EnterGuestThread(0xBEEF);
+            try
+            {
+                context[CpuRegister.Rdi] = handle;
+                context[CpuRegister.Rsi] = 1;
+                context[CpuRegister.Rdx] = timeoutAddress;
+                Assert.Equal(
+                    (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                    KernelSemaphoreCompatExports.KernelWaitSema(context));
+                Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
+                    out _,
+                    out _,
+                    out _,
+                    out _,
+                    out var resumeHandler,
+                    out var wakeHandler,
+                    out _));
+                Assert.NotNull(resumeHandler);
+                Assert.NotNull(wakeHandler);
+
+                Assert.True(memory.RemoveRegion(timeoutAddress));
+                context[CpuRegister.Rdi] = handle;
+                context[CpuRegister.Rsi] = 1;
+                Assert.Equal(
+                    (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                    KernelSemaphoreCompatExports.KernelSignalSema(context));
+                Assert.True(wakeHandler!());
+                Assert.Equal(
+                    (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                    resumeHandler!());
+            }
+            finally
+            {
+                GuestThreadExecution.RestoreGuestThread(previousGuestThread);
+            }
+
+            context[CpuRegister.Rdi] = handle;
+            context[CpuRegister.Rsi] = 1;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelSemaphoreCompatExports.KernelPollSema(context));
+        }
+        finally
+        {
+            if (handle != 0)
+            {
+                context[CpuRegister.Rdi] = handle;
+                _ = KernelSemaphoreCompatExports.KernelDeleteSema(context);
+            }
         }
     }
 
