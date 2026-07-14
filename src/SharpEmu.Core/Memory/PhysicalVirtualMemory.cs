@@ -19,8 +19,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     private readonly List<StackRange> _stackRanges = new();
     private readonly Dictionary<(ulong DesiredAddress, ulong Alignment, bool Executable), ulong> _allocationSearchHints = new();
     private readonly Dictionary<ulong, ProgramHeaderFlags> _pageProtections = new();
-    private readonly Dictionary<ulong, ulong> _guestAllocations = new();
-    private readonly List<GuestFreeRange> _guestFreeRanges = new();
+    private readonly GuestRangeAllocator _guestAllocator = new();
     private bool _disposed;
     private const ulong PageSize = 0x1000;
     private const ulong HostAllocationGranularity = 0x1_0000;
@@ -43,9 +42,6 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     private const uint PAGE_READWRITE = 0x04;
     private const uint PAGE_READONLY = 0x02;
 
-    private ulong _guestAllocationArenaBase;
-    private ulong _guestAllocationArenaSize;
-    private ulong _guestAllocationOffset;
     private ulong _resetVersion = 1;
     private static readonly ulong LazyReservePrimeBytes = ResolveLazyReservePrimeBytes();
 
@@ -432,21 +428,17 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
         lock (_guestAllocationGate)
         {
-            if (TryAllocateFromGuestFreeRanges(size, alignment, out address))
+            if (_guestAllocator.TryAllocate(size, alignment, out address))
             {
-                _guestAllocations.Add(address, size);
                 return true;
             }
 
-            if (!TryResolveGuestAllocationOffset(size, alignment, out var alignedOffset) &&
-                !TryCreateGuestAllocationArena(size, alignment, out alignedOffset))
+            if (!TryCreateGuestAllocationArena(size, alignment) ||
+                !_guestAllocator.TryAllocate(size, alignment, out address))
             {
                 return false;
             }
 
-            address = _guestAllocationArenaBase + alignedOffset;
-            _guestAllocationOffset = alignedOffset + size;
-            _guestAllocations.Add(address, size);
             return true;
         }
     }
@@ -461,98 +453,12 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
         lock (_guestAllocationGate)
         {
-            if (!_guestAllocations.Remove(address, out var size))
-            {
-                return false;
-            }
-
-            InsertGuestFreeRange(address, size);
-            return true;
+            return _guestAllocator.TryFree(address);
         }
     }
 
-    private bool TryAllocateFromGuestFreeRanges(
-        ulong size,
-        ulong alignment,
-        out ulong address)
+    private bool TryCreateGuestAllocationArena(ulong size, ulong alignment)
     {
-        address = 0;
-        for (var index = 0; index < _guestFreeRanges.Count; index++)
-        {
-            var range = _guestFreeRanges[index];
-            ulong alignedAddress;
-            try
-            {
-                alignedAddress = AlignUp(range.Address, alignment);
-            }
-            catch (OverflowException)
-            {
-                continue;
-            }
-
-            var rangeEnd = range.Address + range.Size;
-            if (alignedAddress < range.Address ||
-                alignedAddress > rangeEnd ||
-                size > rangeEnd - alignedAddress)
-            {
-                continue;
-            }
-
-            _guestFreeRanges.RemoveAt(index);
-            var prefixSize = alignedAddress - range.Address;
-            var allocationEnd = alignedAddress + size;
-            var suffixSize = rangeEnd - allocationEnd;
-            if (suffixSize != 0)
-            {
-                _guestFreeRanges.Insert(
-                    index,
-                    new GuestFreeRange(allocationEnd, suffixSize));
-            }
-            if (prefixSize != 0)
-            {
-                _guestFreeRanges.Insert(
-                    index,
-                    new GuestFreeRange(range.Address, prefixSize));
-            }
-
-            address = alignedAddress;
-            return true;
-        }
-
-        return false;
-    }
-
-    private void InsertGuestFreeRange(ulong address, ulong size)
-    {
-        var start = address;
-        var end = checked(address + size);
-        var index = 0;
-        while (index < _guestFreeRanges.Count)
-        {
-            var range = _guestFreeRanges[index];
-            var rangeEnd = checked(range.Address + range.Size);
-            if (rangeEnd < start)
-            {
-                index++;
-                continue;
-            }
-
-            if (range.Address > end)
-            {
-                break;
-            }
-
-            start = Math.Min(start, range.Address);
-            end = Math.Max(end, rangeEnd);
-            _guestFreeRanges.RemoveAt(index);
-        }
-
-        _guestFreeRanges.Insert(index, new GuestFreeRange(start, end - start));
-    }
-
-    private bool TryCreateGuestAllocationArena(ulong size, ulong alignment, out ulong alignedOffset)
-    {
-        alignedOffset = 0;
         try
         {
             var minimumArenaSize = checked(Math.Max(GuestAllocationArenaStartOffset, alignment) + size);
@@ -565,38 +471,15 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 executable: false,
                 allowAlternative: true);
 
-            _guestAllocationArenaBase = arenaBase;
-            _guestAllocationArenaSize = arenaSize;
-            _guestAllocationOffset = GuestAllocationArenaStartOffset;
-            return TryResolveGuestAllocationOffset(size, alignment, out alignedOffset);
+            return _guestAllocator.TryAddArena(
+                arenaBase,
+                arenaSize,
+                GuestAllocationArenaStartOffset);
         }
         catch (Exception)
         {
             return false;
         }
-    }
-
-    private bool TryResolveGuestAllocationOffset(ulong size, ulong alignment, out ulong alignedOffset)
-    {
-        alignedOffset = 0;
-        if (_guestAllocationArenaBase == 0)
-        {
-            return false;
-        }
-
-        try
-        {
-            var nextAddress = checked(_guestAllocationArenaBase + _guestAllocationOffset);
-            var alignedAddress = AlignUp(nextAddress, alignment);
-            alignedOffset = checked(alignedAddress - _guestAllocationArenaBase);
-        }
-        catch (OverflowException)
-        {
-            return false;
-        }
-
-        return alignedOffset <= _guestAllocationArenaSize &&
-               size <= _guestAllocationArenaSize - alignedOffset;
     }
 
     public void Clear()
@@ -629,11 +512,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 _gate.ExitWriteLock();
             }
 
-            _guestAllocationArenaBase = 0;
-            _guestAllocationArenaSize = 0;
-            _guestAllocationOffset = 0;
-            _guestAllocations.Clear();
-            _guestFreeRanges.Clear();
+            _guestAllocator.Clear();
         }
     }
 
@@ -1850,8 +1729,6 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             _ => 0,
         };
     }
-
-    private readonly record struct GuestFreeRange(ulong Address, ulong Size);
 
     private readonly record struct StackRange(ulong Start, ulong End);
 
