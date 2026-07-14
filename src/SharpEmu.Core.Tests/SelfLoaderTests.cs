@@ -21,6 +21,8 @@ public sealed class SelfLoaderTests
     private const long DynamicTagInit = 0x0C;
     private const long DynamicTagRela = 0x07;
     private const long DynamicTagRelaSize = 0x08;
+    private const int ElfRelocationSize = 24;
+    private const uint RelativeRelocationType = 8;
 
     [Fact]
     public void LoadsMinimalElf64Image()
@@ -401,6 +403,75 @@ public sealed class SelfLoaderTests
             $"Loader requested an unavailable {memory.LargestReadRequest}-byte guest buffer.");
     }
 
+    [Theory]
+    [InlineData(0x1234L)]
+    [InlineData(-0x20L)]
+    public void AppliesDynamicRelativeRelocation(long addend)
+    {
+        const int payloadSize = 0x100;
+        const int dynamicVirtualAddress = 0x20;
+        const int relocationVirtualAddress = 0x60;
+        const int targetVirtualAddress = 0x80;
+        var payloadOffset = ElfHeaderSize + (2 * ProgramHeaderSize);
+        var elf = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 2);
+        Array.Resize(ref elf, payloadOffset + payloadSize);
+
+        var loadHeader = elf.AsSpan(ElfHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(loadHeader, (uint)ProgramHeaderType.Load);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            loadHeader[4..],
+            (uint)(ProgramHeaderFlags.Read | ProgramHeaderFlags.Write));
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[8..], (ulong)payloadOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[32..], payloadSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[40..], payloadSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[48..], 8);
+
+        var dynamicHeader = elf.AsSpan(
+            ElfHeaderSize + ProgramHeaderSize,
+            ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(dynamicHeader, (uint)ProgramHeaderType.Dynamic);
+        BinaryPrimitives.WriteUInt32LittleEndian(dynamicHeader[4..], (uint)ProgramHeaderFlags.Read);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            dynamicHeader[8..],
+            (ulong)(payloadOffset + dynamicVirtualAddress));
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[16..], dynamicVirtualAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[32..], 3 * DynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[40..], 3 * DynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[48..], 8);
+
+        var dynamicTable = elf.AsSpan(
+            payloadOffset + dynamicVirtualAddress,
+            3 * DynamicEntrySize);
+        BinaryPrimitives.WriteInt64LittleEndian(dynamicTable, DynamicTagRela);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            dynamicTable[sizeof(long)..],
+            relocationVirtualAddress);
+        BinaryPrimitives.WriteInt64LittleEndian(
+            dynamicTable[DynamicEntrySize..],
+            DynamicTagRelaSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            dynamicTable[(DynamicEntrySize + sizeof(long))..],
+            ElfRelocationSize);
+
+        var relocation = elf.AsSpan(
+            payloadOffset + relocationVirtualAddress,
+            ElfRelocationSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(relocation, targetVirtualAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(relocation[sizeof(ulong)..], RelativeRelocationType);
+        BinaryPrimitives.WriteInt64LittleEndian(relocation[(2 * sizeof(ulong))..], addend);
+        var memory = new VirtualMemory();
+
+        var image = new SelfLoader().Load(elf, memory);
+
+        Span<byte> patchedTarget = stackalloc byte[sizeof(ulong)];
+        Assert.True(memory.TryRead(image.EntryPoint + targetVirtualAddress, patchedTarget));
+        Assert.Equal(
+            AddSignedForTest(image.EntryPoint, addend),
+            BinaryPrimitives.ReadUInt64LittleEndian(patchedTarget));
+    }
+
     [Fact]
     public void LoadsSyntheticSelfSegmentFromContainerMapping()
     {
@@ -681,6 +752,11 @@ public sealed class SelfLoaderTests
         BinaryPrimitives.WriteUInt64LittleEndian(header[40..], memorySize);
         BinaryPrimitives.WriteUInt64LittleEndian(header[48..], 1);
     }
+
+    private static ulong AddSignedForTest(ulong value, long addend) =>
+        addend >= 0
+            ? checked(value + (ulong)addend)
+            : checked(value - (ulong)(-(addend + 1)) - 1);
 
     private sealed class RecordingVirtualMemory : IVirtualMemory
     {
