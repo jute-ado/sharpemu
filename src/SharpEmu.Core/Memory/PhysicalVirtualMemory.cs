@@ -8,7 +8,7 @@ using SharpEmu.Logging;
 
 namespace SharpEmu.Core.Memory;
 
-public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryAllocator, IGuestStackMemory, IDisposable
+public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryAllocator, IGuestStackMemory, IGuestVirtualMemoryQuery, IDisposable
 {
     private static readonly SharpEmuLogger Log = SharpEmuLog.For("VMEM");
 
@@ -585,6 +585,52 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         {
             _gate.ExitReadLock();
         }
+    }
+
+    public bool TryQueryMemoryRegion(
+        ulong address,
+        bool findNext,
+        out GuestVirtualMemoryRegion region)
+    {
+        _gate.EnterReadLock();
+        try
+        {
+            MemoryRegion? next = null;
+            foreach (var candidate in _regions)
+            {
+                if (candidate.Size > ulong.MaxValue - candidate.VirtualAddress)
+                {
+                    continue;
+                }
+
+                var candidateEnd = candidate.VirtualAddress + candidate.Size;
+                if (address >= candidate.VirtualAddress && address < candidateEnd)
+                {
+                    region = ToGuestMemoryRegion(candidate, address);
+                    return true;
+                }
+
+                if (findNext &&
+                    candidate.VirtualAddress >= address &&
+                    (next is null || candidate.VirtualAddress < next.VirtualAddress))
+                {
+                    next = candidate;
+                }
+            }
+
+            if (next is not null)
+            {
+                region = ToGuestMemoryRegion(next, next.VirtualAddress);
+                return true;
+            }
+        }
+        finally
+        {
+            _gate.ExitReadLock();
+        }
+
+        region = default;
+        return false;
     }
 
     public bool TryRead(ulong virtualAddress, Span<byte> destination)
@@ -1178,6 +1224,82 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         public bool IsExecutable { get; set; }
         public bool IsReservedOnly { get; set; }
         public uint Protection { get; set; }
+    }
+
+    private GuestVirtualMemoryRegion ToGuestMemoryRegion(MemoryRegion region, ulong address)
+    {
+        var pageAddress = address & ~(PageSize - 1);
+        var protection = GetOrbisProtection(region, pageAddress);
+        var regionEnd = region.VirtualAddress + region.Size;
+        var queryStart = Math.Max(region.VirtualAddress, pageAddress);
+        var pageEnd = pageAddress > ulong.MaxValue - PageSize
+            ? ulong.MaxValue
+            : pageAddress + PageSize;
+        var queryEnd = Math.Min(regionEnd, pageEnd);
+
+        while (queryStart > region.VirtualAddress)
+        {
+            var previousPage = (queryStart - 1) & ~(PageSize - 1);
+            if (GetOrbisProtection(region, previousPage) != protection)
+            {
+                break;
+            }
+
+            queryStart = Math.Max(region.VirtualAddress, previousPage);
+        }
+
+        while (queryEnd < regionEnd && GetOrbisProtection(region, queryEnd) == protection)
+        {
+            queryEnd = regionEnd - queryEnd <= PageSize
+                ? regionEnd
+                : queryEnd + PageSize;
+        }
+
+        return new GuestVirtualMemoryRegion(
+            queryStart,
+            queryEnd - queryStart,
+            protection);
+    }
+
+    private int GetOrbisProtection(MemoryRegion region, ulong pageAddress)
+    {
+        return _pageProtections.TryGetValue(pageAddress, out var pageProtection)
+            ? ToOrbisProtection(pageProtection)
+            : ToOrbisProtection(region.Protection);
+    }
+
+    private static int ToOrbisProtection(ProgramHeaderFlags protection)
+    {
+        var result = 0;
+        if ((protection & ProgramHeaderFlags.Read) != 0)
+        {
+            result |= 0x01;
+        }
+
+        if ((protection & ProgramHeaderFlags.Write) != 0)
+        {
+            result |= 0x02;
+        }
+
+        if ((protection & ProgramHeaderFlags.Execute) != 0)
+        {
+            result |= 0x04;
+        }
+
+        return result;
+    }
+
+    private static int ToOrbisProtection(uint protection)
+    {
+        return (protection & 0xFF) switch
+        {
+            PAGE_READONLY => 0x01,
+            PAGE_READWRITE => 0x03,
+            PAGE_EXECUTE => 0x04,
+            PAGE_EXECUTE_READ => 0x05,
+            PAGE_EXECUTE_READWRITE or PAGE_EXECUTE_WRITECOPY => 0x07,
+            _ => 0,
+        };
     }
 
     private readonly record struct StackRange(ulong Start, ulong End);

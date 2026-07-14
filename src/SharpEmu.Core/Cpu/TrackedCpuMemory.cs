@@ -5,7 +5,7 @@ using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Cpu;
 
-public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemoryAllocator, IGuestStackMemory
+public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemoryAllocator, IGuestStackMemory, IGuestVirtualMemoryQuery
 {
     private readonly ICpuMemory _inner;
 
@@ -70,6 +70,20 @@ public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemo
 
         start = 0;
         end = 0;
+        return false;
+    }
+
+    public bool TryQueryMemoryRegion(
+        ulong address,
+        bool findNext,
+        out GuestVirtualMemoryRegion region)
+    {
+        if (_inner is IGuestVirtualMemoryQuery query)
+        {
+            return query.TryQueryMemoryRegion(address, findNext, out region);
+        }
+
+        region = default;
         return false;
     }
 }
