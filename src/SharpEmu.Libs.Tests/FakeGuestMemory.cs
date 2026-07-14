@@ -9,16 +9,41 @@ namespace SharpEmu.Libs.Tests;
 /// Minimal in-memory <see cref="ICpuMemory"/> for unit tests: sparse regions
 /// backed by byte arrays. Reads and writes must fall entirely inside one region.
 /// </summary>
-public sealed class FakeGuestMemory : ICpuMemory, IGuestStackMemory
+public sealed class FakeGuestMemory : ICpuMemory, IGuestMemoryAllocator, IGuestStackMemory
 {
     private readonly List<(ulong Base, byte[] Data)> _regions = [];
     private readonly List<(ulong Start, ulong End)> _stackRanges = [];
+    private ulong _nextAllocationAddress = 0x0010_0000;
 
     public void AddRegion(ulong baseAddress, byte[] data)
         => _regions.Add((baseAddress, data));
 
     public void RegisterStackRange(ulong start, ulong size)
         => _stackRanges.Add((start, checked(start + size)));
+
+    public bool TryAllocateGuestMemory(ulong size, ulong alignment, out ulong address)
+    {
+        address = 0;
+        if (size == 0 || size > int.MaxValue ||
+            alignment == 0 || (alignment & (alignment - 1)) != 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            var alignedAddress = checked(
+                (_nextAllocationAddress + alignment - 1) & ~(alignment - 1));
+            _nextAllocationAddress = checked(alignedAddress + size);
+            _regions.Add((alignedAddress, new byte[(int)size]));
+            address = alignedAddress;
+            return true;
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+    }
 
     public bool TryGetStackRange(ulong address, out ulong start, out ulong end)
     {

@@ -73,7 +73,8 @@ public static class KernelPthreadCompatExports
         // See PthreadMutexState.WakeKey.
         public string WakeKey { get; } = "pthread_cond#" + Interlocked.Increment(ref _nextCondWakeId).ToString("X");
 
-        // A signal with no waiter stays pending; the guest often signals before the wait.
+        // scePthread compatibility can retain an early signal for titles that signal
+        // before waiting. POSIX exports deliberately never add to this latch.
         public int PendingSignals { get; set; }
 
         public bool TryConsumePendingSignal()
@@ -381,14 +382,14 @@ public static class KernelPthreadCompatExports
         ExportName = "scePthreadCondSignal",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PthreadCondSignal(CpuContext ctx) => PthreadCondSignalCore(ctx, ctx[CpuRegister.Rdi], broadcast: false);
+    public static int PthreadCondSignal(CpuContext ctx) => PthreadCondSignalCore(ctx, ctx[CpuRegister.Rdi], broadcast: false, latchWhenNoWaiters: true);
 
     [SysAbiExport(
         Nid = "JGgj7Uvrl+A",
         ExportName = "scePthreadCondBroadcast",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PthreadCondBroadcast(CpuContext ctx) => PthreadCondSignalCore(ctx, ctx[CpuRegister.Rdi], broadcast: true);
+    public static int PthreadCondBroadcast(CpuContext ctx) => PthreadCondSignalCore(ctx, ctx[CpuRegister.Rdi], broadcast: true, latchWhenNoWaiters: true);
 
     [SysAbiExport(
         Nid = "Op8TBGY5KHg",
@@ -402,14 +403,14 @@ public static class KernelPthreadCompatExports
         ExportName = "pthread_cond_broadcast",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadCondBroadcast(CpuContext ctx) => PthreadCondSignalCore(ctx, ctx[CpuRegister.Rdi], broadcast: true);
+    public static int PosixPthreadCondBroadcast(CpuContext ctx) => PthreadCondSignalCore(ctx, ctx[CpuRegister.Rdi], broadcast: true, latchWhenNoWaiters: false);
 
     [SysAbiExport(
         Nid = "2MOy+rUfuhQ",
         ExportName = "pthread_cond_signal",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadCondSignal(CpuContext ctx) => PthreadCondSignalCore(ctx, ctx[CpuRegister.Rdi], broadcast: false);
+    public static int PosixPthreadCondSignal(CpuContext ctx) => PthreadCondSignalCore(ctx, ctx[CpuRegister.Rdi], broadcast: false, latchWhenNoWaiters: false);
 
     [SysAbiExport(
         Nid = "m5-2bsNfv7s",
@@ -1318,7 +1319,11 @@ public static class KernelPthreadCompatExports
         return waitResult;
     }
 
-    private static int PthreadCondSignalCore(CpuContext ctx, ulong condAddress, bool broadcast)
+    private static int PthreadCondSignalCore(
+        CpuContext ctx,
+        ulong condAddress,
+        bool broadcast,
+        bool latchWhenNoWaiters)
     {
         if (condAddress == 0)
         {
@@ -1347,7 +1352,7 @@ public static class KernelPthreadCompatExports
                     Monitor.Pulse(state.SyncRoot);
                 }
             }
-            else
+            else if (latchWhenNoWaiters)
             {
                 state.PendingSignals++;
             }
