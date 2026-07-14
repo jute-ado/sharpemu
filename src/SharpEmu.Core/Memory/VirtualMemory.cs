@@ -249,43 +249,78 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
 
     private bool TryResolveRange(ulong virtualAddress, int length, out int firstRegionIndex)
     {
-        for (var index = 0; index < _regions.Count; index++)
+        var index = FindStartingRegionIndex(virtualAddress, length, out _);
+        if (index < 0)
         {
-            var candidate = _regions[index];
-            if (virtualAddress < candidate.Region.VirtualAddress ||
-                virtualAddress > candidate.EndAddress ||
-                (virtualAddress == candidate.EndAddress && length != 0))
-            {
-                continue;
-            }
-
-            firstRegionIndex = index;
-            var address = virtualAddress;
-            var remaining = (ulong)length;
-            while (remaining != 0)
-            {
-                if (index >= _regions.Count)
-                {
-                    return false;
-                }
-
-                candidate = _regions[index];
-                if (address < candidate.Region.VirtualAddress || address >= candidate.EndAddress)
-                {
-                    return false;
-                }
-
-                var lengthInRegion = Math.Min(remaining, candidate.EndAddress - address);
-                remaining -= lengthInRegion;
-                address += lengthInRegion;
-                index++;
-            }
-
-            return true;
+            firstRegionIndex = 0;
+            return false;
         }
 
-        firstRegionIndex = 0;
-        return false;
+        firstRegionIndex = index;
+        var address = virtualAddress;
+        var remaining = (ulong)length;
+        while (remaining != 0)
+        {
+            if (index >= _regions.Count)
+            {
+                return false;
+            }
+
+            var candidate = _regions[index];
+            if (address < candidate.Region.VirtualAddress || address >= candidate.EndAddress)
+            {
+                return false;
+            }
+
+            var lengthInRegion = Math.Min(remaining, candidate.EndAddress - address);
+            remaining -= lengthInRegion;
+            address += lengthInRegion;
+            index++;
+        }
+
+        return true;
+    }
+
+    internal int CountRegionLookupProbes(ulong virtualAddress)
+    {
+        lock (_gate)
+        {
+            _ = FindStartingRegionIndex(virtualAddress, length: 1, out var probes);
+            return probes;
+        }
+    }
+
+    private int FindStartingRegionIndex(ulong virtualAddress, int length, out int probes)
+    {
+        probes = 0;
+        var low = 0;
+        var high = _regions.Count - 1;
+        var candidateIndex = -1;
+        while (low <= high)
+        {
+            probes++;
+            var middle = low + ((high - low) / 2);
+            if (_regions[middle].Region.VirtualAddress <= virtualAddress)
+            {
+                candidateIndex = middle;
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle - 1;
+            }
+        }
+
+        if (candidateIndex < 0)
+        {
+            return -1;
+        }
+
+        var candidate = _regions[candidateIndex];
+        return virtualAddress < candidate.EndAddress ||
+               (virtualAddress == candidate.EndAddress && length == 0)
+            ? candidateIndex
+            : -1;
     }
 
     private static GuestVirtualMemoryRegion ToGuestMemoryRegion(MappedRegion region)
