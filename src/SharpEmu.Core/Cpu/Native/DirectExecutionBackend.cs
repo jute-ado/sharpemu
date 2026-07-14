@@ -210,7 +210,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private nint _sleepAddress;
 
 	private int _tlsPatchStubOffset;
-	private readonly nint[] _tlsLoadHelpers = new nint[16];
+	private readonly Dictionary<(int DestinationRegister, int Displacement), nint> _tlsLoadHelpers = new();
 
 	private nint _unresolvedReturnStub;
 
@@ -2031,7 +2031,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private unsafe void CreateTlsHandler()
 	{
-		Array.Clear(_tlsLoadHelpers);
+		_tlsLoadHelpers.Clear();
 		_tlsHandlerAddress = (nint)TryAllocateNearEntry(TlsHandlerRegionSize);
 		if (_tlsHandlerAddress == 0)
 		{
@@ -2553,11 +2553,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 
 		var displacement = *(int*)(source + offset + 3);
-		if (displacement != 0)
-		{
-			return false;
-		}
-
 		var destinationRegister = ((modRm >> 3) & 7) | (((rex & 4) != 0) ? 8 : 0);
 		var instructionLength = offset + 7;
 		if (instructionLength < MinTlsPatchInstructionBytes)
@@ -2565,12 +2560,16 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			return false;
 		}
 
-		return PatchTlsLoadInstruction(address, instructionLength, destinationRegister);
+		return PatchTlsLoadInstruction(address, instructionLength, destinationRegister, displacement);
 	}
 
-	private unsafe bool PatchTlsLoadInstruction(nint address, int instructionLength, int destinationRegister)
+	private unsafe bool PatchTlsLoadInstruction(
+		nint address,
+		int instructionLength,
+		int destinationRegister,
+		int displacement)
 	{
-		var helper = GetOrCreateTlsLoadHelper(destinationRegister);
+		var helper = GetOrCreateTlsLoadHelper(destinationRegister, displacement);
 		if (helper == 0)
 		{
 			return false;
@@ -2609,16 +2608,17 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 	}
 
-	private unsafe nint GetOrCreateTlsLoadHelper(int destinationRegister)
+	private unsafe nint GetOrCreateTlsLoadHelper(int destinationRegister, int displacement)
 	{
 		if (destinationRegister is < 0 or >= 16 or 4)
 		{
 			return 0;
 		}
 
-		if (_tlsLoadHelpers[destinationRegister] != 0)
+		var helperKey = (destinationRegister, displacement);
+		if (_tlsLoadHelpers.TryGetValue(helperKey, out var existingHelper))
 		{
-			return _tlsLoadHelpers[destinationRegister];
+			return existingHelper;
 		}
 
 		const int helperSize = 128;
@@ -2654,6 +2654,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		offset += sizeof(nint);
 		EmitByte(code, ref offset, 0xFF); // call rax
 		EmitByte(code, ref offset, 0xD0);
+		EmitByte(code, ref offset, 0x48); // mov rax, [rax+displacement]
+		EmitByte(code, ref offset, 0x8B);
+		EmitByte(code, ref offset, 0x80);
+		EmitUInt32(code, ref offset, unchecked((uint)displacement));
 		EmitByte(code, ref offset, 0x48); // add rsp, 0x28
 		EmitByte(code, ref offset, 0x83);
 		EmitByte(code, ref offset, 0xC4);
@@ -2713,7 +2717,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 
 		FlushInstructionCache(GetCurrentProcess(), (void*)helper, helperSize);
-		_tlsLoadHelpers[destinationRegister] = helper;
+		_tlsLoadHelpers[helperKey] = helper;
 		return helper;
 	}
 

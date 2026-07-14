@@ -170,6 +170,38 @@ public sealed class NativeCpuConformanceTests
             ]
         },
         {
+            "tls-load-supports-positive-offset",
+            [
+                0x64, 0x48, 0x8B, 0x04, 0x25,
+                0x10, 0x00, 0x00, 0x00,             // mov rax, fs:[0x10]
+                0x64, 0x48, 0x8B, 0x14, 0x25,
+                0x00, 0x00, 0x00, 0x00,             // mov rdx, fs:[0]
+                0x48, 0x39, 0xD0,                   // cmp rax, rdx
+                0x75, 0x03,                         // jne failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
+            "tls-load-reads-seeded-field",
+            [
+                0x64, 0x48, 0x8B, 0x04, 0x25,
+                0x00, 0x00, 0x00, 0x00,             // mov rax, fs:[0]
+                0x64, 0x48, 0x8B, 0x04, 0x25,
+                0x28, 0x00, 0x00, 0x00,             // mov rax, fs:[0x28]
+                0x48, 0xB9, 0xBE, 0xBA, 0xFE, 0xCA,
+                0xDE, 0xC0, 0xDE, 0xC0,             // mov rcx, 0xC0DEC0DECAFEBABE
+                0x48, 0x39, 0xC8,                   // cmp rax, rcx
+                0x75, 0x03,                         // jne failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
             "tls-load-inside-nested-call",
             [
                 0xE8, 0x0D, 0x00, 0x00, 0x00,       // call helper
