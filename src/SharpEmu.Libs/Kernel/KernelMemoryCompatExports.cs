@@ -1199,34 +1199,7 @@ public static partial class KernelMemoryCompatExports
         LibraryName = "libc")]
     public static int Memcpy(CpuContext ctx)
     {
-        var destination = ctx[CpuRegister.Rdi];
-        var source = ctx[CpuRegister.Rsi];
-        var rawCount = ctx[CpuRegister.Rdx];
-
-        // A garbage/absurd count (observed as e.g. 0xA7560035 from the same still-unidentified
-        // upstream bug that also feeds bad lengths to memset) must not reach
-        // GC.AllocateUninitializedArray: attempting a multi-GB allocation from a guest-thread
-        // call context corrupted the CLR outright ("Invalid Program: attempted to call a
-        // UnmanagedCallersOnly method from managed code") instead of throwing a normal
-        // exception. Reject anything above a sane bound before allocating.
-        const ulong maxSaneCount = 512UL * 1024 * 1024;
-        if (rawCount > maxSaneCount)
-        {
-            Console.Error.WriteLine($"[LOADER][WARNING] memcpy oversized count rejected: dst=0x{destination:X16} src=0x{source:X16} count=0x{rawCount:X}");
-            ctx[CpuRegister.Rax] = destination;
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
-        }
-
-        var count = (int)rawCount;
-        var payload = GC.AllocateUninitializedArray<byte>(count);
-        if (count > 0 && (!TryReadCompat(ctx, source, payload) || !TryWriteCompat(ctx, destination, payload)))
-        {
-            ctx[CpuRegister.Rax] = destination;
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-        }
-
-        ctx[CpuRegister.Rax] = destination;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        return CopyMemory(ctx, preserveOverlap: false);
     }
 
     [SysAbiExport(
@@ -1236,7 +1209,87 @@ public static partial class KernelMemoryCompatExports
         LibraryName = "libc")]
     public static int Memmove(CpuContext ctx)
     {
-        return Memcpy(ctx);
+        return CopyMemory(ctx, preserveOverlap: true);
+    }
+
+    private static int CopyMemory(CpuContext ctx, bool preserveOverlap)
+    {
+        var destination = ctx[CpuRegister.Rdi];
+        var source = ctx[CpuRegister.Rsi];
+        var count = ctx[CpuRegister.Rdx];
+        if (count == 0)
+        {
+            ctx[CpuRegister.Rax] = destination;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        if (count - 1 > ulong.MaxValue - source ||
+            count - 1 > ulong.MaxValue - destination)
+        {
+            ctx[CpuRegister.Rax] = destination;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        var requestedChunkSize = (int)Math.Min((ulong)MemsetChunkSize, count);
+        var buffer = ArrayPool<byte>.Shared.Rent(requestedChunkSize);
+        try
+        {
+            var chunkCapacity = Math.Min(buffer.Length, MemsetChunkSize);
+            var copyBackward = preserveOverlap &&
+                destination > source &&
+                destination - source < count;
+
+            if (copyBackward)
+            {
+                var remaining = count;
+                while (remaining != 0)
+                {
+                    var take = (int)Math.Min((ulong)chunkCapacity, remaining);
+                    var offset = remaining - (ulong)take;
+                    if (!CopyMemoryChunk(ctx, source + offset, destination + offset, buffer, take))
+                    {
+                        ctx[CpuRegister.Rax] = destination;
+                        return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                    }
+
+                    remaining = offset;
+                }
+            }
+            else
+            {
+                ulong offset = 0;
+                while (offset < count)
+                {
+                    var take = (int)Math.Min((ulong)chunkCapacity, count - offset);
+                    if (!CopyMemoryChunk(ctx, source + offset, destination + offset, buffer, take))
+                    {
+                        ctx[CpuRegister.Rax] = destination;
+                        return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                    }
+
+                    offset += (ulong)take;
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+
+        ctx[CpuRegister.Rax] = destination;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static bool CopyMemoryChunk(
+        CpuContext ctx,
+        ulong source,
+        ulong destination,
+        byte[] buffer,
+        int count)
+    {
+        var chunk = buffer.AsSpan(0, count);
+        return TryReadCompat(ctx, source, chunk) &&
+            TryWriteCompat(ctx, destination, chunk);
     }
 
     [SysAbiExport(
