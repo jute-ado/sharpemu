@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.Core.Cpu;
-using SharpEmu.Core.Memory;
 using SharpEmu.HLE;
 using Xunit;
 
@@ -10,8 +9,6 @@ namespace SharpEmu.Core.Tests;
 
 public sealed class NativeCpuConformanceTests
 {
-    private const ulong PreferredCodeAddress = 0x0000_0008_1000_0000;
-
     public static TheoryData<string, byte[]> InstructionSequences => new()
     {
         {
@@ -203,21 +200,13 @@ public sealed class NativeCpuConformanceTests
         Environment.SetEnvironmentVariable("SHARPEMU_STALL_WATCHDOG_SECONDS", "0");
         try
         {
-            using var memory = new PhysicalVirtualMemory();
-            var entryPoint = memory.AllocateAt(
-                PreferredCodeAddress,
-                0x1000,
-                executable: true);
-            Assert.True(memory.TryWrite(entryPoint, code), name);
-            using var dispatcher = new CpuDispatcher(memory, new ModuleManager());
-
-            var result = dispatcher.DispatchModuleInitializer(
-                entryPoint,
+            var execution = SyntheticNativeGuest.ExecuteModuleInitializer(
+                code,
                 Generation.Gen5,
                 moduleName: $"conformance-{name}");
 
-            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, result);
-            Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, execution.Result);
+            Assert.Equal(CpuExitReason.ReturnedToHost, execution.ExitReason);
         }
         finally
         {
