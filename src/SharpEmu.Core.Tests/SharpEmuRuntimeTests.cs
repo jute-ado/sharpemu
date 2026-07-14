@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text.Json;
 using SharpEmu.Core.Runtime;
 using SharpEmu.HLE;
@@ -155,6 +156,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuTrap").ValueKind);
         Assert.True(root.GetProperty("durationMilliseconds").GetInt64() >= 0);
         Assert.True(root.GetProperty("executableSizeBytes").GetInt64() > 0);
+        Assert.Equal(execution.ExecutableSha256, root.GetProperty("executableSha256").GetString());
         Assert.Equal("Release", root.GetProperty("build").GetProperty("configuration").GetString());
         Assert.False(root.GetProperty("build").GetProperty("isOfficialRelease").GetBoolean());
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("host").GetProperty("osDescription").GetString()));
@@ -227,6 +229,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuMemoryFault").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuNotImplemented").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("executableSizeBytes").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("executableSha256").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("application").ValueKind);
     }
 
@@ -274,6 +277,7 @@ public sealed class SharpEmuRuntimeTests
             StringComparison.OrdinalIgnoreCase);
         Assert.Contains("timed out after 1 second", execution.StandardError, StringComparison.OrdinalIgnoreCase);
         Assert.InRange(root.GetProperty("durationMilliseconds").GetInt64(), 900, 10_000);
+        Assert.Equal(execution.ExecutableSha256, root.GetProperty("executableSha256").GetString());
         Assert.Equal("PPSA00001", root.GetProperty("application").GetProperty("titleId").GetString());
     }
 
@@ -359,9 +363,12 @@ public sealed class SharpEmuRuntimeTests
 
         try
         {
+            string? executableSha256 = null;
             if (writeExecutable)
             {
-                File.WriteAllBytes(executablePath, SyntheticElfImage.CreateExecutable(code));
+                var executable = SyntheticElfImage.CreateExecutable(code);
+                File.WriteAllBytes(executablePath, executable);
+                executableSha256 = Convert.ToHexStringLower(SHA256.HashData(executable));
             }
             if (paramJson is not null)
             {
@@ -415,7 +422,8 @@ public sealed class SharpEmuRuntimeTests
                 process.ExitCode,
                 await standardOutput,
                 await standardError,
-                File.Exists(reportPath) ? await File.ReadAllTextAsync(reportPath) : null);
+                File.Exists(reportPath) ? await File.ReadAllTextAsync(reportPath) : null,
+                executableSha256);
         }
         finally
         {
@@ -441,5 +449,6 @@ public sealed class SharpEmuRuntimeTests
         int ExitCode,
         string StandardOutput,
         string StandardError,
-        string? ReportJson);
+        string? ReportJson,
+        string? ExecutableSha256);
 }
