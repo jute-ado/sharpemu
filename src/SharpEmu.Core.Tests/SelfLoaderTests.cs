@@ -190,8 +190,96 @@ public sealed class SelfLoaderTests
             image.RuntimeSymbols,
             moduleName: "synthetic-loader-smoke");
 
-        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, result);
+        Assert.True(
+            result == OrbisGen2Result.ORBIS_GEN2_OK,
+            dispatcher.LastNotImplementedInfo?.Detail ?? $"Unexpected result: {result}");
         Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
+    }
+
+    [WindowsX64Fact]
+    public void ProcessEntryReceivesExpectedAbiFrame()
+    {
+        var probe = CreateProcessEntryProbe();
+        var elf = CreateElfWithLoadSegment(
+            fileOffset: ElfHeaderSize + ProgramHeaderSize,
+            virtualAddress: 0,
+            fileSize: (ulong)probe.Length,
+            memorySize: (ulong)probe.Length,
+            payload: probe);
+        using var memory = new PhysicalVirtualMemory();
+        var image = new SelfLoader().Load(elf, memory);
+        using var dispatcher = new CpuDispatcher(memory, new ModuleManager());
+
+        var result = dispatcher.DispatchEntry(
+            image.EntryPoint,
+            Generation.Gen5,
+            image.ImportStubs,
+            image.RuntimeSymbols,
+            processImageName: "smoke.bin");
+
+        Assert.True(
+            result == OrbisGen2Result.ORBIS_GEN2_OK,
+            dispatcher.LastNotImplementedInfo?.Detail ?? $"Unexpected result: {result}");
+        Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
+    }
+
+    private static byte[] CreateProcessEntryProbe()
+    {
+        var code = new List<byte>();
+        var failureBranches = new List<(int DisplacementOffset, byte ErrorCode)>();
+
+        void Emit(params byte[] bytes) => code.AddRange(bytes);
+        void JumpToFailure(byte conditionOpcode, byte errorCode)
+        {
+            Emit(0x0F, conditionOpcode, 0, 0, 0, 0);
+            failureBranches.Add((code.Count - sizeof(int), errorCode));
+        }
+
+        Emit(0x48, 0x85, 0xFF);                   // test rdi, rdi
+        JumpToFailure(0x84, 1);                   // jz failure
+        Emit(0x83, 0x3F, 0x01);                   // cmp dword ptr [rdi], 1
+        JumpToFailure(0x85, 2);                   // jne failure
+        Emit(0x83, 0x7F, 0x04, 0x00);             // cmp dword ptr [rdi+4], 0
+        JumpToFailure(0x85, 3);                   // jne failure
+        Emit(0x48, 0x8B, 0x47, 0x08);             // mov rax, [rdi+8]
+        Emit(0x48, 0x85, 0xC0);                   // test rax, rax
+        JumpToFailure(0x84, 4);                   // jz failure
+        Emit(0x81, 0x38, 0x73, 0x6D, 0x6F, 0x6B); // cmp dword ptr [rax], "smok"
+        JumpToFailure(0x85, 5);                   // jne failure
+        Emit(0x81, 0x78, 0x04, 0x65, 0x2E, 0x62, 0x69); // cmp [rax+4], "e.bi"
+        JumpToFailure(0x85, 6);                   // jne failure
+        Emit(0x80, 0x78, 0x08, 0x6E);             // cmp byte ptr [rax+8], 'n'
+        JumpToFailure(0x85, 7);                   // jne failure
+        Emit(0x80, 0x78, 0x09, 0x00);             // cmp byte ptr [rax+9], 0
+        JumpToFailure(0x85, 8);                   // jne failure
+        Emit(0x48, 0x83, 0x7F, 0x10, 0x00);       // cmp qword ptr [rdi+0x10], 0
+        JumpToFailure(0x85, 9);                   // jne failure
+        Emit(0x48, 0x83, 0x7F, 0x18, 0x00);       // cmp qword ptr [rdi+0x18], 0
+        JumpToFailure(0x85, 10);                  // jne failure
+        Emit(0x48, 0x85, 0xF6);                   // test rsi, rsi
+        JumpToFailure(0x84, 11);                  // jz failure
+        Emit(0x48, 0x85, 0xD2);                   // test rdx, rdx
+        JumpToFailure(0x85, 12);                  // jne failure
+        Emit(0x48, 0x85, 0xC9);                   // test rcx, rcx
+        JumpToFailure(0x85, 13);                  // jne failure
+        Emit(0x4D, 0x85, 0xC0);                   // test r8, r8
+        JumpToFailure(0x85, 14);                  // jne failure
+        Emit(0x4D, 0x85, 0xC9);                   // test r9, r9
+        JumpToFailure(0x85, 15);                  // jne failure
+        Emit(0x31, 0xC0, 0xC3);                   // xor eax, eax; ret
+
+        foreach (var (displacementOffset, errorCode) in failureBranches)
+        {
+            var failureOffset = code.Count;
+            Emit(0xB8, errorCode, 0x00, 0x00, 0x00, 0xC3); // mov eax, errorCode; ret
+            var displacement = checked(failureOffset - (displacementOffset + sizeof(int)));
+            code[displacementOffset] = (byte)displacement;
+            code[displacementOffset + 1] = (byte)(displacement >> 8);
+            code[displacementOffset + 2] = (byte)(displacement >> 16);
+            code[displacementOffset + 3] = (byte)(displacement >> 24);
+        }
+
+        return code.ToArray();
     }
 
     private static byte[] CreateElf(
