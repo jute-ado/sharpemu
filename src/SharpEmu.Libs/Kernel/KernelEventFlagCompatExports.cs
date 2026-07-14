@@ -303,7 +303,12 @@ public static class KernelEventFlagCompatExports
                             timedWaiter,
                             timeoutAddress,
                             deadlineTimestamp),
-                        () => TryPrepareBlockedTimedEventFlagWait(ctx, state, timedWaiter),
+                        () => TryPrepareBlockedTimedEventFlagWait(
+                            ctx,
+                            state,
+                            timedWaiter,
+                            timeoutAddress,
+                            deadlineTimestamp),
                         deadlineTimestamp))
                 {
                     state.WaitingThreads++;
@@ -593,30 +598,80 @@ public static class KernelEventFlagCompatExports
     private static bool TryPrepareBlockedTimedEventFlagWait(
         CpuContext ctx,
         EventFlagState state,
-        TimedEventFlagWaiter waiter)
+        TimedEventFlagWaiter waiter,
+        ulong timeoutAddress,
+        long deadlineTimestamp)
     {
         lock (state.Gate)
         {
-            if (waiter.Result is not null)
-            {
-                return true;
-            }
+            return TryPrepareBlockedTimedEventFlagWaitLocked(
+                ctx,
+                state,
+                waiter,
+                timeoutAddress,
+                deadlineTimestamp);
+        }
+    }
 
-            if (!TryPrepareBlockedWaitLocked(
-                    ctx,
-                    state,
-                    waiter.Pattern,
-                    waiter.WaitMode,
-                    waiter.ResultAddress,
-                    waiter.CancelEpochAtBlock,
-                    out var result))
-            {
-                return false;
-            }
-
-            waiter.Result = result;
+    private static bool TryPrepareBlockedTimedEventFlagWaitLocked(
+        CpuContext ctx,
+        EventFlagState state,
+        TimedEventFlagWaiter waiter,
+        ulong timeoutAddress,
+        long deadlineTimestamp)
+    {
+        if (waiter.Result is not null)
+        {
             return true;
         }
+
+        OrbisGen2Result result;
+        var writeResultPattern = false;
+        var remainingMicros = 0u;
+        if (state.Deleted)
+        {
+            result = OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED;
+        }
+        else if (state.CancelEpoch != waiter.CancelEpochAtBlock)
+        {
+            result = OrbisGen2Result.ORBIS_GEN2_ERROR_CANCELED;
+        }
+        else if (IsSatisfied(state.Bits, waiter.Pattern, waiter.WaitMode))
+        {
+            result = OrbisGen2Result.ORBIS_GEN2_OK;
+            writeResultPattern = true;
+            var remainingTicks = deadlineTimestamp - Stopwatch.GetTimestamp();
+            remainingMicros = remainingTicks <= 0
+                ? 0u
+                : (uint)Math.Min(
+                    uint.MaxValue,
+                    remainingTicks / (double)Stopwatch.Frequency * 1_000_000d);
+        }
+        else
+        {
+            return false;
+        }
+
+        if ((writeResultPattern &&
+                !TryWriteResultPattern(ctx, waiter.ResultAddress, state.Bits)) ||
+            !KernelMemoryCompatExports.TryWriteUInt32Compat(
+                ctx,
+                timeoutAddress,
+                remainingMicros))
+        {
+            result = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+        else if (result == OrbisGen2Result.ORBIS_GEN2_OK)
+        {
+            ApplyClearMode(state, waiter.Pattern, waiter.WaitMode);
+        }
+
+        waiter.Result = result;
+        state.WaitingThreads = Math.Max(0, state.WaitingThreads - 1);
+        TraceEventFlag(
+            $"wait-wake-timed pattern=0x{waiter.Pattern:X16} mode=0x{waiter.WaitMode:X2} " +
+            $"bits=0x{state.Bits:X16} result=0x{(int)result:X8} waiters={state.WaitingThreads}");
+        return true;
     }
 
     private static int CompleteBlockedTimedEventFlagWait(
@@ -626,51 +681,26 @@ public static class KernelEventFlagCompatExports
         ulong timeoutAddress,
         long deadlineTimestamp)
     {
-        OrbisGen2Result result;
         lock (state.Gate)
         {
-            if (waiter.Result is null)
+            if (waiter.Result is null &&
+                !TryPrepareBlockedTimedEventFlagWaitLocked(
+                    ctx,
+                    state,
+                    waiter,
+                    timeoutAddress,
+                    deadlineTimestamp))
             {
-                if (TryPrepareBlockedWaitLocked(
-                        ctx,
-                        state,
-                        waiter.Pattern,
-                        waiter.WaitMode,
-                        waiter.ResultAddress,
-                        waiter.CancelEpochAtBlock,
-                        out var preparedResult))
-                {
-                    waiter.Result = preparedResult;
-                }
-                else
-                {
-                    waiter.Result = TryWriteResultPattern(ctx, waiter.ResultAddress, state.Bits)
+                waiter.Result =
+                    TryWriteResultPattern(ctx, waiter.ResultAddress, state.Bits) &&
+                    KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, timeoutAddress, 0)
                         ? OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT
                         : OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-                    state.WaitingThreads = Math.Max(0, state.WaitingThreads - 1);
-                }
+                state.WaitingThreads = Math.Max(0, state.WaitingThreads - 1);
             }
 
-            result = waiter.Result.Value;
+            return (int)waiter.Result!.Value;
         }
-
-        var remainingMicros = 0u;
-        if (result == OrbisGen2Result.ORBIS_GEN2_OK)
-        {
-            var remainingTicks = deadlineTimestamp - Stopwatch.GetTimestamp();
-            remainingMicros = remainingTicks <= 0
-                ? 0u
-                : (uint)Math.Min(
-                    uint.MaxValue,
-                    remainingTicks / (double)Stopwatch.Frequency * 1_000_000d);
-        }
-
-        if (!KernelMemoryCompatExports.TryWriteUInt32Compat(ctx, timeoutAddress, remainingMicros))
-        {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-        }
-
-        return (int)result;
     }
 
     private static string GetEventFlagWakeKey(ulong handle) =>
