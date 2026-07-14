@@ -12,6 +12,7 @@ public sealed class PhysicalVirtualMemoryTests
 {
     private const ulong OneGibibyte = 0x4000_0000UL;
     private const ulong HostBlockerSize = 0x2000_0000UL;
+    private const uint MemCommit = 0x1000;
     private const uint MemReserve = 0x2000;
     private const uint MemRelease = 0x8000;
     private const uint PageNoAccess = 0x01;
@@ -133,6 +134,68 @@ public sealed class PhysicalVirtualMemoryTests
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool VirtualFree(nint address, nuint size, uint freeType);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern nuint VirtualQuery(
+        nint address,
+        out MemoryBasicInformation64 information,
+        nuint length);
+
+    private static bool TryFindReservedPage(
+        ulong address,
+        ulong size,
+        out ulong reservedAddress)
+    {
+        var end = checked(address + size);
+        var cursor = address;
+        while (cursor < end)
+        {
+            var information = QueryPage(cursor);
+            var regionEnd = information.RegionSize > ulong.MaxValue - information.BaseAddress
+                ? ulong.MaxValue
+                : information.BaseAddress + information.RegionSize;
+            if (information.State == MemReserve)
+            {
+                reservedAddress = Math.Max(cursor, information.BaseAddress);
+                return reservedAddress < end;
+            }
+
+            if (regionEnd <= cursor)
+            {
+                break;
+            }
+
+            cursor = regionEnd;
+        }
+
+        reservedAddress = 0;
+        return false;
+    }
+
+    private static MemoryBasicInformation64 QueryPage(ulong address)
+    {
+        Assert.NotEqual(
+            0u,
+            VirtualQuery(
+                unchecked((nint)address),
+                out var information,
+                (nuint)Marshal.SizeOf<MemoryBasicInformation64>()));
+        return information;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MemoryBasicInformation64
+    {
+        public ulong BaseAddress;
+        public ulong AllocationBase;
+        public uint AllocationProtect;
+        public uint Alignment1;
+        public ulong RegionSize;
+        public uint State;
+        public uint Protect;
+        public uint Type;
+        public uint Alignment2;
+    }
+
     [Theory]
     [InlineData(OneGibibyte - 0x1000, false, false)]
     [InlineData(OneGibibyte, false, true)]
@@ -148,6 +211,24 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Equal(
             expected,
             PhysicalVirtualMemory.ShouldReserveWithoutCommit(alignedSize, executable));
+    }
+
+    [WindowsX64Fact]
+    public unsafe void GetPointerCommitsLazyReservedPageBeforeReturning()
+    {
+        using var memory = new PhysicalVirtualMemory();
+        var address = memory.AllocateAt(0, OneGibibyte, executable: false);
+        Assert.True(TryFindReservedPage(address, OneGibibyte, out var reservedAddress));
+        Assert.Equal(MemReserve, QueryPage(reservedAddress).State);
+
+        var pointer = memory.GetPointer(reservedAddress);
+
+        Assert.NotEqual(0, (nint)pointer);
+        Assert.Equal(MemCommit, QueryPage(reservedAddress).State);
+        *(byte*)pointer = 0xA5;
+        Span<byte> actual = stackalloc byte[1];
+        Assert.True(memory.TryRead(reservedAddress, actual));
+        Assert.Equal(0xA5, actual[0]);
     }
 
     [WindowsX64Fact]
