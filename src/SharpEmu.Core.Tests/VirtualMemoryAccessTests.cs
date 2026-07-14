@@ -108,9 +108,11 @@ public sealed class VirtualMemoryAccessTests
     public void ClearRemovesMappingsAndTheirContents()
     {
         var memory = CreateMappedMemory([1, 2, 3, 4]);
+        var resetVersion = memory.ResetVersion;
 
         memory.Clear();
 
+        Assert.NotEqual(resetVersion, memory.ResetVersion);
         Assert.Empty(memory.SnapshotRegions());
         Span<byte> contents = stackalloc byte[1];
         Assert.False(memory.TryRead(BaseAddress, contents));

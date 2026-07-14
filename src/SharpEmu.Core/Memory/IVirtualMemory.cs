@@ -8,6 +8,12 @@ namespace SharpEmu.Core.Memory;
 
 public interface IVirtualMemory : ICpuMemory
 {
+    /// <summary>
+    /// Gets a nonzero version that changes whenever <see cref="Clear"/> invalidates
+    /// existing mappings. Implementations that cannot track resets may return zero.
+    /// </summary>
+    ulong ResetVersion => 0;
+
     void Clear();
 
     void Map(ulong virtualAddress, ulong memorySize, ulong fileOffset, ReadOnlySpan<byte> fileData, ProgramHeaderFlags protection);

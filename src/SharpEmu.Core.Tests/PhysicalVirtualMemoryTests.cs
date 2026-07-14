@@ -98,9 +98,11 @@ public sealed class PhysicalVirtualMemoryTests
         using var memory = new PhysicalVirtualMemory();
         var address = memory.AllocateAt(0, 0x1000, executable: false);
         Assert.True(memory.TryWrite(address, new byte[] { 1 }));
+        var resetVersion = memory.ResetVersion;
 
         memory.Clear();
 
+        Assert.NotEqual(resetVersion, memory.ResetVersion);
         Assert.Empty(memory.SnapshotRegions());
         Span<byte> one = stackalloc byte[1];
         Assert.False(memory.TryRead(address, one));
