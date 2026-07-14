@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.Reflection;
+using System.Text.Json;
 using SharpEmu.Core.Runtime;
 using SharpEmu.HLE;
 using Xunit;
@@ -109,6 +110,77 @@ public sealed class SharpEmuRuntimeTests
             opcode: "F4");
     }
 
+    [WindowsX64Fact]
+    public async Task CliWritesVersionedJsonExecutionReport()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [
+                0x31, 0xC0, // xor eax, eax
+                0xC3,       // ret
+            ],
+            requestReport: true);
+
+        Assert.Equal(0, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var document = JsonDocument.Parse(execution.ReportJson);
+        var root = document.RootElement;
+        Assert.Equal(1, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal("ORBIS_GEN2_OK", root.GetProperty("result").GetProperty("name").GetString());
+        Assert.Equal(0, root.GetProperty("result").GetProperty("code").GetInt32());
+        Assert.True(root.GetProperty("result").GetProperty("succeeded").GetBoolean());
+        Assert.Contains(
+            "reason=ReturnedToHost",
+            root.GetProperty("sessionSummary").GetString(),
+            StringComparison.Ordinal);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("diagnostics").ValueKind);
+    }
+
+    [WindowsX64Fact]
+    public async Task CliWritesGuestTrapDetailsToJsonExecutionReport()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0x0F, 0x0B], // ud2
+            requestReport: true);
+
+        Assert.Equal(4, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var document = JsonDocument.Parse(execution.ReportJson);
+        var root = document.RootElement;
+        Assert.Equal("ORBIS_GEN2_ERROR_CPU_TRAP", root.GetProperty("result").GetProperty("name").GetString());
+        Assert.False(root.GetProperty("result").GetProperty("succeeded").GetBoolean());
+        Assert.Contains(
+            "exception=0xC000001D",
+            root.GetProperty("diagnostics").GetString(),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "reason=CpuTrap",
+            root.GetProperty("sessionSummary").GetString(),
+            StringComparison.Ordinal);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("hostError").ValueKind);
+    }
+
+    [Fact]
+    public async Task CliWritesHostFailureToJsonExecutionReport()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [],
+            requestReport: true,
+            writeExecutable: false);
+
+        Assert.Equal(2, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var document = JsonDocument.Parse(execution.ReportJson);
+        var root = document.RootElement;
+        Assert.Equal("HOST_ERROR", root.GetProperty("result").GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("result").GetProperty("code").ValueKind);
+        Assert.False(root.GetProperty("result").GetProperty("succeeded").GetBoolean());
+        Assert.Contains(
+            "EBOOT file was not found",
+            root.GetProperty("hostError").GetString(),
+            StringComparison.Ordinal);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("sessionSummary").ValueKind);
+    }
+
     private static async Task AssertSyntheticGuestTrapAsync(
         byte[] code,
         string exceptionCode,
@@ -162,7 +234,10 @@ public sealed class SharpEmuRuntimeTests
         }
     }
 
-    private static async Task<SyntheticProcessExecution> RunSyntheticExecutableInCliAsync(byte[] code)
+    private static async Task<SyntheticProcessExecution> RunSyntheticExecutableInCliAsync(
+        byte[] code,
+        bool requestReport = false,
+        bool writeExecutable = true)
     {
         var testDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -170,10 +245,14 @@ public sealed class SharpEmuRuntimeTests
             Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(testDirectory);
         var executablePath = Path.Combine(testDirectory, "eboot.bin");
+        var reportPath = Path.Combine(testDirectory, "execution-report.json");
 
         try
         {
-            File.WriteAllBytes(executablePath, SyntheticElfImage.CreateExecutable(code));
+            if (writeExecutable)
+            {
+                File.WriteAllBytes(executablePath, SyntheticElfImage.CreateExecutable(code));
+            }
             var cliAssemblyPath = GetCliAssemblyPath();
             Assert.True(File.Exists(cliAssemblyPath), $"SharpEmu CLI was not built at '{cliAssemblyPath}'.");
 
@@ -185,6 +264,11 @@ public sealed class SharpEmuRuntimeTests
                 RedirectStandardError = true,
             };
             startInfo.ArgumentList.Add(cliAssemblyPath);
+            if (requestReport)
+            {
+                startInfo.ArgumentList.Add("--report-json");
+                startInfo.ArgumentList.Add(reportPath);
+            }
             startInfo.ArgumentList.Add(executablePath);
             startInfo.Environment.Remove("SHARPEMU_MITIGATED_CHILD");
             startInfo.Environment.Remove("SHARPEMU_DISABLE_MITIGATION_RELAUNCH");
@@ -209,7 +293,8 @@ public sealed class SharpEmuRuntimeTests
             return new SyntheticProcessExecution(
                 process.ExitCode,
                 await standardOutput,
-                await standardError);
+                await standardError,
+                File.Exists(reportPath) ? await File.ReadAllTextAsync(reportPath) : null);
         }
         finally
         {
@@ -234,5 +319,6 @@ public sealed class SharpEmuRuntimeTests
     private readonly record struct SyntheticProcessExecution(
         int ExitCode,
         string StandardOutput,
-        string StandardError);
+        string StandardError,
+        string? ReportJson);
 }

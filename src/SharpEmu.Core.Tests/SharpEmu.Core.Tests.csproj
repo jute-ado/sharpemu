@@ -26,6 +26,6 @@ SPDX-License-Identifier: GPL-2.0-or-later
   <ItemGroup>
     <AssemblyMetadata
       Include="SharpEmu.CliAssemblyPath"
-      Value="$(RepoRoot)artifacts/bin/$(SharpEmuHostPlatform)/SharpEmu.CLI/$(Configuration)/$(TargetFramework)/win-x64/SharpEmu.dll" />
+      Value="$(RepoRoot)artifacts/bin/$(SharpEmuHostPlatform)/SharpEmu.CLI/$(Configuration)/$(TargetFramework)/$(NETCoreSdkRuntimeIdentifier)/SharpEmu.dll" />
   </ItemGroup>
 </Project>
