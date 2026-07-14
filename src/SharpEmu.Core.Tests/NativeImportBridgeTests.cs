@@ -14,10 +14,12 @@ public sealed class NativeImportBridgeTests
     private const string AddNid = "test-add-nid";
     private const string SixArgumentSumNid = "test-six-argument-sum-nid";
     private const string EightArgumentSumNid = "test-eight-argument-sum-nid";
+    private const string ClobberNonvolatileNid = "test-clobber-nonvolatile-nid";
     private const string FloatReturnNid = "test-float-return-nid";
     private const string FloatAddNid = "test-float-add-nid";
     private const ulong CodeAddress = 0x0000_0008_1000_0000;
     private const ulong ImportAddress = CodeAddress + 0x100;
+    private const ulong NonvolatileSentinel = 0x1122_3344_5566_7788;
 
     [WindowsX64Fact]
     public void GuestCallDispatchesHleExportAndReturnsValue()
@@ -156,6 +158,37 @@ public sealed class NativeImportBridgeTests
             Generation.Gen5,
             new Dictionary<ulong, string> { [ImportAddress] = EightArgumentSumNid },
             moduleName: "synthetic-stack-argument-import-roundtrip");
+
+        Assert.True(
+            result == OrbisGen2Result.ORBIS_GEN2_OK,
+            dispatcher.LastNotImplementedInfo?.Detail ?? $"Unexpected result: {result}");
+        Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
+    }
+
+    [WindowsX64Fact]
+    public void ImportBridgePreservesGuestNonvolatileRegistersAcrossManagedHandler()
+    {
+        var code = CreateNonvolatileRegisterProbe();
+        using var memory = new PhysicalVirtualMemory();
+        var entryPoint = memory.AllocateAt(CodeAddress, 0x1000, executable: true);
+        Assert.Equal(CodeAddress, entryPoint);
+        Assert.True(memory.TryWrite(entryPoint, code));
+        Assert.True(memory.TryWrite(ImportAddress, [0xCC, 0xC3]));
+
+        var moduleManager = new ModuleManager();
+        var registered = moduleManager.RegisterFromAssembly(
+            Assembly.GetExecutingAssembly(),
+            Generation.Gen5);
+        Assert.True(registered >= 4);
+        Assert.True(moduleManager.TryGetExport(ClobberNonvolatileNid, out _));
+        moduleManager.Freeze();
+        using var dispatcher = new CpuDispatcher(memory, moduleManager);
+
+        var result = dispatcher.DispatchModuleInitializer(
+            entryPoint,
+            Generation.Gen5,
+            new Dictionary<ulong, string> { [ImportAddress] = ClobberNonvolatileNid },
+            moduleName: "synthetic-nonvolatile-import-roundtrip");
 
         Assert.True(
             result == OrbisGen2Result.ORBIS_GEN2_OK,
@@ -307,6 +340,32 @@ public sealed class NativeImportBridgeTests
         }
 
         [SysAbiExport(
+            Nid = ClobberNonvolatileNid,
+            ExportName = "syntheticClobberNonvolatile",
+            Target = Generation.Gen5,
+            LibraryName = "libSyntheticTest")]
+        public static int ClobberNonvolatile(CpuContext context)
+        {
+            var receivedExpectedValues =
+                context[CpuRegister.Rbx] == NonvolatileSentinel &&
+                context[CpuRegister.Rbp] == NonvolatileSentinel &&
+                context[CpuRegister.R12] == NonvolatileSentinel &&
+                context[CpuRegister.R13] == NonvolatileSentinel &&
+                context[CpuRegister.R14] == NonvolatileSentinel &&
+                context[CpuRegister.R15] == NonvolatileSentinel;
+
+            context[CpuRegister.Rbx] = 0;
+            context[CpuRegister.Rbp] = 0;
+            context[CpuRegister.R12] = 0;
+            context[CpuRegister.R13] = 0;
+            context[CpuRegister.R14] = 0;
+            context[CpuRegister.R15] = 0;
+            return context.SetReturn(receivedExpectedValues
+                ? OrbisGen2Result.ORBIS_GEN2_OK
+                : OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        [SysAbiExport(
             Nid = FloatReturnNid,
             ExportName = "syntheticFloatReturn",
             Target = Generation.Gen5,
@@ -332,5 +391,75 @@ public sealed class NativeImportBridgeTests
             context.SetXmmRegister(0, sumBits, 0);
             return context.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
         }
+    }
+
+    private static byte[] CreateNonvolatileRegisterProbe()
+    {
+        var code = new List<byte>();
+        var failureBranches = new List<int>();
+
+        void Emit(params byte[] bytes) => code.AddRange(bytes);
+        void EmitUInt64(ulong value)
+        {
+            for (var shift = 0; shift < 64; shift += 8)
+            {
+                code.Add((byte)(value >> shift));
+            }
+        }
+        void EmitMovImmediate(byte rex, byte opcode)
+        {
+            Emit(rex, opcode);
+            EmitUInt64(NonvolatileSentinel);
+        }
+        void JumpToFailure()
+        {
+            Emit(0x0F, 0x85, 0, 0, 0, 0); // jne failure
+            failureBranches.Add(code.Count - sizeof(int));
+        }
+        void PatchInt32(int offset, int value)
+        {
+            code[offset] = (byte)value;
+            code[offset + 1] = (byte)(value >> 8);
+            code[offset + 2] = (byte)(value >> 16);
+            code[offset + 3] = (byte)(value >> 24);
+        }
+
+        EmitMovImmediate(0x48, 0xBB); // mov rbx, sentinel
+        EmitMovImmediate(0x48, 0xBD); // mov rbp, sentinel
+        EmitMovImmediate(0x49, 0xBC); // mov r12, sentinel
+        EmitMovImmediate(0x49, 0xBD); // mov r13, sentinel
+        EmitMovImmediate(0x49, 0xBE); // mov r14, sentinel
+        EmitMovImmediate(0x49, 0xBF); // mov r15, sentinel
+
+        Emit(0xE8, 0, 0, 0, 0); // call ImportAddress
+        PatchInt32(code.Count - sizeof(int), checked((int)(ImportAddress - CodeAddress) - code.Count));
+
+        Emit(0x85, 0xC0); // test eax, eax
+        JumpToFailure();
+        EmitMovImmediate(0x49, 0xBA); // mov r10, sentinel
+        Emit(0x4C, 0x39, 0xD3); // cmp rbx, r10
+        JumpToFailure();
+        Emit(0x4C, 0x39, 0xD5); // cmp rbp, r10
+        JumpToFailure();
+        Emit(0x4D, 0x39, 0xD4); // cmp r12, r10
+        JumpToFailure();
+        Emit(0x4D, 0x39, 0xD5); // cmp r13, r10
+        JumpToFailure();
+        Emit(0x4D, 0x39, 0xD6); // cmp r14, r10
+        JumpToFailure();
+        Emit(0x4D, 0x39, 0xD7); // cmp r15, r10
+        JumpToFailure();
+        Emit(0x31, 0xC0, 0xC3); // xor eax, eax; ret
+
+        var failureOffset = code.Count;
+        Emit(0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3); // mov eax, 1; ret
+        foreach (var displacementOffset in failureBranches)
+        {
+            PatchInt32(
+                displacementOffset,
+                checked(failureOffset - (displacementOffset + sizeof(int))));
+        }
+
+        return code.ToArray();
     }
 }
