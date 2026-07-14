@@ -125,20 +125,58 @@ public static class KernelRuntimeCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        GuestThreadExecution.Scheduler?.Pump(ctx, posix ? "nanosleep" : "sceKernelNanosleep");
-
         // TimeSpan resolution is 100 ns ticks, so sub-100 ns requests round up to
         // a single tick rather than collapsing to a zero-length (no-op) sleep.
-        var totalTicks = tvSec * TimeSpan.TicksPerSecond + Math.Max(tvNsec / 100L, 1L);
+        var sleepDuration = GetNanosleepDuration(tvSec, tvNsec);
+        var reason = posix ? "nanosleep" : "sceKernelNanosleep";
+        var deadlineTimestamp = GuestThreadExecution.ComputeDeadlineTimestamp(sleepDuration);
+        if (GuestThreadExecution.RequestCurrentThreadBlock(
+                ctx,
+                reason,
+                $"{reason}:{GuestThreadExecution.CurrentGuestThreadHandle:X16}",
+                () => CompleteNanosleep(ctx, remainAddress),
+                blockDeadlineTimestamp: deadlineTimestamp))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        GuestThreadExecution.Scheduler?.Pump(ctx, reason);
+
         try
         {
-            Thread.Sleep(TimeSpan.FromTicks(totalTicks));
+            Thread.Sleep(sleepDuration);
         }
         catch (ArgumentOutOfRangeException)
         {
             Thread.Sleep(TimeSpan.FromMilliseconds(int.MaxValue));
         }
 
+        WriteRemainingTime(ctx, remainAddress, 0, 0);
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static TimeSpan GetNanosleepDuration(long seconds, long nanoseconds)
+    {
+        var subsecondTicks = Math.Max(nanoseconds / 100L, 1L);
+        var maxWholeSeconds = TimeSpan.MaxValue.Ticks / TimeSpan.TicksPerSecond;
+        if (seconds > maxWholeSeconds)
+        {
+            return TimeSpan.MaxValue;
+        }
+
+        var wholeSecondTicks = seconds * TimeSpan.TicksPerSecond;
+        if (subsecondTicks > TimeSpan.MaxValue.Ticks - wholeSecondTicks)
+        {
+            return TimeSpan.MaxValue;
+        }
+
+        return TimeSpan.FromTicks(wholeSecondTicks + subsecondTicks);
+    }
+
+    private static int CompleteNanosleep(CpuContext ctx, ulong remainAddress)
+    {
         WriteRemainingTime(ctx, remainAddress, 0, 0);
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
@@ -187,6 +225,18 @@ public static class KernelRuntimeCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
+        var deadlineTimestamp = GuestThreadExecution.ComputeDeadlineTimestamp(GetUsleepDuration(micros));
+        if (GuestThreadExecution.RequestCurrentThreadBlock(
+                ctx,
+                "sceKernelUsleep",
+                $"sceKernelUsleep:{GuestThreadExecution.CurrentGuestThreadHandle:X16}",
+                () => CompleteUsleep(ctx),
+                blockDeadlineTimestamp: deadlineTimestamp))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
         GuestThreadExecution.Scheduler?.Pump(ctx, "sceKernelUsleep");
 
         if (micros < 1000)
@@ -209,6 +259,20 @@ public static class KernelRuntimeCompatExports
             Thread.Sleep(sleepMilliseconds);
         }
 
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static TimeSpan GetUsleepDuration(ulong microseconds)
+    {
+        var maxMicroseconds = (ulong)(TimeSpan.MaxValue.Ticks / 10L);
+        return microseconds > maxMicroseconds
+            ? TimeSpan.MaxValue
+            : TimeSpan.FromTicks((long)microseconds * 10L);
+    }
+
+    private static int CompleteUsleep(CpuContext ctx)
+    {
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
