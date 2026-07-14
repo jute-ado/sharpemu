@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
+using SharpEmu.Core.Cpu;
 using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
+using SharpEmu.HLE;
 using Xunit;
 
 namespace SharpEmu.Core.Tests;
@@ -162,6 +164,34 @@ public sealed class SelfLoaderTests
         Span<byte> mapped = stackalloc byte[8];
         Assert.True(memory.TryRead(region.VirtualAddress, mapped));
         Assert.Equal(new byte[] { 1, 2, 3, 4, 0, 0, 0, 0 }, mapped.ToArray());
+    }
+
+    [WindowsX64Fact]
+    public void LoadsAndExecutesMinimalElfImage()
+    {
+        var elf = CreateElfWithLoadSegment(
+            fileOffset: ElfHeaderSize + ProgramHeaderSize,
+            virtualAddress: 0,
+            fileSize: 3,
+            memorySize: 3,
+            payload:
+            [
+                0x31, 0xC0, // xor eax, eax
+                0xC3,       // ret
+            ]);
+        using var memory = new PhysicalVirtualMemory();
+        var image = new SelfLoader().Load(elf, memory);
+        using var dispatcher = new CpuDispatcher(memory, new ModuleManager());
+
+        var result = dispatcher.DispatchModuleInitializer(
+            image.EntryPoint,
+            Generation.Gen5,
+            image.ImportStubs,
+            image.RuntimeSymbols,
+            moduleName: "synthetic-loader-smoke");
+
+        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, result);
+        Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
     }
 
     private static byte[] CreateElf(
