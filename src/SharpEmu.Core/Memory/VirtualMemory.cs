@@ -175,7 +175,11 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
     {
         lock (_gate)
         {
-            if (!TryResolveRange(virtualAddress, destination.Length, out var regionIndex))
+            if (!TryResolveRange(
+                    virtualAddress,
+                    destination.Length,
+                    ProgramHeaderFlags.Read,
+                    out var regionIndex))
             {
                 return false;
             }
@@ -199,7 +203,11 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
     {
         lock (_gate)
         {
-            if (!TryResolveRange(virtualAddress, expected.Length, out var regionIndex))
+            if (!TryResolveRange(
+                    virtualAddress,
+                    expected.Length,
+                    ProgramHeaderFlags.Read,
+                    out var regionIndex))
             {
                 return false;
             }
@@ -227,7 +235,11 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
     {
         lock (_gate)
         {
-            if (!TryResolveRange(virtualAddress, source.Length, out var regionIndex))
+            if (!TryResolveRange(
+                    virtualAddress,
+                    source.Length,
+                    ProgramHeaderFlags.Write,
+                    out var regionIndex))
             {
                 return false;
             }
@@ -247,7 +259,11 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
         }
     }
 
-    private bool TryResolveRange(ulong virtualAddress, int length, out int firstRegionIndex)
+    private bool TryResolveRange(
+        ulong virtualAddress,
+        int length,
+        ProgramHeaderFlags requiredProtection,
+        out int firstRegionIndex)
     {
         var index = FindStartingRegionIndex(virtualAddress, length, out _);
         if (index < 0)
@@ -268,6 +284,11 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
 
             var candidate = _regions[index];
             if (address < candidate.Region.VirtualAddress || address >= candidate.EndAddress)
+            {
+                return false;
+            }
+
+            if ((candidate.Region.Protection & requiredProtection) != requiredProtection)
             {
                 return false;
             }
