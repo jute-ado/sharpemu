@@ -10,6 +10,8 @@ namespace SharpEmu.Libs.Tests;
 
 public sealed class PthreadConditionCompatibilityTests
 {
+    private const int PosixMemoryFault = 14;
+    private const int PosixInvalidArgument = 22;
     private const int PosixTimedOut = 60;
     private const ulong CondAddress = 0x1000;
     private const ulong MutexAddress = 0x2000;
@@ -95,7 +97,7 @@ public sealed class PthreadConditionCompatibilityTests
             context[CpuRegister.Rdx] = DeadlineAddress;
 
             Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+                PosixInvalidArgument,
                 KernelPthreadCompatExports.PosixPthreadCondTimedwait(context));
 
             UnlockMutex(context);
@@ -104,6 +106,32 @@ public sealed class PthreadConditionCompatibilityTests
         {
             DestroyConditionAndMutex(context);
         }
+    }
+
+    [Fact]
+    public void PosixTimedwaitRejectsNullDeadlineWithEinval()
+    {
+        var context = CreateContext();
+        context[CpuRegister.Rdi] = CondAddress;
+        context[CpuRegister.Rsi] = MutexAddress;
+        context[CpuRegister.Rdx] = 0;
+
+        Assert.Equal(
+            PosixInvalidArgument,
+            KernelPthreadCompatExports.PosixPthreadCondTimedwait(context));
+    }
+
+    [Fact]
+    public void PosixTimedwaitRejectsUnmappedDeadlineWithEfault()
+    {
+        var context = CreateContext();
+        context[CpuRegister.Rdi] = CondAddress;
+        context[CpuRegister.Rsi] = MutexAddress;
+        context[CpuRegister.Rdx] = 0xDEAD_0000;
+
+        Assert.Equal(
+            PosixMemoryFault,
+            KernelPthreadCompatExports.PosixPthreadCondTimedwait(context));
     }
 
     [Fact]

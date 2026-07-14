@@ -358,20 +358,26 @@ public static class KernelPthreadCompatExports
         var absoluteTimeAddress = ctx[CpuRegister.Rdx];
         if (absoluteTimeAddress == 0)
         {
-            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+            return ctx.SetReturn(TranslatePthreadResult(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+                posixResult: true));
         }
 
         if (!ctx.TryReadUInt64(absoluteTimeAddress, out var secondsRaw) ||
             !ctx.TryReadUInt64(absoluteTimeAddress + sizeof(ulong), out var nanosecondsRaw))
         {
-            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            return ctx.SetReturn(TranslatePthreadResult(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                posixResult: true));
         }
 
         var deadlineSeconds = unchecked((long)secondsRaw);
         var deadlineNanoseconds = unchecked((long)nanosecondsRaw);
         if (deadlineNanoseconds is < 0 or >= 1_000_000_000)
         {
-            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+            return ctx.SetReturn(TranslatePthreadResult(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+                posixResult: true));
         }
 
         long nowSeconds;
