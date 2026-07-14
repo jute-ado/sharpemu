@@ -19,9 +19,13 @@ public sealed class SelfLoaderTests
     private const int SyntheticSelfPayloadOffset = 0x200;
     private const int DynamicEntrySize = 16;
     private const long DynamicTagInit = 0x0C;
+    private const long DynamicTagStringTable = 0x05;
+    private const long DynamicTagSymbolTable = 0x06;
     private const long DynamicTagRela = 0x07;
     private const long DynamicTagRelaSize = 0x08;
+    private const long DynamicTagStringTableSize = 0x0A;
     private const int ElfRelocationSize = 24;
+    private const uint Absolute64RelocationType = 1;
     private const uint RelativeRelocationType = 8;
     private const uint TlsModuleIdRelocationType = 16;
     private const int SyntheticRelocationTargetVirtualAddress = 0x80;
@@ -440,6 +444,23 @@ public sealed class SelfLoaderTests
         Assert.Equal(2UL, ReadSyntheticRelocationTarget(memory, additionalImage));
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void LeavesRelocationTargetUnchangedForUnmappedDefinedSymbol(
+        byte symbolBinding)
+    {
+        const ulong originalTargetValue = 0xA5A5_5A5A_DEAD_BEEFUL;
+        var elf = CreateElfWithUnmappedDefinedSymbolRelocation(
+            originalTargetValue,
+            symbolBinding);
+        var memory = new VirtualMemory();
+
+        var image = new SelfLoader().Load(elf, memory);
+
+        Assert.Equal(originalTargetValue, ReadSyntheticRelocationTarget(memory, image));
+    }
+
     [Fact]
     public void LoadsSyntheticSelfSegmentFromContainerMapping()
     {
@@ -789,6 +810,95 @@ public sealed class SelfLoaderTests
             relocation[(2 * sizeof(ulong))..],
             addend);
         return elf;
+    }
+
+    private static byte[] CreateElfWithUnmappedDefinedSymbolRelocation(
+        ulong originalTargetValue,
+        byte symbolBinding)
+    {
+        const int payloadSize = 0x180;
+        const int dynamicVirtualAddress = 0x20;
+        const int relocationVirtualAddress = 0x90;
+        const int symbolTableVirtualAddress = 0xB0;
+        const int stringTableVirtualAddress = 0xE0;
+        const ulong unmappedSymbolVirtualAddress = 0x200;
+        const int dynamicEntryCount = 6;
+        var payloadOffset = ElfHeaderSize + (2 * ProgramHeaderSize);
+        var elf = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 2);
+        Array.Resize(ref elf, payloadOffset + payloadSize);
+
+        var loadHeader = elf.AsSpan(ElfHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(loadHeader, (uint)ProgramHeaderType.Load);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            loadHeader[4..],
+            (uint)(ProgramHeaderFlags.Read | ProgramHeaderFlags.Write));
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[8..], (ulong)payloadOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[32..], payloadSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[40..], payloadSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[48..], 8);
+
+        var dynamicHeader = elf.AsSpan(
+            ElfHeaderSize + ProgramHeaderSize,
+            ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(dynamicHeader, (uint)ProgramHeaderType.Dynamic);
+        BinaryPrimitives.WriteUInt32LittleEndian(dynamicHeader[4..], (uint)ProgramHeaderFlags.Read);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            dynamicHeader[8..],
+            (ulong)(payloadOffset + dynamicVirtualAddress));
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[16..], dynamicVirtualAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            dynamicHeader[32..],
+            dynamicEntryCount * DynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            dynamicHeader[40..],
+            dynamicEntryCount * DynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[48..], 8);
+
+        var dynamicTable = elf.AsSpan(
+            payloadOffset + dynamicVirtualAddress,
+            dynamicEntryCount * DynamicEntrySize);
+        WriteDynamicEntry(dynamicTable, 0, DynamicTagRela, relocationVirtualAddress);
+        WriteDynamicEntry(dynamicTable, 1, DynamicTagRelaSize, ElfRelocationSize);
+        WriteDynamicEntry(dynamicTable, 2, DynamicTagStringTable, stringTableVirtualAddress);
+        WriteDynamicEntry(dynamicTable, 3, DynamicTagStringTableSize, 1);
+        WriteDynamicEntry(dynamicTable, 4, DynamicTagSymbolTable, symbolTableVirtualAddress);
+
+        var relocation = elf.AsSpan(
+            payloadOffset + relocationVirtualAddress,
+            ElfRelocationSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            relocation,
+            SyntheticRelocationTargetVirtualAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            relocation[sizeof(ulong)..],
+            ((ulong)1 << 32) | Absolute64RelocationType);
+
+        var definedSymbol = elf.AsSpan(
+            payloadOffset + symbolTableVirtualAddress + 24,
+            24);
+        definedSymbol[4] = checked((byte)(symbolBinding << 4));
+        BinaryPrimitives.WriteUInt16LittleEndian(definedSymbol[6..], 1);
+        BinaryPrimitives.WriteUInt64LittleEndian(definedSymbol[8..], unmappedSymbolVirtualAddress);
+        elf[payloadOffset + stringTableVirtualAddress] = 0;
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            elf.AsSpan(
+                payloadOffset + SyntheticRelocationTargetVirtualAddress,
+                sizeof(ulong)),
+            originalTargetValue);
+        return elf;
+    }
+
+    private static void WriteDynamicEntry(
+        Span<byte> dynamicTable,
+        int index,
+        long tag,
+        ulong value)
+    {
+        var entry = dynamicTable[(index * DynamicEntrySize)..];
+        BinaryPrimitives.WriteInt64LittleEndian(entry, tag);
+        BinaryPrimitives.WriteUInt64LittleEndian(entry[sizeof(long)..], value);
     }
 
     private static ulong ReadSyntheticRelocationTarget(

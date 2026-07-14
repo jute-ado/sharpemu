@@ -993,6 +993,7 @@ public sealed class SelfLoader : ISelfLoader
                     Log.Warning(
                         $"Skipping local relocation with invalid symbol value 0x{symbol.Value:X} " +
                         $"at target 0x{targetAddress:X16}, type={relocation.Type}, sym={symbolIndex}");
+                    continue;
                 }
 
                 descriptors.Add(new RelocationDescriptor(
@@ -1013,6 +1014,7 @@ public sealed class SelfLoader : ISelfLoader
                     Log.Warning(
                         $"Skipping relocation with invalid symbol value 0x{symbol.Value:X} " +
                         $"at target 0x{targetAddress:X16}, type={relocation.Type}, sym={symbolIndex}");
+                    continue;
                 }
 
                 descriptors.Add(new RelocationDescriptor(
