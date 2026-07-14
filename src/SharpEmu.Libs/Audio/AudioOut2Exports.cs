@@ -86,7 +86,8 @@ public static class AudioOut2Exports
         var memoryAddress = ctx[CpuRegister.Rsi];
         var memorySize = ctx[CpuRegister.Rdx];
         var outContextAddress = ctx[CpuRegister.Rcx];
-        if (paramAddress == 0 || memoryAddress == 0 || memorySize == 0 || outContextAddress == 0)
+        if (paramAddress == 0 || memoryAddress == 0 ||
+            memorySize < AudioOut2ContextMemorySize || outContextAddress == 0)
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
