@@ -653,6 +653,26 @@ public sealed class SelfLoaderTests
     }
 
     [WindowsX64Fact]
+    public void ReservesThroughNonzeroFirstLoadSegment()
+    {
+        const ulong segmentVirtualAddress = 0x2000;
+        byte[] payload = [0x11, 0x22, 0x33, 0x44];
+        var elf = CreateElfWithLoadSegment(
+            fileOffset: ElfHeaderSize + ProgramHeaderSize,
+            virtualAddress: segmentVirtualAddress,
+            fileSize: (ulong)payload.Length,
+            memorySize: (ulong)payload.Length,
+            payload: payload);
+        using var memory = new PhysicalVirtualMemory();
+
+        var image = new SelfLoader().Load(elf, memory);
+
+        Span<byte> loaded = stackalloc byte[payload.Length];
+        Assert.True(memory.TryRead(image.EntryPoint + segmentVirtualAddress, loaded));
+        Assert.Equal(payload, loaded.ToArray());
+    }
+
+    [WindowsX64Fact]
     public void LoadsAndExecutesMinimalElfImage()
     {
         var elf = CreateElfWithLoadSegment(
