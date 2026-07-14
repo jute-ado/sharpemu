@@ -14,6 +14,7 @@ public static class LibcStdioExports
     private const int MaxPathLength = 4096;
     private const int MaxModeLength = 16;
     private const int ReadChunkSize = 1024 * 1024;
+    private const int FgetsChunkSize = 4096;
 
     private static readonly ConcurrentDictionary<ulong, FileStream> _fileHandles = new();
     private static long _nextHandle = 0x1000 - 8;
@@ -298,12 +299,35 @@ public static class LibcStdioExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        var buffer = ArrayPool<byte>.Shared.Rent(maxCount - 1);
-        var count = 0;
+        return ReadLineToGuest(ctx, stream, destination, maxCount);
+    }
 
+    internal static int ReadLineToGuest(
+        CpuContext ctx,
+        Stream stream,
+        ulong destination,
+        int maxCount)
+    {
+        if (destination == 0 || maxCount <= 0)
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (maxCount == 1)
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+        }
+
+        // maxCount is guest controlled and can be int.MaxValue. Keep host
+        // allocation bounded and stream complete chunks into guest memory.
+        var buffer = ArrayPool<byte>.Shared.Rent(Math.Min(FgetsChunkSize, maxCount - 1));
+        var totalCount = 0;
+        var bufferedCount = 0;
         try
         {
-            while (count < maxCount - 1)
+            while (totalCount + bufferedCount < maxCount - 1)
             {
                 var b = stream.ReadByte();
                 if (b < 0)
@@ -311,36 +335,86 @@ public static class LibcStdioExports
                     break;
                 }
 
-                buffer[count++] = (byte)b;
+                buffer[bufferedCount++] = (byte)b;
+                if (bufferedCount == buffer.Length || b == '\n')
+                {
+                    if (!TryWriteGuestOffset(
+                            ctx,
+                            destination,
+                            totalCount,
+                            buffer.AsSpan(0, bufferedCount)))
+                    {
+                        ctx[CpuRegister.Rax] = 0;
+                        return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                    }
+
+                    totalCount += bufferedCount;
+                    bufferedCount = 0;
+                }
+
                 if (b == '\n')
                 {
                     break;
                 }
             }
 
-            if (count == 0)
+            if (bufferedCount != 0)
             {
-                ctx[CpuRegister.Rax] = 0;
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
-            }
+                if (!TryWriteGuestOffset(
+                        ctx,
+                        destination,
+                        totalCount,
+                        buffer.AsSpan(0, bufferedCount)))
+                {
+                    ctx[CpuRegister.Rax] = 0;
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                }
 
-            Span<byte> withNul = stackalloc byte[count + 1];
-            buffer.AsSpan(0, count).CopyTo(withNul);
-            withNul[count] = 0;
-
-            if (!ctx.Memory.TryWrite(destination, withNul))
-            {
-                ctx[CpuRegister.Rax] = 0;
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                totalCount += bufferedCount;
             }
+        }
+        catch (Exception exception) when (exception is IOException or ObjectDisposedException)
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
         }
         finally
         {
             ArrayPool<byte>.Shared.Return(buffer);
         }
 
+        if (totalCount == 0)
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+        }
+
+        Span<byte> terminator = stackalloc byte[1];
+        terminator.Clear();
+        if (!TryWriteGuestOffset(ctx, destination, totalCount, terminator))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
         ctx[CpuRegister.Rax] = destination;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static bool TryWriteGuestOffset(
+        CpuContext ctx,
+        ulong destination,
+        int offset,
+        ReadOnlySpan<byte> source)
+    {
+        if (offset < 0)
+        {
+            return false;
+        }
+
+        var unsignedOffset = unchecked((ulong)offset);
+        return unsignedOffset <= ulong.MaxValue - destination &&
+            ctx.Memory.TryWrite(destination + unsignedOffset, source);
     }
 
     [SysAbiExport(
