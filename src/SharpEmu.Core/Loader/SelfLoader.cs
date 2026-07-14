@@ -75,7 +75,6 @@ public sealed class SelfLoader : ISelfLoader
     private const byte SymbolBindWeak = 2;
     private const byte SymbolTypeObject = 1;
 
-    private IModuleManager? _moduleManager;
     private uint _nextTlsModuleId = 1;
 
     private static readonly IReadOnlyDictionary<ulong, string> EmptyImportStubs = new Dictionary<ulong, string>();
@@ -109,7 +108,7 @@ public sealed class SelfLoader : ISelfLoader
 
     public SelfImage Load(ReadOnlySpan<byte> imageData, IVirtualMemory virtualMemory, IModuleManager moduleManager, IFileSystem? fs, string? mountRoot)
     {
-        _moduleManager = moduleManager;
+        ArgumentNullException.ThrowIfNull(moduleManager);
         return LoadCore(
             imageData,
             virtualMemory,
@@ -121,7 +120,7 @@ public sealed class SelfLoader : ISelfLoader
 
     public SelfImage LoadAdditional(ReadOnlySpan<byte> imageData, IVirtualMemory virtualMemory, IModuleManager moduleManager, IFileSystem? fs, string? mountRoot)
     {
-        _moduleManager = moduleManager;
+        ArgumentNullException.ThrowIfNull(moduleManager);
         return LoadCore(
             imageData,
             virtualMemory,
@@ -206,7 +205,6 @@ public sealed class SelfLoader : ISelfLoader
             programHeaders,
             virtualMemory,
             imageBase,
-            _moduleManager,
             tlsModuleId,
             out var importedRelocations);
         var effectiveImportStubs = importStubs.Count == 0
@@ -601,7 +599,6 @@ public sealed class SelfLoader : ISelfLoader
         IReadOnlyList<ProgramHeader> programHeaders,
         IVirtualMemory virtualMemory,
         ulong imageBase,
-        IModuleManager? moduleManager,
         uint tlsModuleId,
         out IReadOnlyList<ImportedSymbolRelocation> importedRelocations)
     {

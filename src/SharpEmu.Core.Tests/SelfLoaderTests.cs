@@ -43,6 +43,36 @@ public sealed class SelfLoaderTests
         Assert.Equal(0x0000_0008_0000_0000UL, image.EntryPoint);
     }
 
+    [Fact]
+    public void ModuleManagerOverloadsRejectNullBeforeChangingGuestMemory()
+    {
+        var memory = new VirtualMemory();
+        memory.Map(
+            virtualAddress: 0x1000,
+            memorySize: 4,
+            fileOffset: 0,
+            fileData: [1, 2, 3, 4],
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        var loader = new SelfLoader();
+        var elf = CreateElf();
+
+        Assert.Throws<ArgumentNullException>(() =>
+            loader.Load(elf, memory, (IModuleManager)null!));
+        Assert.Throws<ArgumentNullException>(() =>
+            loader.LoadAdditional(
+                elf,
+                memory,
+                null!,
+                fs: null,
+                mountRoot: null));
+
+        var region = Assert.Single(memory.SnapshotRegions());
+        Assert.Equal(0x1000UL, region.VirtualAddress);
+        Span<byte> contents = stackalloc byte[4];
+        Assert.True(memory.TryRead(0x1000, contents));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, contents.ToArray());
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
@@ -422,6 +452,38 @@ public sealed class SelfLoaderTests
         Assert.Equal(
             AddSignedForTest(image.EntryPoint, addend),
             ReadSyntheticRelocationTarget(memory, image));
+    }
+
+    [Fact]
+    public void MutatedDynamicMetadataNeverLeaksArithmeticExceptions()
+    {
+        var baseline = CreateElfWithSymbolRelocation(
+            originalTargetValue: 0,
+            symbolBinding: 1,
+            symbolType: 1,
+            symbolValue: 0,
+            symbolName: "TESTNID#libSceSynthetic",
+            addend: 0);
+        var payloadOffset = ElfHeaderSize + (2 * ProgramHeaderSize);
+        var random = new Random(0xD1A6);
+
+        for (var iteration = 0; iteration < 256; iteration++)
+        {
+            var image = (byte[])baseline.Clone();
+            var mutationCount = random.Next(1, 9);
+            for (var mutation = 0; mutation < mutationCount; mutation++)
+            {
+                var offset = random.Next(payloadOffset + 0x20, image.Length);
+                image[offset] = (byte)random.Next(0, 256);
+            }
+
+            var exception = Record.Exception(() =>
+                new SelfLoader().Load(image, new VirtualMemory()));
+
+            Assert.False(
+                exception is OverflowException or ArgumentOutOfRangeException or IndexOutOfRangeException,
+                $"Iteration {iteration} leaked {exception?.GetType().Name}: {exception?.Message}");
+        }
     }
 
     [Fact]
