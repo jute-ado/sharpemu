@@ -444,6 +444,33 @@ public sealed class SelfLoaderTests
         Assert.Equal(2UL, ReadSyntheticRelocationTarget(memory, additionalImage));
     }
 
+    [Fact]
+    public void ResetsTlsModuleIdsWhenLoaderStartsNewPrimaryImage()
+    {
+        var elf = CreateElfWithDynamicRelocation(TlsModuleIdRelocationType, addend: 0);
+        var memory = new VirtualMemory();
+        var moduleManager = new ModuleManager();
+        var loader = new SelfLoader();
+        _ = loader.Load(elf, memory, moduleManager);
+        _ = loader.LoadAdditional(
+            elf,
+            memory,
+            moduleManager,
+            fs: null,
+            mountRoot: null);
+
+        var replacementMain = loader.Load(elf, memory, moduleManager);
+        var replacementAdditional = loader.LoadAdditional(
+            elf,
+            memory,
+            moduleManager,
+            fs: null,
+            mountRoot: null);
+
+        Assert.Equal(1UL, ReadSyntheticRelocationTarget(memory, replacementMain));
+        Assert.Equal(2UL, ReadSyntheticRelocationTarget(memory, replacementAdditional));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
