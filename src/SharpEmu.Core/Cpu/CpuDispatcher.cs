@@ -156,13 +156,16 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         LastRecentControlTransferTrace = null;
         LastSessionSummary = default;
         RefreshInfrastructureCacheForMemoryReset();
-        OrbisGen2Result FailEarly(OrbisGen2Result result, CpuExitReason reason = CpuExitReason.UnhandledException)
+        OrbisGen2Result FailEarly(
+            OrbisGen2Result result,
+            CpuExitReason reason = CpuExitReason.UnhandledException,
+            ulong? lastGuestRip = null)
         {
             LastSessionSummary = new CpuSessionSummary(
                 result,
                 reason,
                 exitCode: null,
-                lastGuestRip: entryPoint,
+                lastGuestRip: lastGuestRip ?? entryPoint,
                 lastStubRip: 0,
                 totalInstructions: 0,
                 importsHit: 0,
@@ -323,9 +326,17 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                 CpuExitReason.NativeBackendUnavailable,
             _ => CpuExitReason.UnhandledException,
         };
+        if (nativeResult == OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP)
+        {
+            Span<byte> opcode = stackalloc byte[1];
+            LastTrapInfo = new CpuTrapInfo(
+                context.Rip,
+                context.Memory.TryRead(context.Rip, opcode) ? opcode[0] : (byte)0);
+        }
         return FailEarly(
             nativeResult,
-            failureReason);
+            failureReason,
+            context.Rip);
     }
 
     private ulong TryMapStackRegion()

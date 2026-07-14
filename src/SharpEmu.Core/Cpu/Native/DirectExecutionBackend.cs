@@ -252,6 +252,18 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private static bool _activeForcedGuestExit;
 
 	[ThreadStatic]
+	private static ulong _activeGuestStackStart;
+
+	[ThreadStatic]
+	private static ulong _activeGuestStackEnd;
+
+	[ThreadStatic]
+	private static ulong _activeGuestHardwareExceptionRip;
+
+	[ThreadStatic]
+	private static uint _activeGuestHardwareExceptionCode;
+
+	[ThreadStatic]
 	private static bool _activeGuestThreadYieldRequested;
 
 	[ThreadStatic]
@@ -877,6 +889,33 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_activeForcedGuestExit = previousForcedExit;
 		_activeGuestThreadYieldRequested = previousYieldRequested;
 		_activeGuestThreadYieldReason = previousYieldReason;
+	}
+
+	private static void BindActiveGuestStackRange(CpuContext context)
+	{
+		_activeGuestStackStart = 0;
+		_activeGuestStackEnd = 0;
+		if (context.Memory is IGuestStackMemory stackMemory &&
+			stackMemory.TryGetStackRange(context[CpuRegister.Rsp], out var start, out var end))
+		{
+			_activeGuestStackStart = start;
+			_activeGuestStackEnd = end;
+		}
+	}
+
+	private static bool ApplyActiveGuestHardwareException(CpuContext context, out string? detail)
+	{
+		if (_activeGuestHardwareExceptionCode == 0)
+		{
+			detail = null;
+			return false;
+		}
+
+		context.Rip = _activeGuestHardwareExceptionRip;
+		detail =
+			$"Guest hardware exception 0x{_activeGuestHardwareExceptionCode:X8} " +
+			$"at RIP=0x{_activeGuestHardwareExceptionRip:X16}.";
+		return true;
 	}
 
 	public unsafe DirectExecutionBackend(IModuleManager moduleManager)
@@ -4005,6 +4044,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		var previousForcedExit = _activeForcedGuestExit;
 		var previousYieldRequested = _activeGuestThreadYieldRequested;
 		var previousYieldReason = _activeGuestThreadYieldReason;
+		var previousGuestStackStart = _activeGuestStackStart;
+		var previousGuestStackEnd = _activeGuestStackEnd;
+		var previousHardwareExceptionRip = _activeGuestHardwareExceptionRip;
+		var previousHardwareExceptionCode = _activeGuestHardwareExceptionCode;
 		nint previousHostRspSlotValue = TlsGetValue(_hostRspSlotTlsIndex);
 		if (LogThreadMode)
 		{
@@ -4021,6 +4064,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
         _activeForcedGuestExit = false;
         _activeGuestThreadYieldRequested = false;
         _activeGuestThreadYieldReason = null;
+		_activeGuestHardwareExceptionRip = 0;
+		_activeGuestHardwareExceptionCode = 0;
+		BindActiveGuestStackRange(context);
         BindTlsBase(context);
         byte* ptr2 = (byte*)ptr;
         ulong hostRspSlot = (ulong)ptr + stubSize - 16uL;
@@ -4146,6 +4192,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
         ActiveGuestThreadYieldRequested = false;
         ActiveGuestThreadYieldReason = null;
         var nativeReturn = RunGuestEntryStub(ptr, hostRspSlot);
+		if (ApplyActiveGuestHardwareException(context, out var hardwareExceptionDetail))
+		{
+			LastError = hardwareExceptionDetail;
+		}
         if (ActiveGuestThreadYieldRequested)
         {
             reason = ActiveGuestThreadYieldReason ?? "guest thread blocked";
@@ -4180,6 +4230,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
             previousForcedExit,
             previousYieldRequested,
             previousYieldReason);
+		_activeGuestStackStart = previousGuestStackStart;
+		_activeGuestStackEnd = previousGuestStackEnd;
+		_activeGuestHardwareExceptionRip = previousHardwareExceptionRip;
+		_activeGuestHardwareExceptionCode = previousHardwareExceptionCode;
         VirtualFree(ptr, 0u, 32768u);
     }
 }
@@ -4211,6 +4265,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		var previousForcedExit = _activeForcedGuestExit;
 		var previousYieldRequested = _activeGuestThreadYieldRequested;
 		var previousYieldReason = _activeGuestThreadYieldReason;
+		var previousGuestStackStart = _activeGuestStackStart;
+		var previousGuestStackEnd = _activeGuestStackEnd;
+		var previousHardwareExceptionRip = _activeGuestHardwareExceptionRip;
+		var previousHardwareExceptionCode = _activeGuestHardwareExceptionCode;
 		nint previousHostRspSlotValue = TlsGetValue(_hostRspSlotTlsIndex);
 		if (LogThreadMode)
 		{
@@ -4227,6 +4285,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			_activeForcedGuestExit = false;
 			_activeGuestThreadYieldRequested = false;
 			_activeGuestThreadYieldReason = null;
+			_activeGuestHardwareExceptionRip = 0;
+			_activeGuestHardwareExceptionCode = 0;
+			BindActiveGuestStackRange(context);
 			BindTlsBase(context);
 			byte* ptr2 = (byte*)ptr;
 			ulong hostRspSlot = (ulong)ptr + stubSize - 16uL;
@@ -4292,6 +4353,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			try
 			{
 				var nativeReturn = RunGuestEntryStub(ptr, hostRspSlot);
+				if (ApplyActiveGuestHardwareException(context, out var hardwareExceptionDetail))
+				{
+					LastError = hardwareExceptionDetail;
+				}
 				if (ActiveGuestThreadYieldRequested)
 				{
 					reason = ActiveGuestThreadYieldReason ?? "guest thread blocked";
@@ -4327,6 +4392,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				previousForcedExit,
 				previousYieldRequested,
 				previousYieldReason);
+			_activeGuestStackStart = previousGuestStackStart;
+			_activeGuestStackEnd = previousGuestStackEnd;
+			_activeGuestHardwareExceptionRip = previousHardwareExceptionRip;
+			_activeGuestHardwareExceptionCode = previousHardwareExceptionCode;
 			VirtualFree(ptr, 0u, 32768u);
 		}
 	}
@@ -4425,6 +4494,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		var previousForcedExit = _activeForcedGuestExit;
 		var previousYieldRequested = _activeGuestThreadYieldRequested;
 		var previousYieldReason = _activeGuestThreadYieldReason;
+		var previousGuestStackStart = _activeGuestStackStart;
+		var previousGuestStackEnd = _activeGuestStackEnd;
+		var previousHardwareExceptionRip = _activeGuestHardwareExceptionRip;
+		var previousHardwareExceptionCode = _activeGuestHardwareExceptionCode;
 		nint previousHostRspSlotValue = TlsGetValue(_hostRspSlotTlsIndex);
 		try
 		{
@@ -4435,6 +4508,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			_activeForcedGuestExit = false;
 			_activeGuestThreadYieldRequested = false;
 			_activeGuestThreadYieldReason = null;
+			_activeGuestHardwareExceptionRip = 0;
+			_activeGuestHardwareExceptionCode = 0;
+			BindActiveGuestStackRange(context);
 			BindTlsBase(context);
 			byte* ptr2 = (byte*)ptr;
 			ulong num2 = (ulong)ptr + stubSize - 16uL;
@@ -4576,6 +4652,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			try
 			{
 				num6 = RunGuestEntryStub(ptr, num2);
+				if (ApplyActiveGuestHardwareException(context, out var hardwareExceptionDetail))
+				{
+					LastError = hardwareExceptionDetail;
+				}
 				Console.Error.WriteLine($"[LOADER][INFO] Guest returned: {num6}");
 				PumpUntilGuestThreadsIdle(context, "entry_return");
 			}
@@ -4637,6 +4717,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				previousForcedExit,
 				previousYieldRequested,
 				previousYieldReason);
+			_activeGuestStackStart = previousGuestStackStart;
+			_activeGuestStackEnd = previousGuestStackEnd;
+			_activeGuestHardwareExceptionRip = previousHardwareExceptionRip;
+			_activeGuestHardwareExceptionCode = previousHardwareExceptionCode;
 			VirtualFree(ptr, 0u, 32768u);
 		}
 	}
