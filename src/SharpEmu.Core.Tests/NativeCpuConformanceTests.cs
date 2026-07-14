@@ -3,6 +3,7 @@
 
 using SharpEmu.Core.Cpu;
 using SharpEmu.HLE;
+using System.Text.Json;
 using Xunit;
 
 namespace SharpEmu.Core.Tests;
@@ -358,27 +359,23 @@ public sealed class NativeCpuConformanceTests
 
     [WindowsX64Theory]
     [MemberData(nameof(InstructionSequences))]
-    public void ExecutesNativeInstructionSequence(string name, byte[] code)
+    public async Task ExecutesNativeInstructionSequence(string name, byte[] code)
     {
-        var previousWatchdog = Environment.GetEnvironmentVariable(
-            "SHARPEMU_STALL_WATCHDOG_SECONDS");
-        Environment.SetEnvironmentVariable("SHARPEMU_STALL_WATCHDOG_SECONDS", "0");
-        try
-        {
-            var execution = SyntheticNativeGuest.ExecuteModuleInitializer(
-                code,
-                Generation.Gen5,
-                moduleName: $"conformance-{name}");
+        var execution = await SyntheticCliGuest.RunAsync(
+            code,
+            requestReport: true,
+            executionTimeoutSeconds: 10);
 
-            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, execution.Result);
-            Assert.Equal(CpuExitReason.ReturnedToHost, execution.ExitReason);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(
-                "SHARPEMU_STALL_WATCHDOG_SECONDS",
-                previousWatchdog);
-        }
+        Assert.True(
+            execution.ExitCode == 0,
+            $"Conformance case '{name}' exited with {execution.ExitCode}.{Environment.NewLine}" +
+            $"stdout:{Environment.NewLine}{execution.StandardOutput}{Environment.NewLine}" +
+            $"stderr:{Environment.NewLine}{execution.StandardError}");
+        Assert.NotNull(execution.ReportJson);
+        using var report = JsonDocument.Parse(execution.ReportJson);
+        Assert.Equal(
+            "ORBIS_GEN2_OK",
+            report.RootElement.GetProperty("result").GetProperty("name").GetString());
     }
 
     [WindowsX64Fact]
