@@ -36,9 +36,14 @@ public static class HostSystemInfo
             using var key = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\CentralProcessor\0");
             if (key?.GetValue("ProcessorNameString") is string name && !string.IsNullOrWhiteSpace(name))
             {
-                return Regex.Replace(
+                name = Regex.Replace(
                     name.Trim(),
                     @"\s+\d+-Core Processor$",
+                    string.Empty,
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                return Regex.Replace(
+                    name,
+                    @"\s+with Radeon Graphics$",
                     string.Empty,
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
             }
@@ -103,8 +108,12 @@ public static class HostSystemInfo
         }
 
         if (name.Contains("nvidia", StringComparison.OrdinalIgnoreCase) ||
-            name.Contains("geforce", StringComparison.OrdinalIgnoreCase) ||
-            name.Contains("amd", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("geforce", StringComparison.OrdinalIgnoreCase))
+        {
+            return 3;
+        }
+
+        if (name.Contains("amd", StringComparison.OrdinalIgnoreCase) ||
             name.Contains("radeon", StringComparison.OrdinalIgnoreCase))
         {
             return 2;

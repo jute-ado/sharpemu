@@ -10,6 +10,7 @@ namespace SharpEmu.Libs.Tests;
 
 public sealed class PthreadConditionCompatibilityTests
 {
+    private const int PosixTimedOut = 60;
     private const ulong CondAddress = 0x1000;
     private const ulong MutexAddress = 0x2000;
     private const ulong DeadlineAddress = 0x3000;
@@ -37,7 +38,7 @@ public sealed class PthreadConditionCompatibilityTests
             context[CpuRegister.Rdx] = DeadlineAddress;
 
             Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT,
+                PosixTimedOut,
                 KernelPthreadCompatExports.PosixPthreadCondTimedwait(context));
 
             UnlockMutex(context);
@@ -119,7 +120,7 @@ public sealed class PthreadConditionCompatibilityTests
             context[CpuRegister.Rdx] = DeadlineAddress;
 
             Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT,
+                PosixTimedOut,
                 KernelPthreadCompatExports.PosixPthreadCondTimedwait(context));
 
             UnlockMutex(context);

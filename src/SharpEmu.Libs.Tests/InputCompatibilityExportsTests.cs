@@ -13,7 +13,7 @@ namespace SharpEmu.Libs.Tests;
 public sealed class InputCompatibilityExportsTests
 {
     private const ulong OutputAddress = 0x1000;
-    private const int PrimaryUserId = 1;
+    private const int PrimaryUserId = 1000;
     private const int OrbisUserServiceErrorInvalidArgument = unchecked((int)0x80960005);
     private const int OrbisUserServiceErrorInvalidParameter = unchecked((int)0x80960009);
 

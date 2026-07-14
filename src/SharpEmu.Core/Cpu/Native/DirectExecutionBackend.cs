@@ -25,6 +25,26 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private const int DefaultImportLoopGuardSeconds = 5;
 
+	private enum ImportStubKind : byte
+	{
+		Normal = 0,
+		BootstrapBridge = 1,
+		KernelDynlibDlsym = 2,
+		Il2CppApiLookupSymbol = 3,
+	}
+
+	[Flags]
+	private enum ImportStubTraceFlags : byte
+	{
+		None = 0,
+		Memset = 1 << 0,
+		CxaAtexit = 1 << 1,
+		RawArgs = 1 << 2,
+		StackChkFail = 1 << 3,
+		PeriodicEvery1000 = 1 << 4,
+		PeriodicEvery128 = 1 << 5,
+	}
+
 	private readonly struct ImportStubEntry
 	{
 		public ulong Address { get; }
@@ -33,12 +53,36 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 		public ExportedFunction? Export { get; }
 
+		public ImportStubKind Kind { get; }
+
+		public ImportStubTraceFlags TraceFlags { get; }
+
 		public ImportStubEntry(ulong address, string nid, ExportedFunction? export)
 		{
 			Address = address;
 			Nid = nid;
 			Export = export;
+			Kind = ClassifyKind(nid);
+			TraceFlags = ClassifyTraceFlags(nid);
 		}
+
+		private static ImportStubKind ClassifyKind(string nid) => nid switch
+		{
+			RuntimeStubNids.BootstrapBridge => ImportStubKind.BootstrapBridge,
+			RuntimeStubNids.KernelDynlibDlsym or "LwG8g3niqwA" => ImportStubKind.KernelDynlibDlsym,
+			"r8mvOaWdi28" => ImportStubKind.Il2CppApiLookupSymbol,
+			_ => ImportStubKind.Normal,
+		};
+
+		private static ImportStubTraceFlags ClassifyTraceFlags(string nid) => nid switch
+		{
+			"8zTFvBIAIN8" => ImportStubTraceFlags.Memset,
+			"tsvEmnenz48" => ImportStubTraceFlags.CxaAtexit | ImportStubTraceFlags.PeriodicEvery1000,
+			"bzQExy189ZI" or "8G2LB+A3rzg" => ImportStubTraceFlags.RawArgs,
+			"Ou3iL1abvng" => ImportStubTraceFlags.StackChkFail,
+			"rTXw65xmLIA" => ImportStubTraceFlags.PeriodicEvery128,
+			_ => ImportStubTraceFlags.None,
+		};
 	}
 
 	private readonly record struct RecentImportTraceEntry(
@@ -126,6 +170,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private const ulong GuestThreadTlsPrefixSize = 0x0000_1000UL;
 
 	private const ulong GuestThreadRegionStride = 0x0100_0000UL;
+
+	private const int GuestThreadRegionSlotCount = 256;
 
 	private const uint PAGE_EXECUTE_READWRITE = 64u;
 
@@ -2911,7 +2957,21 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			if (hostThread is not null &&
 				!ReferenceEquals(hostThread, Thread.CurrentThread))
 			{
-				hostThread.Join(1);
+				// The handle is published before the host thread starts.
+				if ((hostThread.ThreadState & System.Threading.ThreadState.Unstarted) != 0)
+				{
+					Thread.Sleep(1);
+					continue;
+				}
+
+				try
+				{
+					hostThread.Join(1);
+				}
+				catch (ThreadStateException)
+				{
+					Thread.Sleep(1);
+				}
 			}
 			else
 			{
@@ -3604,7 +3664,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		out ulong mappedBase,
 		out string? error)
 	{
-		for (int i = 0; i < 64; i++)
+		for (int i = 0; i < GuestThreadRegionSlotCount; i++)
 		{
 			var candidateBase = baseAddress - ((ulong)i * GuestThreadRegionStride);
 			if (!IsGuestThreadRegionFree(virtualMemory, candidateBase, size))
@@ -3638,7 +3698,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		out ulong tlsBase,
 		out string? error)
 	{
-		for (int i = 0; i < 64; i++)
+		for (int i = 0; i < GuestThreadRegionSlotCount; i++)
 		{
 			var candidateBase = GuestThreadTlsBaseAddress - ((ulong)i * GuestThreadRegionStride);
 			var mappedBase = candidateBase - GuestThreadTlsPrefixSize;

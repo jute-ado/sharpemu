@@ -161,7 +161,7 @@ public sealed partial class DirectExecutionBackend
 				*(ulong*)(xmmSlot + 8));
 		}
 		cpuContext[CpuRegister.Rsp] = (ulong)argPackPtr + 96uL;
-		if (string.Equals(importStubEntry.Nid, RuntimeStubNids.BootstrapBridge, StringComparison.Ordinal))
+		if (importStubEntry.Kind == ImportStubKind.BootstrapBridge)
 		{
 			NormalizeKernelDynlibDlsymArguments(cpuContext, out _, out _);
 			*(ulong*)argPackPtr = cpuContext[CpuRegister.Rdi];
@@ -245,12 +245,13 @@ public sealed partial class DirectExecutionBackend
 		bool flag4 = !string.IsNullOrWhiteSpace(_importFilter);
 		bool flag5 = false;
 		ExportedFunction? matchedExport = importStubEntry.Export;
+		var traceFlags = importStubEntry.TraceFlags;
 		bool periodicTrace = num <= 128 ||
 			(num >= 240 && num <= 400) ||
 			(num >= 900 && num <= 1300) ||
 			num % 100000 == 0L ||
-			(importStubEntry.Nid == "tsvEmnenz48" && (num <= 256 || num % 1000 == 0L)) ||
-			(importStubEntry.Nid == "rTXw65xmLIA" && (num <= 256 || num % 128 == 0)) ||
+			((traceFlags & ImportStubTraceFlags.PeriodicEvery1000) != 0 && (num <= 256 || num % 1000 == 0L)) ||
+			((traceFlags & ImportStubTraceFlags.PeriodicEvery128) != 0 && (num <= 256 || num % 128 == 0)) ||
 			flag ||
 			flag2 ||
 			flag3;
@@ -311,15 +312,15 @@ public sealed partial class DirectExecutionBackend
 				cpuContext[CpuRegister.Rsi],
 				cpuContext[CpuRegister.Rdx]);
 		}
-		if (importStubEntry.Nid == "8zTFvBIAIN8" && num <= 256)
+		if ((traceFlags & ImportStubTraceFlags.Memset) != 0 && num <= 256)
 		{
 			Console.Error.WriteLine($"[LOADER][TRACE] memset#{num}: dst=0x{cpuContext[CpuRegister.Rdi]:X16} val=0x{cpuContext[CpuRegister.Rsi] & 0xFF:X2} len=0x{cpuContext[CpuRegister.Rdx]:X16} ret=0x{num7:X16}");
 		}
-		if (importStubEntry.Nid == "tsvEmnenz48" && num <= 64)
+		if ((traceFlags & ImportStubTraceFlags.CxaAtexit) != 0 && num <= 64)
 		{
 			Console.Error.WriteLine($"[LOADER][TRACE] __cxa_atexit#{num}: func=0x{cpuContext[CpuRegister.Rdi]:X16} arg=0x{cpuContext[CpuRegister.Rsi]:X16} dso=0x{cpuContext[CpuRegister.Rdx]:X16} ret=0x{num7:X16}");
 		}
-		if (importStubEntry.Nid == "bzQExy189ZI" || importStubEntry.Nid == "8G2LB+A3rzg")
+		if ((traceFlags & ImportStubTraceFlags.RawArgs) != 0)
 		{
 			Console.Error.WriteLine($"[LOADER][TRACE] {importStubEntry.Nid}#{num}: rdi=0x{cpuContext[CpuRegister.Rdi]:X16} rsi=0x{cpuContext[CpuRegister.Rsi]:X16} rdx=0x{cpuContext[CpuRegister.Rdx]:X16} ret=0x{num7:X16}");
 		}
@@ -349,7 +350,7 @@ public sealed partial class DirectExecutionBackend
 				Console.Error.Flush();
 			}
 		}
-		if (importStubEntry.Nid == "Ou3iL1abvng")
+		if ((traceFlags & ImportStubTraceFlags.StackChkFail) != 0)
 		{
 			if (_logStackCheck)
 			{
@@ -381,7 +382,7 @@ public sealed partial class DirectExecutionBackend
 				ActiveGuestReturnSlotAddress);
 			try
 			{
-				if (string.Equals(importStubEntry.Nid, RuntimeStubNids.BootstrapBridge, StringComparison.Ordinal))
+				if (importStubEntry.Kind == ImportStubKind.BootstrapBridge)
 				{
 					if (_logBootstrap)
 					{
@@ -390,12 +391,11 @@ public sealed partial class DirectExecutionBackend
 
 					orbisGen2Result = DispatchBootstrapBridge();
 				}
-				else if (string.Equals(importStubEntry.Nid, RuntimeStubNids.KernelDynlibDlsym, StringComparison.Ordinal) ||
-					string.Equals(importStubEntry.Nid, "LwG8g3niqwA", StringComparison.Ordinal))
+				else if (importStubEntry.Kind == ImportStubKind.KernelDynlibDlsym)
 				{
 					orbisGen2Result = DispatchKernelDynlibDlsym();
 				}
-				else if (string.Equals(importStubEntry.Nid, "r8mvOaWdi28", StringComparison.Ordinal))
+				else if (importStubEntry.Kind == ImportStubKind.Il2CppApiLookupSymbol)
 				{
 					orbisGen2Result = DispatchIl2CppApiLookupSymbol();
 				}
@@ -818,6 +818,7 @@ public sealed partial class DirectExecutionBackend
 			"2Z+PpY6CaJg" or // pthread_mutex_unlock
 			"EgmLo6EWgso" or // pthread_rwlock_unlock
 			"+L98PIbGttk" or // scePthreadRwlockUnlock
+			"q1cHNfGycLI" or // scePadRead
 			"8aI7R7WaOlc" or // sceAmprCommandBufferConstructor
 			"zgXifHT9ErY" or // sceVideoOutIsFlipPending
 			"V++UgBtQhn0" or // sceAgcGetDataPacketPayloadAddress
@@ -1076,9 +1077,15 @@ public sealed partial class DirectExecutionBackend
 	}
 
 	private static bool IsImportLoopGuardBoundary(string nid) =>
-		string.Equals(nid, "1jfXLRVzisc", StringComparison.Ordinal) ||
-		string.Equals(nid, "Zxa0VhQVTsk", StringComparison.Ordinal) ||
-		string.Equals(nid, "T72hz6ffq08", StringComparison.Ordinal);
+    nid switch
+    {
+        "1jfXLRVzisc" => true, // sceKernelUsleep
+        "QcteRwbsnV0" => true, // usleep
+        "n88vx3C5nW8" => true, // gettimeofday
+        "Zxa0VhQVIsk" => true,
+        "T72hz6ffq08" => true, // scePthreadYield
+        _ => false
+    };
 
 	private void ResetImportLoopPattern()
 	{
