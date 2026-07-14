@@ -2378,6 +2378,95 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void ReusesUnchangedGlobalMemoryAcrossEvaluatorScopes()
+    {
+        const ulong dataAddress = 0x0000_7A55_0000_0000;
+        var ctx = CreateContext(
+        [
+            0xDC308004u, 0x20000000u, // global_load_dword v32, v0, s[0:1] offset:4
+            SEndpgm,
+        ]);
+        var memory = Assert.IsType<FakeGuestMemory>(ctx.Memory);
+        memory.AddRegion(dataAddress, Enumerable.Range(0, 64).Select(value => (byte)value).ToArray());
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        var state = new Gen5ShaderState(
+            program,
+            [unchecked((uint)dataAddress), (uint)(dataAddress >> 32)],
+            Metadata: null);
+        var reusesBefore = Interlocked.Read(ref Gen5ShaderScalarEvaluator.GlobalMemoryReadReuses);
+
+        Gen5ShaderScalarEvaluator.BeginGlobalMemoryReadScope();
+        try
+        {
+            Assert.True(
+                Gen5ShaderScalarEvaluator.TryEvaluate(
+                    ctx,
+                    state,
+                    out var firstEvaluation,
+                    out var firstError),
+                firstError);
+            Assert.Single(firstEvaluation.GlobalMemoryBindings);
+        }
+        finally
+        {
+            Gen5ShaderScalarEvaluator.EndGlobalMemoryReadScope();
+        }
+
+        var readsAfterFirstEvaluation = memory.ReadCount;
+        Gen5ShaderScalarEvaluator.BeginGlobalMemoryReadScope();
+        try
+        {
+            Assert.True(
+                Gen5ShaderScalarEvaluator.TryEvaluate(
+                    ctx,
+                    state,
+                    out var secondEvaluation,
+                    out var secondError),
+                secondError);
+            Assert.Single(secondEvaluation.GlobalMemoryBindings);
+        }
+        finally
+        {
+            Gen5ShaderScalarEvaluator.EndGlobalMemoryReadScope();
+        }
+
+        Assert.True(memory.CompareCount > 0);
+        Assert.Equal(readsAfterFirstEvaluation, memory.ReadCount);
+        Assert.True(
+            Interlocked.Read(ref Gen5ShaderScalarEvaluator.GlobalMemoryReadReuses) > reusesBefore);
+
+        Assert.True(memory.TryWrite(dataAddress, [0xFF]));
+        var readsBeforeChangedEvaluation = memory.ReadCount;
+        var comparesBeforeChangedEvaluation = memory.CompareCount;
+        Gen5ShaderScalarEvaluator.BeginGlobalMemoryReadScope();
+        try
+        {
+            Assert.True(
+                Gen5ShaderScalarEvaluator.TryEvaluate(
+                    ctx,
+                    state,
+                    out var changedEvaluation,
+                    out var changedError),
+                changedError);
+            var changedBinding = Assert.Single(changedEvaluation.GlobalMemoryBindings);
+            Assert.Equal(0xFF, changedBinding.Data[0]);
+        }
+        finally
+        {
+            Gen5ShaderScalarEvaluator.EndGlobalMemoryReadScope();
+        }
+
+        Assert.True(memory.CompareCount > comparesBeforeChangedEvaluation);
+        Assert.True(memory.ReadCount > readsBeforeChangedEvaluation);
+    }
+
+    [Fact]
     public void CompilesGlobalD16MemoryOperationsToSpirv()
     {
         var ctx = CreateContext(
