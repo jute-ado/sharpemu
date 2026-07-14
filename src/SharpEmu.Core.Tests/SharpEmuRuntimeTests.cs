@@ -181,6 +181,28 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(JsonValueKind.Null, root.GetProperty("sessionSummary").ValueKind);
     }
 
+    [WindowsX64Fact]
+    public async Task CliWritesJsonReportWhenStallWatchdogTerminatesGuest()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0xEB, 0xFE], // jmp $
+            requestReport: true,
+            stallWatchdogSeconds: 1);
+
+        Assert.Equal(6, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var document = JsonDocument.Parse(execution.ReportJson);
+        var root = document.RootElement;
+        Assert.Equal("EXECUTION_STALLED", root.GetProperty("result").GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("result").GetProperty("code").ValueKind);
+        Assert.False(root.GetProperty("result").GetProperty("succeeded").GetBoolean());
+        Assert.Contains(
+            "stalled",
+            root.GetProperty("hostError").GetString(),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Execution stalled", execution.StandardError, StringComparison.Ordinal);
+    }
+
     private static async Task AssertSyntheticGuestTrapAsync(
         byte[] code,
         string exceptionCode,
@@ -237,7 +259,8 @@ public sealed class SharpEmuRuntimeTests
     private static async Task<SyntheticProcessExecution> RunSyntheticExecutableInCliAsync(
         byte[] code,
         bool requestReport = false,
-        bool writeExecutable = true)
+        bool writeExecutable = true,
+        int stallWatchdogSeconds = 0)
     {
         var testDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -272,7 +295,7 @@ public sealed class SharpEmuRuntimeTests
             startInfo.ArgumentList.Add(executablePath);
             startInfo.Environment.Remove("SHARPEMU_MITIGATED_CHILD");
             startInfo.Environment.Remove("SHARPEMU_DISABLE_MITIGATION_RELAUNCH");
-            startInfo.Environment["SHARPEMU_STALL_WATCHDOG_SECONDS"] = "0";
+            startInfo.Environment["SHARPEMU_STALL_WATCHDOG_SECONDS"] = stallWatchdogSeconds.ToString();
 
             using var process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Failed to start the SharpEmu CLI test process.");
