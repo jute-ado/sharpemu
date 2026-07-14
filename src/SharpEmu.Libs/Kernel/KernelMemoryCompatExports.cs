@@ -200,6 +200,40 @@ public static partial class KernelMemoryCompatExports
         }
     }
 
+    public static bool TryUnregisterGuestPathMount(string guestMountPoint)
+    {
+        if (string.IsNullOrWhiteSpace(guestMountPoint))
+        {
+            return false;
+        }
+
+        var normalizedMountPoint = NormalizeGuestStatCachePath(guestMountPoint);
+        if (normalizedMountPoint is null || normalizedMountPoint == "/")
+        {
+            return false;
+        }
+
+        var removed = false;
+        lock (_guestMountGate)
+        {
+            removed = _guestMounts.Remove(normalizedMountPoint);
+        }
+
+        if (!removed)
+        {
+            return false;
+        }
+
+        lock (_statCacheGate)
+        {
+            _negativeStatCache.RemoveWhere(path =>
+                string.Equals(path, normalizedMountPoint, StringComparison.OrdinalIgnoreCase) ||
+                path.StartsWith(normalizedMountPoint + "/", StringComparison.OrdinalIgnoreCase));
+        }
+
+        return true;
+    }
+
     internal static bool TryAllocateHleData(
         CpuContext ctx,
         ulong length,
@@ -7350,16 +7384,5 @@ public static partial class KernelMemoryCompatExports
     {
         sum = left + right;
         return sum >= left;
-    }
-
-    [SysAbiExport(
-        Nid = "KMcEa+rHsIo",
-        ExportName = "sceKernelMapMemory",
-        Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libKernel")]
-    public static int KernelMapMemory(CpuContext ctx)
-    {
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 }
