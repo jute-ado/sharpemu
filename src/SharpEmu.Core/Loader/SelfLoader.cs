@@ -1913,16 +1913,12 @@ public sealed class SelfLoader : ISelfLoader
 
     private static ulong CalculateTotalImageSize(IReadOnlyList<ProgramHeader> programHeaders)
     {
-        ulong minAddr = ulong.MaxValue;
         ulong maxAddr = 0;
 
         foreach (var header in programHeaders)
         {
             if (header.HeaderType == ProgramHeaderType.Load && header.MemorySize > 0)
             {
-                if (header.VirtualAddress < minAddr)
-                    minAddr = header.VirtualAddress;
-
                 if (header.VirtualAddress > ulong.MaxValue - header.MemorySize)
                 {
                     throw new InvalidDataException("ELF segment virtual address range overflows.");
@@ -1934,10 +1930,11 @@ public sealed class SelfLoader : ISelfLoader
             }
         }
 
-        if (minAddr == ulong.MaxValue)
-            return 0;
-
-        return maxAddr - minAddr;
+        // imageBase is a load bias: every segment is mapped at
+        // imageBase + p_vaddr. The reservation therefore has to extend from
+        // that bias through the greatest segment end even when the first
+        // PT_LOAD starts above virtual address zero.
+        return maxAddr;
     }
 
     private static ulong ComputeImageBase(IReadOnlyList<ProgramHeader> programHeaders)
