@@ -231,6 +231,58 @@ public sealed class KernelEventFlagLifecycleTests
         }
     }
 
+    [Fact]
+    public void TimedWaitTimeoutCopyoutFailurePreservesClearPatternBits()
+    {
+        var fixture = CreateTimedFixture("timed-copyout", 100_000);
+        try
+        {
+            var previousGuestThread = GuestThreadExecution.EnterGuestThread(0xFEDC);
+            try
+            {
+                BeginTimedWait(fixture, waitMode: 0x22);
+                Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
+                    out _,
+                    out _,
+                    out _,
+                    out _,
+                    out var resumeHandler,
+                    out var wakeHandler,
+                    out _));
+                Assert.NotNull(resumeHandler);
+                Assert.NotNull(wakeHandler);
+
+                Assert.True(fixture.Memory.RemoveRegion(TimeoutAddress));
+                fixture.Context[CpuRegister.Rdi] = fixture.Handle;
+                fixture.Context[CpuRegister.Rsi] = 1;
+                Assert.Equal(
+                    (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                    KernelEventFlagCompatExports.KernelSetEventFlag(fixture.Context));
+                Assert.True(wakeHandler!());
+                Assert.Equal(
+                    (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                    resumeHandler!());
+            }
+            finally
+            {
+                GuestThreadExecution.RestoreGuestThread(previousGuestThread);
+            }
+
+            fixture.Context[CpuRegister.Rdi] = fixture.Handle;
+            fixture.Context[CpuRegister.Rsi] = 1;
+            fixture.Context[CpuRegister.Rdx] = 2;
+            fixture.Context[CpuRegister.Rcx] = ResultAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelEventFlagCompatExports.KernelPollEventFlag(fixture.Context));
+            Assert.Equal(1UL, BinaryPrimitives.ReadUInt64LittleEndian(fixture.Result));
+        }
+        finally
+        {
+            DeleteFixture(fixture);
+        }
+    }
+
     private static TimedFixture CreateTimedFixture(string name, uint timeoutMicros)
     {
         var memory = new FakeGuestMemory();
@@ -253,16 +305,17 @@ public sealed class KernelEventFlagLifecycleTests
             KernelEventFlagCompatExports.KernelCreateEventFlag(context));
         return new TimedFixture(
             context,
+            memory,
             BinaryPrimitives.ReadUInt64LittleEndian(handleBytes),
             resultBytes,
             timeoutBytes);
     }
 
-    private static void BeginTimedWait(TimedFixture fixture)
+    private static void BeginTimedWait(TimedFixture fixture, uint waitMode = 2)
     {
         fixture.Context[CpuRegister.Rdi] = fixture.Handle;
         fixture.Context[CpuRegister.Rsi] = 1;
-        fixture.Context[CpuRegister.Rdx] = 2;
+        fixture.Context[CpuRegister.Rdx] = waitMode;
         fixture.Context[CpuRegister.Rcx] = ResultAddress;
         fixture.Context[CpuRegister.R8] = TimeoutAddress;
         Assert.Equal(
@@ -278,6 +331,7 @@ public sealed class KernelEventFlagLifecycleTests
 
     private sealed record TimedFixture(
         CpuContext Context,
+        FakeGuestMemory Memory,
         ulong Handle,
         byte[] Result,
         byte[] Timeout);
