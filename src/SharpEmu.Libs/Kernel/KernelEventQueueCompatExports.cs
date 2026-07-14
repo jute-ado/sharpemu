@@ -326,8 +326,14 @@ public static class KernelEventQueueCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        var deliveredCount = DequeueEvents(ctx, handle, eventsAddress, eventCapacity);
-        if (outCountAddress != 0 && !ctx.TryWriteUInt32(outCountAddress, (uint)deliveredCount))
+        var deliveredCount = DequeueEvents(
+            ctx,
+            handle,
+            eventsAddress,
+            eventCapacity,
+            outCountAddress,
+            out var eventCopyFaulted);
+        if (eventCopyFaulted)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -350,11 +356,10 @@ public static class KernelEventQueueCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        if (timeoutAddress != 0 && ctx.TryReadUInt64(timeoutAddress, out var timeoutRaw))
+        if (timeoutAddress != 0)
         {
-            var timeoutMicros = timeoutRaw & 0xFFFF_FFFFUL;
             var deadline = Environment.TickCount64 +
-                Math.Max(1L, (long)Math.Min(timeoutMicros / 1000, int.MaxValue));
+                Math.Max(1L, Math.Min((long)timeoutUsec / 1000, int.MaxValue));
             lock (_eventQueueGate)
             {
                 while (!HasPendingEvents(handle))
@@ -369,8 +374,14 @@ public static class KernelEventQueueCompatExports
                 }
             }
 
-            deliveredCount = DequeueEvents(ctx, handle, eventsAddress, eventCapacity);
-            if (outCountAddress != 0 && !ctx.TryWriteUInt32(outCountAddress, (uint)deliveredCount))
+            deliveredCount = DequeueEvents(
+                ctx,
+                handle,
+                eventsAddress,
+                eventCapacity,
+                outCountAddress,
+                out eventCopyFaulted);
+            if (eventCopyFaulted)
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
             }
@@ -415,7 +426,6 @@ public static class KernelEventQueueCompatExports
 
             queue.AddLast(queuedEvent);
             queued = true;
-            Monitor.PulseAll(_eventQueueGate);
         }
 
         if (queued)
@@ -457,8 +467,27 @@ public static class KernelEventQueueCompatExports
     {
         lock (_eventQueueGate)
         {
-            return _registeredEvents.TryGetValue(handle, out var events) &&
-                   events.Remove((ident, filter));
+            if (!_registeredEvents.TryGetValue(handle, out var events) ||
+                !events.Remove((ident, filter)))
+            {
+                return false;
+            }
+
+            if (_pendingEvents.TryGetValue(handle, out var queue))
+            {
+                for (var node = queue.First; node is not null;)
+                {
+                    var next = node.Next;
+                    if (node.Value.Ident == ident && node.Value.Filter == filter)
+                    {
+                        queue.Remove(node);
+                    }
+
+                    node = next;
+                }
+            }
+
+            return true;
         }
     }
 
@@ -611,8 +640,14 @@ public static class KernelEventQueueCompatExports
         int eventCapacity,
         ulong outCountAddress)
     {
-        var deliveredCount = DequeueEvents(ctx, handle, eventsAddress, eventCapacity);
-        if (outCountAddress != 0 && !ctx.TryWriteUInt32(outCountAddress, (uint)deliveredCount))
+        var deliveredCount = DequeueEvents(
+            ctx,
+            handle,
+            eventsAddress,
+            eventCapacity,
+            outCountAddress,
+            out var eventCopyFaulted);
+        if (eventCopyFaulted)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -668,42 +703,69 @@ public static class KernelEventQueueCompatExports
 
     private static void WakeEventQueue(ulong handle)
     {
+        lock (_eventQueueGate)
+        {
+            Monitor.PulseAll(_eventQueueGate);
+        }
+
         _ = GuestThreadExecution.Scheduler?.WakeBlockedThreads(GetEventQueueWakeKey(handle));
     }
 
-    private static int DequeueEvents(CpuContext ctx, ulong handle, ulong eventsAddress, int eventCapacity)
+    private static int DequeueEvents(
+        CpuContext ctx,
+        ulong handle,
+        ulong eventsAddress,
+        int eventCapacity,
+        ulong outCountAddress,
+        out bool memoryFaulted)
     {
+        memoryFaulted = false;
         if (eventsAddress == 0 || eventCapacity <= 0)
         {
             return 0;
         }
 
-        KernelQueuedEvent[] events;
         lock (_eventQueueGate)
         {
             if (!_pendingEvents.TryGetValue(handle, out var queue) || queue.Count == 0)
             {
+                if (outCountAddress != 0 && !ctx.TryWriteUInt32(outCountAddress, 0))
+                {
+                    memoryFaulted = true;
+                }
+
                 return 0;
             }
 
             var count = Math.Min(eventCapacity, queue.Count);
-            events = new KernelQueuedEvent[count];
-            for (var i = 0; i < count; i++)
+            var node = queue.First;
+            for (var index = 0; index < count; index++)
             {
-                events[i] = queue.First!.Value;
+                if (!WriteKernelEvent(
+                        ctx,
+                        eventsAddress + ((ulong)index * KernelEventSize),
+                        node!.Value))
+                {
+                    memoryFaulted = true;
+                    return 0;
+                }
+
+                node = node.Next;
+            }
+
+            if (outCountAddress != 0 && !ctx.TryWriteUInt32(outCountAddress, (uint)count))
+            {
+                memoryFaulted = true;
+                return 0;
+            }
+
+            for (var index = 0; index < count; index++)
+            {
                 queue.RemoveFirst();
             }
-        }
 
-        for (var i = 0; i < events.Length; i++)
-        {
-            if (!WriteKernelEvent(ctx, eventsAddress + ((ulong)i * KernelEventSize), events[i]))
-            {
-                return i;
-            }
+            return count;
         }
-
-        return events.Length;
     }
 
     private static bool WriteKernelEvent(CpuContext ctx, ulong address, KernelQueuedEvent queuedEvent)
