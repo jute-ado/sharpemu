@@ -14,6 +14,9 @@ public sealed class SelfLoaderTests
 {
     private const int ElfHeaderSize = 64;
     private const int ProgramHeaderSize = 56;
+    private const int SelfHeaderSize = 32;
+    private const int SelfSegmentSize = 32;
+    private const int SyntheticSelfPayloadOffset = 0x200;
 
     [Fact]
     public void LoadsMinimalElf64Image()
@@ -257,6 +260,70 @@ public sealed class SelfLoaderTests
         Assert.Equal(new byte[] { 1, 2, 3, 4, 0, 0, 0, 0 }, mapped.ToArray());
     }
 
+    [Fact]
+    public void LoadsSyntheticSelfSegmentFromContainerMapping()
+    {
+        byte[] payload = [0x31, 0xC0, 0xC3];
+        var self = CreateSelfWithLoadSegment(payload);
+        var memory = new VirtualMemory();
+
+        var image = new SelfLoader().Load(self, memory);
+
+        Assert.True(image.IsSelf);
+        var region = Assert.Single(image.MappedRegions);
+        Assert.Equal(0x0000_0008_0000_2000UL, region.VirtualAddress);
+        Assert.Equal((ulong)payload.Length, region.MemorySize);
+        Span<byte> mapped = stackalloc byte[payload.Length];
+        Assert.True(memory.TryRead(region.VirtualAddress, mapped));
+        Assert.Equal(payload, mapped.ToArray());
+    }
+
+    [Theory]
+    [InlineData(0x2UL)]
+    [InlineData(0x8UL)]
+    public void LoadsAvailableDumpedPayloadForProtectedSelfSegment(ulong segmentAttributes)
+    {
+        byte[] payload = [0xAA, 0xBB, 0xCC, 0xDD];
+        var self = CreateSelfWithLoadSegment(payload, segmentAttributes);
+        var memory = new VirtualMemory();
+
+        var image = new SelfLoader().Load(self, memory);
+
+        Assert.True(image.IsSelf);
+        var region = Assert.Single(image.MappedRegions);
+        Span<byte> mapped = stackalloc byte[payload.Length];
+        Assert.True(memory.TryRead(region.VirtualAddress, mapped));
+        Assert.Equal(payload, mapped.ToArray());
+    }
+
+    [Theory]
+    [InlineData(0x2UL, "encrypted")]
+    [InlineData(0x8UL, "compressed")]
+    public void RejectedProtectedSelfWithoutDumpedPayloadDoesNotClearGuestMemory(
+        ulong segmentAttributes,
+        string protectionName)
+    {
+        var memory = new VirtualMemory();
+        memory.Map(
+            virtualAddress: 0x1000,
+            memorySize: 4,
+            fileOffset: 0,
+            fileData: new byte[] { 1, 2, 3, 4 },
+            protection: ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        var self = CreateSelfWithLoadSegment([0xAA], segmentAttributes);
+        Array.Resize(ref self, SelfHeaderSize + SelfSegmentSize + ElfHeaderSize + ProgramHeaderSize);
+
+        var exception = Assert.Throws<NotSupportedException>(() =>
+            new SelfLoader().Load(self, memory));
+
+        Assert.Contains(protectionName, exception.Message, StringComparison.OrdinalIgnoreCase);
+        var region = Assert.Single(memory.SnapshotRegions());
+        Assert.Equal(0x1000UL, region.VirtualAddress);
+        Span<byte> contents = stackalloc byte[4];
+        Assert.True(memory.TryRead(0x1000, contents));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, contents.ToArray());
+    }
+
     [WindowsX64Fact]
     public void LoadsAndExecutesMinimalElfImage()
     {
@@ -419,6 +486,44 @@ public sealed class SelfLoaderTests
         BinaryPrimitives.WriteUInt64LittleEndian(header[40..], memorySize);
         BinaryPrimitives.WriteUInt64LittleEndian(header[48..], 1);
         payload.CopyTo(image.AsSpan(checked((int)fileOffset)));
+        return image;
+    }
+
+    private static byte[] CreateSelfWithLoadSegment(
+        byte[] payload,
+        ulong segmentAttributes = 0)
+    {
+        var elf = CreateElfWithLoadSegment(
+            fileOffset: SyntheticSelfPayloadOffset,
+            virtualAddress: 0x2000,
+            fileSize: (ulong)payload.Length,
+            memorySize: (ulong)payload.Length,
+            payload: payload);
+        var elfOffset = SelfHeaderSize + SelfSegmentSize;
+        var image = new byte[SyntheticSelfPayloadOffset + payload.Length];
+
+        byte[] selfIdentity =
+        [
+            0x4F, 0x15, 0x3D, 0x1D,
+            0x00, 0x01, 0x01, 0x12,
+            0x01, 0x01, 0x00, 0x00,
+        ];
+        selfIdentity.CopyTo(image, 0);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            image.AsSpan(16),
+            SyntheticSelfPayloadOffset);
+        BinaryPrimitives.WriteUInt16LittleEndian(image.AsSpan(24), 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(image.AsSpan(26), 0x22);
+
+        var segment = image.AsSpan(SelfHeaderSize, SelfSegmentSize);
+        var segmentType = 0x800UL | segmentAttributes;
+        BinaryPrimitives.WriteUInt64LittleEndian(segment, segmentType);
+        BinaryPrimitives.WriteUInt64LittleEndian(segment[8..], SyntheticSelfPayloadOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(segment[16..], (ulong)payload.Length);
+        BinaryPrimitives.WriteUInt64LittleEndian(segment[24..], (ulong)payload.Length);
+
+        elf.AsSpan(0, ElfHeaderSize + ProgramHeaderSize).CopyTo(image.AsSpan(elfOffset));
+        payload.CopyTo(image.AsSpan(SyntheticSelfPayloadOffset));
         return image;
     }
 
