@@ -397,6 +397,7 @@ public static class AgcExports
         public ulong ResourceRegistrationMemory { get; set; }
         public ulong ResourceRegistrationMemorySize { get; set; }
         public uint ResourceRegistrationMaxOwners { get; set; }
+        public uint ResourceRegistrationMaxResources { get; set; }
         public uint DefaultOwner { get; set; } = DefaultAgcOwner;
         public uint NextOwner { get; set; } = 1;
         public uint NextResource { get; set; } = 1;
@@ -2204,6 +2205,25 @@ public static class AgcExports
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
+        ulong ownerTableSize;
+        try
+        {
+            ownerTableSize = checked(ownerCount * ResourceRegistrationBytesPerOwner);
+        }
+        catch (OverflowException)
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        if (memorySize < ownerTableSize)
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        var resourceCapacity = Math.Min(
+            (memorySize - ownerTableSize) / ResourceRegistrationBytesPerResource,
+            uint.MaxValue);
+
         var state = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
         lock (state.Gate)
         {
@@ -2211,6 +2231,7 @@ public static class AgcExports
             state.ResourceRegistrationMemory = memoryAddress;
             state.ResourceRegistrationMemorySize = memorySize;
             state.ResourceRegistrationMaxOwners = (uint)ownerCount;
+            state.ResourceRegistrationMaxResources = (uint)resourceCapacity;
             state.ResourceOwners.Clear();
             state.RegisteredResources.Clear();
             state.DefaultOwner = DefaultAgcOwner;
@@ -2220,7 +2241,7 @@ public static class AgcExports
 
         TraceAgc(
             $"agc.driver_init_resource_registration memory=0x{memoryAddress:X16} " +
-            $"bytes=0x{memorySize:X} owners={ownerCount}");
+            $"bytes=0x{memorySize:X} owners={ownerCount} resources={resourceCapacity}");
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
@@ -2363,7 +2384,8 @@ public static class AgcExports
         {
             if (!state.ResourceRegistrationInitialized ||
                 owner != state.DefaultOwner &&
-                !state.ResourceOwners.ContainsKey(owner))
+                !state.ResourceOwners.ContainsKey(owner) ||
+                state.RegisteredResources.Count >= state.ResourceRegistrationMaxResources)
             {
                 return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
             }
