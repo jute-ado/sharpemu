@@ -19,7 +19,8 @@ internal static class SyntheticCliGuest
         string? paramJson = null,
         bool loadOnly = false,
         byte[]? adjacentModuleCode = null,
-        bool writeInvalidAdjacentModule = false)
+        bool writeInvalidAdjacentModule = false,
+        bool writeSkippedCoreModule = false)
     {
         var testDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -44,7 +45,7 @@ internal static class SyntheticCliGuest
                 Directory.CreateDirectory(systemDirectory);
                 File.WriteAllText(Path.Combine(systemDirectory, "param.json"), paramJson);
             }
-            if (adjacentModuleCode is not null || writeInvalidAdjacentModule)
+            if (adjacentModuleCode is not null || writeInvalidAdjacentModule || writeSkippedCoreModule)
             {
                 var moduleDirectory = Path.Combine(testDirectory, "sce_module");
                 Directory.CreateDirectory(moduleDirectory);
@@ -58,6 +59,13 @@ internal static class SyntheticCliGuest
                 if (writeInvalidAdjacentModule)
                 {
                     File.WriteAllBytes(Path.Combine(moduleDirectory, "broken.sprx"), [0x01, 0x02, 0x03]);
+                }
+
+                if (writeSkippedCoreModule)
+                {
+                    File.WriteAllBytes(
+                        Path.Combine(moduleDirectory, "libkernel.prx"),
+                        SyntheticElfImage.CreateExecutable([0xF4]));
                 }
             }
 
