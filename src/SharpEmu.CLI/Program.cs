@@ -12,6 +12,7 @@ using SharpEmu.Logging;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -911,6 +912,7 @@ internal static partial class Program
                 GeneratedAtUtc: DateTimeOffset.UtcNow,
                 ExecutablePath: executablePath,
                 ExecutableSizeBytes: TryGetFileSize(executablePath),
+                ExecutableSha256: TryComputeFileSha256(executablePath),
                 DurationMilliseconds: GetElapsedMilliseconds(invocationStartedTimestamp),
                 Build: BuildExecutionReportBuild(),
                 Host: BuildExecutionReportHost(),
@@ -965,6 +967,25 @@ internal static partial class Program
         try
         {
             return File.Exists(path) ? new FileInfo(path).Length : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static string? TryComputeFileSha256(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read,
+                bufferSize: 1024 * 1024,
+                FileOptions.SequentialScan);
+            return Convert.ToHexStringLower(SHA256.HashData(stream));
         }
         catch (Exception)
         {
@@ -1399,6 +1420,7 @@ internal static partial class Program
         DateTimeOffset GeneratedAtUtc,
         string ExecutablePath,
         long? ExecutableSizeBytes,
+        string? ExecutableSha256,
         long DurationMilliseconds,
         CliBuildReport Build,
         CliHostReport Host,
