@@ -180,6 +180,58 @@ public sealed class PhysicalVirtualMemoryTests
     }
 
     [WindowsX64Fact]
+    public void UnalignedRequestedAllocationPreservesGuestAddressAndTail()
+    {
+        var probe = VirtualAlloc(
+            0,
+            0x1_0000,
+            MemReserve,
+            PageNoAccess);
+        Assert.NotEqual(0, probe);
+        Assert.True(VirtualFree(probe, 0, MemRelease));
+
+        using var memory = new PhysicalVirtualMemory();
+        var desiredAddress = unchecked((ulong)probe) + 0x1000;
+        var actualAddress = memory.AllocateAt(
+            desiredAddress,
+            0x2000,
+            executable: false,
+            allowAlternative: false);
+
+        Assert.Equal(desiredAddress, actualAddress);
+        Assert.True(memory.IsAccessible(desiredAddress, 0x2000));
+        Assert.True(memory.TryWrite(desiredAddress + 0x1FFF, [0xA5]));
+        Span<byte> tail = stackalloc byte[1];
+        Assert.True(memory.TryRead(desiredAddress + 0x1FFF, tail));
+        Assert.Equal(0xA5, tail[0]);
+    }
+
+    [WindowsX64Fact]
+    public void AllocationSearchReturnsUnalignedGuestCandidateInsteadOfRoundedHostBase()
+    {
+        var probe = VirtualAlloc(
+            0,
+            0x1_0000,
+            MemReserve,
+            PageNoAccess);
+        Assert.NotEqual(0, probe);
+        Assert.True(VirtualFree(probe, 0, MemRelease));
+
+        using var memory = new PhysicalVirtualMemory();
+        var desiredAddress = unchecked((ulong)probe) + 0x1000;
+
+        Assert.True(memory.TryAllocateAtOrAbove(
+            desiredAddress,
+            size: 0x2000,
+            executable: false,
+            alignment: 0x1000,
+            out var actualAddress));
+        Assert.Equal(desiredAddress, actualAddress);
+        Assert.Single(memory.SnapshotRegions());
+        Assert.True(memory.IsAccessible(actualAddress, 0x2000));
+    }
+
+    [WindowsX64Fact]
     public void DisposedMemoryRejectsFurtherOperations()
     {
         var memory = new PhysicalVirtualMemory();
