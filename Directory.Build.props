@@ -12,9 +12,11 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
 
     <RepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)'))</RepoRoot>
+    <SharpEmuHostPlatform Condition="'$(OS)' == 'Windows_NT'">windows</SharpEmuHostPlatform>
+    <SharpEmuHostPlatform Condition="'$(OS)' != 'Windows_NT'">unix</SharpEmuHostPlatform>
 
-    <BaseIntermediateOutputPath>$(RepoRoot)artifacts/obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
-    <BaseOutputPath>$(RepoRoot)artifacts/bin/$(MSBuildProjectName)/</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(RepoRoot)artifacts/obj/$(SharpEmuHostPlatform)/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(RepoRoot)artifacts/bin/$(SharpEmuHostPlatform)/$(MSBuildProjectName)/</BaseOutputPath>
 
     <AppendConfigurationToOutputPath>true</AppendConfigurationToOutputPath>
     <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
