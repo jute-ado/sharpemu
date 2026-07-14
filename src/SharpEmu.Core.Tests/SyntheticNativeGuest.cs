@@ -68,15 +68,7 @@ internal static class SyntheticNativeGuest
 
         if (importStubs is not null)
         {
-            foreach (var address in importStubs.Keys)
-            {
-                if (address < codeAddress || address > codeAddress + CodeRegionSize - 2 ||
-                    !memory.TryWrite(address, [0xCC, 0xC3]))
-                {
-                    throw new InvalidOperationException(
-                        $"Could not map synthetic import stub at 0x{address:X16}.");
-                }
-            }
+            MapImportStubs(memory, importStubs.Keys, codeAddress);
         }
 
         var moduleManager = new ModuleManager();
@@ -101,5 +93,55 @@ internal static class SyntheticNativeGuest
         }
 
         return executions;
+    }
+
+    private static void MapImportStubs(
+        PhysicalVirtualMemory memory,
+        IEnumerable<ulong> addresses,
+        ulong codeAddress)
+    {
+        const ulong pageSize = 0x1000;
+        var codeEnd = checked(codeAddress + CodeRegionSize);
+        var mappedPages = new HashSet<ulong>();
+        foreach (var address in addresses.Order())
+        {
+            if (address > ulong.MaxValue - 2)
+            {
+                throw new InvalidOperationException(
+                    $"Synthetic import stub at 0x{address:X16} overflows guest memory.");
+            }
+
+            var stubEnd = address + 2;
+            var isInsideCodeRegion = address >= codeAddress && stubEnd <= codeEnd;
+            if (!isInsideCodeRegion)
+            {
+                var pageAddress = address & ~(pageSize - 1);
+                if (stubEnd > pageAddress + pageSize)
+                {
+                    throw new InvalidOperationException(
+                        $"Synthetic import stub at 0x{address:X16} crosses a page boundary.");
+                }
+
+                if (mappedPages.Add(pageAddress))
+                {
+                    var mappedAddress = memory.AllocateAt(
+                        pageAddress,
+                        pageSize,
+                        executable: true,
+                        allowAlternative: false);
+                    if (mappedAddress != pageAddress)
+                    {
+                        throw new InvalidOperationException(
+                            $"Could not map synthetic import page at 0x{pageAddress:X16}.");
+                    }
+                }
+            }
+
+            if (!memory.TryWrite(address, [0xCC, 0xC3]))
+            {
+                throw new InvalidOperationException(
+                    $"Could not write synthetic import stub at 0x{address:X16}.");
+            }
+        }
     }
 }
