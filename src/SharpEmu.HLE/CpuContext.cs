@@ -289,14 +289,30 @@ public sealed class CpuContext(ICpuMemory memory, Generation generation)
     public bool PushUInt64(ulong value)
     {
         var rsp = this[CpuRegister.Rsp];
-        rsp -= sizeof(ulong);
-        this[CpuRegister.Rsp] = rsp;
-        return TryWriteUInt64(rsp, value);
+        if (rsp < sizeof(ulong))
+        {
+            return false;
+        }
+
+        var nextRsp = rsp - sizeof(ulong);
+        if (!TryWriteUInt64(nextRsp, value))
+        {
+            return false;
+        }
+
+        this[CpuRegister.Rsp] = nextRsp;
+        return true;
     }
 
     public bool PopUInt64(out ulong value)
     {
         var rsp = this[CpuRegister.Rsp];
+        if (rsp > ulong.MaxValue - sizeof(ulong))
+        {
+            value = 0;
+            return false;
+        }
+
         if (!TryReadUInt64(rsp, out value))
         {
             return false;
