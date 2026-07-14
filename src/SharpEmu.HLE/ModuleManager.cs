@@ -28,17 +28,18 @@ public sealed class ModuleManager : IModuleManager
             }
 
             // Deduplicated: one assembly is reached through many types.
-            if (!_scannedAssemblies.Add((assembly, generation)))
+            if (_scannedAssemblies.Contains((assembly, generation)))
             {
                 return 0;
             }
 
-            var registeredCount = 0;
             var instances = new Dictionary<Type, object>();
+            var candidates = new List<RegistrationCandidate>();
 
-            foreach (var type in assembly.GetTypes())
+            foreach (var type in assembly.GetTypes().OrderBy(type => type.FullName, StringComparer.Ordinal))
             {
-                foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static))
+                foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
+                    .OrderBy(method => method.MetadataToken))
                 {
                     var exportAttribute = method.GetCustomAttribute<SysAbiExportAttribute>(inherit: false);
                     if (exportAttribute is null)
@@ -53,25 +54,50 @@ public sealed class ModuleManager : IModuleManager
                     }
 
                     var handler = CreateHandler(type, method, instances);
-                    if (!_dispatchTable.TryAdd(exportInfo.Value.Nid, handler))
-                    {
-                        Console.Error.WriteLine($"[HLE] Duplicate NID '{exportInfo.Value.Nid}' ({exportInfo.Value.ExportName}) — already registered, skipping.");
-                        continue;
-                    }
-
-                    _exportTable[exportInfo.Value.Nid] = new ExportedFunction(
+                    var export = new ExportedFunction(
                         exportInfo.Value.LibraryName,
                         exportInfo.Value.Nid,
                         exportInfo.Value.ExportName,
                         exportInfo.Value.Target,
                         (SysAbiFunction)handler);
-                    _exportNameTable.TryAdd(exportInfo.Value.ExportName, _exportTable[exportInfo.Value.Nid]);
-
-                    registeredCount++;
+                    candidates.Add(new RegistrationCandidate(
+                        exportInfo.Value,
+                        handler,
+                        export,
+                        $"{method.DeclaringType?.FullName}.{method.Name}"));
                 }
             }
 
-            return registeredCount;
+            var candidatesByNid = new Dictionary<string, RegistrationCandidate>(StringComparer.Ordinal);
+            foreach (var candidate in candidates)
+            {
+                if (_exportTable.TryGetValue(candidate.Info.Nid, out var existing))
+                {
+                    throw new InvalidOperationException(
+                        $"NID '{candidate.Info.Nid}' ({candidate.Info.ExportName}) from {candidate.Source} " +
+                        $"conflicts with the already registered export {existing.LibraryName}.{existing.Name}.");
+                }
+
+                if (!candidatesByNid.TryAdd(candidate.Info.Nid, candidate))
+                {
+                    var first = candidatesByNid[candidate.Info.Nid];
+                    throw new InvalidOperationException(
+                        $"NID '{candidate.Info.Nid}' is declared by both {first.Source} " +
+                        $"({first.Info.ExportName}) and {candidate.Source} ({candidate.Info.ExportName}).");
+                }
+            }
+
+            // Commit only after the complete assembly has passed validation. This keeps a
+            // failed scan from leaving a partially populated or permanently skipped manager.
+            foreach (var candidate in candidates)
+            {
+                _dispatchTable[candidate.Info.Nid] = candidate.Handler;
+                _exportTable[candidate.Info.Nid] = candidate.Export;
+                _exportNameTable.TryAdd(candidate.Info.ExportName, candidate.Export);
+            }
+
+            _scannedAssemblies.Add((assembly, generation));
+            return candidates.Count;
         }
     }
 
@@ -431,4 +457,10 @@ public sealed class ModuleManager : IModuleManager
     }
 
     private readonly record struct ExportInfo(string Nid, string ExportName, string LibraryName, Generation Target);
+
+    private readonly record struct RegistrationCandidate(
+        ExportInfo Info,
+        Delegate Handler,
+        ExportedFunction Export,
+        string Source);
 }
