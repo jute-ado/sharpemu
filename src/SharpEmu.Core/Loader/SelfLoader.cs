@@ -2015,25 +2015,68 @@ public sealed class SelfLoader : ISelfLoader
             return false;
         }
 
-        tableBytes = GC.AllocateUninitializedArray<byte>((int)size);
-        if (location <= ulong.MaxValue - imageBase)
+        var hasRebasedAddress = location <= ulong.MaxValue - imageBase;
+        var rebasedAddress = hasRebasedAddress ? location + imageBase : 0;
+        var hasMappedRebasedRange = hasRebasedAddress &&
+            ContainsMappedRange(virtualMemory, rebasedAddress, size);
+        var hasMappedAbsoluteRange =
+            (!hasRebasedAddress || rebasedAddress != location) &&
+            ContainsMappedRange(virtualMemory, location, size);
+        if (!hasMappedRebasedRange && !hasMappedAbsoluteRange)
         {
-            var guestAddress = location + imageBase;
-            Log.Debug($"TryLoadTableBytes: trying guest address 0x{guestAddress:X}");
-            if (virtualMemory.TryRead(guestAddress, tableBytes))
+            tableBytes = Array.Empty<byte>();
+            return false;
+        }
+
+        tableBytes = GC.AllocateUninitializedArray<byte>((int)size);
+        if (hasMappedRebasedRange)
+        {
+            Log.Debug($"TryLoadTableBytes: trying guest address 0x{rebasedAddress:X}");
+            if (virtualMemory.TryRead(rebasedAddress, tableBytes))
             {
-                Log.Debug($"TryLoadTableBytes: loaded from guest memory at 0x{guestAddress:X}");
+                Log.Debug($"TryLoadTableBytes: loaded from guest memory at 0x{rebasedAddress:X}");
                 return true;
             }
         }
 
-        if (virtualMemory.TryRead(location, tableBytes))
+        if (hasMappedAbsoluteRange && virtualMemory.TryRead(location, tableBytes))
         {
             Log.Debug($"TryLoadTableBytes: loaded from absolute guest address 0x{location:X}");
             return true;
         }
 
         tableBytes = Array.Empty<byte>();
+        return false;
+    }
+
+    private static bool ContainsMappedRange(
+        IVirtualMemory virtualMemory,
+        ulong address,
+        ulong size)
+    {
+        if (size == 0 || address > ulong.MaxValue - size)
+        {
+            return false;
+        }
+
+        var endAddress = address + size;
+        var regions = virtualMemory.SnapshotRegions();
+        for (var index = 0; index < regions.Count; index++)
+        {
+            var region = regions[index];
+            if (region.MemorySize == 0 ||
+                region.VirtualAddress > ulong.MaxValue - region.MemorySize)
+            {
+                continue;
+            }
+
+            var regionEndAddress = region.VirtualAddress + region.MemorySize;
+            if (address >= region.VirtualAddress && endAddress <= regionEndAddress)
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 

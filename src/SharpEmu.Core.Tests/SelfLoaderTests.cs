@@ -19,6 +19,8 @@ public sealed class SelfLoaderTests
     private const int SyntheticSelfPayloadOffset = 0x200;
     private const int DynamicEntrySize = 16;
     private const long DynamicTagInit = 0x0C;
+    private const long DynamicTagRela = 0x07;
+    private const long DynamicTagRelaSize = 0x08;
 
     [Fact]
     public void LoadsMinimalElf64Image()
@@ -364,6 +366,42 @@ public sealed class SelfLoaderTests
     }
 
     [Fact]
+    public void UnavailableDynamicTableDoesNotRequestMetadataSizedGuestBuffer()
+    {
+        const int unavailableTableSize = 1024 * 1024;
+        var dynamicOffset = ElfHeaderSize + ProgramHeaderSize;
+        var elf = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 1);
+        Array.Resize(ref elf, dynamicOffset + (3 * DynamicEntrySize));
+
+        var header = elf.AsSpan(ElfHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(header, (uint)ProgramHeaderType.Dynamic);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[4..], (uint)ProgramHeaderFlags.Read);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[8..], (ulong)dynamicOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[16..], 0x5000);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[32..], 3 * DynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[40..], 3 * DynamicEntrySize);
+
+        var dynamicTable = elf.AsSpan(dynamicOffset, 3 * DynamicEntrySize);
+        BinaryPrimitives.WriteInt64LittleEndian(dynamicTable, DynamicTagRela);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicTable[sizeof(long)..], 0x10_0000);
+        BinaryPrimitives.WriteInt64LittleEndian(
+            dynamicTable[DynamicEntrySize..],
+            DynamicTagRelaSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            dynamicTable[(DynamicEntrySize + sizeof(long))..],
+            unavailableTableSize);
+        var memory = new RecordingVirtualMemory();
+
+        _ = new SelfLoader().Load(elf, memory);
+
+        Assert.True(
+            memory.LargestReadRequest < unavailableTableSize,
+            $"Loader requested an unavailable {memory.LargestReadRequest}-byte guest buffer.");
+    }
+
+    [Fact]
     public void LoadsSyntheticSelfSegmentFromContainerMapping()
     {
         byte[] payload = [0x31, 0xC0, 0xC3];
@@ -642,5 +680,39 @@ public sealed class SelfLoaderTests
         BinaryPrimitives.WriteUInt64LittleEndian(header[16..], virtualAddress);
         BinaryPrimitives.WriteUInt64LittleEndian(header[40..], memorySize);
         BinaryPrimitives.WriteUInt64LittleEndian(header[48..], 1);
+    }
+
+    private sealed class RecordingVirtualMemory : IVirtualMemory
+    {
+        private readonly VirtualMemory _inner = new();
+
+        public int LargestReadRequest { get; private set; }
+
+        public void Clear() => _inner.Clear();
+
+        public void Map(
+            ulong virtualAddress,
+            ulong memorySize,
+            ulong fileOffset,
+            ReadOnlySpan<byte> fileData,
+            ProgramHeaderFlags protection) =>
+            _inner.Map(
+                virtualAddress,
+                memorySize,
+                fileOffset,
+                fileData,
+                protection);
+
+        public IReadOnlyList<VirtualMemoryRegion> SnapshotRegions() =>
+            _inner.SnapshotRegions();
+
+        public bool TryRead(ulong virtualAddress, Span<byte> destination)
+        {
+            LargestReadRequest = Math.Max(LargestReadRequest, destination.Length);
+            return _inner.TryRead(virtualAddress, destination);
+        }
+
+        public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source) =>
+            _inner.TryWrite(virtualAddress, source);
     }
 }
