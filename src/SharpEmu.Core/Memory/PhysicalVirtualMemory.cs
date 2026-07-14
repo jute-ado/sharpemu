@@ -42,6 +42,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     private const uint PAGE_READONLY = 0x02;
 
     private ulong _guestAllocationArenaBase;
+    private ulong _guestAllocationArenaSize;
     private ulong _guestAllocationOffset;
     private ulong _resetVersion = 1;
     private static readonly ulong LazyReservePrimeBytes = ResolveLazyReservePrimeBytes();
@@ -402,25 +403,8 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
         lock (_guestAllocationGate)
         {
-            if (_guestAllocationArenaBase == 0)
-            {
-                try
-                {
-                    _guestAllocationArenaBase = AllocateAt(
-                        GuestAllocationArenaAddress,
-                        GuestAllocationArenaSize,
-                        executable: false,
-                        allowAlternative: true);
-                    _guestAllocationOffset = GuestAllocationArenaStartOffset;
-                }
-                catch (Exception)
-                {
-                    return false;
-                }
-            }
-
-            var alignedOffset = AlignUp(_guestAllocationOffset, alignment);
-            if (alignedOffset > GuestAllocationArenaSize || size > GuestAllocationArenaSize - alignedOffset)
+            if (!TryResolveGuestAllocationOffset(size, alignment, out var alignedOffset) &&
+                !TryCreateGuestAllocationArena(size, alignment, out alignedOffset))
             {
                 return false;
             }
@@ -429,6 +413,55 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             _guestAllocationOffset = alignedOffset + size;
             return true;
         }
+    }
+
+    private bool TryCreateGuestAllocationArena(ulong size, ulong alignment, out ulong alignedOffset)
+    {
+        alignedOffset = 0;
+        try
+        {
+            var minimumArenaSize = checked(Math.Max(GuestAllocationArenaStartOffset, alignment) + size);
+            var arenaSize = AlignUp(
+                Math.Max(GuestAllocationArenaSize, minimumArenaSize),
+                HostAllocationGranularity);
+            var arenaBase = AllocateAt(
+                GuestAllocationArenaAddress,
+                arenaSize,
+                executable: false,
+                allowAlternative: true);
+
+            _guestAllocationArenaBase = arenaBase;
+            _guestAllocationArenaSize = arenaSize;
+            _guestAllocationOffset = GuestAllocationArenaStartOffset;
+            return TryResolveGuestAllocationOffset(size, alignment, out alignedOffset);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private bool TryResolveGuestAllocationOffset(ulong size, ulong alignment, out ulong alignedOffset)
+    {
+        alignedOffset = 0;
+        if (_guestAllocationArenaBase == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            var nextAddress = checked(_guestAllocationArenaBase + _guestAllocationOffset);
+            var alignedAddress = AlignUp(nextAddress, alignment);
+            alignedOffset = checked(alignedAddress - _guestAllocationArenaBase);
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+
+        return alignedOffset <= _guestAllocationArenaSize &&
+               size <= _guestAllocationArenaSize - alignedOffset;
     }
 
     public void Clear()
@@ -462,6 +495,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             }
 
             _guestAllocationArenaBase = 0;
+            _guestAllocationArenaSize = 0;
             _guestAllocationOffset = 0;
         }
     }

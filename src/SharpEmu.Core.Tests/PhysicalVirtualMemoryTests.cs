@@ -12,6 +12,7 @@ public sealed class PhysicalVirtualMemoryTests
 {
     private const ulong OneGibibyte = 0x4000_0000UL;
     private const ulong HostBlockerSize = 0x2000_0000UL;
+    private const ulong GuestAllocationArenaSize = 0x0100_0000UL;
     private const uint MemCommit = 0x1000;
     private const uint MemReserve = 0x2000;
     private const uint MemRelease = 0x8000;
@@ -96,6 +97,46 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.True(second >= first + 3);
         Assert.True(memory.TryWrite(first, new byte[] { 1, 2, 3 }));
         Assert.True(memory.TryWrite(second, new byte[] { 4, 5, 6, 7, 8 }));
+    }
+
+    [WindowsX64Fact]
+    public void GuestAllocatorGrowsAfterCurrentArenaIsExhausted()
+    {
+        using var memory = new PhysicalVirtualMemory();
+        var firstSize = GuestAllocationArenaSize - 0x1000;
+
+        Assert.True(memory.TryAllocateGuestMemory(firstSize, 0x1000, out var first));
+        Assert.True(memory.TryAllocateGuestMemory(1, 0x1000, out var second));
+        Assert.True(second >= first + firstSize || first >= second + 1);
+        Assert.Equal(2, memory.SnapshotRegions().Count);
+        Assert.True(memory.TryWrite(first + firstSize - 1, [0xA5]));
+        Assert.True(memory.TryWrite(second, [0x5A]));
+
+        Span<byte> firstTail = stackalloc byte[1];
+        Span<byte> secondContents = stackalloc byte[1];
+        Assert.True(memory.TryRead(first + firstSize - 1, firstTail));
+        Assert.True(memory.TryRead(second, secondContents));
+        Assert.Equal(0xA5, firstTail[0]);
+        Assert.Equal(0x5A, secondContents[0]);
+    }
+
+    [WindowsX64Fact]
+    public void GuestAllocatorCreatesArenaLargeEnoughForOversizedRequest()
+    {
+        using var memory = new PhysicalVirtualMemory();
+        const ulong requestedSize = GuestAllocationArenaSize + 0x20_0000;
+
+        Assert.True(memory.TryAllocateGuestMemory(requestedSize, 0x20_000, out var address));
+        Assert.Equal(0UL, address & 0x1_FFFF);
+        var region = Assert.Single(memory.SnapshotRegions());
+        Assert.True(region.MemorySize >= requestedSize);
+        Assert.True(memory.TryWrite(address, [0x11]));
+        Assert.True(memory.TryWrite(address + requestedSize - 1, [0x22]));
+
+        Span<byte> edges = stackalloc byte[2];
+        Assert.True(memory.TryRead(address, edges[..1]));
+        Assert.True(memory.TryRead(address + requestedSize - 1, edges[1..]));
+        Assert.Equal(new byte[] { 0x11, 0x22 }, edges.ToArray());
     }
 
     [WindowsX64Fact]
