@@ -80,8 +80,9 @@ Currently the project primarily targets Windows. Cross-platform support (Linux a
     identity, generation, addresses, mapping/import/relocation counts, and
     application metadata for safe cross-platform loader automation. Adjacent
     PRX/SPRX modules are prepared through the same pre-execution path as a real
-    run, with module image summaries and structured load failures included in
-    the report. A path-independent bundle manifest records file sizes and
+    run, with module image summaries, intentional HLE-core skips, and structured
+    load failures included in the report. A path-independent bundle manifest
+    includes loaded, skipped, and failed inputs and records file sizes and
     SHA-256 fingerprints and derives one deterministic bundle SHA-256, allowing
     local regression baselines to identify exact content without storing game
     files. It uses a managed inspection memory backend and does not reserve

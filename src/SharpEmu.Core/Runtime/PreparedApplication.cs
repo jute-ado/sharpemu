@@ -12,6 +12,7 @@ public sealed class PreparedApplication
     internal PreparedApplication(
         SelfImage mainImage,
         IReadOnlyList<PreparedModule> modules,
+        IReadOnlyList<SkippedModule> skippedModules,
         IReadOnlyList<ModuleLoadFailure> moduleLoadFailures,
         Generation generation,
         IReadOnlyDictionary<ulong, string> importStubs,
@@ -20,11 +21,13 @@ public sealed class PreparedApplication
     {
         MainImage = mainImage ?? throw new ArgumentNullException(nameof(mainImage));
         ArgumentNullException.ThrowIfNull(modules);
+        ArgumentNullException.ThrowIfNull(skippedModules);
         ArgumentNullException.ThrowIfNull(moduleLoadFailures);
         ArgumentNullException.ThrowIfNull(importStubs);
         ArgumentNullException.ThrowIfNull(runtimeSymbols);
 
         Modules = modules.ToArray();
+        SkippedModules = skippedModules.ToArray();
         ModuleLoadFailures = moduleLoadFailures.ToArray();
         Generation = generation;
         ImportStubs = new ReadOnlyDictionary<ulong, string>(new Dictionary<ulong, string>(importStubs));
@@ -36,6 +39,8 @@ public sealed class PreparedApplication
     public SelfImage MainImage { get; }
 
     public IReadOnlyList<PreparedModule> Modules { get; }
+
+    public IReadOnlyList<SkippedModule> SkippedModules { get; }
 
     public IReadOnlyList<ModuleLoadFailure> ModuleLoadFailures { get; }
 
@@ -49,5 +54,7 @@ public sealed class PreparedApplication
 }
 
 public sealed record PreparedModule(string Path, SelfImage Image);
+
+public sealed record SkippedModule(string Path, string Reason);
 
 public sealed record ModuleLoadFailure(string Path, string ErrorType, string Message);

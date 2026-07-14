@@ -190,6 +190,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(1, image.GetProperty("programHeaderCount").GetInt32());
         Assert.Equal(1, image.GetProperty("mappedRegionCount").GetInt32());
         Assert.Empty(root.GetProperty("modules").EnumerateArray());
+        Assert.Empty(root.GetProperty("skippedModules").EnumerateArray());
         Assert.Empty(root.GetProperty("moduleLoadFailures").EnumerateArray());
     }
 
@@ -201,13 +202,15 @@ public sealed class SharpEmuRuntimeTests
             requestReport: true,
             paramJson: SyntheticParamJson,
             loadOnly: true,
-            adjacentModuleCode: [0xF4]);
+            adjacentModuleCode: [0xF4],
+            writeSkippedCoreModule: true);
         var repeatedExecution = await RunSyntheticExecutableInCliAsync(
             [0xF4],
             requestReport: true,
             paramJson: SyntheticParamJson,
             loadOnly: true,
-            adjacentModuleCode: [0xF4]);
+            adjacentModuleCode: [0xF4],
+            writeSkippedCoreModule: true);
 
         Assert.Equal(0, execution.ExitCode);
         Assert.NotNull(execution.ReportJson);
@@ -236,6 +239,9 @@ public sealed class SharpEmuRuntimeTests
         var module = Assert.Single(root.GetProperty("modules").EnumerateArray());
         Assert.Equal("sce_module/synthetic.prx", module.GetProperty("path").GetString());
         Assert.Equal("ELF", module.GetProperty("image").GetProperty("format").GetString());
+        var skippedModule = Assert.Single(root.GetProperty("skippedModules").EnumerateArray());
+        Assert.Equal("sce_module/libkernel.prx", skippedModule.GetProperty("path").GetString());
+        Assert.Contains("HLE", skippedModule.GetProperty("reason").GetString(), StringComparison.Ordinal);
         Assert.Empty(root.GetProperty("moduleLoadFailures").EnumerateArray());
         Assert.NotNull(repeatedExecution.ReportJson);
         using var repeatedDocument = JsonDocument.Parse(repeatedExecution.ReportJson);
@@ -244,9 +250,15 @@ public sealed class SharpEmuRuntimeTests
             bundle.GetProperty("sha256").GetString(),
             repeatedDocument.RootElement.GetProperty("bundle").GetProperty("sha256").GetString());
         var bundleFiles = bundle.GetProperty("files").EnumerateArray().ToArray();
-        Assert.Equal(3, bundleFiles.Length);
+        Assert.Equal(4, bundleFiles.Length);
         Assert.Equal(
-            new[] { "eboot.bin", "sce_module/synthetic.prx", "sce_sys/param.json" },
+            new[]
+            {
+                "eboot.bin",
+                "sce_module/libkernel.prx",
+                "sce_module/synthetic.prx",
+                "sce_sys/param.json",
+            },
             bundleFiles.Select(file => file.GetProperty("path").GetString()).ToArray());
         Assert.All(bundleFiles, file =>
         {
@@ -359,6 +371,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(JsonValueKind.Null, missingFile.GetProperty("sha256").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("application").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("modules").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("skippedModules").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("moduleLoadFailures").ValueKind);
     }
 
@@ -483,7 +496,8 @@ public sealed class SharpEmuRuntimeTests
         string? paramJson = null,
         bool loadOnly = false,
         byte[]? adjacentModuleCode = null,
-        bool writeInvalidAdjacentModule = false) =>
+        bool writeInvalidAdjacentModule = false,
+        bool writeSkippedCoreModule = false) =>
         SyntheticCliGuest.RunAsync(
             code,
             requestReport,
@@ -493,7 +507,8 @@ public sealed class SharpEmuRuntimeTests
             paramJson,
             loadOnly,
             adjacentModuleCode,
-            writeInvalidAdjacentModule);
+            writeInvalidAdjacentModule,
+            writeSkippedCoreModule);
 
     private readonly record struct SyntheticRuntimeExecution(
         OrbisGen2Result Result,

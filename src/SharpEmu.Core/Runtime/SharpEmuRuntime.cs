@@ -474,16 +474,19 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         HleDataSymbols.ConfigureProcessImageName(processImageName);
         MergeKnownHleDataSymbols(activeRuntimeSymbols);
         var moduleLoadFailures = new List<ModuleLoadFailure>();
+        var skippedModules = new List<SkippedModule>();
         var loadedModuleImages = LoadAdjacentSceModules(
             normalizedEbootPath,
             activeImportStubs,
             activeRuntimeSymbols,
+            skippedModules,
             moduleLoadFailures);
         RebindImportedDataSymbols(image, loadedModuleImages, activeRuntimeSymbols);
 
         var preparedApplication = new PreparedApplication(
             image,
             loadedModuleImages,
+            skippedModules,
             moduleLoadFailures,
             generation,
             activeImportStubs,
@@ -670,6 +673,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         string ebootPath,
         IDictionary<ulong, string> importStubs,
         IDictionary<string, ulong> runtimeSymbols,
+        ICollection<SkippedModule>? skipped = null,
         ICollection<ModuleLoadFailure>? failures = null)
     {
         var loadedImages = new List<PreparedModule>();
@@ -710,14 +714,21 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         var modulePaths = allModulePaths
             .Where(ShouldPreloadModule)
             .ToArray();
-        var skippedModules = allModulePaths
+        var skippedModulePaths = allModulePaths
             .Where(path => !ShouldPreloadModule(path))
-            .Select(Path.GetFileName)
-            .Where(name => !string.IsNullOrWhiteSpace(name))
             .ToArray();
-        if (skippedModules.Length > 0)
+        foreach (var skippedPath in skippedModulePaths)
         {
-            Log.Info($"Skipping {skippedModules.Length} core module(s): {string.Join(", ", skippedModules)}");
+            skipped?.Add(new SkippedModule(
+                skippedPath,
+                "Core module is provided by SharpEmu HLE."));
+        }
+
+        if (skippedModulePaths.Length > 0)
+        {
+            Log.Info(
+                $"Skipping {skippedModulePaths.Length} core module(s): " +
+                string.Join(", ", skippedModulePaths.Select(Path.GetFileName)));
         }
 
         if (modulePaths.Length == 0)

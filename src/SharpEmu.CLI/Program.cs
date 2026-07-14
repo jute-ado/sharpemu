@@ -165,6 +165,7 @@ internal static partial class Program
                     $"entry=0x{image.EntryPoint:X16}, mappedRegions={image.MappedRegions.Count}, " +
                     $"imports={image.ImportStubs.Count}, relocations={image.ImportedRelocations.Count}, " +
                     $"modules={preparedApplication.Modules.Count}, " +
+                    $"skippedModules={preparedApplication.SkippedModules.Count}, " +
                     $"moduleFailures={preparedApplication.ModuleLoadFailures.Count}");
                 if (preparedApplication.ModuleLoadFailures.Count > 0)
                 {
@@ -1003,6 +1004,7 @@ internal static partial class Program
                     runtime?.LastApplicationMetadata ?? TryReadApplicationMetadataForReport(executablePath)),
                 Image: BuildImageReport(runtime?.LastLoadedImage),
                 Modules: BuildModuleReports(runtime?.LastPreparedApplication, executablePath),
+                SkippedModules: BuildSkippedModuleReports(runtime?.LastPreparedApplication, executablePath),
                 ModuleLoadFailures: BuildModuleFailureReports(runtime?.LastPreparedApplication, executablePath),
                 Result: executionResult,
                 CpuSession: BuildCpuSessionReport(runtime?.LastCpuSessionSummary),
@@ -1168,6 +1170,17 @@ internal static partial class Program
             .ToArray();
     }
 
+    private static IReadOnlyList<CliSkippedModuleReport>? BuildSkippedModuleReports(
+        PreparedApplication? application,
+        string executablePath)
+    {
+        return application?.SkippedModules
+            .Select(module => new CliSkippedModuleReport(
+                BuildBundleRelativePath(executablePath, module.Path),
+                module.Reason))
+            .ToArray();
+    }
+
     private static string BuildBundleRelativePath(string executablePath, string path)
     {
         try
@@ -1206,6 +1219,11 @@ internal static partial class Program
             foreach (var failure in application.ModuleLoadFailures)
             {
                 paths[BuildBundleRelativePath(executablePath, failure.Path)] = failure.Path;
+            }
+
+            foreach (var skippedModule in application.SkippedModules)
+            {
+                paths[BuildBundleRelativePath(executablePath, skippedModule.Path)] = skippedModule.Path;
             }
         }
 
@@ -1682,6 +1700,7 @@ internal static partial class Program
         CliApplicationReport? Application,
         CliImageReport? Image,
         IReadOnlyList<CliModuleReport>? Modules,
+        IReadOnlyList<CliSkippedModuleReport>? SkippedModules,
         IReadOnlyList<CliModuleLoadFailureReport>? ModuleLoadFailures,
         CliExecutionResult Result,
         CliCpuSessionReport? CpuSession,
@@ -1746,6 +1765,8 @@ internal static partial class Program
         string? InitFunctionEntryPoint);
 
     private sealed record CliModuleReport(string Path, CliImageReport Image);
+
+    private sealed record CliSkippedModuleReport(string Path, string Reason);
 
     private sealed record CliModuleLoadFailureReport(string Path, string ErrorType, string Message);
 
