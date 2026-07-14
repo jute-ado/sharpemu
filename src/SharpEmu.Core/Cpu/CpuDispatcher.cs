@@ -307,13 +307,16 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         var backendError = string.IsNullOrWhiteSpace(_nativeCpuBackend.LastError)
             ? "unknown backend error"
             : _nativeCpuBackend.LastError;
-        LastNotImplementedInfo = new CpuNotImplementedInfo(
-            CpuNotImplementedSource.NativeBackend,
-            entryPoint,
-            nid: null,
-            exportName: "cpu_engine_native_only",
-            libraryName: backendName,
-            detail: backendError);
+        if (nativeResult == OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_IMPLEMENTED)
+        {
+            LastNotImplementedInfo = new CpuNotImplementedInfo(
+                CpuNotImplementedSource.NativeBackend,
+                entryPoint,
+                nid: null,
+                exportName: "cpu_engine_native_only",
+                libraryName: backendName,
+                detail: backendError);
+        }
         LastMilestoneLog = string.Concat(
             LastMilestoneLog,
             Environment.NewLine,

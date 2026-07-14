@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using SharpEmu.Core.Cpu;
 using SharpEmu.Core.Loader;
 using SharpEmu.HLE;
 
@@ -17,6 +18,14 @@ public interface ISharpEmuRuntime : IDisposable
     string? LastBasicBlockTrace { get; }
 
     string? LastMilestoneLog { get; }
+
+    CpuSessionSummary? LastCpuSessionSummary { get; }
+
+    CpuTrapInfo? LastCpuTrapInfo { get; }
+
+    CpuMemoryFaultInfo? LastCpuMemoryFaultInfo { get; }
+
+    CpuNotImplementedInfo? LastCpuNotImplementedInfo { get; }
 
     SelfImage LoadImage(string ebootPath);
 

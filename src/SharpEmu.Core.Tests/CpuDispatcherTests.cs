@@ -40,7 +40,14 @@ public sealed class CpuDispatcherTests
         Assert.Equal(backendResult, result);
         Assert.Equal(backendResult, dispatcher.LastSessionSummary.Result);
         Assert.Equal(expectedReason, dispatcher.LastSessionSummary.Reason);
-        Assert.Equal("synthetic backend failure", dispatcher.LastNotImplementedInfo?.Detail);
+        if (backendResult == OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_IMPLEMENTED)
+        {
+            Assert.Equal("synthetic backend failure", dispatcher.LastNotImplementedInfo?.Detail);
+        }
+        else
+        {
+            Assert.Null(dispatcher.LastNotImplementedInfo);
+        }
     }
 
     [Fact]
@@ -73,6 +80,7 @@ public sealed class CpuDispatcherTests
         Assert.Equal(0uL, dispatcher.LastTrapInfo?.AccessAddress);
         Assert.Equal(CpuMemoryAccessKind.Read, dispatcher.LastTrapInfo?.AccessKind);
         Assert.Equal(trapRip, dispatcher.LastSessionSummary.LastGuestRip);
+        Assert.Null(dispatcher.LastNotImplementedInfo);
     }
 
     [Fact]

@@ -134,13 +134,22 @@ public sealed class SharpEmuRuntimeTests
             root.GetProperty("sessionSummary").GetString(),
             StringComparison.Ordinal);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("diagnostics").ValueKind);
+        var cpuSession = root.GetProperty("cpuSession");
+        Assert.Equal("ORBIS_GEN2_OK", cpuSession.GetProperty("result").GetProperty("name").GetString());
+        Assert.Equal("ReturnedToHost", cpuSession.GetProperty("reason").GetString());
+        Assert.StartsWith("0x", cpuSession.GetProperty("lastGuestRip").GetString(), StringComparison.Ordinal);
+        Assert.Equal(0, cpuSession.GetProperty("importsHit").GetInt32());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuTrap").ValueKind);
     }
 
     [WindowsX64Fact]
     public async Task CliWritesGuestTrapDetailsToJsonExecutionReport()
     {
         var execution = await RunSyntheticExecutableInCliAsync(
-            [0x0F, 0x0B], // ud2
+            [
+                0x48, 0x31, 0xC0, // xor rax, rax
+                0x48, 0x8B, 0x00, // mov rax, [rax]
+            ],
             requestReport: true);
 
         Assert.Equal(4, execution.ExitCode);
@@ -150,7 +159,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("ORBIS_GEN2_ERROR_CPU_TRAP", root.GetProperty("result").GetProperty("name").GetString());
         Assert.False(root.GetProperty("result").GetProperty("succeeded").GetBoolean());
         Assert.Contains(
-            "exception=0xC000001D",
+            "exception=0xC0000005",
             root.GetProperty("diagnostics").GetString(),
             StringComparison.Ordinal);
         Assert.Contains(
@@ -158,6 +167,15 @@ public sealed class SharpEmuRuntimeTests
             root.GetProperty("sessionSummary").GetString(),
             StringComparison.Ordinal);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("hostError").ValueKind);
+        Assert.Equal("CpuTrap", root.GetProperty("cpuSession").GetProperty("reason").GetString());
+        var cpuTrap = root.GetProperty("cpuTrap");
+        Assert.Equal("0x48", cpuTrap.GetProperty("opcode").GetString());
+        Assert.Equal("0xC0000005", cpuTrap.GetProperty("exceptionCode").GetString());
+        Assert.StartsWith("0x", cpuTrap.GetProperty("instructionPointer").GetString(), StringComparison.Ordinal);
+        Assert.Equal("0x0000000000000000", cpuTrap.GetProperty("accessAddress").GetString());
+        Assert.Equal("read", cpuTrap.GetProperty("accessKind").GetString());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuMemoryFault").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuNotImplemented").ValueKind);
     }
 
     [Fact]
@@ -180,6 +198,10 @@ public sealed class SharpEmuRuntimeTests
             root.GetProperty("hostError").GetString(),
             StringComparison.Ordinal);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("sessionSummary").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuSession").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuTrap").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuMemoryFault").ValueKind);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuNotImplemented").ValueKind);
     }
 
     [WindowsX64Fact]

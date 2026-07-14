@@ -69,7 +69,8 @@ Currently the project primarily targets Windows. Cross-platform support (Linux a
   * Or command: `.\SharpEmu "eboot.bin" 2>&1 | Tee-Object -FilePath "log.txt"`
   * For automation, add `--report-json execution.json` to atomically write a
     versioned machine-readable result. Schema version 1 includes the result
-    code, session summary, diagnostics, traces, and any host-side error.
+    code, typed CPU session/fault objects with hex-safe addresses, diagnostics,
+    traces, and any host-side error.
     Native watchdog termination returns exit code 6 and reports
     `EXECUTION_STALLED` instead of leaving automation without a result.
   * On Windows, add `--timeout-seconds N` to enforce a wall-clock execution
