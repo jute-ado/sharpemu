@@ -238,6 +238,27 @@ public static class Ngs2Exports
     public static int Ngs2PanInit(CpuContext ctx) => ctx.SetReturn(0);
 
     [SysAbiExport(
+        Nid = "1WsleK-MTkE",
+        ExportName = "sceNgs2GeomCalcListener",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNgs2")]
+    public static int Ngs2GeomCalcListener(CpuContext ctx) => ctx.SetReturn(0);
+
+    [SysAbiExport(
+        Nid = "0lbbayqDNoE",
+        ExportName = "sceNgs2GeomResetSourceParam",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNgs2")]
+    public static int Ngs2GeomResetSourceParam(CpuContext ctx) => ctx.SetReturn(0);
+
+    [SysAbiExport(
+        Nid = "7Lcfo8SmpsU",
+        ExportName = "sceNgs2GeomResetListenerParam",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNgs2")]
+    public static int Ngs2GeomResetListenerParam(CpuContext ctx) => ctx.SetReturn(0);
+
+    [SysAbiExport(
         Nid = "i0VnXM-C9fc",
         ExportName = "sceNgs2SystemRender",
         Target = Generation.Gen4 | Generation.Gen5,

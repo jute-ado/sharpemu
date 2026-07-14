@@ -821,6 +821,47 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         }
     }
 
+    public bool TryCompare(ulong virtualAddress, ReadOnlySpan<byte> expected)
+    {
+        _gate.EnterReadLock();
+        try
+        {
+            var region = FindRegion(virtualAddress, (ulong)expected.Length);
+            if (region is null ||
+                !TryResolveRegionOffset(
+                    virtualAddress,
+                    (ulong)expected.Length,
+                    region,
+                    out var offset))
+            {
+                return false;
+            }
+
+            if (expected.IsEmpty)
+            {
+                return true;
+            }
+
+            var srcPtr = (void*)(region.VirtualAddress + offset);
+            if (region.IsReservedOnly &&
+                !EnsureRangeCommitted((ulong)srcPtr, (ulong)expected.Length, region))
+            {
+                return false;
+            }
+
+            if (!CanReadWithoutProtectionChange((ulong)srcPtr, (ulong)expected.Length, region))
+            {
+                return false;
+            }
+
+            return new ReadOnlySpan<byte>(srcPtr, expected.Length).SequenceEqual(expected);
+        }
+        finally
+        {
+            _gate.ExitReadLock();
+        }
+    }
+
     public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source)
     {
         ThrowIfDisposed();

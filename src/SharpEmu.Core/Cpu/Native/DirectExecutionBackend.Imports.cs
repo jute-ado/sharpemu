@@ -814,10 +814,10 @@ public sealed partial class DirectExecutionBackend
 			return !_logUsleep;
 		}
 
-		// Only mutex/rwlock *lock* is excluded: it may block a contended acquire, which the
-		// leaf path can't. unlock never blocks and stays here — routing it off the fast path
-		// slows guest spinlocks enough to livelock (Demon's Souls).
+		// Mutex lock uses this block-capable leaf path. Keep it out of the no-block subset.
 		return nid is
+			"9UK1vLZQft4" or // scePthreadMutexLock
+			"7H0iTOciTLo" or // pthread_mutex_lock
 			"tn3VlD0hG60" or // scePthreadMutexUnlock
 			"2Z+PpY6CaJg" or // pthread_mutex_unlock
 			"EgmLo6EWgso" or // pthread_rwlock_unlock

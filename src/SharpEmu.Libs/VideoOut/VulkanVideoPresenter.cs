@@ -9,6 +9,7 @@ using Silk.NET.Vulkan;
 using Silk.NET.Vulkan.Extensions.KHR;
 using Silk.NET.Vulkan.Extensions.EXT;
 using Silk.NET.Windowing;
+using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -277,6 +278,7 @@ internal static unsafe class VulkanVideoPresenter
                 TranslatedDraw: null,
                 RequiredGuestWorkSequence: _enqueuedGuestWorkSequence,
                 IsSplash: false);
+            System.Threading.Monitor.PulseAll(_gate);
             Console.Error.WriteLine("[LOADER][INFO] Vulkan VideoOut hid splash");
         }
     }
@@ -310,6 +312,7 @@ internal static unsafe class VulkanVideoPresenter
                 TranslatedDraw: null,
                 RequiredGuestWorkSequence: _enqueuedGuestWorkSequence,
                 IsSplash: false);
+            System.Threading.Monitor.PulseAll(_gate);
             if (_thread is not null)
             {
                 return;
@@ -359,6 +362,7 @@ internal static unsafe class VulkanVideoPresenter
                 TranslatedDraw: null,
                 RequiredGuestWorkSequence: _enqueuedGuestWorkSequence,
                 IsSplash: false);
+            System.Threading.Monitor.PulseAll(_gate);
             if (_thread is not null)
             {
                 return;
@@ -429,6 +433,7 @@ internal static unsafe class VulkanVideoPresenter
                     renderState ?? VulkanGuestRenderState.Default),
                 RequiredGuestWorkSequence: _enqueuedGuestWorkSequence,
                 IsSplash: false);
+            System.Threading.Monitor.PulseAll(_gate);
             if (_thread is not null)
             {
                 return;
@@ -643,6 +648,7 @@ internal static unsafe class VulkanVideoPresenter
                 RequiredGuestWorkSequence: 0,
                 IsSplash: false,
                 GuestImageAddress: address);
+            System.Threading.Monitor.PulseAll(_gate);
             if (_thread is not null)
             {
                 return true;
@@ -883,6 +889,7 @@ internal static unsafe class VulkanVideoPresenter
 
         _pendingGuestWork.Enqueue(work);
         _enqueuedGuestWorkSequence++;
+        System.Threading.Monitor.PulseAll(_gate);
     }
 
     private static bool TryTakeGuestWork(out object work)
@@ -923,6 +930,13 @@ internal static unsafe class VulkanVideoPresenter
 
         private readonly IWindow _window;
         private const int MaxInFlightGuestSubmissions = 8;
+        private const double PerformanceHudSampleSeconds = 0.5;
+        private const uint ThreadQueryLimitedInformation = 0x0800;
+        private static readonly bool _performanceHudEnabled =
+            !string.Equals(
+                Environment.GetEnvironmentVariable("SHARPEMU_PERF_HUD"),
+                "0",
+                StringComparison.Ordinal);
         private Vk _vk = null!;
         private KhrSurface _surfaceApi = null!;
         private KhrSwapchain _swapchainApi = null!;
@@ -962,6 +976,17 @@ internal static unsafe class VulkanVideoPresenter
         private ulong _stagingSize;
         private long _presentedSequence;
         private bool _vulkanApiLoaded;
+        private long _performanceHudLastTimestamp;
+        private TimeSpan _performanceHudLastProcessCpu;
+        private long _performanceHudPresentedFrames;
+        private long _performanceHudLastPresentedFrames;
+        private long _performanceHudLastReadCount;
+        private long _performanceHudLastReadBytes;
+        private long _performanceHudLastReadHits;
+        private long _performanceHudLastReadPvmBytes;
+        private long _performanceHudLastReadLibcBytes;
+        private readonly Dictionary<int, TimeSpan> _performanceHudThreadCpu = [];
+        private readonly Dictionary<int, string> _performanceHudThreadNames = [];
         private bool _vulkanReady;
         private bool _vulkanDisposing;
         private bool _vulkanDisposed;
@@ -1124,9 +1149,11 @@ internal static unsafe class VulkanVideoPresenter
             options.Size = new Vector2D<int>((int)DefaultWindowWidth, (int)DefaultWindowHeight);
             options.Title = VideoOutExports.GetWindowTitle();
             options.WindowBorder = WindowBorder.Fixed;
-            options.VSync = true;
-            options.FramesPerSecond = 60;
-            options.UpdatesPerSecond = 60;
+            // FIFO already provides the presentation clock. Throttling Silk's render loop
+            // as well can miss alternating vblanks and collapse delivery to 30 FPS or less.
+            options.VSync = false;
+            options.FramesPerSecond = 0;
+            options.UpdatesPerSecond = 0;
             _window = Window.Create(options);
             _window.Load += Initialize;
             _window.Render += Render;
@@ -1895,6 +1922,30 @@ internal static unsafe class VulkanVideoPresenter
             var surfaceFormat = ChooseSurfaceFormat(formats);
             _swapchainFormat = surfaceFormat.Format;
             _extent = ChooseExtent(capabilities);
+            uint presentModeCount = 0;
+            Check(
+                _surfaceApi.GetPhysicalDeviceSurfacePresentModes(
+                    _physicalDevice,
+                    _surface,
+                    &presentModeCount,
+                    null),
+                "vkGetPhysicalDeviceSurfacePresentModesKHR");
+            var presentModes = new PresentModeKHR[presentModeCount];
+            fixed (PresentModeKHR* presentModePointer = presentModes)
+            {
+                Check(
+                    _surfaceApi.GetPhysicalDeviceSurfacePresentModes(
+                        _physicalDevice,
+                        _surface,
+                        &presentModeCount,
+                        presentModePointer),
+                    "vkGetPhysicalDeviceSurfacePresentModesKHR");
+            }
+
+            var presentMode = presentModes.Contains(PresentModeKHR.MailboxKhr)
+                ? PresentModeKHR.MailboxKhr
+                : PresentModeKHR.FifoKhr;
+            Console.Error.WriteLine($"[LOADER][INFO] Vulkan present mode: {presentMode}");
             var imageCount = capabilities.MinImageCount + 1;
             if (capabilities.MaxImageCount != 0)
             {
@@ -1918,7 +1969,7 @@ internal static unsafe class VulkanVideoPresenter
                 ImageSharingMode = SharingMode.Exclusive,
                 PreTransform = capabilities.CurrentTransform,
                 CompositeAlpha = compositeAlpha,
-                PresentMode = PresentModeKHR.FifoKhr,
+                PresentMode = presentMode,
                 Clipped = true,
             };
 
@@ -5272,12 +5323,228 @@ internal static unsafe class VulkanVideoPresenter
                 _ => 0,
             };
 
+        private void UpdatePerformanceHud()
+        {
+            if (!_performanceHudEnabled || !OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
+            var now = Stopwatch.GetTimestamp();
+            if (_performanceHudLastTimestamp != 0 &&
+                Stopwatch.GetElapsedTime(_performanceHudLastTimestamp, now).TotalSeconds <
+                    PerformanceHudSampleSeconds)
+            {
+                return;
+            }
+
+            try
+            {
+                using var process = Process.GetCurrentProcess();
+                var processCpu = process.TotalProcessorTime;
+                var currentThreadCpu = new Dictionary<int, TimeSpan>();
+                var currentThreadIds = new HashSet<int>();
+                var hottestThreadId = 0;
+                var hottestThreadCpuSeconds = 0.0;
+
+                foreach (ProcessThread thread in process.Threads)
+                {
+                    using (thread)
+                    {
+                        try
+                        {
+                            var threadId = thread.Id;
+                            var cpu = thread.TotalProcessorTime;
+                            currentThreadIds.Add(threadId);
+                            currentThreadCpu[threadId] = cpu;
+                            if (_performanceHudThreadCpu.TryGetValue(threadId, out var previousCpu))
+                            {
+                                var deltaSeconds = Math.Max(0.0, (cpu - previousCpu).TotalSeconds);
+                                if (deltaSeconds > hottestThreadCpuSeconds)
+                                {
+                                    hottestThreadCpuSeconds = deltaSeconds;
+                                    hottestThreadId = threadId;
+                                }
+                            }
+                        }
+                        catch (InvalidOperationException)
+                        {
+                        }
+                    }
+                }
+
+                if (_performanceHudLastTimestamp != 0)
+                {
+                    var elapsedSeconds = Math.Max(
+                        Stopwatch.GetElapsedTime(_performanceHudLastTimestamp, now).TotalSeconds,
+                        0.001);
+                    var processCpuPercent = Math.Max(
+                        0.0,
+                        (processCpu - _performanceHudLastProcessCpu).TotalSeconds /
+                            elapsedSeconds /
+                            Math.Max(Environment.ProcessorCount, 1) *
+                            100.0);
+                    var hottestThreadPercent = hottestThreadCpuSeconds / elapsedSeconds * 100.0;
+                    var presentedFrames = _performanceHudPresentedFrames;
+                    var fps = (presentedFrames - _performanceHudLastPresentedFrames) / elapsedSeconds;
+                    var hotName = hottestThreadId == 0
+                        ? "idle"
+                        : GetPerformanceThreadName(hottestThreadId);
+                    long guestBacklog;
+                    int queuedGuestWork;
+                    lock (_gate)
+                    {
+                        guestBacklog = Math.Max(
+                            0,
+                            _enqueuedGuestWorkSequence - _completedGuestWorkSequence);
+                        queuedGuestWork = _pendingGuestWork.Count;
+                    }
+
+                    var gpuInFlight = _pendingGuestSubmissions.Count +
+                        (_presentationInFlight ? 1 : 0);
+                    var readCount = Interlocked.Read(
+                        ref Agc.Gen5ShaderScalarEvaluator.GlobalMemoryReadCount);
+                    var readBytes = Interlocked.Read(
+                        ref Agc.Gen5ShaderScalarEvaluator.GlobalMemoryReadBytes);
+                    var readHits = Interlocked.Read(
+                        ref Agc.Gen5ShaderScalarEvaluator.GlobalMemoryReadCacheHits);
+                    var readPvmBytes = Interlocked.Read(
+                        ref Agc.Gen5ShaderScalarEvaluator.GlobalMemoryReadPvmBytes);
+                    var readLibcBytes = Interlocked.Read(
+                        ref Agc.Gen5ShaderScalarEvaluator.GlobalMemoryReadLibcBytes);
+                    var readsPerSecond =
+                        (readCount - _performanceHudLastReadCount) / elapsedSeconds;
+                    var readMbPerSecond =
+                        (readBytes - _performanceHudLastReadBytes) /
+                        elapsedSeconds /
+                        (1024.0 * 1024.0);
+                    var readHitsPerSecond =
+                        (readHits - _performanceHudLastReadHits) / elapsedSeconds;
+                    var readPvmMbPerSecond =
+                        (readPvmBytes - _performanceHudLastReadPvmBytes) /
+                        elapsedSeconds /
+                        (1024.0 * 1024.0);
+                    var readLibcMbPerSecond =
+                        (readLibcBytes - _performanceHudLastReadLibcBytes) /
+                        elapsedSeconds /
+                        (1024.0 * 1024.0);
+                    _performanceHudLastReadCount = readCount;
+                    _performanceHudLastReadBytes = readBytes;
+                    _performanceHudLastReadHits = readHits;
+                    _performanceHudLastReadPvmBytes = readPvmBytes;
+                    _performanceHudLastReadLibcBytes = readLibcBytes;
+                    _window.Title =
+                        $"FPS {fps:0.0} CPU {processCpuPercent:0}% | " +
+                        $"HOT {hotName}#{hottestThreadId} {hottestThreadPercent:0}% | " +
+                        $"WORK {guestBacklog} (q{queuedGuestWork}/gpu{gpuInFlight}) | " +
+                        $"RD {readsPerSecond:0}/s {readMbPerSecond:0}MB/s h{readHitsPerSecond:0}/s " +
+                        $"P{readPvmMbPerSecond:0} L{readLibcMbPerSecond:0} | " +
+                        VideoOutExports.GetWindowTitle();
+                    _performanceHudLastPresentedFrames = presentedFrames;
+                }
+
+                _performanceHudThreadCpu.Clear();
+                foreach (var (threadId, cpu) in currentThreadCpu)
+                {
+                    _performanceHudThreadCpu[threadId] = cpu;
+                }
+
+                foreach (var staleThreadId in _performanceHudThreadNames.Keys
+                             .Where(threadId => !currentThreadIds.Contains(threadId))
+                             .ToArray())
+                {
+                    _performanceHudThreadNames.Remove(staleThreadId);
+                }
+
+                _performanceHudLastProcessCpu = processCpu;
+                _performanceHudLastTimestamp = now;
+            }
+            catch (Exception exception) when (
+                exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                _performanceHudLastTimestamp = now;
+            }
+        }
+
+        private string GetPerformanceThreadName(int threadId)
+        {
+            if (_performanceHudThreadNames.TryGetValue(threadId, out var cached))
+            {
+                return cached;
+            }
+
+            var name = "tid";
+            var handle = OpenThread(ThreadQueryLimitedInformation, false, (uint)threadId);
+            if (handle != 0)
+            {
+                try
+                {
+                    if (GetThreadDescription(handle, out var description) >= 0 && description != 0)
+                    {
+                        try
+                        {
+                            var described = Marshal.PtrToStringUni(description);
+                            if (!string.IsNullOrWhiteSpace(described))
+                            {
+                                name = described.Length <= 28 ? described : described[..28];
+                            }
+                        }
+                        finally
+                        {
+                            LocalFree(description);
+                        }
+                    }
+                }
+                finally
+                {
+                    CloseHandle(handle);
+                }
+            }
+
+            _performanceHudThreadNames[threadId] = name;
+            return name;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern nint OpenThread(uint desiredAccess, bool inheritHandle, uint threadId);
+
+        [DllImport("kernel32.dll")]
+        private static extern int GetThreadDescription(nint thread, out nint description);
+
+        [DllImport("kernel32.dll")]
+        private static extern nint LocalFree(nint memory);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        private static extern bool CloseHandle(nint handle);
+
+        private void WaitForRenderWork()
+        {
+            var gpuWorkInFlight = _pendingGuestSubmissions.Count > 0 || _presentationInFlight;
+            lock (_gate)
+            {
+                if (_closed ||
+                    _pendingGuestWork.Count > 0 ||
+                    (_latestPresentation is { } latest &&
+                     latest.Sequence != _presentedSequence &&
+                     latest.RequiredGuestWorkSequence <= _completedGuestWorkSequence))
+                {
+                    return;
+                }
+
+                System.Threading.Monitor.Wait(_gate, gpuWorkInFlight ? 1 : 8);
+            }
+        }
+
         private void Render(double _)
         {
             if (!_vulkanReady)
             {
                 return;
             }
+
+            WaitForRenderWork();
+            UpdatePerformanceHud();
 
             _commandBuffer = _presentationCommandBuffer;
             if (!_deviceLost)
@@ -5542,6 +5809,7 @@ internal static unsafe class VulkanVideoPresenter
             CheckSwapchainResult(presentResult, "vkQueuePresentKHR");
             recreateAfterPresent |= presentResult == Result.SuboptimalKhr;
             VideoOutExports.ReportPresentedFrame();
+            _performanceHudPresentedFrames++;
             if (_swapchainReadbackPending)
             {
                 CompletePendingPresentation(wait: true);
@@ -6231,59 +6499,34 @@ internal static unsafe class VulkanVideoPresenter
                     offsets);
             }
 
-            const uint maxPixelsPerDraw = 512 * 512;
-            var rowsPerDraw = Math.Max(
-                1u,
-                Math.Min(drawScissor.Height, maxPixelsPerDraw / Math.Max(drawScissor.Width, 1u)));
-            var drawCount = 0u;
-            for (var y = 0u; y < drawScissor.Height; y += rowsPerDraw)
+            var scissor = new Rect2D(
+                new Offset2D(drawScissor.X, drawScissor.Y),
+                new Extent2D(drawScissor.Width, drawScissor.Height));
+            _vk.CmdSetScissor(_commandBuffer, 0, 1, &scissor);
+
+            if (resources.IndexBuffer.Handle != 0)
             {
-                var scissor = new Rect2D(
-                    new Offset2D(
-                        drawScissor.X,
-                        checked(drawScissor.Y + (int)y)),
-                    new Extent2D(
-                        drawScissor.Width,
-                        Math.Min(rowsPerDraw, drawScissor.Height - y)));
-                _vk.CmdSetScissor(_commandBuffer, 0, 1, &scissor);
-
-                if (resources.IndexBuffer.Handle != 0)
-                {
-                    _vk.CmdBindIndexBuffer(
-                        _commandBuffer,
-                        resources.IndexBuffer,
-                        0,
-                        resources.Index32Bit ? IndexType.Uint32 : IndexType.Uint16);
-                    _vk.CmdDrawIndexed(
-                        _commandBuffer,
-                        resources.VertexCount,
-                        resources.InstanceCount,
-                        0,
-                        0,
-                        0);
-                }
-                else
-                {
-                    _vk.CmdDraw(
-                        _commandBuffer,
-                        resources.VertexCount,
-                        resources.InstanceCount,
-                        0,
-                        0);
-                }
-
-                drawCount++;
+                _vk.CmdBindIndexBuffer(
+                    _commandBuffer,
+                    resources.IndexBuffer,
+                    0,
+                    resources.Index32Bit ? IndexType.Uint32 : IndexType.Uint16);
+                _vk.CmdDrawIndexed(
+                    _commandBuffer,
+                    resources.VertexCount,
+                    resources.InstanceCount,
+                    0,
+                    0,
+                    0);
             }
-
-            if (drawCount > 1)
+            else
             {
-                TraceVulkanShader(
-                    $"vk.graphics_chunked target={extent.Width}x{extent.Height} " +
-                    $"draws={drawCount} rows={rowsPerDraw} " +
-                    $"scissor={drawScissor.X},{drawScissor.Y},{drawScissor.Width}x{drawScissor.Height} " +
-                    $"viewport={drawViewport.X:0.###},{drawViewport.Y:0.###}," +
-                    $"{drawViewport.Width:0.###}x{drawViewport.Height:0.###} " +
-                    $"name={resources.DebugName}");
+                _vk.CmdDraw(
+                    _commandBuffer,
+                    resources.VertexCount,
+                    resources.InstanceCount,
+                    0,
+                    0);
             }
             _vk.CmdEndRenderPass(_commandBuffer);
         }

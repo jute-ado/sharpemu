@@ -14,6 +14,24 @@ internal static class Gen5ShaderScalarEvaluator
     private const int ImageDescriptorDwords = 8;
     private const int SamplerDescriptorDwords = 4;
     private const int MaxGlobalMemoryBindingBytes = 16 * 1024 * 1024;
+    private static readonly int DefaultGlobalMemoryBindingBytes =
+        int.TryParse(
+            Environment.GetEnvironmentVariable("SHARPEMU_GLOBAL_BINDING_BYTES"),
+            out var configured) && configured >= sizeof(uint)
+            ? Math.Min(configured, MaxGlobalMemoryBindingBytes)
+            : 1 * 1024 * 1024;
+
+    internal static long GlobalMemoryReadCount;
+    internal static long GlobalMemoryReadBytes;
+    internal static long GlobalMemoryReadCacheHits;
+    internal static long GlobalMemoryReadPvmBytes;
+    internal static long GlobalMemoryReadLibcBytes;
+    internal static long GlobalMemoryReadReuses;
+
+    private const long CrossFrameReadCacheMaxBytes = 1024L * 1024 * 1024;
+    private static readonly object _crossFrameReadGate = new();
+    private static readonly Dictionary<(ulong BaseAddress, int SizeBytes), byte[]> _crossFrameReadCache = new();
+    private static long _crossFrameReadCacheBytes;
     private const ulong RdnaWaveMask = 0xFFFF_FFFFUL;
 
     private readonly record struct BufferDescriptor(
@@ -45,7 +63,8 @@ internal static class Gen5ShaderScalarEvaluator
         Gen5ShaderState state,
         out Gen5ShaderEvaluation evaluation,
         out string error,
-        bool resolveVertexInputs = false)
+        bool resolveVertexInputs = false,
+        uint? vertexRecordLimit = null)
     {
         evaluation = default!;
         error = string.Empty;
@@ -275,10 +294,28 @@ internal static class Gen5ShaderScalarEvaluator
                 if (resolveVertexInputs &&
                     IsVertexFetchCandidate(instruction, bufferMemory, bufferDescriptor))
                 {
+                    var vertexReadSize = bufferDescriptor.SizeBytes;
+                    if (vertexRecordLimit is { } recordLimit &&
+                        instruction.Sources.Count > 2 &&
+                        TryEvaluateScalarOperand(
+                            instruction.Sources[2],
+                            scalarRegisters,
+                            out var scalarOffset))
+                    {
+                        var bindingOffset = unchecked((uint)bufferMemory.OffsetBytes + scalarOffset);
+                        var requiredBytes =
+                            (ulong)bindingOffset +
+                            (ulong)(Math.Max(recordLimit, 1u) - 1u) * bufferDescriptor.Stride +
+                            (ulong)bufferMemory.DwordCount * sizeof(uint);
+                        vertexReadSize = Math.Min(
+                            bufferDescriptor.SizeBytes,
+                            Math.Max(requiredBytes, sizeof(uint)));
+                    }
+
                     if (!TryReadGlobalMemory(
                             ctx,
                             bufferDescriptor.BaseAddress,
-                            bufferDescriptor.SizeBytes,
+                            vertexReadSize,
                             out var vertexData))
                     {
                         error =
@@ -561,22 +598,29 @@ internal static class Gen5ShaderScalarEvaluator
         return false;
     }
 
+    [ThreadStatic]
+    private static Dictionary<(ulong BaseAddress, int SizeBytes), byte[]>? _globalMemoryReadCache;
+
+    internal static void BeginGlobalMemoryReadScope()
+    {
+        _globalMemoryReadCache = new Dictionary<(ulong, int), byte[]>();
+    }
+
+    internal static void EndGlobalMemoryReadScope()
+    {
+        _globalMemoryReadCache = null;
+    }
+
     private static bool TryReadGlobalMemory(
         CpuContext ctx,
         ulong baseAddress,
         out byte[] data)
     {
-        for (var size = MaxGlobalMemoryBindingBytes; size >= 4096; size >>= 1)
-        {
-            data = GC.AllocateUninitializedArray<byte>(size);
-            if (ctx.Memory.TryRead(baseAddress, data))
-            {
-                return true;
-            }
-        }
-
-        data = [];
-        return false;
+        return TryReadGlobalMemory(
+            ctx,
+            baseAddress,
+            (ulong)DefaultGlobalMemoryBindingBytes,
+            out data);
     }
 
     private static bool TryReadGlobalMemory(
@@ -598,13 +642,74 @@ internal static class Gen5ShaderScalarEvaluator
             return false;
         }
 
+        var cache = _globalMemoryReadCache;
+        var cacheKey = (baseAddress, (int)cappedSize);
+        if (cache is not null && cache.TryGetValue(cacheKey, out var cached))
+        {
+            Interlocked.Increment(ref GlobalMemoryReadCacheHits);
+            data = cached;
+            return true;
+        }
+
+        byte[]? previous;
+        lock (_crossFrameReadGate)
+        {
+            _crossFrameReadCache.TryGetValue(cacheKey, out previous);
+        }
+
+        if (previous is not null && ctx.Memory.TryCompare(baseAddress, previous))
+        {
+            Interlocked.Increment(ref GlobalMemoryReadReuses);
+            if (cache is not null)
+            {
+                cache[cacheKey] = previous;
+            }
+
+            data = previous;
+            return true;
+        }
+
         var candidateSize = (int)cappedSize;
         while (candidateSize >= sizeof(uint))
         {
             data = GC.AllocateUninitializedArray<byte>(candidateSize);
-            if (ctx.Memory.TryRead(baseAddress, data) ||
+            var readFromPvm = ctx.Memory.TryRead(baseAddress, data);
+            if (readFromPvm ||
                 KernelMemoryCompatExports.TryReadTrackedLibcHeap(baseAddress, data))
             {
+                Interlocked.Increment(ref GlobalMemoryReadCount);
+                Interlocked.Add(ref GlobalMemoryReadBytes, data.Length);
+                if (readFromPvm)
+                {
+                    Interlocked.Add(ref GlobalMemoryReadPvmBytes, data.Length);
+                }
+                else
+                {
+                    Interlocked.Add(ref GlobalMemoryReadLibcBytes, data.Length);
+                }
+
+                if (cache is not null)
+                {
+                    cache[cacheKey] = data;
+                }
+
+                lock (_crossFrameReadGate)
+                {
+                    if (_crossFrameReadCache.TryGetValue(cacheKey, out var replaced))
+                    {
+                        _crossFrameReadCacheBytes -= replaced.Length;
+                    }
+
+                    if (_crossFrameReadCacheBytes + data.Length > CrossFrameReadCacheMaxBytes)
+                    {
+                        _crossFrameReadCache.Clear();
+                        _crossFrameReadCacheBytes = 0;
+                    }
+
+                    _crossFrameReadCache[cacheKey] = data;
+                    _crossFrameReadCacheBytes += data.Length;
+                }
+
                 return true;
             }
 

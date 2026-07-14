@@ -157,7 +157,7 @@ public static class AgcExports
     private static readonly HashSet<uint> _tracedSubmittedDrawOpcodes = new();
     private static readonly Dictionary<(ulong Ps, ulong State, Gen5PixelOutputKind Output), byte[]> _pixelSpirvCache = new();
     private static readonly Dictionary<
-        (ulong Es, ulong EsState, ulong Ps, ulong PsState, Gen5PixelOutputKind Output),
+        (ulong Es, ulong EsState, ulong Ps, ulong PsState, Gen5PixelOutputKind Output, uint Attributes),
         (byte[] Vertex, byte[] Pixel)> _graphicsSpirvCache = new();
     private static readonly Dictionary<
         (ulong Cs, ulong State, uint LocalX, uint LocalY, uint LocalZ),
@@ -2020,8 +2020,16 @@ public static class AgcExports
         var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
         lock (gpuState.Gate)
         {
-            ParseSubmittedDcb(ctx, gpuState, gpuState.Graphics, commandAddress, dwordCount, tracePackets);
-            DrainResumableDcbs(ctx, gpuState, tracePackets);
+            Gen5ShaderScalarEvaluator.BeginGlobalMemoryReadScope();
+            try
+            {
+                ParseSubmittedDcb(ctx, gpuState, gpuState.Graphics, commandAddress, dwordCount, tracePackets);
+                DrainResumableDcbs(ctx, gpuState, tracePackets);
+            }
+            finally
+            {
+                Gen5ShaderScalarEvaluator.EndGlobalMemoryReadScope();
+            }
         }
 
         ctx[CpuRegister.Rax] = 0;
@@ -2051,27 +2059,35 @@ public static class AgcExports
         var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
         lock (gpuState.Gate)
         {
-            for (uint i = 0; i < bufferCount; i++)
+            Gen5ShaderScalarEvaluator.BeginGlobalMemoryReadScope();
+            try
             {
-                if (!ctx.TryReadUInt64(addressArray + i * 8, out var commandAddress) ||
-                    commandAddress == 0 ||
-                    !ctx.TryReadUInt32(sizeArray + i * 4, out var dwordCount) ||
-                    dwordCount == 0)
+                for (uint i = 0; i < bufferCount; i++)
                 {
-                    continue;
+                    if (!ctx.TryReadUInt64(addressArray + i * 8, out var commandAddress) ||
+                        commandAddress == 0 ||
+                        !ctx.TryReadUInt32(sizeArray + i * 4, out var dwordCount) ||
+                        dwordCount == 0)
+                    {
+                        continue;
+                    }
+
+                    if (tracePackets)
+                    {
+                        TraceAgc(
+                            $"agc.driver_submit_multi_dcbs index={i}/{bufferCount} " +
+                            $"addr=0x{commandAddress:X16} dwords={dwordCount}");
+                    }
+
+                    ParseSubmittedDcb(ctx, gpuState, gpuState.Graphics, commandAddress, dwordCount, tracePackets);
                 }
 
-                if (tracePackets)
-                {
-                    TraceAgc(
-                        $"agc.driver_submit_multi_dcbs index={i}/{bufferCount} " +
-                        $"addr=0x{commandAddress:X16} dwords={dwordCount}");
-                }
-
-                ParseSubmittedDcb(ctx, gpuState, gpuState.Graphics, commandAddress, dwordCount, tracePackets);
+                DrainResumableDcbs(ctx, gpuState, tracePackets);
             }
-
-            DrainResumableDcbs(ctx, gpuState, tracePackets);
+            finally
+            {
+                Gen5ShaderScalarEvaluator.EndGlobalMemoryReadScope();
+            }
         }
 
         ctx[CpuRegister.Rax] = 0;
@@ -2119,8 +2135,16 @@ public static class AgcExports
                 gpuState.ComputeQueues.Add(ownerHandle, queueState);
             }
 
-            ParseSubmittedDcb(ctx, gpuState, queueState, commandAddress, dwordCount, tracePackets);
-            DrainResumableDcbs(ctx, gpuState, tracePackets);
+            Gen5ShaderScalarEvaluator.BeginGlobalMemoryReadScope();
+            try
+            {
+                ParseSubmittedDcb(ctx, gpuState, queueState, commandAddress, dwordCount, tracePackets);
+                DrainResumableDcbs(ctx, gpuState, tracePackets);
+            }
+            finally
+            {
+                Gen5ShaderScalarEvaluator.EndGlobalMemoryReadScope();
+            }
         }
 
         ctx[CpuRegister.Rax] = 0;
@@ -3440,7 +3464,8 @@ public static class AgcExports
                 exportState,
                 out var exportEvaluation,
                 out error,
-                resolveVertexInputs: true) ||
+                resolveVertexInputs: true,
+                vertexRecordLimit: indexed ? null : vertexCount) ||
             !Gen5ShaderTranslator.TryCreateState(
                 ctx,
                 pixelShaderAddress,
@@ -3464,14 +3489,19 @@ public static class AgcExports
                 HasPixelColorExport(pixelState, target.Slot))
             .ToArray();
         var outputKind = GetPixelOutputKind(renderTargets.FirstOrDefault().NumberType);
-        var exportStateFingerprint = ComputeShaderStateFingerprint(exportEvaluation);
-        var pixelStateFingerprint = ComputeShaderStateFingerprint(pixelEvaluation);
+        var attributeCount = GetInterpolatedAttributeCount(pixelState);
+        var exportStateFingerprint = ComputeShaderStructureFingerprint(exportEvaluation);
+        var pixelStateFingerprint = ComputeShaderStructureFingerprint(pixelEvaluation);
         var shaderKey = (
             exportShaderAddress,
             exportStateFingerprint,
             pixelShaderAddress,
             pixelStateFingerprint,
-            outputKind);
+            outputKind,
+            attributeCount);
+        var totalGlobalBuffers =
+            pixelEvaluation.GlobalMemoryBindings.Count +
+            exportEvaluation.GlobalMemoryBindings.Count;
         (byte[] Vertex, byte[] Pixel) compiled;
         lock (_submitTraceGate)
         {
@@ -3480,9 +3510,6 @@ public static class AgcExports
 
         if (compiled.Vertex is null || compiled.Pixel is null)
         {
-            var totalGlobalBuffers =
-                pixelEvaluation.GlobalMemoryBindings.Count +
-                exportEvaluation.GlobalMemoryBindings.Count;
             if (!Gen5SpirvTranslator.TryCompilePixelShader(
                     pixelState,
                     pixelEvaluation,
@@ -3490,16 +3517,18 @@ public static class AgcExports
                     out var pixelShader,
                     out error,
                     globalBufferBase: 0,
-                    totalGlobalBufferCount: totalGlobalBuffers,
-                    imageBindingBase: 0) ||
+                    totalGlobalBufferCount: totalGlobalBuffers + 2,
+                    imageBindingBase: 0,
+                    scalarRegisterBufferIndex: totalGlobalBuffers) ||
                 !Gen5SpirvTranslator.TryCompileVertexShader(
                     exportState,
                     exportEvaluation,
                     out var vertexShader,
                     out error,
                     globalBufferBase: pixelEvaluation.GlobalMemoryBindings.Count,
-                    totalGlobalBufferCount: totalGlobalBuffers,
-                    imageBindingBase: pixelEvaluation.ImageBindings.Count))
+                    totalGlobalBufferCount: totalGlobalBuffers + 2,
+                    imageBindingBase: pixelEvaluation.ImageBindings.Count,
+                    scalarRegisterBufferIndex: totalGlobalBuffers + 1))
             {
                 return false;
             }
@@ -3551,6 +3580,8 @@ public static class AgcExports
 
         var globalMemoryBindings = pixelEvaluation.GlobalMemoryBindings
             .Concat(exportEvaluation.GlobalMemoryBindings)
+            .Append(CreateScalarRegisterBinding(pixelEvaluation))
+            .Append(CreateScalarRegisterBinding(exportEvaluation))
             .ToArray();
         IReadOnlyList<Gen5VertexInputBinding> vertexInputs =
             exportEvaluation.VertexInputs ?? [];
@@ -3561,7 +3592,7 @@ public static class AgcExports
             primitiveType,
             compiled.Vertex,
             compiled.Pixel,
-            GetInterpolatedAttributeCount(pixelState),
+            attributeCount,
             vertexCount,
             state.InstanceCount,
             indexed ? CreateVulkanIndexBuffer(ctx, state, vertexCount) : null,
@@ -3671,6 +3702,88 @@ public static class AgcExports
         }
 
         return (uint)(maxAttribute + 1);
+    }
+
+    private const int ShaderScalarRegisterCount = 256;
+
+    private static Gen5GlobalMemoryBinding CreateScalarRegisterBinding(
+        Gen5ShaderEvaluation evaluation)
+    {
+        var data = new byte[ShaderScalarRegisterCount * sizeof(uint)];
+        var registers = evaluation.InitialScalarRegisters;
+        var count = Math.Min(registers.Count, ShaderScalarRegisterCount);
+        for (var index = 0; index < count; index++)
+        {
+            var value = registers[index];
+            var offset = index * sizeof(uint);
+            data[offset] = (byte)value;
+            data[offset + 1] = (byte)(value >> 8);
+            data[offset + 2] = (byte)(value >> 16);
+            data[offset + 3] = (byte)(value >> 24);
+        }
+
+        return new Gen5GlobalMemoryBinding(0, 0, [], data);
+    }
+
+    private static ulong ComputeShaderStructureFingerprint(Gen5ShaderEvaluation evaluation)
+    {
+        const ulong offsetBasis = 14695981039346656037UL;
+        const ulong prime = 1099511628211UL;
+        var hash = offsetBasis;
+        void Mix(ulong value) => hash = (hash ^ value) * prime;
+
+        Mix((ulong)evaluation.GlobalMemoryBindings.Count);
+        foreach (var binding in evaluation.GlobalMemoryBindings)
+        {
+            Mix(binding.ScalarAddress);
+            Mix((ulong)binding.InstructionPcs.Count);
+            foreach (var pc in binding.InstructionPcs)
+            {
+                Mix(pc);
+            }
+        }
+
+        Mix((ulong)evaluation.ImageBindings.Count);
+        foreach (var image in evaluation.ImageBindings)
+        {
+            Mix(image.Pc);
+            Mix((ulong)(uint)image.Opcode.GetHashCode());
+            foreach (var word in image.ResourceDescriptor)
+            {
+                Mix(word);
+            }
+
+            foreach (var word in image.SamplerDescriptor)
+            {
+                Mix(word);
+            }
+
+            Mix(image.MipLevel ?? uint.MaxValue);
+        }
+
+        if (evaluation.VertexInputs is { } vertexInputs)
+        {
+            Mix((ulong)vertexInputs.Count);
+            foreach (var input in vertexInputs)
+            {
+                Mix(input.Pc);
+                Mix(input.Location);
+                Mix(input.ComponentCount);
+                Mix(input.DataFormat);
+                Mix(input.NumberFormat);
+                Mix(input.Stride);
+            }
+        }
+
+        if (evaluation.ComputeSystemRegisters is { } computeSystemRegisters)
+        {
+            Mix(computeSystemRegisters.WorkGroupXRegister ?? uint.MaxValue);
+            Mix(computeSystemRegisters.WorkGroupYRegister ?? uint.MaxValue);
+            Mix(computeSystemRegisters.WorkGroupZRegister ?? uint.MaxValue);
+            Mix(computeSystemRegisters.ThreadGroupSizeRegister ?? uint.MaxValue);
+        }
+
+        return hash;
     }
 
     private static ulong ComputeShaderStateFingerprint(Gen5ShaderEvaluation evaluation)

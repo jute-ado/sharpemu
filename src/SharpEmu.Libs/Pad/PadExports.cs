@@ -28,6 +28,7 @@ public static class PadExports
     private static PadState _cachedInputState;
 
     private static bool _initialized;
+    private static int _controlsAnnouncementLogged;
 
     [SysAbiExport(
         Nid = "hv1luiJrqQM",
@@ -70,11 +71,15 @@ public static class PadExports
 
         DualSenseReader.EnsureStarted();
         XInputReader.EnsureStarted();
-        Console.Error.WriteLine(DualSenseReader.TryGetState(out _)
-            ? "[LOADER][INFO] Controls: DualSense connected (keyboard fallback also active)."
-            : XInputReader.TryGetState(out _)
-                ? "[LOADER][INFO] Controls: Xbox controller connected (keyboard fallback also active)."
-                : "[LOADER][INFO] Keyboard controls: Arrow keys = D-pad, WASD = left stick, IJKL = right stick, Z/Enter = Cross, X/Esc = Circle, C = Square, V = Triangle, Q = L1, E = R1, R = L2, F = R2, Tab/Backspace = Options. A DualSense or Xbox controller will be used automatically when plugged in.");
+        if (Interlocked.Exchange(ref _controlsAnnouncementLogged, 1) == 0)
+        {
+            Console.Error.WriteLine(DualSenseReader.TryGetState(out _)
+                ? "[LOADER][INFO] Controls: DualSense connected (keyboard fallback also active)."
+                : XInputReader.TryGetState(out _)
+                    ? "[LOADER][INFO] Controls: Xbox controller connected (keyboard fallback also active)."
+                    : "[LOADER][INFO] Keyboard controls: Arrow keys = D-pad, WASD = left stick, IJKL = right stick, Z/Enter = Cross, X/Esc = Circle, C = Square, V = Triangle, Q = L1, E = R1, R = L2, F = R2, Tab/Backspace = Options. A DualSense or Xbox controller will be used automatically when plugged in.");
+        }
+
         return ctx.SetReturn(PrimaryPadHandle);
     }
 
