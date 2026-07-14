@@ -52,4 +52,54 @@ public sealed class VirtualMemoryQueryTests
         Assert.Equal(0x2000UL, region.Length);
         Assert.Equal(0x03, region.Protection);
     }
+
+    [WindowsX64Fact]
+    public void PhysicalMemorySnapshotsPageProtectionRuns()
+    {
+        using var memory = new PhysicalVirtualMemory();
+        var address = memory.AllocateAt(0, 0x4000, executable: true);
+        memory.Map(
+            address,
+            0x1000,
+            fileOffset: 0,
+            fileData: [],
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+        memory.Map(
+            address + 0x1000,
+            0x2000,
+            fileOffset: 0,
+            fileData: [],
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+
+        var regions = memory.SnapshotRegions();
+
+        Assert.Collection(
+            regions,
+            region => AssertRegion(
+                region,
+                address,
+                0x1000,
+                ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute),
+            region => AssertRegion(
+                region,
+                address + 0x1000,
+                0x2000,
+                ProgramHeaderFlags.Read | ProgramHeaderFlags.Write),
+            region => AssertRegion(
+                region,
+                address + 0x3000,
+                0x1000,
+                ProgramHeaderFlags.Read | ProgramHeaderFlags.Write | ProgramHeaderFlags.Execute));
+    }
+
+    private static void AssertRegion(
+        VirtualMemoryRegion region,
+        ulong expectedAddress,
+        ulong expectedSize,
+        ProgramHeaderFlags expectedProtection)
+    {
+        Assert.Equal(expectedAddress, region.VirtualAddress);
+        Assert.Equal(expectedSize, region.MemorySize);
+        Assert.Equal(expectedProtection, region.Protection);
+    }
 }

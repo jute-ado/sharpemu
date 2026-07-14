@@ -568,23 +568,109 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         _gate.EnterReadLock();
         try
         {
-            var snapshot = new VirtualMemoryRegion[_regions.Count];
-            for (var i = 0; i < _regions.Count; i++)
+            var snapshot = new List<VirtualMemoryRegion>(_regions.Count);
+            var pageProtections = _pageProtections
+                .OrderBy(pair => pair.Key)
+                .ToArray();
+            var pageIndex = 0;
+            foreach (var region in _regions)
             {
-                var r = _regions[i];
-                snapshot[i] = new VirtualMemoryRegion(
-                    r.VirtualAddress,
-                    r.Size,
-                    0,
-                    r.Size,
-                    r.IsExecutable ? ProgramHeaderFlags.Execute | ProgramHeaderFlags.Read : ProgramHeaderFlags.Read);
+                var regionEnd = checked(region.VirtualAddress + region.Size);
+                var cursor = region.VirtualAddress;
+                var defaultProtection = GetDefaultProgramHeaderProtection(region);
+                while (pageIndex < pageProtections.Length &&
+                       pageProtections[pageIndex].Key < region.VirtualAddress)
+                {
+                    pageIndex++;
+                }
+
+                while (pageIndex < pageProtections.Length &&
+                       pageProtections[pageIndex].Key < regionEnd)
+                {
+                    var page = pageProtections[pageIndex];
+                    if (cursor < page.Key)
+                    {
+                        AddSnapshotRegion(
+                            snapshot,
+                            region.VirtualAddress,
+                            cursor,
+                            page.Key,
+                            defaultProtection);
+                    }
+
+                    var pageEnd = regionEnd - page.Key <= PageSize
+                        ? regionEnd
+                        : page.Key + PageSize;
+                    AddSnapshotRegion(
+                        snapshot,
+                        region.VirtualAddress,
+                        page.Key,
+                        pageEnd,
+                        page.Value);
+                    cursor = pageEnd;
+                    pageIndex++;
+                }
+
+                if (cursor < regionEnd)
+                {
+                    AddSnapshotRegion(
+                        snapshot,
+                        region.VirtualAddress,
+                        cursor,
+                        regionEnd,
+                        defaultProtection);
+                }
             }
+
             return snapshot;
         }
         finally
         {
             _gate.ExitReadLock();
         }
+    }
+
+    private static void AddSnapshotRegion(
+        List<VirtualMemoryRegion> snapshot,
+        ulong allocationStart,
+        ulong start,
+        ulong end,
+        ProgramHeaderFlags protection)
+    {
+        var size = end - start;
+        if (snapshot.Count != 0)
+        {
+            var previous = snapshot[^1];
+            if (previous.VirtualAddress >= allocationStart &&
+                previous.VirtualAddress + previous.MemorySize == start &&
+                previous.Protection == protection)
+            {
+                var combinedSize = checked(previous.MemorySize + size);
+                snapshot[^1] = new VirtualMemoryRegion(
+                    previous.VirtualAddress,
+                    combinedSize,
+                    0,
+                    combinedSize,
+                    protection);
+                return;
+            }
+        }
+
+        snapshot.Add(new VirtualMemoryRegion(start, size, 0, size, protection));
+    }
+
+    private static ProgramHeaderFlags GetDefaultProgramHeaderProtection(MemoryRegion region)
+    {
+        return (region.Protection & 0xFF) switch
+        {
+            PAGE_READONLY => ProgramHeaderFlags.Read,
+            PAGE_READWRITE => ProgramHeaderFlags.Read | ProgramHeaderFlags.Write,
+            PAGE_EXECUTE => ProgramHeaderFlags.Execute,
+            PAGE_EXECUTE_READ => ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute,
+            PAGE_EXECUTE_READWRITE or PAGE_EXECUTE_WRITECOPY =>
+                ProgramHeaderFlags.Read | ProgramHeaderFlags.Write | ProgramHeaderFlags.Execute,
+            _ => ProgramHeaderFlags.None,
+        };
     }
 
     public bool TryQueryMemoryRegion(
