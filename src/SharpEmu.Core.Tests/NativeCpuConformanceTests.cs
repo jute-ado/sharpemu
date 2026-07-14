@@ -336,6 +336,66 @@ public sealed class NativeCpuConformanceTests
             ]
         },
         {
+            "tls-32-bit-immediate-store-preserves-register-and-adjacent-bytes",
+            [
+                0x48, 0xB8, 0x00, 0x00, 0x00, 0x00,
+                0xDD, 0xCC, 0xBB, 0xAA,             // mov rax, 0xAABBCCDD00000000
+                0x64, 0x48, 0x89, 0x04, 0x25,
+                0x60, 0x00, 0x00, 0x00,             // mov fs:[0x60], rax
+                0x64, 0xC7, 0x04, 0x25,
+                0x60, 0x00, 0x00, 0x00,
+                0x78, 0x56, 0x34, 0x12,             // mov dword fs:[0x60], 0x12345678
+                0x48, 0xB9, 0x00, 0x00, 0x00, 0x00,
+                0xDD, 0xCC, 0xBB, 0xAA,             // mov rcx, 0xAABBCCDD00000000
+                0x48, 0x39, 0xC8,                   // cmp rax, rcx
+                0x75, 0x1B,                         // jne failure
+                0x64, 0x48, 0x8B, 0x04, 0x25,
+                0x60, 0x00, 0x00, 0x00,             // mov rax, fs:[0x60]
+                0x48, 0xB9, 0x78, 0x56, 0x34, 0x12,
+                0xDD, 0xCC, 0xBB, 0xAA,             // mov rcx, 0xAABBCCDD12345678
+                0x48, 0x39, 0xC8,                   // cmp rax, rcx
+                0x75, 0x03,                         // jne failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
+            "tls-64-bit-immediate-store-sign-extends-value",
+            [
+                0x64, 0x48, 0xC7, 0x04, 0x25,
+                0x68, 0x00, 0x00, 0x00,
+                0x80, 0xFF, 0xFF, 0xFF,             // mov qword fs:[0x68], -128
+                0x64, 0x48, 0x8B, 0x04, 0x25,
+                0x68, 0x00, 0x00, 0x00,             // mov rax, fs:[0x68]
+                0x48, 0x83, 0xF8, 0x80,             // cmp rax, -128
+                0x75, 0x03,                         // jne failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
+            "tls-immediate-store-preserves-arithmetic-flags",
+            [
+                0xB8, 0xFF, 0xFF, 0xFF, 0x7F,       // mov eax, 0x7fffffff
+                0x83, 0xC0, 0x01,                   // add eax, 1
+                0x64, 0xC7, 0x04, 0x25,
+                0x70, 0x00, 0x00, 0x00,
+                0x78, 0x56, 0x34, 0x12,             // mov dword fs:[0x70], 0x12345678
+                0x71, 0x09,                         // jno failure
+                0x79, 0x07,                         // jns failure
+                0x74, 0x05,                         // jz failure
+                0x72, 0x03,                         // jc failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
             "tls-load-inside-nested-call",
             [
                 0xE8, 0x0D, 0x00, 0x00, 0x00,       // call helper
