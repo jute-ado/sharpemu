@@ -1,8 +1,9 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using SharpEmu.Core.Runtime;
 using SharpEmu.Core.Cpu;
+using SharpEmu.Core.Cpu.Native;
+using SharpEmu.Core.Runtime;
 using SharpEmu.GUI;
 using SharpEmu.HLE;
 using SharpEmu.Logging;
@@ -77,11 +78,6 @@ internal static partial class Program
 
         Console.Error.WriteLine($"[DEBUG] SharpEmu starting with {args.Length} args");
 
-        if (!isMitigatedChild && TryRunMitigatedChild(args, out var childExitCode))
-        {
-            return childExitCode;
-        }
-
         if (!TryParseArguments(
                 args,
                 out var ebootPath,
@@ -92,6 +88,12 @@ internal static partial class Program
         {
             PrintUsage();
             return 1;
+        }
+
+        if (!isMitigatedChild &&
+            TryRunMitigatedChild(args, ebootPath, reportJsonPath, out var childExitCode))
+        {
+            return childExitCode;
         }
 
         if (!isMitigatedChild && !string.IsNullOrWhiteSpace(logFilePath))
@@ -304,7 +306,11 @@ internal static partial class Program
         return list.ToArray();
     }
 
-    private static bool TryRunMitigatedChild(string[] args, out int childExitCode)
+    private static bool TryRunMitigatedChild(
+        string[] args,
+        string ebootPath,
+        string? reportJsonPath,
+        out int childExitCode)
     {
         childExitCode = 0;
         if (!OperatingSystem.IsWindows())
@@ -451,6 +457,17 @@ internal static partial class Program
                 }
 
                 childExitCode = unchecked((int)exitCode);
+                if (childExitCode == DirectExecutionBackend.StallWatchdogExitCode)
+                {
+                    TryWriteExecutionReport(
+                        reportJsonPath,
+                        Path.GetFullPath(ebootPath),
+                        result: null,
+                        runtime: null,
+                        hostError: "Execution stalled and was terminated by the native watchdog.",
+                        incompleteResultName: "EXECUTION_STALLED");
+                }
+
                 Console.Error.WriteLine("[DEBUG] Running in mitigated child process (CET/CFG disabled).");
                 return true;
             }
@@ -819,7 +836,8 @@ internal static partial class Program
         string executablePath,
         OrbisGen2Result? result,
         ISharpEmuRuntime? runtime,
-        string? hostError)
+        string? hostError,
+        string? incompleteResultName = null)
     {
         if (string.IsNullOrWhiteSpace(reportJsonPath))
         {
@@ -841,7 +859,7 @@ internal static partial class Program
                     completedResult.ToString(),
                     (int)completedResult,
                     completedResult == OrbisGen2Result.ORBIS_GEN2_OK)
-                : new CliExecutionResult("HOST_ERROR", null, false);
+                : new CliExecutionResult(incompleteResultName ?? "HOST_ERROR", null, false);
             var report = new CliExecutionReport(
                 SchemaVersion: 1,
                 GeneratedAtUtc: DateTimeOffset.UtcNow,

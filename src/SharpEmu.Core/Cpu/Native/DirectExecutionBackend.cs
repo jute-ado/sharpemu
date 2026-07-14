@@ -18,6 +18,8 @@ namespace SharpEmu.Core.Cpu.Native;
 
 public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, IGuestThreadScheduler, IDisposable
 {
+	public const int StallWatchdogExitCode = 6;
+
 	private static readonly SharpEmuLogger Log = SharpEmuLog.For("Native");
 	private const int ImportLoopHistoryLength = 2048;
 
@@ -4856,7 +4858,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				Console.Error.WriteLine("[LOADER][ERROR] " + LastError);
 				LogStallWatchdogSnapshot();
 				Console.Error.Flush();
-				Environment.Exit(4);
+				Environment.Exit(StallWatchdogExitCode);
 			}
 		}))
 		{
