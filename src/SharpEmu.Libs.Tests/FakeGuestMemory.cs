@@ -13,11 +13,14 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestMemoryAllocator, IGuestS
 {
     private readonly List<(ulong Base, byte[] Data)> _regions = [];
     private readonly List<(ulong Start, ulong End)> _stackRanges = [];
+    private readonly HashSet<ulong> _guestAllocations = [];
     private ulong _nextAllocationAddress = 0x0010_0000;
 
     public int ReadCount { get; private set; }
 
     public int CompareCount { get; private set; }
+
+    public int GuestAllocationCount => _guestAllocations.Count;
 
     public void AddRegion(ulong baseAddress, byte[] data)
         => _regions.Add((baseAddress, data));
@@ -31,6 +34,7 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestMemoryAllocator, IGuestS
         }
 
         _regions.RemoveAt(index);
+        _guestAllocations.Remove(baseAddress);
         return true;
     }
 
@@ -52,6 +56,7 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestMemoryAllocator, IGuestS
                 (_nextAllocationAddress + alignment - 1) & ~(alignment - 1));
             _nextAllocationAddress = checked(alignedAddress + size);
             _regions.Add((alignedAddress, new byte[(int)size]));
+            _guestAllocations.Add(alignedAddress);
             address = alignedAddress;
             return true;
         }
@@ -59,6 +64,24 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestMemoryAllocator, IGuestS
         {
             return false;
         }
+    }
+
+    public bool TryFreeGuestMemory(ulong address)
+    {
+        if (!_guestAllocations.Contains(address))
+        {
+            return false;
+        }
+
+        var index = _regions.FindIndex(region => region.Base == address);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        _regions.RemoveAt(index);
+        _guestAllocations.Remove(address);
+        return true;
     }
 
     public bool TryGetStackRange(ulong address, out ulong start, out ulong end)

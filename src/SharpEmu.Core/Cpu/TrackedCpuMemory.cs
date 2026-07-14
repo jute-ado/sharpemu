@@ -54,6 +54,10 @@ public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemo
         return false;
     }
 
+    public bool TryFreeGuestMemory(ulong address) =>
+        _inner is IGuestMemoryAllocator allocator &&
+        allocator.TryFreeGuestMemory(address);
+
     public void RegisterStackRange(ulong start, ulong size)
     {
         if (_inner is not IGuestStackMemory stackMemory)
