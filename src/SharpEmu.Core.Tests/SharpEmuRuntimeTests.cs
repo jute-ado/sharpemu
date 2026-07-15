@@ -169,6 +169,31 @@ public sealed class SharpEmuRuntimeTests
     }
 
     [WindowsX64Fact]
+    public async Task RuntimeExecutesModuleInitializerArrayBeforeMainEntry()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0xC3], // main entry returns successfully
+            requestReport: true,
+            adjacentModuleImage: SyntheticElfImage.CreateModuleWithInitializerArray(
+                [0xC3],       // DT_INIT returns successfully
+                [0x0F, 0x0B])); // DT_INIT_ARRAY executes ud2
+
+        Assert.Equal(4, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var document = JsonDocument.Parse(execution.ReportJson);
+        var root = document.RootElement;
+        Assert.Equal(
+            "ORBIS_GEN2_ERROR_CPU_TRAP",
+            root.GetProperty("result").GetProperty("name").GetString());
+        Assert.Equal("CpuTrap", root.GetProperty("cpuSession").GetProperty("reason").GetString());
+        Assert.Equal("0x0F", root.GetProperty("cpuTrap").GetProperty("opcode").GetString());
+        Assert.Contains(
+            "Initializer dispatch failed",
+            execution.StandardOutput + execution.StandardError,
+            StringComparison.Ordinal);
+    }
+
+    [WindowsX64Fact]
     public Task CliReportsSyntheticIllegalInstructionWithoutCrashingHostProcess()
     {
         return AssertSyntheticGuestTrapAsync(

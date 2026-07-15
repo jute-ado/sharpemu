@@ -564,8 +564,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         for (var i = 0; i < loadedModuleImages.Count; i++)
         {
             var loadedModule = loadedModuleImages[i];
-            var initEntryPoint = loadedModule.Image.InitFunctionEntryPoint;
-            if (initEntryPoint < 0x10000)
+            var initializerEntryPoints = loadedModule.Image.InitializerFunctions;
+            if (initializerEntryPoints.Count == 0)
             {
                 continue;
             }
@@ -577,20 +577,27 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             }
 
             Log.Info(
-                $"Starting module {moduleName}: dt_init=0x{initEntryPoint:X16}");
+                $"Starting module {moduleName}: initializers={initializerEntryPoints.Count}, dt_init=0x{loadedModule.Image.InitFunctionEntryPoint:X16}");
 
-            var result = _cpuDispatcher.DispatchModuleInitializer(
-                initEntryPoint,
-                generation,
-                activeImportStubs,
-                activeRuntimeSymbols,
-                moduleName,
-                _cpuExecutionOptions);
-            if (result != OrbisGen2Result.ORBIS_GEN2_OK)
+            for (var initializerIndex = 0; initializerIndex < initializerEntryPoints.Count; initializerIndex++)
             {
-                Log.Error(
-                    $"Module start failed: {moduleName} -> {result}");
-                return result;
+                var initializerEntryPoint = initializerEntryPoints[initializerIndex];
+                Log.Debug(
+                    $"  Module initializer {moduleName}[{initializerIndex}] -> 0x{initializerEntryPoint:X16}");
+
+                var result = _cpuDispatcher.DispatchModuleInitializer(
+                    initializerEntryPoint,
+                    generation,
+                    activeImportStubs,
+                    activeRuntimeSymbols,
+                    moduleName,
+                    _cpuExecutionOptions);
+                if (result != OrbisGen2Result.ORBIS_GEN2_OK)
+                {
+                    Log.Error(
+                        $"Module start failed: {moduleName}[{initializerIndex}] -> {result}");
+                    return result;
+                }
             }
         }
 
