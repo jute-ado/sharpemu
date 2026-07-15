@@ -192,6 +192,16 @@ const ulong ProgramAddress = 0x100000;
         0xE0700014, 0x80020500, // buffer_store_dword v5, off, s[8:11], 0 offset:20
         0xBF810000,             // s_endpgm
     ]),
+    // Load through two scalar resource descriptors, then cross-copy the
+    // values. Correct results require distinct descriptor-array elements and
+    // correct instruction-PC-to-resource routing in the compiler.
+    ("exec-buffer-bindings", true, [
+        0xE0300000, 0x80020400, // buffer_load_dword v4, off, s[8:11], 0
+        0xE0300000, 0x80030500, // buffer_load_dword v5, off, s[12:15], 0
+        0xE0700004, 0x80030400, // buffer_store_dword v4, off, s[12:15], 0 offset:4
+        0xE0700004, 0x80020500, // buffer_store_dword v5, off, s[8:11], 0 offset:4
+        0xBF810000,             // s_endpgm
+    ]),
     // A finite backward branch exercises the structured program-counter loop,
     // dynamic SCC updates, and scalar-to-vector transfer. The dispatch runner
     // has a fence deadline, so a broken termination condition fails boundedly.
@@ -429,25 +439,23 @@ foreach (var (name, expectTranslate, words) in testPrograms)
         continue;
     }
 
-    // Buffer memory operations need a global-memory binding; the emitter
-    // resolves them by instruction PC, so collect every buffer PC from the
-    // decoded program itself.
-    var bufferPcs = new List<uint>();
-    foreach (var instruction in program!.Instructions)
-    {
-        if (instruction.Opcode.StartsWith("Buffer", StringComparison.Ordinal) ||
-            instruction.Opcode.StartsWith("TBuffer", StringComparison.Ordinal))
-        {
-            bufferPcs.Add(instruction.Pc);
-        }
-    }
-
-    // The binding's scalar base (8 -> s[8:11]) must match the srsrc field of
-    // the hand-assembled buffer_store words, and the 64-byte backing store
-    // must cover every hand-assembled load/store offset.
-    var globalBindings = bufferPcs.Count > 0
-        ? new[] { new Gen5GlobalMemoryBinding(8u, 0UL, bufferPcs, new byte[64]) }
-        : Array.Empty<Gen5GlobalMemoryBinding>();
+    // Buffer memory operations need global-memory bindings. The emitter
+    // resolves each one by instruction PC, while ScalarResource identifies
+    // the guest descriptor whose PC group becomes one descriptor-array slot.
+    var globalBindings = program!.Instructions
+        .Where(instruction =>
+            instruction.Control is Gen5BufferMemoryControl &&
+            (instruction.Opcode.StartsWith("Buffer", StringComparison.Ordinal) ||
+             instruction.Opcode.StartsWith("TBuffer", StringComparison.Ordinal)))
+        .GroupBy(instruction =>
+            ((Gen5BufferMemoryControl)instruction.Control!).ScalarResource)
+        .OrderBy(group => group.Key)
+        .Select(group => new Gen5GlobalMemoryBinding(
+            group.Key,
+            0UL,
+            group.Select(instruction => instruction.Pc).ToArray(),
+            new byte[64]))
+        .ToArray();
 
     var conformanceCase = CreateConformanceCase(name);
     Gen5ComputeSystemRegisters? computeSystemRegisters = conformanceCase is { } computeCase &&
@@ -514,14 +522,25 @@ foreach (var (name, expectTranslate, words) in testPrograms)
         if (conformanceCase is not null)
         {
             var manifestPath = Path.Combine(outputDirectory, $"{name}-cs.conformance.json");
+            var conformanceBuffers = new List<SyntheticConformanceBuffer>
+            {
+                new(
+                    "guest buffer 0",
+                    conformanceCase.InitialWords,
+                    conformanceCase.ExpectedWords,
+                    conformanceCase.Labels),
+            };
+            if (conformanceCase.AdditionalBuffers is not null)
+            {
+                conformanceBuffers.AddRange(conformanceCase.AdditionalBuffers);
+            }
+
             var manifest = new
             {
-                SchemaVersion = 2,
+                SchemaVersion = 3,
                 Name = name,
                 Shader = Path.GetFileName(path),
-                conformanceCase.InitialWords,
-                conformanceCase.ExpectedWords,
-                conformanceCase.Labels,
+                Buffers = conformanceBuffers,
                 conformanceCase.LocalSizeX,
                 conformanceCase.LocalSizeY,
                 conformanceCase.LocalSizeZ,
@@ -681,6 +700,39 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
             labels[4] = "buffer_load_dwordx2 low result copied to offset 16";
             labels[5] = "buffer_load_dwordx2 high result copied to offset 20";
             break;
+        case "exec-buffer-bindings":
+        {
+            const uint firstValue = 0x11111111;
+            const uint secondValue = 0x22222222;
+            initialWords[0] = firstValue;
+            expectedWords[0] = firstValue;
+            expectedWords[1] = secondValue;
+            labels[0] = "descriptor 0 source remains unchanged";
+            labels[1] = "descriptor 0 receives the value loaded through descriptor 1";
+
+            var secondInitialWords = Enumerable.Repeat(sentinel, 16).ToArray();
+            var secondExpectedWords = (uint[])secondInitialWords.Clone();
+            var secondLabels = Enumerable.Range(0, secondInitialWords.Length)
+                .Select(index => $"descriptor 1 trailing word [{index}] remains sentinel")
+                .ToArray();
+            secondInitialWords[0] = secondValue;
+            secondExpectedWords[0] = secondValue;
+            secondExpectedWords[1] = firstValue;
+            secondLabels[0] = "descriptor 1 source remains unchanged";
+            secondLabels[1] = "descriptor 1 receives the value loaded through descriptor 0";
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                AdditionalBuffers:
+                [
+                    new SyntheticConformanceBuffer(
+                        "guest buffer 1",
+                        secondInitialWords,
+                        secondExpectedWords,
+                        secondLabels),
+                ]);
+        }
         case "exec-scalar-loop":
             expectedWords[0] = 4;
             labels[0] = "backward scalar loop terminates after four iterations";
@@ -883,7 +935,14 @@ internal sealed record SyntheticConformanceCase(
     uint? WorkGroupXRegister = null,
     uint? WorkGroupYRegister = null,
     uint? WorkGroupZRegister = null,
-    uint? ThreadGroupSizeRegister = null);
+    uint? ThreadGroupSizeRegister = null,
+    IReadOnlyList<SyntheticConformanceBuffer>? AdditionalBuffers = null);
+
+internal sealed record SyntheticConformanceBuffer(
+    string Name,
+    uint[] InitialWords,
+    uint[] ExpectedWords,
+    string[] Labels);
 
 internal sealed class FakeMemory : ICpuMemory
 {
