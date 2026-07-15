@@ -285,6 +285,21 @@ const ulong ProgramAddress = 0x100000;
         0xE0701000, 0x80020002, // buffer_store_dword v0, v2, s[8:11], 0 offen
         0xBF810000,             // s_endpgm
     ]),
+    // Exercise the conventional VCC + saveexec divergence sequence rather
+    // than writing EXEC directly with cmpx. Each half must execute in turn.
+    ("exec-saveexec", true, [
+        0x7E020288,             // v_mov_b32 v1, 8
+        0x7D820300,             // v_cmp_lt_u32 vcc, v0, v1
+        0xBE80246A,             // s_and_saveexec_b64 s[0:1], vcc
+        0x34040082,             // v_lshlrev_b32 v2, 2, v0 (byte address)
+        0xE0701000, 0x80020002, // buffer_store_dword v0, v2, s[8:11], 0 offen
+        0xBEFE0400,             // s_mov_b64 exec, s[0:1]
+        0x7D8C0300,             // v_cmp_ge_u32 vcc, v0, v1
+        0xBE82246A,             // s_and_saveexec_b64 s[2:3], vcc
+        0x34040082,             // v_lshlrev_b32 v2, 2, v0 (byte address)
+        0xE0701000, 0x80020002, // buffer_store_dword v0, v2, s[8:11], 0 offen
+        0xBF810000,             // s_endpgm
+    ]),
     // Sixteen invocations contend on one storage-buffer counter. A plain
     // load/add/store would race; the deterministic final value proves that
     // buffer_atomic_add is emitted and synchronized as an actual atomic.
@@ -730,6 +745,20 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
                 labels[index] = index < 8
                     ? $"lower-path lane {index} writes before EXEC restoration"
                     : $"upper-path lane {index} writes after EXEC restoration";
+            }
+
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                LocalSizeX: 16);
+        case "exec-saveexec":
+            for (uint index = 0; index < 16; index++)
+            {
+                expectedWords[index] = index;
+                labels[index] = index < 8
+                    ? $"VCC/saveexec lower-path lane {index} writes"
+                    : $"VCC/saveexec upper-path lane {index} writes after restore";
             }
 
             return new SyntheticConformanceCase(
