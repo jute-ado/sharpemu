@@ -88,11 +88,6 @@ internal static partial class Program
             TryEnableConsoleFileMirror(earlyLogFilePath);
         }
 
-        if (!CheckHostArchitecture())
-        {
-            return 5;
-        }
-
         if (OperatingSystem.IsMacOS() || OperatingSystem.IsLinux())
         {
             if (OperatingSystem.IsMacOS())
@@ -268,6 +263,11 @@ internal static partial class Program
         }
 
         Console.Error.WriteLine("[DEBUG] Creating runtime...");
+
+        if (!loadOnly && !CheckHostArchitecture())
+        {
+            return 5;
+        }
 
         using var runtime = loadOnly
             ? SharpEmuRuntime.CreateForInspection(runtimeOptions)

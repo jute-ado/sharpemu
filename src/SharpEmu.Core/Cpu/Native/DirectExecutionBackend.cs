@@ -732,7 +732,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private static nint ResolveImportGatewayPtr()
 	{
 		var managedPtr = Marshal.GetFunctionPointerForDelegate(ImportGatewayDelegateInstance);
-		return OperatingSystem.IsWindows()
+		return OperatingSystem.IsWindows() ||
+			RuntimeInformation.ProcessArchitecture != Architecture.X64
 			? managedPtr
 			: PosixHostStubs.CreateWin64ToSysVThunk(managedPtr);
 	}
