@@ -537,6 +537,69 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public unsafe void TlsInstructionCrossingScanChunkBoundaryIsRecognized()
+    {
+        const int chunkSize = 0x0100_0000;
+        byte[] instruction =
+        [
+            0x64, 0x4C, 0x33, 0x3C, 0x25, 0x28, 0x00, 0x00, 0x00,
+        ];
+        var allocationSize = chunkSize + instruction.Length;
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(
+            failedAllocation: int.MaxValue,
+            failedProtection: 4);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        var codeAddress = memory.Allocate(
+            0,
+            (ulong)allocationSize,
+            HostPageProtection.ReadWriteExecute);
+        var instructionAddress = codeAddress + chunkSize - 4u;
+        instruction.CopyTo(new Span<byte>((void*)instructionAddress, instruction.Length));
+        memory.ExecutableRegionAddress = codeAddress;
+        memory.ExecutableRegionSize = (ulong)allocationSize;
+        const ulong stackAddress = 0x1000;
+        var context = new CpuContext(
+            new StackSlotMemory(stackAddress, 0x1122_3344_5566_7788),
+            Generation.Gen5)
+        {
+            [CpuRegister.Rsp] = stackAddress,
+        };
+
+        try
+        {
+            var executed = backend.TryExecute(
+                context,
+                codeAddress,
+                Generation.Gen5,
+                new Dictionary<ulong, string>(),
+                new Dictionary<string, ulong>(),
+                default,
+                NativeEntryReturnContract.RequireZero,
+                out var result);
+
+            Assert.False(executed);
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+            Assert.Contains("TLS patch", backend.LastError, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(
+                instruction,
+                new ReadOnlySpan<byte>((void*)instructionAddress, instruction.Length).ToArray());
+        }
+        finally
+        {
+            backend.Dispose();
+            memory.Free(codeAddress);
+        }
+    }
+
+    [Fact]
     public unsafe void LaterRecognizedTlsPatchFailureRollsBackEarlierPatches()
     {
         var threading = new RecordingHostThreading([17u, 23u]);

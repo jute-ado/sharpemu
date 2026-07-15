@@ -666,6 +666,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private readonly IHostFaultHandling _faultHandling;
 
 	private const int MinTlsPatchInstructionBytes = 8;
+	private const int MaxX86InstructionBytes = 15;
 	private const ulong MaxTlsScanChunkBytes = 0x0100_0000;
 
 	private delegate ulong ImportGatewayDelegate(nint backendHandle, int importIndex, nint argPackPtr);
@@ -2519,18 +2520,24 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				var nextScanAddress = flag && flag2
 					? GetTlsScanChunkEnd(num5, num6)
 					: num6;
+				var scanReadEnd = nextScanAddress < num6
+					? GetTlsScanLookaheadEnd(nextScanAddress, num6)
+					: nextScanAddress;
 				if (flag &&
 					flag2 &&
 					nextScanAddress > num5 &&
-					nextScanAddress - num5 >= MinTlsPatchInstructionBytes)
+					scanReadEnd - num5 >= MinTlsPatchInstructionBytes)
 				{
 					byte* ptr = (byte*)num5;
-					int scanBytes = checked((int)(nextScanAddress - num5));
-					for (int i = 0; i <= scanBytes - MinTlsPatchInstructionBytes; i++)
+					int scanBytes = checked((int)(scanReadEnd - num5));
+					int ownedStartBytes = checked((int)(nextScanAddress - num5));
+					for (int i = 0;
+						i < ownedStartBytes && i <= scanBytes - MinTlsPatchInstructionBytes;
+						i++)
 					{
 						nint address = (nint)(ptr + i);
 						int remainingBytes = scanBytes - i;
-						var candidateLength = Math.Min(15, remainingBytes);
+						var candidateLength = Math.Min(MaxX86InstructionBytes, remainingBytes);
 						if (!NativeTlsInstructionDecoder.TryDecode(
 							new ReadOnlySpan<byte>(ptr + i, candidateLength),
 							out var recognizedInstruction))
@@ -2596,6 +2603,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return regionEnd - regionStart <= MaxTlsScanChunkBytes
 			? regionEnd
 			: regionStart + MaxTlsScanChunkBytes;
+	}
+
+	private static ulong GetTlsScanLookaheadEnd(ulong chunkEnd, ulong regionEnd)
+	{
+		const ulong lookaheadBytes = MaxX86InstructionBytes - 1;
+		return regionEnd - chunkEnd <= lookaheadBytes
+			? regionEnd
+			: chunkEnd + lookaheadBytes;
 	}
 
 	private static ulong AdvanceTlsScanAddress(ulong address, ulong scanEnd)
@@ -2722,7 +2737,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			return false;
 		}
 
-		var candidateLength = Math.Min(15, availableLength);
+		var candidateLength = Math.Min(MaxX86InstructionBytes, availableLength);
 		if (!NativeTlsInstructionDecoder.TryDecode(
 				new ReadOnlySpan<byte>(source, candidateLength),
 				out var instruction))
