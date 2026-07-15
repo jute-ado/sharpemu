@@ -66,13 +66,70 @@ public sealed class HostMemoryAbstractionTests
         GuestPageProtection guestProtection,
         HostPageProtection expectedHostProtection)
     {
+        const ulong address = 0x0000_0008_1800_0000;
+        var hostMemory = new RecordingHostMemory
+        {
+            AllocateResult = address,
+        };
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+        memory.AllocateAt(address, 0x2000, executable: false, allowAlternative: false);
+
+        Assert.True(memory.TryProtect(address, 0x2000, guestProtection));
+
+        var request = Assert.Single(hostMemory.ProtectionRequests);
+        Assert.Equal((address, 0x2000uL, expectedHostProtection), request);
+    }
+
+    [Fact]
+    public void GuestProtectionUpdatesGuestVisibleRegionBoundaries()
+    {
+        const ulong address = 0x0000_0008_2000_0000;
+        var hostMemory = new RecordingHostMemory
+        {
+            AllocateResult = address,
+        };
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+        memory.AllocateAt(address, 0x3000, executable: false, allowAlternative: false);
+
+        Assert.True(memory.TryProtect(
+            address + 0x1000,
+            0x1000,
+            GuestPageProtection.Read | GuestPageProtection.Execute));
+
+        Assert.True(memory.TryQueryMemoryRegion(address + 0x1800, findNext: false, out var region));
+        Assert.Equal(new GuestVirtualMemoryRegion(address + 0x1000, 0x1000, 0x05), region);
+        Assert.Equal([(address + 0x1000, 0x1000uL)], hostMemory.FlushedRanges);
+    }
+
+    [Fact]
+    public void GuestProtectionRejectsUnmappedRangeWithoutCallingHost()
+    {
         var hostMemory = new RecordingHostMemory();
         using var memory = new PhysicalVirtualMemory(hostMemory);
 
-        Assert.True(memory.TryProtect(0x1000, 0x2000, guestProtection));
+        Assert.False(memory.TryProtect(0x1000, 0x1000, GuestPageProtection.Read));
 
-        var request = Assert.Single(hostMemory.ProtectionRequests);
-        Assert.Equal((0x1000uL, 0x2000uL, expectedHostProtection), request);
+        Assert.Empty(hostMemory.ProtectionRequests);
+    }
+
+    [Fact]
+    public void FailedGuestProtectionDoesNotChangeGuestVisibleProtection()
+    {
+        const ulong address = 0x0000_0008_3000_0000;
+        var hostMemory = new RecordingHostMemory
+        {
+            AllocateResult = address,
+            ProtectResult = false,
+        };
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+        memory.AllocateAt(address, 0x1000, executable: false, allowAlternative: false);
+
+        Assert.False(memory.TryProtect(address, 0x1000, GuestPageProtection.Read));
+
+        Assert.True(memory.TryQueryMemoryRegion(address, findNext: false, out var region));
+        Assert.Equal(new GuestVirtualMemoryRegion(address, 0x1000, 0x03), region);
+        Assert.Single(hostMemory.ProtectionRequests);
+        Assert.Empty(hostMemory.FlushedRanges);
     }
 
     [Fact]
@@ -91,9 +148,13 @@ public sealed class HostMemoryAbstractionTests
     {
         public ulong AllocateResult { get; init; }
 
+        public bool ProtectResult { get; init; } = true;
+
         public List<ulong> FreedAddresses { get; } = [];
 
         public List<(ulong Address, ulong Size, HostPageProtection Protection)> ProtectionRequests { get; } = [];
+
+        public List<(ulong Address, ulong Size)> FlushedRanges { get; } = [];
 
         public ulong Allocate(ulong desiredAddress, ulong size, HostPageProtection protection) =>
             AllocateResult;
@@ -116,7 +177,7 @@ public sealed class HostMemoryAbstractionTests
         {
             ProtectionRequests.Add((address, size, protection));
             rawOldProtection = 0;
-            return true;
+            return ProtectResult;
         }
 
         public bool ProtectRaw(
@@ -137,6 +198,7 @@ public sealed class HostMemoryAbstractionTests
 
         public void FlushInstructionCache(ulong address, ulong size)
         {
+            FlushedRanges.Add((address, size));
         }
     }
 }
