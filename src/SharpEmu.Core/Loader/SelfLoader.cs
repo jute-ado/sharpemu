@@ -161,6 +161,7 @@ public sealed class SelfLoader : ISelfLoader
         ValidateElfHeader(elfHeader);
 
         var programHeaders = ParseProgramHeaders(imageData, loadContext, elfHeader);
+        ValidateSectionHeaderTable(imageData, loadContext, elfHeader);
 
         var totalImageSize = CalculateTotalImageSize(programHeaders);
         Console.WriteLine($"Total image size needed: 0x{totalImageSize:X} ({totalImageSize} bytes)");
@@ -396,6 +397,43 @@ public sealed class SelfLoader : ISelfLoader
         }
 
         return headers;
+    }
+
+    private static void ValidateSectionHeaderTable(
+        ReadOnlySpan<byte> imageData,
+        LoadContext loadContext,
+        ElfHeader elfHeader)
+    {
+        if (elfHeader.SectionHeaderCount == 0)
+        {
+            return;
+        }
+
+        if (elfHeader.SectionHeaderOffset == 0)
+        {
+            throw new InvalidDataException(
+                "ELF section header table has entries but no table offset.");
+        }
+
+        if (elfHeader.SectionHeaderEntrySize < ElfSectionHeaderSize)
+        {
+            throw new InvalidDataException(
+                "ELF section header entry size is smaller than expected.");
+        }
+
+        if (elfHeader.SectionHeaderOffset > ulong.MaxValue - (ulong)loadContext.ElfOffset)
+        {
+            throw new InvalidDataException("ELF section header table offset overflows.");
+        }
+
+        var tableOffset = (ulong)loadContext.ElfOffset + elfHeader.SectionHeaderOffset;
+        var tableSize = (ulong)elfHeader.SectionHeaderCount * elfHeader.SectionHeaderEntrySize;
+        if (tableOffset > (ulong)imageData.Length ||
+            tableSize > (ulong)imageData.Length - tableOffset)
+        {
+            throw new InvalidDataException(
+                "ELF section header table extends beyond the image bounds.");
+        }
     }
 
     private static void ValidateLoadSegments(
@@ -1519,7 +1557,8 @@ public sealed class SelfLoader : ISelfLoader
             return false;
         }
 
-        var headerOffset = elfHeader.SectionHeaderOffset + ((ulong)sectionIndex * elfHeader.SectionHeaderEntrySize);
+        var headerOffset = checked(
+            elfHeader.SectionHeaderOffset + ((ulong)sectionIndex * elfHeader.SectionHeaderEntrySize));
         if (!TryReadElfRelativeSlice(imageData, loadContext, headerOffset, ElfSectionHeaderSize, out var sectionBytes))
         {
             sectionHeader = default;
