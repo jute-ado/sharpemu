@@ -1018,6 +1018,11 @@ public static class VideoOutExports
             return OrbisVideoOutErrorInvalidValue;
         }
 
+        if (!GuestAddress.IsRangeValid(addressesAddress, (ulong)bufferNum * sizeof(ulong)))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
         if (!TryReadBufferAttribute(ctx, attributeAddress, false, out var attribute))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
@@ -1077,6 +1082,13 @@ public static class VideoOutExports
         if (categoryRaw != 0 || option != 0)
         {
             return OrbisVideoOutErrorInvalidValue;
+        }
+
+        if (!GuestAddress.IsRangeValid(
+                buffersAddress,
+                (ulong)bufferNum * VideoOutBuffersEntrySize))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
         if (!TryReadBufferAttribute(ctx, attributeAddress, true, out var attribute))
@@ -1318,6 +1330,14 @@ public static class VideoOutExports
     private static bool TryReadBufferAttribute(CpuContext ctx, ulong attributeAddress, bool attribute2, out BufferAttribute attribute)
     {
         attribute = default;
+        var attributeSize = attribute2
+            ? VideoOutBufferAttribute2Size
+            : VideoOutBufferAttributeSize;
+        if (!GuestAddress.IsRangeValid(attributeAddress, (ulong)attributeSize))
+        {
+            return false;
+        }
+
         if (!ctx.TryReadUInt32(attributeAddress + 0x04, out var tilingMode) ||
             !ctx.TryReadUInt32(attributeAddress + 0x0C, out var width) ||
             !ctx.TryReadUInt32(attributeAddress + 0x10, out var height))
