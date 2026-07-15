@@ -305,6 +305,68 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public unsafe void RecognizedTlsPatchFailureStopsExecutionPreparation()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(
+            failedAllocation: int.MaxValue,
+            failedProtection: 6,
+            failedRawProtection: 1);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        var instructionAddress = memory.Allocate(
+            0,
+            16,
+            HostPageProtection.ReadWriteExecute);
+        byte[] instruction =
+        [
+            0x64, 0x4C, 0x33, 0x3C, 0x25, 0x28, 0x00, 0x00, 0x00,
+            0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC,
+        ];
+        instruction.CopyTo(new Span<byte>((void*)instructionAddress, instruction.Length));
+        memory.ExecutableRegionAddress = instructionAddress;
+        memory.ExecutableRegionSize = (ulong)instruction.Length;
+        const ulong stackAddress = 0x1000;
+        var context = new CpuContext(
+            new StackSlotMemory(stackAddress, 0x1122_3344_5566_7788),
+            Generation.Gen5)
+        {
+            [CpuRegister.Rsp] = stackAddress,
+        };
+
+        try
+        {
+            var executed = backend.TryExecute(
+                context,
+                instructionAddress,
+                Generation.Gen5,
+                new Dictionary<ulong, string>(),
+                new Dictionary<string, ulong>(),
+                default,
+                NativeEntryReturnContract.RequireZero,
+                out var result);
+
+            Assert.False(executed);
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+            Assert.Contains("TLS patch", backend.LastError, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(
+                instruction,
+                new ReadOnlySpan<byte>((void*)instructionAddress, instruction.Length).ToArray());
+        }
+        finally
+        {
+            backend.Dispose();
+            memory.Free(instructionAddress);
+        }
+    }
+
+    [Fact]
     public unsafe void FailedImportSetupRestoresPatchedSlotsAndAttemptAllocations()
     {
         var threading = new RecordingHostThreading([17u, 23u]);
@@ -626,6 +688,10 @@ public sealed class NativeBackendConstructionTests
 
         public List<(ulong Address, HostPageProtection Protection)> ProtectionCalls { get; } = [];
 
+        public ulong ExecutableRegionAddress { get; set; }
+
+        public ulong ExecutableRegionSize { get; set; }
+
         public ulong Allocate(ulong desiredAddress, ulong size, HostPageProtection protection)
         {
             if (++_allocationCount == failedAllocation)
@@ -677,6 +743,22 @@ public sealed class NativeBackendConstructionTests
 
         public bool Query(ulong address, out HostRegionInfo info)
         {
+            if (ExecutableRegionSize != 0 &&
+                address >= ExecutableRegionAddress &&
+                address - ExecutableRegionAddress < ExecutableRegionSize)
+            {
+                info = new HostRegionInfo(
+                    ExecutableRegionAddress,
+                    ExecutableRegionAddress,
+                    ExecutableRegionSize,
+                    HostRegionState.Committed,
+                    RawState: 0x1000,
+                    HostPageProtection.ReadExecute,
+                    RawProtection: 0x20,
+                    RawAllocationProtection: 0x20);
+                return true;
+            }
+
             info = default;
             return false;
         }
