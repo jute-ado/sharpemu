@@ -257,6 +257,32 @@ const ulong ProgramAddress = 0x100000;
         0xE0700014, 0x80020A00, // buffer_store_dword v10, off, s[8:11], 0 offset:20
         0xBF810000,             // s_endpgm
     ]),
+    // Exercise scratch byte/short extension and a halfword that straddles two
+    // scratch dwords. Reloading both aligned words after the stores checks that
+    // neighboring bytes survive the read-modify-write lowering.
+    ("exec-scratch-subword", true, [
+        0xE0300000, 0x80020500, // buffer_load_dword v5, off, s[8:11], 0
+        0xE0300004, 0x80020600, // buffer_load_dword v6, off, s[8:11], 0 offset:4
+        0xE0300008, 0x80020700, // buffer_load_dword v7, off, s[8:11], 0 offset:8
+        0x7E080280,             // v_mov_b32 v4, 0 (scratch byte address)
+        0xDC704000, 0x007F0504, // scratch_store_dword v4, v5
+        0xDC704004, 0x007F0604, // scratch_store_dword v4, v6 offset:4
+        0xDC204000, 0x087F0004, // scratch_load_ubyte v8, v4
+        0xDC244002, 0x097F0004, // scratch_load_sbyte v9, v4 offset:2
+        0xDC284003, 0x0A7F0004, // scratch_load_ushort v10, v4 offset:3
+        0xDC2C4003, 0x0B7F0004, // scratch_load_sshort v11, v4 offset:3
+        0xDC604000, 0x007F0704, // scratch_store_byte v4, v7
+        0xDC684003, 0x007F0704, // scratch_store_short v4, v7 offset:3
+        0xDC304000, 0x0C7F0004, // scratch_load_dword v12, v4
+        0xDC304004, 0x0D7F0004, // scratch_load_dword v13, v4 offset:4
+        0xE070000C, 0x80020800, // buffer_store_dword v8, off, s[8:11], 0 offset:12
+        0xE0700010, 0x80020900, // buffer_store_dword v9, off, s[8:11], 0 offset:16
+        0xE0700014, 0x80020A00, // buffer_store_dword v10, off, s[8:11], 0 offset:20
+        0xE0700018, 0x80020B00, // buffer_store_dword v11, off, s[8:11], 0 offset:24
+        0xE070001C, 0x80020C00, // buffer_store_dword v12, off, s[8:11], 0 offset:28
+        0xE0700020, 0x80020D00, // buffer_store_dword v13, off, s[8:11], 0 offset:32
+        0xBF810000,             // s_endpgm
+    ]),
     // A finite backward branch exercises the structured program-counter loop,
     // dynamic SCC updates, and scalar-to-vector transfer. The dispatch runner
     // has a fence deadline, so a broken termination condition fails boundedly.
@@ -908,6 +934,29 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
             labels[3] = "scratch load crosses a dword boundary in little-endian order";
             labels[4] = "unaligned scratch store preserves the first dword's low bytes";
             labels[5] = "unaligned scratch store preserves the second dword's high byte";
+            break;
+        case "exec-scratch-subword":
+            initialWords[0] = 0x34FF7F01;
+            initialWords[1] = 0xCAFEBAF2;
+            initialWords[2] = 0x0000C3D4;
+            expectedWords[0] = initialWords[0];
+            expectedWords[1] = initialWords[1];
+            expectedWords[2] = initialWords[2];
+            expectedWords[3] = 0x00000001;
+            expectedWords[4] = 0xFFFFFFFF;
+            expectedWords[5] = 0x0000F234;
+            expectedWords[6] = 0xFFFFF234;
+            expectedWords[7] = 0xD4FF7FD4;
+            expectedWords[8] = 0xCAFEBAC3;
+            labels[0] = "first scratch seed remains unchanged";
+            labels[1] = "second scratch seed remains unchanged";
+            labels[2] = "scratch subword-store source remains unchanged";
+            labels[3] = "scratch_load_ubyte zero-extends 0x01";
+            labels[4] = "scratch_load_sbyte sign-extends 0xFF";
+            labels[5] = "scratch_load_ushort crosses a dword boundary";
+            labels[6] = "scratch_load_sshort sign-extends across a dword boundary";
+            labels[7] = "byte and crossing-short stores preserve first-word neighbors";
+            labels[8] = "crossing-short store preserves second-word neighbors";
             break;
         case "exec-scalar-loop":
             expectedWords[0] = 4;
