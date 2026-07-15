@@ -18,6 +18,8 @@ public static class SaveDataExports
     private const int SaveDataDirNameSize = 32;
     private const int SaveDataParamSize = 0x530;
     private const int SaveDataSearchInfoSize = 0x30;
+    private const int SearchCondSize = 0x20;
+    private const int SearchResultSize = 0x28;
     private const ulong ResultHitNumOffset = 0x00;
     private const ulong ResultDirNamesOffset = 0x08;
     private const ulong ResultDirNamesNumOffset = 0x10;
@@ -381,7 +383,8 @@ public static class SaveDataExports
     private static bool TryReadSearchCond(CpuContext ctx, ulong address, out SearchCond cond)
     {
         cond = default;
-        if (!ctx.TryReadInt32(address, out var userId) ||
+        if (!GuestAddress.IsRangeValid(address, SearchCondSize) ||
+            !ctx.TryReadInt32(address, out var userId) ||
             !ctx.TryReadUInt64(address + 0x08, out var titleIdAddress) ||
             !ctx.TryReadUInt64(address + 0x10, out var dirNameAddress) ||
             !ctx.TryReadUInt32(address + 0x18, out var sortKey) ||
@@ -407,7 +410,8 @@ public static class SaveDataExports
     private static bool TryReadSearchResult(CpuContext ctx, ulong address, out SearchResult result)
     {
         result = default;
-        if (!ctx.TryReadUInt64(address + ResultDirNamesOffset, out var dirNamesAddress) ||
+        if (!GuestAddress.IsRangeValid(address, SearchResultSize) ||
+            !ctx.TryReadUInt64(address + ResultDirNamesOffset, out var dirNamesAddress) ||
             !ctx.TryReadUInt32(address + ResultDirNamesNumOffset, out var dirNamesNum) ||
             !ctx.TryReadUInt64(address + ResultParamsOffset, out var paramsAddress) ||
             !ctx.TryReadUInt64(address + ResultInfosOffset, out var infosAddress))
