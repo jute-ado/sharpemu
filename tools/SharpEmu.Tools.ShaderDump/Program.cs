@@ -271,6 +271,20 @@ const ulong ProgramAddress = 0x100000;
         0xE0701000, 0x80020002, // buffer_store_dword v0, v2, s[8:11], 0 offen
         0xBF810000,             // s_endpgm
     ]),
+    // Save the full EXEC mask, run the lower-half path, restore all lanes,
+    // then select the upper half. A broken restore leaves slots 8..15 untouched.
+    ("exec-reconverge", true, [
+        0xBE80047E,             // s_mov_b64 s[0:1], exec
+        0x7E020288,             // v_mov_b32 v1, 8
+        0x7DA20300,             // v_cmpx_lt_u32 v0, v1
+        0x34040082,             // v_lshlrev_b32 v2, 2, v0 (byte address)
+        0xE0701000, 0x80020002, // buffer_store_dword v0, v2, s[8:11], 0 offen
+        0xBEFE0400,             // s_mov_b64 exec, s[0:1]
+        0x7DAC0300,             // v_cmpx_ge_u32 v0, v1
+        0x34040082,             // v_lshlrev_b32 v2, 2, v0 (byte address)
+        0xE0701000, 0x80020002, // buffer_store_dword v0, v2, s[8:11], 0 offen
+        0xBF810000,             // s_endpgm
+    ]),
     // Sixteen invocations contend on one storage-buffer counter. A plain
     // load/add/store would race; the deterministic final value proves that
     // buffer_atomic_add is emitted and synchronized as an actual atomic.
@@ -702,6 +716,20 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
             for (var index = 8; index < 16; index++)
             {
                 labels[index] = $"inactive lane {index} leaves its slot untouched";
+            }
+
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                LocalSizeX: 16);
+        case "exec-reconverge":
+            for (uint index = 0; index < 16; index++)
+            {
+                expectedWords[index] = index;
+                labels[index] = index < 8
+                    ? $"lower-path lane {index} writes before EXEC restoration"
+                    : $"upper-path lane {index} writes after EXEC restoration";
             }
 
             return new SyntheticConformanceCase(
