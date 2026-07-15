@@ -858,6 +858,25 @@ public sealed class SelfLoaderTests
         Assert.Equal(new byte[] { 1, 2, 3, 4 }, contents.ToArray());
     }
 
+    [Fact]
+    public void RejectedOverflowingSelfFallbackOffsetDoesNotClearGuestMemory()
+    {
+        var self = CreateSelfWithLoadSegment([0xAA]);
+        var segment = self.AsSpan(SelfHeaderSize, SelfSegmentSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(segment, 0);
+        var programHeaderOffset = SelfHeaderSize + SelfSegmentSize + ElfHeaderSize;
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            self.AsSpan(programHeaderOffset + sizeof(ulong)),
+            ulong.MaxValue);
+        var memory = CreateSentinelMemory();
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            new SelfLoader().Load(self, memory));
+
+        Assert.Contains("offset overflows", exception.Message, StringComparison.OrdinalIgnoreCase);
+        AssertSentinelMemoryPreserved(memory);
+    }
+
     [WindowsX64Fact]
     public void ReservesThroughNonzeroFirstLoadSegment()
     {
