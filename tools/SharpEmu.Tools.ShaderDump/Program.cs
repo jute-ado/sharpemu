@@ -283,6 +283,43 @@ const ulong ProgramAddress = 0x100000;
         0xE0700020, 0x80020D00, // buffer_store_dword v13, off, s[8:11], 0 offset:32
         0xBF810000,             // s_endpgm
     ]),
+    // D16 scratch loads replace one register half while preserving the other.
+    // The D16-high stores source the upper register half; aligned reloads make
+    // their byte selection and cross-dword preservation externally visible.
+    ("exec-scratch-d16", true, [
+        0xE0300000, 0x80020500, // buffer_load_dword v5, off, s[8:11], 0
+        0xE0300004, 0x80020600, // buffer_load_dword v6, off, s[8:11], 0 offset:4
+        0xE0300008, 0x80020700, // buffer_load_dword v7, off, s[8:11], 0 offset:8
+        0xE030000C, 0x80020800, // buffer_load_dword v8, off, s[8:11], 0 offset:12
+        0x7E080280,             // v_mov_b32 v4, 0 (scratch byte address)
+        0xDC704000, 0x007F0504, // scratch_store_dword v4, v5
+        0xDC704004, 0x007F0604, // scratch_store_dword v4, v6 offset:4
+        0xE0300008, 0x80020900, // buffer_load_dword v9, off, s[8:11], 0 offset:8
+        0xE0300008, 0x80020A00, // buffer_load_dword v10, off, s[8:11], 0 offset:8
+        0xE0300008, 0x80020B00, // buffer_load_dword v11, off, s[8:11], 0 offset:8
+        0xE0300008, 0x80020C00, // buffer_load_dword v12, off, s[8:11], 0 offset:8
+        0xE0300008, 0x80020D00, // buffer_load_dword v13, off, s[8:11], 0 offset:8
+        0xE0300008, 0x80020E00, // buffer_load_dword v14, off, s[8:11], 0 offset:8
+        0xDC804000, 0x097F0004, // scratch_load_ubyte_d16 v9, v4
+        0xDC844001, 0x0A7F0004, // scratch_load_ubyte_d16_hi v10, v4 offset:1
+        0xDC884002, 0x0B7F0004, // scratch_load_sbyte_d16 v11, v4 offset:2
+        0xDC8C4002, 0x0C7F0004, // scratch_load_sbyte_d16_hi v12, v4 offset:2
+        0xDC904003, 0x0D7F0004, // scratch_load_short_d16 v13, v4 offset:3
+        0xDC944003, 0x0E7F0004, // scratch_load_short_d16_hi v14, v4 offset:3
+        0xDC644000, 0x007F0804, // scratch_store_byte_d16_hi v4, v8
+        0xDC6C4003, 0x007F0804, // scratch_store_short_d16_hi v4, v8 offset:3
+        0xDC304000, 0x0F7F0004, // scratch_load_dword v15, v4
+        0xDC304004, 0x107F0004, // scratch_load_dword v16, v4 offset:4
+        0xE0700010, 0x80020900, // buffer_store_dword v9, off, s[8:11], 0 offset:16
+        0xE0700014, 0x80020A00, // buffer_store_dword v10, off, s[8:11], 0 offset:20
+        0xE0700018, 0x80020B00, // buffer_store_dword v11, off, s[8:11], 0 offset:24
+        0xE070001C, 0x80020C00, // buffer_store_dword v12, off, s[8:11], 0 offset:28
+        0xE0700020, 0x80020D00, // buffer_store_dword v13, off, s[8:11], 0 offset:32
+        0xE0700024, 0x80020E00, // buffer_store_dword v14, off, s[8:11], 0 offset:36
+        0xE0700028, 0x80020F00, // buffer_store_dword v15, off, s[8:11], 0 offset:40
+        0xE070002C, 0x80021000, // buffer_store_dword v16, off, s[8:11], 0 offset:44
+        0xBF810000,             // s_endpgm
+    ]),
     // A finite backward branch exercises the structured program-counter loop,
     // dynamic SCC updates, and scalar-to-vector transfer. The dispatch runner
     // has a fence deadline, so a broken termination condition fails boundedly.
@@ -957,6 +994,36 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
             labels[6] = "scratch_load_sshort sign-extends across a dword boundary";
             labels[7] = "byte and crossing-short stores preserve first-word neighbors";
             labels[8] = "crossing-short store preserves second-word neighbors";
+            break;
+        case "exec-scratch-d16":
+            initialWords[0] = 0x34FF7F01;
+            initialWords[1] = 0xCAFEBAF2;
+            initialWords[2] = 0xA1B2C3D4;
+            initialWords[3] = 0xC3D4A1B2;
+            expectedWords[0] = initialWords[0];
+            expectedWords[1] = initialWords[1];
+            expectedWords[2] = initialWords[2];
+            expectedWords[3] = initialWords[3];
+            expectedWords[4] = 0xA1B20001;
+            expectedWords[5] = 0x007FC3D4;
+            expectedWords[6] = 0xA1B2FFFF;
+            expectedWords[7] = 0xFFFFC3D4;
+            expectedWords[8] = 0xA1B2F234;
+            expectedWords[9] = 0xF234C3D4;
+            expectedWords[10] = 0xD4FF7FD4;
+            expectedWords[11] = 0xCAFEBAC3;
+            labels[0] = "first scratch seed remains unchanged";
+            labels[1] = "second scratch seed remains unchanged";
+            labels[2] = "D16 destination template remains unchanged";
+            labels[3] = "D16-high store source remains unchanged";
+            labels[4] = "ubyte D16 replaces the low half and preserves the high half";
+            labels[5] = "ubyte D16-high replaces the high half and preserves the low half";
+            labels[6] = "sbyte D16 sign-extends into the low half";
+            labels[7] = "sbyte D16-high sign-extends into the high half";
+            labels[8] = "short D16 crosses a dword boundary into the low half";
+            labels[9] = "short D16-high crosses a dword boundary into the high half";
+            labels[10] = "D16-high stores source upper bits and preserve first-word neighbors";
+            labels[11] = "D16-high crossing store preserves second-word neighbors";
             break;
         case "exec-scalar-loop":
             expectedWords[0] = 4;
