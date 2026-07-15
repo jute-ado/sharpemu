@@ -7,6 +7,7 @@ using SharpEmu.Core.Cpu.Disasm;
 using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
 using SharpEmu.HLE;
+using SharpEmu.HLE.Host;
 using SharpEmu.Libs.VideoOut;
 using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.AppContent;
@@ -91,7 +92,12 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
     public static ISharpEmuRuntime CreateDefault(SharpEmuRuntimeOptions options = default)
     {
-        return CreateWithMemory(new PhysicalVirtualMemory(), options, allowExecution: true);
+        var hostPlatform = HostPlatform.Current;
+        return CreateWithMemory(
+            new PhysicalVirtualMemory(hostPlatform.Memory),
+            options,
+            allowExecution: true,
+            hostPlatform: hostPlatform);
     }
 
     public static ISharpEmuRuntime CreateForInspection(SharpEmuRuntimeOptions options = default)
@@ -102,7 +108,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
     private static ISharpEmuRuntime CreateWithMemory(
         IVirtualMemory virtualMemory,
         SharpEmuRuntimeOptions options,
-        bool allowExecution)
+        bool allowExecution,
+        IHostPlatform? hostPlatform = null)
     {
         var cpuExecutionOptions = new CpuExecutionOptions
         {
@@ -119,7 +126,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         return new SharpEmuRuntime(
             new SelfLoader(),
             virtualMemory,
-            new CpuDispatcher(virtualMemory, moduleManager),
+            new CpuDispatcher(virtualMemory, moduleManager, hostPlatform: hostPlatform),
             moduleManager,
             Aerolib.Instance,
             cpuExecutionOptions,

@@ -5,7 +5,7 @@ using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Cpu;
 
-public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemoryAllocator, IGuestStackMemory, IGuestVirtualMemoryQuery
+public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemoryAllocator, IGuestStackMemory, IGuestVirtualMemoryQuery, ICpuMemoryWrapper
 {
     private readonly ICpuMemory _inner;
 

@@ -8,6 +8,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using SharpEmu.HLE;
+using SharpEmu.HLE.Host;
 using SharpEmu.Logging;
 
 namespace SharpEmu.Core.Cpu.Native;
@@ -134,8 +135,9 @@ public sealed partial class DirectExecutionBackend
 		int num2 = 0;
 		List<ulong> list = new List<ulong>(16);
 		ulong num3 = scanStart;
-		MEMORY_BASIC_INFORMATION64 lpBuffer;
-		while (num3 < scanEnd && VirtualQuery((void*)num3, out lpBuffer, (nuint)sizeof(MEMORY_BASIC_INFORMATION64)) != 0)
+		var hostMemory = ResolveDiagnosticsHostMemory();
+		HostRegionInfo lpBuffer;
+		while (num3 < scanEnd && hostMemory.Query(num3, out lpBuffer))
 		{
 			ulong baseAddress = lpBuffer.BaseAddress;
 			ulong num4 = baseAddress + lpBuffer.RegionSize;
@@ -145,7 +147,7 @@ public sealed partial class DirectExecutionBackend
 			}
 			ulong value = Math.Max(num3, baseAddress);
 			ulong num5 = Math.Min(num4, scanEnd);
-			if (lpBuffer.State == 4096 && IsReadableProtection(lpBuffer.Protect) && !IsExecutableProtection(lpBuffer.Protect))
+			if (lpBuffer.State == HostRegionState.Committed && IsReadableProtection(lpBuffer.RawProtection) && !IsExecutableProtection(lpBuffer.RawProtection))
 			{
 				ulong num6 = AlignUp(value, 8uL);
 				for (ulong num7 = num6; num7 + 8 <= num5; num7 += 8)
@@ -350,7 +352,7 @@ public sealed partial class DirectExecutionBackend
 		{
 			return false;
 		}
-		if (VirtualQuery((void*)address, out var lpBuffer, (nuint)sizeof(MEMORY_BASIC_INFORMATION64)) == 0)
+		if (!ResolveDiagnosticsHostMemory().Query(address, out var lpBuffer))
 		{
 			return false;
 		}
@@ -359,7 +361,7 @@ public sealed partial class DirectExecutionBackend
 		{
 			return false;
 		}
-		if (lpBuffer.State != 4096 || !IsReadableProtection(lpBuffer.Protect))
+		if (lpBuffer.State != HostRegionState.Committed || !IsReadableProtection(lpBuffer.RawProtection))
 		{
 			return false;
 		}
@@ -391,12 +393,12 @@ public sealed partial class DirectExecutionBackend
 			return true;
 		}
 
-		if (VirtualQuery((void*)address, out var lpBuffer, (nuint)sizeof(MEMORY_BASIC_INFORMATION64)) == 0)
+		if (!ResolveDiagnosticsHostMemory().Query(address, out var lpBuffer))
 		{
 			return false;
 		}
 
-		var executable = lpBuffer.State == 4096 && IsExecutableProtection(lpBuffer.Protect);
+		var executable = lpBuffer.State == HostRegionState.Committed && IsExecutableProtection(lpBuffer.RawProtection);
 		if (executable)
 		{
 			_knownExecutablePages.TryAdd(pageAddress, 0);
@@ -413,6 +415,14 @@ public sealed partial class DirectExecutionBackend
 		}
 		ulong num = alignment - 1;
 		return (value + num) & ~num;
+	}
+
+	// Diagnostics helpers are static (reachable from static handler paths), so
+	// they use the platform injected into the backend active on this thread and
+	// fall back to the process-wide singleton only when no run is bound.
+	private static IHostMemory ResolveDiagnosticsHostMemory()
+	{
+		return _activeExecutionBackend?._hostMemory ?? HostPlatform.Current.Memory;
 	}
 
 	private static bool IsReadableProtection(uint protect)
