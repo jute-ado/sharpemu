@@ -2501,11 +2501,13 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			{
 				if (!_hostMemory.Query(num, out var lpBuffer) || lpBuffer.RegionSize == 0)
 				{
-					num += 4096uL;
+					num = AdvanceTlsScanAddress(num, num2);
 					continue;
 				}
 				ulong num5 = Math.Max(num, lpBuffer.BaseAddress);
-				ulong num6 = lpBuffer.BaseAddress + lpBuffer.RegionSize;
+				ulong num6 = lpBuffer.RegionSize > ulong.MaxValue - lpBuffer.BaseAddress
+					? ulong.MaxValue
+					: lpBuffer.BaseAddress + lpBuffer.RegionSize;
 				if (num6 > num2)
 				{
 					num6 = num2;
@@ -2564,7 +2566,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 						i += recognizedInstruction.Length - 1;
 					}
 				}
-				num = num6 > num ? num6 : num + 4096uL;
+				num = num6 > num ? num6 : AdvanceTlsScanAddress(num, num2);
 			}
 			Console.Error.WriteLine(
 				$"[LOADER][INFO] Patched {num3} TLS loads, {num9} TLS stores, {num4} stack-canary accesses; failures={failedPatchCount}");
@@ -2578,6 +2580,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				RollbackTlsInstructionPatches(recognizedPatches);
 			}
 		}
+	}
+
+	private static ulong AdvanceTlsScanAddress(ulong address, ulong scanEnd)
+	{
+		const ulong scanStep = 4096;
+		return scanEnd - address <= scanStep
+			? scanEnd
+			: address + scanStep;
 	}
 
 	private unsafe void RollbackTlsInstructionPatches(

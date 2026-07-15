@@ -490,6 +490,53 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public void TlsScanStopsAtGuestAddressSpaceCeiling()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(
+            failedAllocation: int.MaxValue,
+            failedProtection: 4,
+            throwingQuery: 2);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        const ulong stackAddress = 0x1000;
+        var context = new CpuContext(
+            new StackSlotMemory(stackAddress, 0x1122_3344_5566_7788),
+            Generation.Gen5)
+        {
+            [CpuRegister.Rsp] = stackAddress,
+        };
+
+        try
+        {
+            var executed = backend.TryExecute(
+                context,
+                entryPoint: ulong.MaxValue - 1,
+                Generation.Gen5,
+                new Dictionary<ulong, string>(),
+                new Dictionary<string, ulong>(),
+                default,
+                NativeEntryReturnContract.RequireZero,
+                out var result);
+
+            Assert.False(executed);
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+            Assert.Contains("guest entry stub", backend.LastError, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal([ulong.MaxValue - 1], memory.QueryAddresses);
+        }
+        finally
+        {
+            backend.Dispose();
+        }
+    }
+
+    [Fact]
     public unsafe void LaterRecognizedTlsPatchFailureRollsBackEarlierPatches()
     {
         var threading = new RecordingHostThreading([17u, 23u]);
@@ -917,17 +964,21 @@ public sealed class NativeBackendConstructionTests
     private sealed unsafe class AllocatingHostMemory(
         int failedAllocation,
         int failedProtection = 0,
-        int failedRawProtection = 0) : IHostMemory
+        int failedRawProtection = 0,
+        int throwingQuery = 0) : IHostMemory
     {
         private int _allocationCount;
         private int _protectionCount;
         private int _rawProtectionCount;
+        private int _queryCount;
 
         public HashSet<ulong> ActiveAllocations { get; } = [];
 
         public List<ulong> FreedAddresses { get; } = [];
 
         public List<(ulong Address, HostPageProtection Protection)> ProtectionCalls { get; } = [];
+
+        public List<ulong> QueryAddresses { get; } = [];
 
         public ulong ExecutableRegionAddress { get; set; }
 
@@ -984,6 +1035,12 @@ public sealed class NativeBackendConstructionTests
 
         public bool Query(ulong address, out HostRegionInfo info)
         {
+            QueryAddresses.Add(address);
+            if (++_queryCount == throwingQuery)
+            {
+                throw new InvalidOperationException("Injected host query failure.");
+            }
+
             if (ExecutableRegionSize != 0 &&
                 address >= ExecutableRegionAddress &&
                 address - ExecutableRegionAddress < ExecutableRegionSize)
