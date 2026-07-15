@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Agc;
+using SharpEmu.ShaderCompiler;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests;
