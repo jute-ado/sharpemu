@@ -26,7 +26,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-release-${{ github.event_name }}-${{ github.ref }}
+  # Keep the generation explicit so a zombie runner from an older workflow
+  # cannot indefinitely block releases after the pipeline itself is repaired.
+  group: build-release-v2-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
