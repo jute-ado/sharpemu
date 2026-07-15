@@ -230,6 +230,24 @@ public sealed class SelfLoaderTests
     }
 
     [Fact]
+    public void RejectedOversizedLoadSegmentDoesNotClearExistingGuestMemory()
+    {
+        var memory = CreateSentinelMemory();
+        var malformed = CreateElfWithLoadSegment(
+            fileOffset: ElfHeaderSize + ProgramHeaderSize,
+            virtualAddress: 0,
+            fileSize: 0,
+            memorySize: (ulong)int.MaxValue + 1,
+            payload: []);
+
+        var exception = Assert.Throws<NotSupportedException>(() =>
+            new SelfLoader().Load(malformed, memory));
+
+        Assert.Contains("2 GB", exception.Message, StringComparison.OrdinalIgnoreCase);
+        AssertSentinelMemoryPreserved(memory);
+    }
+
+    [Fact]
     public void RejectedOutOfRangeDynamicMetadataDoesNotClearExistingGuestMemory()
     {
         var memory = new VirtualMemory();
