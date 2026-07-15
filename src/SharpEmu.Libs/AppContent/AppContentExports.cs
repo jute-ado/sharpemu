@@ -31,7 +31,8 @@ public static class AppContentExports
 
         Span<byte> attrBytes = stackalloc byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32LittleEndian(attrBytes, 0);
-        if (!ctx.Memory.TryWrite(bootParamAddress + BootParamAttrOffset, attrBytes))
+        if (BootParamAttrOffset > ulong.MaxValue - bootParamAddress ||
+            !ctx.Memory.TryWrite(bootParamAddress + BootParamAttrOffset, attrBytes))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
