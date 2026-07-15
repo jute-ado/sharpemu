@@ -484,28 +484,60 @@ public static class AgcExports
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        if (!RelocatePointerField(ctx, headerAddress + ShaderCxRegistersOffset) ||
-            !RelocatePointerField(ctx, headerAddress + ShaderShRegistersOffset) ||
-            !RelocatePointerField(ctx, headerAddress + ShaderUserDataOffset) ||
-            !RelocatePointerField(ctx, headerAddress + ShaderSpecialsOffset) ||
-            !RelocatePointerField(ctx, headerAddress + ShaderInputSemanticsOffset) ||
-            !RelocatePointerField(ctx, headerAddress + ShaderOutputSemanticsOffset) ||
-            !ctx.TryWriteUInt64(headerAddress + ShaderCodeOffset, codeAddress))
-        {
-            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
-        }
-
-        if (!ctx.TryReadUInt64(headerAddress + ShaderUserDataOffset, out var userDataAddress))
+        var relocations = new List<(ulong FieldAddress, ulong RelocatedAddress)>(11);
+        if (!TryPreparePointerRelocation(
+                ctx,
+                headerAddress + ShaderCxRegistersOffset,
+                relocations,
+                out _) ||
+            !TryPreparePointerRelocation(
+                ctx,
+                headerAddress + ShaderShRegistersOffset,
+                relocations,
+                out _) ||
+            !TryPreparePointerRelocation(
+                ctx,
+                headerAddress + ShaderUserDataOffset,
+                relocations,
+                out var userDataAddress) ||
+            !TryPreparePointerRelocation(
+                ctx,
+                headerAddress + ShaderSpecialsOffset,
+                relocations,
+                out _) ||
+            !TryPreparePointerRelocation(
+                ctx,
+                headerAddress + ShaderInputSemanticsOffset,
+                relocations,
+                out _) ||
+            !TryPreparePointerRelocation(
+                ctx,
+                headerAddress + ShaderOutputSemanticsOffset,
+                relocations,
+                out _))
         {
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
         if (userDataAddress != 0 &&
-            (!RelocatePointerField(ctx, userDataAddress) ||
-             !RelocatePointerField(ctx, userDataAddress + 0x08) ||
-             !RelocatePointerField(ctx, userDataAddress + 0x10) ||
-             !RelocatePointerField(ctx, userDataAddress + 0x18) ||
-             !RelocatePointerField(ctx, userDataAddress + 0x20)))
+            (!TryPreparePointerRelocation(ctx, userDataAddress, relocations, out _) ||
+             !TryPreparePointerRelocation(ctx, userDataAddress + 0x08, relocations, out _) ||
+             !TryPreparePointerRelocation(ctx, userDataAddress + 0x10, relocations, out _) ||
+             !TryPreparePointerRelocation(ctx, userDataAddress + 0x18, relocations, out _) ||
+             !TryPreparePointerRelocation(ctx, userDataAddress + 0x20, relocations, out _)))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        foreach (var relocation in relocations)
+        {
+            if (!ctx.TryWriteUInt64(relocation.FieldAddress, relocation.RelocatedAddress))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+        }
+
+        if (!ctx.TryWriteUInt64(headerAddress + ShaderCodeOffset, codeAddress))
         {
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
@@ -5910,20 +5942,31 @@ public static class AgcExports
                ctx.TryWriteUInt32(destinationAddress + sizeof(uint), value);
     }
 
-    private static bool RelocatePointerField(CpuContext ctx, ulong fieldAddress)
+    private static bool TryPreparePointerRelocation(
+        CpuContext ctx,
+        ulong fieldAddress,
+        List<(ulong FieldAddress, ulong RelocatedAddress)> relocations,
+        out ulong relocatedAddress)
     {
         if (!ctx.TryReadUInt64(fieldAddress, out var relativeAddress))
         {
+            relocatedAddress = 0;
             return false;
         }
 
         if (relativeAddress == 0)
         {
+            relocatedAddress = 0;
             return true;
         }
 
-        return GuestAddress.TryAdd(fieldAddress, relativeAddress, out var relocatedAddress) &&
-               ctx.TryWriteUInt64(fieldAddress, relocatedAddress);
+        if (!GuestAddress.TryAdd(fieldAddress, relativeAddress, out relocatedAddress))
+        {
+            return false;
+        }
+
+        relocations.Add((fieldAddress, relocatedAddress));
+        return true;
     }
 
     private static int ReturnRegisterDefaults(CpuContext ctx, bool internalDefaults)
