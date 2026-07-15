@@ -410,6 +410,61 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public unsafe void FailedTlsPreparationRollsBackCompletedImportSetup()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(
+            failedAllocation: int.MaxValue,
+            failedProtection: 5);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        var stub = memory.Allocate(0, 16, HostPageProtection.ReadWriteExecute);
+        var original = Enumerable.Repeat((byte)0xA5, 16).ToArray();
+        original.CopyTo(new Span<byte>((void*)stub, original.Length));
+        var activeAllocationsBefore = memory.ActiveAllocations.Count;
+        const ulong stackAddress = 0x1000;
+        var context = new CpuContext(
+            new StackSlotMemory(stackAddress, 0x1122_3344_5566_7788),
+            Generation.Gen5)
+        {
+            [CpuRegister.Rsp] = stackAddress,
+        };
+
+        try
+        {
+            var executed = backend.TryExecute(
+                context,
+                entryPoint: 0,
+                Generation.Gen5,
+                new Dictionary<ulong, string>
+                {
+                    [stub] = "unknown-import",
+                },
+                new Dictionary<string, ulong>(),
+                default,
+                NativeEntryReturnContract.RequireZero,
+                out var result);
+
+            Assert.False(executed);
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+            Assert.Contains("TLS handler", backend.LastError, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(original, new ReadOnlySpan<byte>((void*)stub, original.Length).ToArray());
+            Assert.Equal(activeAllocationsBefore, memory.ActiveAllocations.Count);
+        }
+        finally
+        {
+            backend.Dispose();
+            memory.Free(stub);
+        }
+    }
+
+    [Fact]
     public unsafe void FailedLaterImportSetupPreservesEarlierModuleDispatchState()
     {
         var threading = new RecordingHostThreading([17u, 23u]);

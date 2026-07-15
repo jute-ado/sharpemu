@@ -89,6 +89,18 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		};
 	}
 
+	private sealed class ImportSetupCheckpoint(
+		ImportStubEntry[] previousEntries,
+		List<(ulong Address, byte[] OriginalBytes)> patchedStubs,
+		int attemptAllocationStart)
+	{
+		public ImportStubEntry[] PreviousEntries { get; } = previousEntries;
+
+		public List<(ulong Address, byte[] OriginalBytes)> PatchedStubs { get; } = patchedStubs;
+
+		public int AttemptAllocationStart { get; } = attemptAllocationStart;
+	}
+
 	private readonly record struct RecentImportTraceEntry(
 		long DispatchIndex,
 		string Nid,
@@ -1083,9 +1095,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		BindTlsBase(context);
 		var previousGuestThreadScheduler = GuestThreadExecution.Scheduler;
 		GuestThreadExecution.Scheduler = this;
+		ImportSetupCheckpoint? importSetupCheckpoint = null;
 		try
 		{
-			if (!SetupImportStubs(importStubs))
+			if (!SetupImportStubs(importStubs, out var completedImportSetup))
 			{
 				if (string.IsNullOrEmpty(LastError))
 				{
@@ -1094,8 +1107,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				result = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
 				return false;
 			}
+			importSetupCheckpoint = completedImportSetup;
 			if (!TryCreateTlsHandler())
 			{
+				RollbackImportSetup(importSetupCheckpoint);
+				importSetupCheckpoint = null;
 				if (string.IsNullOrEmpty(LastError))
 				{
 					LastError = "Failed to create TLS handler";
@@ -1105,14 +1121,21 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 			if (!PatchTlsPatterns())
 			{
+				RollbackImportSetup(importSetupCheckpoint);
+				importSetupCheckpoint = null;
 				LastError = "TLS patch preparation failed for one or more recognized guest instructions";
 				result = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
 				return false;
 			}
+			importSetupCheckpoint = null;
 			return ExecuteEntry(context, entryPoint, returnContract, out result);
 		}
 		catch (Exception ex)
 		{
+			if (importSetupCheckpoint is not null)
+			{
+				RollbackImportSetup(importSetupCheckpoint);
+			}
 			LastError = "Exception in TryExecute: " + ex.GetType().Name + ": " + ex.Message;
 			Console.Error.WriteLine("[LOADER][ERROR] " + LastError);
 			Console.Error.WriteLine("[LOADER][ERROR] Stack trace: " + ex.StackTrace);
@@ -1143,7 +1166,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		Console.Error.WriteLine($"[LOADER][INFO] {LastError}");
 	}
 
-	internal unsafe bool SetupImportStubs(IReadOnlyDictionary<ulong, string> importStubs)
+	internal unsafe bool SetupImportStubs(IReadOnlyDictionary<ulong, string> importStubs) =>
+		SetupImportStubs(importStubs, out _);
+
+	private unsafe bool SetupImportStubs(
+		IReadOnlyDictionary<ulong, string> importStubs,
+		out ImportSetupCheckpoint checkpoint)
 	{
 		Console.Error.WriteLine($"[LOADER][INFO] Setting up {importStubs.Count} import stubs...");
 		var previousEntries = _importEntries;
@@ -1151,6 +1179,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		previousEntries.CopyTo(expandedEntries, 0);
 		var attemptAllocationStart = _importHandlerTrampolines.Count;
 		var patchedStubs = new List<(ulong Address, byte[] OriginalBytes)>();
+		var setupCheckpoint = new ImportSetupCheckpoint(previousEntries, patchedStubs, attemptAllocationStart);
+		checkpoint = setupCheckpoint;
 		var importAddresses = new HashSet<ulong>(importStubs.Keys);
 		var localIndex = 0;
 		var patchedCount = 0;
@@ -1171,7 +1201,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		bool FailAttempt(string error)
 		{
 			LastError = error;
-			RollbackImportSetup(patchedStubs, attemptAllocationStart);
+			RollbackImportSetup(setupCheckpoint);
 			return false;
 		}
 
@@ -1245,18 +1275,16 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 		catch
 		{
-			RollbackImportSetup(patchedStubs, attemptAllocationStart);
+			RollbackImportSetup(setupCheckpoint);
 			throw;
 		}
 	}
 
-	private unsafe void RollbackImportSetup(
-		List<(ulong Address, byte[] OriginalBytes)> patchedStubs,
-		int attemptAllocationStart)
+	private unsafe void RollbackImportSetup(ImportSetupCheckpoint checkpoint)
 	{
-		for (var index = patchedStubs.Count - 1; index >= 0; index--)
+		for (var index = checkpoint.PatchedStubs.Count - 1; index >= 0; index--)
 		{
-			var (address, originalBytes) = patchedStubs[index];
+			var (address, originalBytes) = checkpoint.PatchedStubs[index];
 			uint oldProtection = 0;
 			if (!_hostMemory.Protect(address, (nuint)originalBytes.Length, HostPageProtection.ReadWriteExecute, out oldProtection))
 			{
@@ -1275,7 +1303,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 		}
 
-		for (var index = _importHandlerTrampolines.Count - 1; index >= attemptAllocationStart; index--)
+		for (var index = _importHandlerTrampolines.Count - 1; index >= checkpoint.AttemptAllocationStart; index--)
 		{
 			var allocation = _importHandlerTrampolines[index];
 			if (allocation != 0)
@@ -1284,6 +1312,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 			_importHandlerTrampolines.RemoveAt(index);
 		}
+
+		_importEntries = checkpoint.PreviousEntries;
 	}
 
 	private unsafe bool TryCreateNativeImportIntrinsic(string nid, out nint address)
