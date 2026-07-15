@@ -234,6 +234,14 @@ const ulong ProgramAddress = 0x100000;
         0xE0701000, 0x80020708, // buffer_store_dword v7, v8, s[8:11], 0 offen
         0xBF810000,             // s_endpgm
     ]),
+    // Sixteen invocations contend on one storage-buffer counter. A plain
+    // load/add/store would race; the deterministic final value proves that
+    // buffer_atomic_add is emitted and synchronized as an actual atomic.
+    ("exec-buffer-atomic", true, [
+        0x7E0802FF, 0x00000001, // v_mov_b32 v4, 1
+        0xE0C80000, 0x80020400, // buffer_atomic_add v4, off, s[8:11], 0
+        0xBF810000,             // s_endpgm
+    ]),
 ];
 
 var assembly = typeof(CxaGuardExports).Assembly;
@@ -680,6 +688,16 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
                 GroupCountX: 2,
                 WorkGroupXRegister: 0,
                 ThreadGroupSizeRegister: 1);
+        case "exec-buffer-atomic":
+            initialWords[0] = 0;
+            expectedWords[0] = 16;
+            labels[0] = "sixteen concurrent buffer_atomic_add operations accumulate";
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                LocalSizeX: 8,
+                GroupCountX: 2);
         default:
             return null;
     }
