@@ -214,6 +214,17 @@ const ulong ProgramAddress = 0x100000;
         0xE0700004, 0x80030700, // buffer_store_dword v7, off, s[12:15], 0 offset:4
         0xBF810000,             // s_endpgm
     ]),
+    // Exercise the GLOBAL memory path in both directions. A vector base plus
+    // immediate offset selects the source and destination words, while a
+    // second MUBUF descriptor provides an independent observable oracle.
+    ("exec-global-memory", true, [
+        0x7E080288,             // v_mov_b32 v4, 8 (global byte-address base)
+        0xDC308004, 0x06000004, // global_load_dword v6, v4, s[0:1] offset:4
+        0xE0700000, 0x80030600, // buffer_store_dword v6, off, s[12:15], 0
+        0xE0300008, 0x80030700, // buffer_load_dword v7, off, s[12:15], 0 offset:8
+        0xDC708008, 0x00000704, // global_store_dword v4, v7, s[0:1] offset:8
+        0xBF810000,             // s_endpgm
+    ]),
     // A finite backward branch exercises the structured program-counter loop,
     // dynamic SCC updates, and scalar-to-vector transfer. The dispatch runner
     // has a fence deadline, so a broken termination condition fails boundedly.
@@ -456,11 +467,18 @@ foreach (var (name, expectTranslate, words) in testPrograms)
     // the guest descriptor whose PC group becomes one descriptor-array slot.
     var globalBindings = program!.Instructions
         .Where(instruction =>
-            instruction.Control is Gen5BufferMemoryControl &&
-            (instruction.Opcode.StartsWith("Buffer", StringComparison.Ordinal) ||
-             instruction.Opcode.StartsWith("TBuffer", StringComparison.Ordinal)))
-        .GroupBy(instruction =>
-            ((Gen5BufferMemoryControl)instruction.Control!).ScalarResource)
+            (instruction.Control is Gen5BufferMemoryControl &&
+             (instruction.Opcode.StartsWith("Buffer", StringComparison.Ordinal) ||
+              instruction.Opcode.StartsWith("TBuffer", StringComparison.Ordinal))) ||
+            (instruction.Control is Gen5GlobalMemoryControl &&
+             instruction.Opcode.StartsWith("Global", StringComparison.Ordinal)))
+        .GroupBy(instruction => instruction.Control switch
+        {
+            Gen5BufferMemoryControl buffer => buffer.ScalarResource,
+            Gen5GlobalMemoryControl global => global.ScalarAddress,
+            _ => throw new InvalidOperationException(
+                $"memory instruction {instruction.Opcode} has no scalar resource"),
+        })
         .OrderBy(group => group.Key)
         .Select(group => new Gen5GlobalMemoryBinding(
             group.Key,
@@ -796,6 +814,39 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
                 {
                     [9] = 16u << 16,
                 });
+        }
+        case "exec-global-memory":
+        {
+            const uint globalLoadValue = 0x0BADF00D;
+            const uint globalStoreValue = 0xDEADBEEF;
+            initialWords[3] = globalLoadValue;
+            expectedWords[3] = globalLoadValue;
+            expectedWords[4] = globalStoreValue;
+            labels[3] = "global load source remains unchanged";
+            labels[4] = "global store writes vector-base 8 plus immediate offset 8";
+
+            var oracleInitialWords = Enumerable.Repeat(sentinel, 16).ToArray();
+            var oracleExpectedWords = (uint[])oracleInitialWords.Clone();
+            var oracleLabels = Enumerable.Range(0, oracleInitialWords.Length)
+                .Select(index => $"oracle trailing word [{index}] remains sentinel")
+                .ToArray();
+            oracleInitialWords[2] = globalStoreValue;
+            oracleExpectedWords[0] = globalLoadValue;
+            oracleExpectedWords[2] = globalStoreValue;
+            oracleLabels[0] = "global load reads vector-base 8 plus immediate offset 4";
+            oracleLabels[2] = "buffer value used by global store remains unchanged";
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                AdditionalBuffers:
+                [
+                    new SyntheticConformanceBuffer(
+                        "guest buffer 1",
+                        oracleInitialWords,
+                        oracleExpectedWords,
+                        oracleLabels),
+                ]);
         }
         case "exec-scalar-loop":
             expectedWords[0] = 4;
