@@ -4758,10 +4758,10 @@ public static partial class Gen5SpirvTranslator
                     gatherSuffix = gatherSuffix[..^1];
                 }
 
-                if (gatherSuffix.Contains("Cl", StringComparison.Ordinal))
+                var hasClamp = gatherSuffix.Contains("Cl", StringComparison.Ordinal);
+                if (hasClamp)
                 {
-                    error = $"image gather LOD clamp is unsupported for {instruction.Opcode}";
-                    return false;
+                    gatherSuffix = gatherSuffix.Replace("Cl", "", StringComparison.Ordinal);
                 }
 
                 var hasCompare = gatherSuffix.StartsWith("C", StringComparison.Ordinal);
@@ -4778,13 +4778,14 @@ public static partial class Gen5SpirvTranslator
                     return false;
                 }
 
-                if (hasBias || hasLod)
+                if (hasClamp)
                 {
-                    error = $"image gather LOD controls are unsupported for {instruction.Opcode}";
+                    error = $"image gather LOD clamp is unsupported for {instruction.Opcode}";
                     return false;
                 }
 
-                var compareIndex = hasOffset ? 1 : 0;
+                var biasIndex = hasOffset ? 1 : 0;
+                var compareIndex = biasIndex + (hasBias ? 1 : 0);
                 var start = compareIndex + (hasCompare ? 1 : 0);
                 var coordinates = BuildFloatCoordinates(image, start);
                 var offset = hasOffset ? BuildImageOffset(image, 0) : 0u;
@@ -4814,11 +4815,32 @@ public static partial class Gen5SpirvTranslator
                     operands.Add(UInt(component));
                 }
 
-                var imageOperands = hasOffset ? 0x10u : 0u;
+                var imageOperands = (hasBias ? 0x01u : 0u) |
+                    (hasLod ? 0x02u : 0u) |
+                    (hasOffset ? 0x10u : 0u);
                 if (imageOperands != 0)
                 {
                     operands.Add(imageOperands);
-                    operands.Add(offset);
+                    if (hasBias)
+                    {
+                        operands.Add(
+                            Bitcast(
+                                _floatType,
+                                LoadV(image.GetAddressRegister(biasIndex))));
+                    }
+
+                    if (hasLod)
+                    {
+                        operands.Add(
+                            Bitcast(
+                                _floatType,
+                                LoadV(image.GetAddressRegister(start + 2))));
+                    }
+
+                    if (hasOffset)
+                    {
+                        operands.Add(offset);
+                    }
                 }
 
                 sampled = _module.AddInstruction(

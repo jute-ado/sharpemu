@@ -1480,11 +1480,91 @@ public sealed class Gen5DecoderTests
         Assert.Equal(0x10u, gathers[3][6]);
     }
 
+    [Fact]
+    public void CompilesImageGatherBiasAndLodVariantsToSpirv()
+    {
+        var ctx = CreateContext(
+        [
+            0xF1140108u, 0x00002000u, // image_gather4_b v[32:35], v[0:2]
+            0xF1100108u, 0x00002000u, // image_gather4_l v[32:35], v[0:2]
+            0xF1340108u, 0x00002000u, // image_gather4_c_b v[32:35], v[0:3]
+            0xF1300108u, 0x00002000u, // image_gather4_c_l v[32:35], v[0:3]
+            0xF1540108u, 0x00002000u, // image_gather4_b_o v[32:35], v[0:3]
+            0xF1500108u, 0x00002000u, // image_gather4_l_o v[32:35], v[0:3]
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            [
+                "ImageGather4B",
+                "ImageGather4L",
+                "ImageGather4CB",
+                "ImageGather4CL",
+                "ImageGather4BO",
+                "ImageGather4LO",
+            ],
+            program.Instructions.Take(6).Select(instruction => instruction.Opcode));
+
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var imageBindings = program.Instructions.Take(6)
+            .Select(
+                instruction => new Gen5ImageBinding(
+                    instruction.Pc,
+                    instruction.Opcode,
+                    Assert.IsType<Gen5ImageControl>(instruction.Control),
+                    [0u, 0u],
+                    [0u, 0u, 0u, 0u],
+                    MipLevel: null))
+            .ToArray();
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            imageBindings,
+            []);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompilePixelShader(
+                state,
+                evaluation,
+                Gen5PixelOutputKind.Float,
+                out var shader,
+                out var compileError),
+            compileError);
+
+        var gathers = GetSpirvInstructions(shader.Spirv, SpirvOp.ImageGather);
+        Assert.Equal(6, gathers.Count);
+
+        // Bias gathers: 6 base + image_operands + bias = 8 words
+        Assert.Equal(8u, gathers[0][0] >> 16);
+        Assert.Equal(0x01u, gathers[0][6]);
+        Assert.Equal(8u, gathers[2][0] >> 16);
+        Assert.Equal(0x01u, gathers[2][6]);
+
+        // LOD gathers: 6 base + image_operands + lod = 8 words
+        Assert.Equal(8u, gathers[1][0] >> 16);
+        Assert.Equal(0x02u, gathers[1][6]);
+        Assert.Equal(8u, gathers[3][0] >> 16);
+        Assert.Equal(0x02u, gathers[3][6]);
+
+        // Bias+offset gathers: 6 base + image_operands + bias + offset = 9 words
+        Assert.Equal(9u, gathers[4][0] >> 16);
+        Assert.Equal(0x11u, gathers[4][6]);
+        // LOD+offset gathers: 6 base + image_operands + lod + offset = 9 words
+        Assert.Equal(9u, gathers[5][0] >> 16);
+        Assert.Equal(0x12u, gathers[5][6]);
+    }
+
     [Theory]
     [InlineData(0x41u, "ImageGather4Cl", "image gather LOD clamp")]
-    [InlineData(0x44u, "ImageGather4L", "image gather LOD controls")]
-    [InlineData(0x45u, "ImageGather4B", "image gather LOD controls")]
     [InlineData(0x4Eu, "ImageGather4CBCl", "image gather LOD clamp")]
+    [InlineData(0x51u, "ImageGather4ClO", "image gather LOD clamp")]
     public void RejectsUnsupportedImageGatherLodControls(
         uint opcode,
         string expectedOpcode,
