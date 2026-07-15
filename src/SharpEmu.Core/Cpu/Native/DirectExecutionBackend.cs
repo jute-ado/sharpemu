@@ -1138,76 +1138,147 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		Console.Error.WriteLine($"[LOADER][INFO] {LastError}");
 	}
 
-	private bool SetupImportStubs(IReadOnlyDictionary<ulong, string> importStubs)
+	internal unsafe bool SetupImportStubs(IReadOnlyDictionary<ulong, string> importStubs)
 	{
 		Console.Error.WriteLine($"[LOADER][INFO] Setting up {importStubs.Count} import stubs...");
-		ClearImportHandlerTrampolines();
-		_importEntries = new ImportStubEntry[importStubs.Count];
-		HashSet<ulong> hashSet = new HashSet<ulong>(importStubs.Keys);
-		int num = 0;
-		int num2 = 0;
-		int num3 = 0;
-		foreach (var (num4, text2) in importStubs)
+		var previousEntries = _importEntries;
+		var expandedEntries = new ImportStubEntry[previousEntries.Length + importStubs.Count];
+		previousEntries.CopyTo(expandedEntries, 0);
+		var attemptAllocationStart = _importHandlerTrampolines.Count;
+		var patchedStubs = new List<(ulong Address, byte[] OriginalBytes)>();
+		var importAddresses = new HashSet<ulong>(importStubs.Keys);
+		var localIndex = 0;
+		var patchedCount = 0;
+		var redirectCount = 0;
+
+		bool TryPatchTracked(ulong stubAddress, nint targetAddress)
 		{
-			_ = _moduleManager.TryGetExport(text2, out var resolvedExport);
-			_importEntries[num] = new ImportStubEntry(num4, text2, resolvedExport);
-			if ((num4 >= 34393242112L && num4 <= 34393242624L) || (num4 >= 34393258496L && num4 <= 34393259008L))
+			var originalBytes = new ReadOnlySpan<byte>((void*)stubAddress, 16).ToArray();
+			if (!PatchImportStub((nint)stubAddress, targetAddress))
 			{
-				if (resolvedExport is not null)
-				{
-					Console.Error.WriteLine($"[LOADER][INFO] ImportStubMap: 0x{num4:X16} -> {resolvedExport.LibraryName}:{resolvedExport.Name} ({text2})");
-				}
-				else
-				{
-					Console.Error.WriteLine($"[LOADER][INFO] ImportStubMap: 0x{num4:X16} -> {text2}");
-				}
-			}
-			if (TryResolveDirectImportTarget(text2, out var targetAddress, out var resolvedSymbol) && !hashSet.Contains(targetAddress))
-			{
-				Console.Error.WriteLine($"[LOADER][DEBUG] SetupImportStubs: Direct bridge for {text2} -> 0x{targetAddress:X16}");
-				if (!PatchImportStub((nint)(long)num4, (nint)(long)targetAddress))
-				{
-					LastError = $"Failed to patch direct import stub at 0x{num4:X16}";
-					return false;
-				}
-				num3++;
-				num2++;
-				if (num3 <= 48)
-				{
-					Console.Error.WriteLine(
-						$"[LOADER][INFO] LLE redirect: 0x{num4:X16} {text2} -> {resolvedSymbol}@0x{targetAddress:X16}");
-				}
-				num++;
-				continue;
-			}
-			if (TryCreateNativeImportIntrinsic(text2, out var intrinsicAddress))
-			{
-				if (!PatchImportStub((nint)(long)num4, intrinsicAddress))
-				{
-					LastError = $"Failed to patch native intrinsic import stub at 0x{num4:X16}";
-					return false;
-				}
-				num2++;
-				num++;
-				continue;
-			}
-			nint num5 = CreateImportHandlerTrampoline(num);
-			if (num5 == 0)
-			{
-				LastError = "Failed to create import trampoline for NID " + text2;
 				return false;
 			}
-			Console.Error.WriteLine($"[LOADER][DEBUG] SetupImportStubs: Trampoline for {text2} -> 0x{num5:X16}");
-			if (!PatchImportStub((nint)num4, num5))
-			{
-				LastError = $"Failed to patch import stub at 0x{num4:X16}";
-				return false;
-			}
-			num2++;
-			num++;
+
+			patchedStubs.Add((stubAddress, originalBytes));
+			return true;
 		}
-		Console.Error.WriteLine($"[LOADER][INFO] Setup {num2}/{importStubs.Count} import stubs (direct bridge, lle_redirects={num3})");
-		return num2 == importStubs.Count;
+
+		bool FailAttempt(string error)
+		{
+			LastError = error;
+			RollbackImportSetup(patchedStubs, attemptAllocationStart);
+			return false;
+		}
+
+		try
+		{
+			foreach (var (stubAddress, nid) in importStubs)
+			{
+				_ = _moduleManager.TryGetExport(nid, out var resolvedExport);
+				var entryIndex = previousEntries.Length + localIndex;
+				expandedEntries[entryIndex] = new ImportStubEntry(stubAddress, nid, resolvedExport);
+				if ((stubAddress >= 34393242112L && stubAddress <= 34393242624L) ||
+					(stubAddress >= 34393258496L && stubAddress <= 34393259008L))
+				{
+					if (resolvedExport is not null)
+					{
+						Console.Error.WriteLine($"[LOADER][INFO] ImportStubMap: 0x{stubAddress:X16} -> {resolvedExport.LibraryName}:{resolvedExport.Name} ({nid})");
+					}
+					else
+					{
+						Console.Error.WriteLine($"[LOADER][INFO] ImportStubMap: 0x{stubAddress:X16} -> {nid}");
+					}
+				}
+
+				if (TryResolveDirectImportTarget(nid, out var targetAddress, out var resolvedSymbol) &&
+					!importAddresses.Contains(targetAddress))
+				{
+					Console.Error.WriteLine($"[LOADER][DEBUG] SetupImportStubs: Direct bridge for {nid} -> 0x{targetAddress:X16}");
+					if (!TryPatchTracked(stubAddress, (nint)targetAddress))
+					{
+						return FailAttempt($"Failed to patch direct import stub at 0x{stubAddress:X16}");
+					}
+					redirectCount++;
+					patchedCount++;
+					if (redirectCount <= 48)
+					{
+						Console.Error.WriteLine(
+							$"[LOADER][INFO] LLE redirect: 0x{stubAddress:X16} {nid} -> {resolvedSymbol}@0x{targetAddress:X16}");
+					}
+					localIndex++;
+					continue;
+				}
+
+				if (TryCreateNativeImportIntrinsic(nid, out var intrinsicAddress))
+				{
+					if (!TryPatchTracked(stubAddress, intrinsicAddress))
+					{
+						return FailAttempt($"Failed to patch native intrinsic import stub at 0x{stubAddress:X16}");
+					}
+					patchedCount++;
+					localIndex++;
+					continue;
+				}
+
+				var trampoline = CreateImportHandlerTrampoline(entryIndex);
+				if (trampoline == 0)
+				{
+					return FailAttempt("Failed to create import trampoline for NID " + nid);
+				}
+				Console.Error.WriteLine($"[LOADER][DEBUG] SetupImportStubs: Trampoline for {nid} -> 0x{trampoline:X16}");
+				if (!TryPatchTracked(stubAddress, trampoline))
+				{
+					return FailAttempt($"Failed to patch import stub at 0x{stubAddress:X16}");
+				}
+				patchedCount++;
+				localIndex++;
+			}
+
+			_importEntries = expandedEntries;
+			Console.Error.WriteLine($"[LOADER][INFO] Setup {patchedCount}/{importStubs.Count} import stubs (direct bridge, lle_redirects={redirectCount})");
+			return patchedCount == importStubs.Count;
+		}
+		catch
+		{
+			RollbackImportSetup(patchedStubs, attemptAllocationStart);
+			throw;
+		}
+	}
+
+	private unsafe void RollbackImportSetup(
+		List<(ulong Address, byte[] OriginalBytes)> patchedStubs,
+		int attemptAllocationStart)
+	{
+		for (var index = patchedStubs.Count - 1; index >= 0; index--)
+		{
+			var (address, originalBytes) = patchedStubs[index];
+			uint oldProtection = 0;
+			if (!_hostMemory.Protect(address, (nuint)originalBytes.Length, HostPageProtection.ReadWriteExecute, out oldProtection))
+			{
+				Console.Error.WriteLine($"[LOADER][ERROR] Failed to restore import stub at 0x{address:X16} during setup rollback");
+				continue;
+			}
+
+			try
+			{
+				originalBytes.CopyTo(new Span<byte>((void*)address, originalBytes.Length));
+			}
+			finally
+			{
+				_hostMemory.ProtectRaw(address, (nuint)originalBytes.Length, oldProtection, out _);
+				_hostMemory.FlushInstructionCache(address, (nuint)originalBytes.Length);
+			}
+		}
+
+		for (var index = _importHandlerTrampolines.Count - 1; index >= attemptAllocationStart; index--)
+		{
+			var allocation = _importHandlerTrampolines[index];
+			if (allocation != 0)
+			{
+				_hostMemory.Free((ulong)allocation);
+			}
+			_importHandlerTrampolines.RemoveAt(index);
+		}
 	}
 
 	private unsafe bool TryCreateNativeImportIntrinsic(string nid, out nint address)

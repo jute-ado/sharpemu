@@ -206,6 +206,101 @@ public sealed class NativeBackendConstructionTests
         Assert.Empty(memory.ActiveAllocations);
     }
 
+    [Fact]
+    public unsafe void FailedImportSetupRestoresPatchedSlotsAndAttemptAllocations()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(
+            failedAllocation: int.MaxValue,
+            failedProtection: 6);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        var firstStub = memory.Allocate(0, 16, HostPageProtection.ReadWriteExecute);
+        var secondStub = memory.Allocate(0, 16, HostPageProtection.ReadWriteExecute);
+        var firstOriginal = Enumerable.Repeat((byte)0xA5, 16).ToArray();
+        var secondOriginal = Enumerable.Repeat((byte)0x5A, 16).ToArray();
+        firstOriginal.CopyTo(new Span<byte>((void*)firstStub, firstOriginal.Length));
+        secondOriginal.CopyTo(new Span<byte>((void*)secondStub, secondOriginal.Length));
+        var activeAllocationsBefore = memory.ActiveAllocations.Count;
+        try
+        {
+            var setupResult = backend.SetupImportStubs(new Dictionary<ulong, string>
+            {
+                [firstStub] = "unknown-import-a",
+                [secondStub] = "unknown-import-b",
+            });
+
+            Assert.False(setupResult);
+            Assert.Equal(firstOriginal, new ReadOnlySpan<byte>((void*)firstStub, 16).ToArray());
+            Assert.Equal(secondOriginal, new ReadOnlySpan<byte>((void*)secondStub, 16).ToArray());
+            Assert.Equal(activeAllocationsBefore, memory.ActiveAllocations.Count);
+        }
+        finally
+        {
+            backend.Dispose();
+            memory.Free(firstStub);
+            memory.Free(secondStub);
+        }
+    }
+
+    [Fact]
+    public unsafe void FailedLaterImportSetupPreservesEarlierModuleDispatchState()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(
+            failedAllocation: int.MaxValue,
+            failedProtection: 8);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        var earlierStub = memory.Allocate(0, 16, HostPageProtection.ReadWriteExecute);
+        var failedStubA = memory.Allocate(0, 16, HostPageProtection.ReadWriteExecute);
+        var failedStubB = memory.Allocate(0, 16, HostPageProtection.ReadWriteExecute);
+        var original = Enumerable.Repeat((byte)0xCC, 16).ToArray();
+        original.CopyTo(new Span<byte>((void*)earlierStub, original.Length));
+        original.CopyTo(new Span<byte>((void*)failedStubA, original.Length));
+        original.CopyTo(new Span<byte>((void*)failedStubB, original.Length));
+
+        try
+        {
+            Assert.True(backend.SetupImportStubs(new Dictionary<ulong, string>
+            {
+                [earlierStub] = "earlier-module-import",
+            }));
+            var earlierPatchedBytes = new ReadOnlySpan<byte>((void*)earlierStub, 16).ToArray();
+            var activeAllocationsBeforeFailedAttempt = memory.ActiveAllocations.Count;
+
+            Assert.False(backend.SetupImportStubs(new Dictionary<ulong, string>
+            {
+                [failedStubA] = "failed-module-import-a",
+                [failedStubB] = "failed-module-import-b",
+            }));
+
+            Assert.Equal(earlierPatchedBytes, new ReadOnlySpan<byte>((void*)earlierStub, 16).ToArray());
+            Assert.Equal(original, new ReadOnlySpan<byte>((void*)failedStubA, 16).ToArray());
+            Assert.Equal(original, new ReadOnlySpan<byte>((void*)failedStubB, 16).ToArray());
+            Assert.Equal(activeAllocationsBeforeFailedAttempt, memory.ActiveAllocations.Count);
+        }
+        finally
+        {
+            backend.Dispose();
+            memory.Free(earlierStub);
+            memory.Free(failedStubA);
+            memory.Free(failedStubB);
+        }
+    }
+
     private sealed class StubHostPlatform(
         IHostThreading threading,
         IHostMemory? memory = null,
