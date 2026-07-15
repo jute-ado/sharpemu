@@ -10,6 +10,61 @@ namespace SharpEmu.Core.Tests;
 
 public sealed class HostMemoryAbstractionTests
 {
+    [Theory]
+    [InlineData(0, ulong.MaxValue)]
+    [InlineData(ulong.MaxValue - 0x7FF, 0x1000)]
+    public void ExactAllocationRejectsOverflowingRangeWithoutCallingHost(
+        ulong desiredAddress,
+        ulong size)
+    {
+        var hostMemory = new RecordingHostMemory
+        {
+            AllocateResult = desiredAddress == 0
+                ? 0x0000_0008_0000_0000
+                : desiredAddress,
+        };
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+
+        var allocated = memory.TryAllocateAtExact(
+            desiredAddress,
+            size,
+            executable: false,
+            out var actualAddress);
+
+        Assert.False(allocated);
+        Assert.Equal(0uL, actualAddress);
+        Assert.Empty(hostMemory.AllocationRequests);
+        Assert.Empty(hostMemory.FreedAddresses);
+        Assert.Empty(memory.SnapshotRegions());
+    }
+
+    [Theory]
+    [InlineData(0, ulong.MaxValue)]
+    [InlineData(ulong.MaxValue - 0x7FF, 0x1000)]
+    public void AllocationRejectsOverflowingRangeWithoutCallingHost(
+        ulong desiredAddress,
+        ulong size)
+    {
+        var hostMemory = new RecordingHostMemory
+        {
+            AllocateResult = desiredAddress == 0
+                ? 0x0000_0008_0000_0000
+                : desiredAddress,
+        };
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            memory.AllocateAt(
+                desiredAddress,
+                size,
+                executable: false,
+                allowAlternative: true));
+
+        Assert.Empty(hostMemory.AllocationRequests);
+        Assert.Empty(hostMemory.FreedAddresses);
+        Assert.Empty(memory.SnapshotRegions());
+    }
+
     [Fact]
     public void ExactAllocationRejectsAndReleasesAlternativeHostAddress()
     {
@@ -152,12 +207,17 @@ public sealed class HostMemoryAbstractionTests
 
         public List<ulong> FreedAddresses { get; } = [];
 
+        public List<(ulong Address, ulong Size, HostPageProtection Protection)> AllocationRequests { get; } = [];
+
         public List<(ulong Address, ulong Size, HostPageProtection Protection)> ProtectionRequests { get; } = [];
 
         public List<(ulong Address, ulong Size)> FlushedRanges { get; } = [];
 
-        public ulong Allocate(ulong desiredAddress, ulong size, HostPageProtection protection) =>
-            AllocateResult;
+        public ulong Allocate(ulong desiredAddress, ulong size, HostPageProtection protection)
+        {
+            AllocationRequests.Add((desiredAddress, size, protection));
+            return AllocateResult;
+        }
 
         public ulong Reserve(ulong desiredAddress, ulong size, HostPageProtection protection) => 0;
 
