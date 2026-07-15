@@ -21,7 +21,7 @@ var manifestPath = args.Length > 0
 var manifest = JsonSerializer.Deserialize<ConformanceManifest>(
         File.ReadAllText(manifestPath))
     ?? throw new InvalidDataException("conformance manifest is empty");
-manifest.Validate();
+var testBuffers = manifest.Validate();
 
 var manifestDirectory = Path.GetDirectoryName(manifestPath)
     ?? throw new InvalidDataException("conformance manifest has no parent directory");
@@ -32,7 +32,9 @@ if (code.Length == 0 || code.Length % sizeof(uint) != 0)
     throw new InvalidDataException("SPIR-V module must contain a non-empty sequence of 32-bit words");
 }
 
-var bufferSize = checked((ulong)manifest.InitialWords.Length * sizeof(uint));
+var bufferSizes = testBuffers
+    .Select(buffer => checked((ulong)buffer.InitialWords.Length * sizeof(uint)))
+    .ToArray();
 Console.WriteLine($"case: {manifest.Name}");
 
 unsafe
@@ -81,6 +83,15 @@ unsafe
     vk.GetPhysicalDeviceProperties(physical, out var chosenProps);
     Console.WriteLine(
         $"executing on: {SilkMarshal.PtrToString((nint)chosenProps.DeviceName)}");
+    var storageBufferLimit = Math.Min(
+        chosenProps.Limits.MaxPerStageDescriptorStorageBuffers,
+        chosenProps.Limits.MaxDescriptorSetStorageBuffers);
+    if ((uint)testBuffers.Length > storageBufferLimit)
+    {
+        throw new InvalidOperationException(
+            $"manifest requires {testBuffers.Length} storage buffers, but the " +
+            $"selected device supports {storageBufferLimit}");
+    }
 
     uint familyCount = 0;
     vk.GetPhysicalDeviceQueueFamilyProperties(physical, &familyCount, null);
@@ -130,56 +141,88 @@ unsafe
     Check(vk.CreateDevice(physical, in deviceInfo, null, out var device), "vkCreateDevice");
     vk.GetDeviceQueue(device, computeFamily, 0, out var queue);
 
-    // Storage buffer, host-visible so the CPU can prefill and read back.
-    var bufferInfo = new BufferCreateInfo
-    {
-        SType = StructureType.BufferCreateInfo,
-        Size = bufferSize,
-        Usage = BufferUsageFlags.StorageBufferBit,
-        SharingMode = SharingMode.Exclusive,
-    };
-    Check(vk.CreateBuffer(device, in bufferInfo, null, out var buffer), "vkCreateBuffer");
-    vk.GetBufferMemoryRequirements(device, buffer, out var requirements);
+    // Each guest resource gets a distinct host-visible storage buffer. Binding
+    // them as one descriptor array mirrors the compiler's guestBuffers layout.
     vk.GetPhysicalDeviceMemoryProperties(physical, out var memoryProperties);
-
-    uint memoryType = uint.MaxValue;
-    for (var index = 0; index < memoryProperties.MemoryTypeCount; index++)
+    var vulkanBuffers = new Silk.NET.Vulkan.Buffer[testBuffers.Length];
+    var memories = new DeviceMemory[testBuffers.Length];
+    var mappedPointers = new nint[testBuffers.Length];
+    for (var bufferIndex = 0; bufferIndex < testBuffers.Length; bufferIndex++)
     {
-        var flags = memoryProperties.MemoryTypes[index].PropertyFlags;
-        if ((requirements.MemoryTypeBits & (1u << index)) != 0 &&
-            flags.HasFlag(MemoryPropertyFlags.HostVisibleBit) &&
-            flags.HasFlag(MemoryPropertyFlags.HostCoherentBit))
+        var bufferInfo = new BufferCreateInfo
         {
-            memoryType = (uint)index;
-            break;
+            SType = StructureType.BufferCreateInfo,
+            Size = bufferSizes[bufferIndex],
+            Usage = BufferUsageFlags.StorageBufferBit,
+            SharingMode = SharingMode.Exclusive,
+        };
+        Check(
+            vk.CreateBuffer(device, in bufferInfo, null, out vulkanBuffers[bufferIndex]),
+            $"vkCreateBuffer[{bufferIndex}]");
+        vk.GetBufferMemoryRequirements(
+            device,
+            vulkanBuffers[bufferIndex],
+            out var requirements);
+
+        uint memoryType = uint.MaxValue;
+        for (var memoryIndex = 0; memoryIndex < memoryProperties.MemoryTypeCount; memoryIndex++)
+        {
+            var flags = memoryProperties.MemoryTypes[memoryIndex].PropertyFlags;
+            if ((requirements.MemoryTypeBits & (1u << memoryIndex)) != 0 &&
+                flags.HasFlag(MemoryPropertyFlags.HostVisibleBit) &&
+                flags.HasFlag(MemoryPropertyFlags.HostCoherentBit))
+            {
+                memoryType = (uint)memoryIndex;
+                break;
+            }
+        }
+
+        if (memoryType == uint.MaxValue)
+        {
+            throw new InvalidOperationException(
+                $"no host-visible, host-coherent memory type available for " +
+                $"readback buffer {bufferIndex}");
+        }
+
+        var allocateInfo = new MemoryAllocateInfo
+        {
+            SType = StructureType.MemoryAllocateInfo,
+            AllocationSize = requirements.Size,
+            MemoryTypeIndex = memoryType,
+        };
+        Check(
+            vk.AllocateMemory(device, in allocateInfo, null, out memories[bufferIndex]),
+            $"vkAllocateMemory[{bufferIndex}]");
+        Check(
+            vk.BindBufferMemory(
+                device,
+                vulkanBuffers[bufferIndex],
+                memories[bufferIndex],
+                0),
+            $"vkBindBufferMemory[{bufferIndex}]");
+
+        void* mapped;
+        Check(
+            vk.MapMemory(
+                device,
+                memories[bufferIndex],
+                0,
+                bufferSizes[bufferIndex],
+                0,
+                &mapped),
+            $"vkMapMemory[{bufferIndex}]");
+        mappedPointers[bufferIndex] = (nint)mapped;
+        var words = (uint*)mapped;
+        for (var wordIndex = 0;
+             wordIndex < testBuffers[bufferIndex].InitialWords.Length;
+             wordIndex++)
+        {
+            words[wordIndex] = testBuffers[bufferIndex].InitialWords[wordIndex];
         }
     }
 
-    if (memoryType == uint.MaxValue)
-    {
-        throw new InvalidOperationException(
-            "no host-visible, host-coherent memory type available for the readback buffer");
-    }
-
-    var allocateInfo = new MemoryAllocateInfo
-    {
-        SType = StructureType.MemoryAllocateInfo,
-        AllocationSize = requirements.Size,
-        MemoryTypeIndex = memoryType,
-    };
-    Check(vk.AllocateMemory(device, in allocateInfo, null, out var memory), "vkAllocateMemory");
-    Check(vk.BindBufferMemory(device, buffer, memory, 0), "vkBindBufferMemory");
-
-    void* mapped;
-    Check(vk.MapMemory(device, memory, 0, bufferSize, 0, &mapped), "vkMapMemory");
-    var words = (uint*)mapped;
-    for (var index = 0; index < manifest.InitialWords.Length; index++)
-    {
-        words[index] = manifest.InitialWords[index];
-    }
-
     // SharpEmu emits all guest buffers as one descriptor array at set 0,
-    // binding 0; this conformance shader uses a single buffer.
+    // binding 0.
     ShaderModule module;
     fixed (byte* pCode = code)
     {
@@ -196,7 +239,7 @@ unsafe
     {
         Binding = 0,
         DescriptorType = DescriptorType.StorageBuffer,
-        DescriptorCount = 1,
+        DescriptorCount = (uint)testBuffers.Length,
         StageFlags = ShaderStageFlags.ComputeBit,
     };
     var setLayoutInfo = new DescriptorSetLayoutCreateInfo
@@ -240,7 +283,7 @@ unsafe
     var poolSize = new DescriptorPoolSize
     {
         Type = DescriptorType.StorageBuffer,
-        DescriptorCount = 1,
+        DescriptorCount = (uint)testBuffers.Length,
     };
     var poolInfo = new DescriptorPoolCreateInfo
     {
@@ -260,23 +303,31 @@ unsafe
     };
     Check(vk.AllocateDescriptorSets(device, in setAllocateInfo, out var descriptorSet), "vkAllocateDescriptorSets");
 
-    var descriptorBuffer = new DescriptorBufferInfo
+    var descriptorBuffers = new DescriptorBufferInfo[testBuffers.Length];
+    for (var bufferIndex = 0; bufferIndex < testBuffers.Length; bufferIndex++)
     {
-        Buffer = buffer,
-        Offset = 0,
-        Range = bufferSize,
-    };
-    var write = new WriteDescriptorSet
+        descriptorBuffers[bufferIndex] = new DescriptorBufferInfo
+        {
+            Buffer = vulkanBuffers[bufferIndex],
+            Offset = 0,
+            Range = bufferSizes[bufferIndex],
+        };
+    }
+
+    fixed (DescriptorBufferInfo* pDescriptorBuffers = descriptorBuffers)
     {
-        SType = StructureType.WriteDescriptorSet,
-        DstSet = descriptorSet,
-        DstBinding = 0,
-        DstArrayElement = 0,
-        DescriptorCount = 1,
-        DescriptorType = DescriptorType.StorageBuffer,
-        PBufferInfo = &descriptorBuffer,
-    };
-    vk.UpdateDescriptorSets(device, 1, in write, 0, null);
+        var write = new WriteDescriptorSet
+        {
+            SType = StructureType.WriteDescriptorSet,
+            DstSet = descriptorSet,
+            DstBinding = 0,
+            DstArrayElement = 0,
+            DescriptorCount = (uint)testBuffers.Length,
+            DescriptorType = DescriptorType.StorageBuffer,
+            PBufferInfo = pDescriptorBuffers,
+        };
+        vk.UpdateDescriptorSets(device, 1, in write, 0, null);
+    }
 
     var commandPoolInfo = new CommandPoolCreateInfo
     {
@@ -363,18 +414,25 @@ unsafe
     Check(waitResult, "vkWaitForFences");
 
     var failures = 0;
-    for (var index = 0; index < manifest.ExpectedWords.Length; index++)
+    for (var bufferIndex = 0; bufferIndex < testBuffers.Length; bufferIndex++)
     {
-        var name = manifest.Labels[index];
-        var actual = words[index];
-        var expected = manifest.ExpectedWords[index];
-        var status = actual == expected ? "PASS" : "FAIL";
-        if (actual != expected)
+        var testBuffer = testBuffers[bufferIndex];
+        var words = (uint*)mappedPointers[bufferIndex];
+        for (var wordIndex = 0; wordIndex < testBuffer.ExpectedWords.Length; wordIndex++)
         {
-            failures++;
-        }
+            var label = testBuffer.Labels[wordIndex];
+            var actual = words[wordIndex];
+            var expected = testBuffer.ExpectedWords[wordIndex];
+            var status = actual == expected ? "PASS" : "FAIL";
+            if (actual != expected)
+            {
+                failures++;
+            }
 
-        Console.WriteLine($"{status}  {name}: gpu=0x{actual:X8} expected=0x{expected:X8}");
+            Console.WriteLine(
+                $"{status}  {testBuffer.Name} / {label}: " +
+                $"gpu=0x{actual:X8} expected=0x{expected:X8}");
+        }
     }
 
     Console.WriteLine(failures == 0
@@ -388,9 +446,12 @@ unsafe
     vk.DestroyPipelineLayout(device, pipelineLayout, null);
     vk.DestroyDescriptorSetLayout(device, setLayout, null);
     vk.DestroyShaderModule(device, module, null);
-    vk.UnmapMemory(device, memory);
-    vk.FreeMemory(device, memory, null);
-    vk.DestroyBuffer(device, buffer, null);
+    for (var bufferIndex = 0; bufferIndex < testBuffers.Length; bufferIndex++)
+    {
+        vk.UnmapMemory(device, memories[bufferIndex]);
+        vk.DestroyBuffer(device, vulkanBuffers[bufferIndex], null);
+        vk.FreeMemory(device, memories[bufferIndex], null);
+    }
     vk.DestroyDevice(device, null);
     vk.DestroyInstance(instance, null);
 
@@ -409,9 +470,10 @@ sealed record ConformanceManifest(
     int SchemaVersion,
     string Name,
     string Shader,
-    uint[] InitialWords,
-    uint[] ExpectedWords,
-    string[] Labels,
+    uint[]? InitialWords,
+    uint[]? ExpectedWords,
+    string[]? Labels,
+    ConformanceBuffer[]? Buffers,
     uint LocalSizeX,
     uint LocalSizeY,
     uint LocalSizeZ,
@@ -419,14 +481,8 @@ sealed record ConformanceManifest(
     uint GroupCountY,
     uint GroupCountZ)
 {
-    public void Validate()
+    public ConformanceBuffer[] Validate()
     {
-        if (SchemaVersion != 2)
-        {
-            throw new InvalidDataException(
-                $"unsupported conformance manifest schema version {SchemaVersion}");
-        }
-
         if (string.IsNullOrWhiteSpace(Name))
         {
             throw new InvalidDataException("conformance manifest name is required");
@@ -441,22 +497,39 @@ sealed record ConformanceManifest(
                 "conformance manifest shader must name a file beside the manifest");
         }
 
-        if (InitialWords is null || InitialWords.Length == 0)
+        var validatedBuffers = SchemaVersion switch
         {
-            throw new InvalidDataException("conformance manifest requires an initial buffer");
-        }
+            2 when InitialWords is not null &&
+                   ExpectedWords is not null &&
+                   Labels is not null =>
+                [new ConformanceBuffer("guest buffer 0", InitialWords, ExpectedWords, Labels)],
+            3 when Buffers is { Length: > 0 } => Buffers,
+            2 => throw new InvalidDataException(
+                "schema 2 conformance manifest requires initial, expected, and label arrays"),
+            3 => throw new InvalidDataException(
+                "schema 3 conformance manifest requires at least one buffer"),
+            _ => throw new InvalidDataException(
+                $"unsupported conformance manifest schema version {SchemaVersion}"),
+        };
 
-        if (ExpectedWords is null || ExpectedWords.Length != InitialWords.Length)
+        var duplicateName = validatedBuffers
+            .GroupBy(buffer => buffer.Name, StringComparer.Ordinal)
+            .FirstOrDefault(group => group.Count() > 1)?.Key;
+        if (duplicateName is not null)
         {
             throw new InvalidDataException(
-                "conformance manifest initial and expected buffers must have equal lengths");
+                $"conformance manifest buffer name '{duplicateName}' is duplicated");
         }
 
-        if (Labels is null || Labels.Length != InitialWords.Length ||
-            Labels.Any(string.IsNullOrWhiteSpace))
+        foreach (var buffer in validatedBuffers)
+        {
+            buffer.Validate();
+        }
+
+        if (validatedBuffers.Length > 1024)
         {
             throw new InvalidDataException(
-                "conformance manifest requires one non-empty label per buffer word");
+                "conformance manifest cannot contain more than 1024 buffers");
         }
 
         if (LocalSizeX == 0 || LocalSizeY == 0 || LocalSizeZ == 0)
@@ -476,6 +549,45 @@ sealed record ConformanceManifest(
         {
             throw new InvalidDataException(
                 "conformance manifest group counts must be positive");
+        }
+
+        return validatedBuffers;
+    }
+}
+
+sealed record ConformanceBuffer(
+    string Name,
+    uint[] InitialWords,
+    uint[] ExpectedWords,
+    string[] Labels)
+{
+    public void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(Name))
+        {
+            throw new InvalidDataException(
+                "conformance manifest requires a non-empty name for every buffer");
+        }
+
+        if (InitialWords is null || InitialWords.Length == 0)
+        {
+            throw new InvalidDataException(
+                $"conformance manifest buffer '{Name}' requires initial words");
+        }
+
+        if (ExpectedWords is null || ExpectedWords.Length != InitialWords.Length)
+        {
+            throw new InvalidDataException(
+                $"conformance manifest buffer '{Name}' initial and expected words " +
+                "must have equal lengths");
+        }
+
+        if (Labels is null || Labels.Length != InitialWords.Length ||
+            Labels.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new InvalidDataException(
+                $"conformance manifest buffer '{Name}' requires one non-empty " +
+                "label per word");
         }
     }
 }
