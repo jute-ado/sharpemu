@@ -548,7 +548,9 @@ internal static class KernelSocketCompatExports
         var length = 0;
         for (; length < maxLength; length++)
         {
-            if (!ctx.Memory.TryRead(address + (ulong)length, buffer.AsSpan(length, 1)))
+            var offset = (ulong)length;
+            if (offset > ulong.MaxValue - address ||
+                !ctx.Memory.TryRead(address + offset, buffer.AsSpan(length, 1)))
             {
                 text = string.Empty;
                 return false;
