@@ -116,7 +116,8 @@ const ulong ProgramAddress = 0x100000;
     // Executable end-to-end test: compute with real ALU instructions, then
     // buffer_store_dword results to guestBuffers[0] at offsets 0/4/8, prove
     // that a store with EXEC=0 does not land (offset 12 stays sentinel), and
-    // that stores work again after EXEC is restored (offset 16).
+    // that stores work again after EXEC is restored (offset 16). Bitwise VOP2
+    // results at offsets 20/24/28 extend the driver-executed ALU coverage.
     ("exec", true, [
         0xBFA10001,             // s_clause 0x1 (hint no-op in an executed program, needs #108)
         0x7E0002FF, 0x3FC00000, // v_mov_b32 v0, 1.5f
@@ -134,6 +135,12 @@ const ulong ProgramAddress = 0x100000;
         0xE070000C, 0x80020200, // buffer_store_dword v2, off, s[8:11], 0 offset:12 (masked, must not land)
         0xBEFE03C1,             // s_mov_b32 exec_lo, -1      -> lane active again
         0xE0700010, 0x80020000, // buffer_store_dword v0, off, s[8:11], 0 offset:16
+        0x360E0903,             // v_and_b32 v7, v3, v4
+        0x38100903,             // v_or_b32 v8, v3, v4
+        0x3A120903,             // v_xor_b32 v9, v3, v4
+        0xE0700014, 0x80020700, // buffer_store_dword v7, off, s[8:11], 0 offset:20
+        0xE0700018, 0x80020800, // buffer_store_dword v8, off, s[8:11], 0 offset:24
+        0xE070001C, 0x80020900, // buffer_store_dword v9, off, s[8:11], 0 offset:28
         0xBF810000,             // s_endpgm
     ]),
 ];

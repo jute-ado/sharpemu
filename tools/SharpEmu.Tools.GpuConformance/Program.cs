@@ -12,6 +12,9 @@
 //   [2] v_mul_lo_i32 -> low  32 bits of the same product
 //   [3] store attempted with EXEC=0 -> must NOT land (sentinel remains)
 //   [4] store after EXEC restored   -> 1.5f (0x3FC00000)
+//   [5] v_and_b32                   -> 0x00010003
+//   [6] v_or_b32                    -> 0x7FFFFFFF
+//   [7] v_xor_b32                   -> 0x7FFEFFFC
 // Every other word of the buffer must still hold the sentinel afterwards.
 //
 // Creating the compute pipeline doubles as a driver-acceptance check for the
@@ -34,6 +37,9 @@ var product = (long)0x7FFFFFFF * 0x00010003;
 var expectedHi = (uint)(product >> 32);
 var expectedLo = (uint)product;
 var expectedRestored = BitConverter.SingleToUInt32Bits(1.5f);
+var expectedAnd = 0x7FFFFFFFu & 0x00010003u;
+var expectedOr = 0x7FFFFFFFu | 0x00010003u;
+var expectedXor = 0x7FFFFFFFu ^ 0x00010003u;
 
 unsafe
 {
@@ -351,6 +357,9 @@ unsafe
         ("v_mul_lo_i32 lo(0x7FFFFFFF*0x10003)", words[2], expectedLo),
         ("exec=0 store suppressed (offset 12 sentinel)", words[3], Sentinel),
         ("store after exec restore (offset 16)", words[4], expectedRestored),
+        ("v_and_b32 0x7FFFFFFF & 0x00010003", words[5], expectedAnd),
+        ("v_or_b32 0x7FFFFFFF | 0x00010003", words[6], expectedOr),
+        ("v_xor_b32 0x7FFFFFFF ^ 0x00010003", words[7], expectedXor),
     };
     var failures = 0;
     foreach (var (name, actual, expected) in results)
