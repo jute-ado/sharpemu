@@ -250,10 +250,15 @@ public static unsafe class JitStubs
     {
         var results = new List<nint>();
         var pattern = TlsAccessPattern;
-        var end = start + length - pattern.Length;
-
-        for (var ptr = start; ptr < end; ptr++)
+        if (start == null || length < pattern.Length)
         {
+            return results;
+        }
+
+        var finalOffset = length - pattern.Length;
+        for (var offset = 0; offset <= finalOffset; offset++)
+        {
+            var ptr = start + offset;
             if (MatchesPattern(ptr, pattern))
             {
                 results.Add((nint)ptr);
