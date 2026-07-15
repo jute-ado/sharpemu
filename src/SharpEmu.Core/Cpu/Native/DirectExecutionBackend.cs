@@ -668,6 +668,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private const int MinTlsPatchInstructionBytes = 8;
 	private const int MaxX86InstructionBytes = 15;
 	private const ulong MaxTlsScanChunkBytes = 0x0100_0000;
+	private const uint NativeEntryStubSize = 512u;
+	private const ulong HostRspSlotSize = sizeof(ulong);
 
 	private delegate ulong ImportGatewayDelegate(nint backendHandle, int importIndex, nint argPackPtr);
 	private delegate int RawExceptionHandlerDelegate(void* exceptionInfo);
@@ -4552,6 +4554,33 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		context[CpuRegister.Rsp] = continuation.Rsp;
 	}
 
+	private unsafe bool TryAllocateNativeEntryStub(out void* entryStub, out ulong hostRspSlot)
+	{
+		entryStub = null;
+		hostRspSlot = 0;
+		var entryStubAddress = _hostMemory.Allocate(
+			0,
+			NativeEntryStubSize,
+			HostPageProtection.ReadWrite);
+		if (entryStubAddress == 0)
+		{
+			return false;
+		}
+
+		hostRspSlot = _hostMemory.Allocate(
+			0,
+			HostRspSlotSize,
+			HostPageProtection.ReadWrite);
+		if (hostRspSlot == 0)
+		{
+			_hostMemory.Free(entryStubAddress);
+			return false;
+		}
+
+		entryStub = (void*)entryStubAddress;
+		return true;
+	}
+
 	private unsafe GuestNativeCallExitReason ExecuteGuestThreadEntry(CpuContext context, ulong entryPoint, string name, out string? reason)
 	{
 		reason = null;
@@ -4560,9 +4589,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			reason = "guest thread stack pointer is zero";
 			return GuestNativeCallExitReason.Exception;
 		}
-		const uint stubSize = 512u;
-		void* ptr = (void*)_hostMemory.Allocate(0, stubSize, HostPageProtection.ReadWriteExecute);
-		if (ptr == null)
+		const uint stubSize = NativeEntryStubSize;
+		if (!TryAllocateNativeEntryStub(out var ptr, out var hostRspSlot))
 		{
 			reason = "failed to allocate executable memory for guest thread stub";
 			return GuestNativeCallExitReason.Exception;
@@ -4607,8 +4635,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		BindActiveGuestStackRange(context);
         BindTlsBase(context);
         byte* ptr2 = (byte*)ptr;
-        ulong hostRspSlot = (ulong)ptr + stubSize - 16uL;
-        int offset = 0;
+		int offset = 0;
         ptr2[offset++] = 83;
         ptr2[offset++] = 85;
         ptr2[offset++] = 87;
@@ -4723,7 +4750,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 		guestStackSlotPatched = true;
         uint oldProtect = default(uint);
-        if (!_hostMemory.Protect((ulong)ptr, stubSize, HostPageProtection.ReadWriteExecute, out oldProtect))
+		if (!_hostMemory.Protect((ulong)ptr, stubSize, HostPageProtection.ReadExecute, out oldProtect))
         {
             reason = $"VirtualProtect failed for guest thread entry stub at 0x{(nint)ptr:X16}";
             return GuestNativeCallExitReason.Exception;
@@ -4781,8 +4808,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_activeGuestHardwareExceptionCode = previousHardwareExceptionCode;
 		_activeGuestHardwareExceptionAccessType = previousHardwareExceptionAccessType;
 		_activeGuestHardwareExceptionAccessAddress = previousHardwareExceptionAccessAddress;
-        _hostMemory.Free((ulong)ptr);
-    }
+		_hostMemory.Free(hostRspSlot);
+		_hostMemory.Free((ulong)ptr);
+	}
 }
 
 	private unsafe GuestNativeCallExitReason ExecuteGuestContinuationEntry(
@@ -4798,9 +4826,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			reason = "guest thread stack pointer is zero";
 			return GuestNativeCallExitReason.Exception;
 		}
-		const uint stubSize = 512u;
-		void* ptr = (void*)_hostMemory.Allocate(0, stubSize, HostPageProtection.ReadWriteExecute);
-		if (ptr == null)
+		const uint stubSize = NativeEntryStubSize;
+		if (!TryAllocateNativeEntryStub(out var ptr, out var hostRspSlot))
 		{
 			reason = "failed to allocate executable memory for guest thread stub";
 			return GuestNativeCallExitReason.Exception;
@@ -4844,7 +4871,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			BindActiveGuestStackRange(context);
 			BindTlsBase(context);
 			byte* ptr2 = (byte*)ptr;
-			ulong hostRspSlot = (ulong)ptr + stubSize - 16uL;
 			int offset = 0;
 
 			void Emit(byte value) => ptr2[offset++] = value;
@@ -4898,7 +4924,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 			returnSlotPatched = true;
 			uint oldProtect = default(uint);
-			if (!_hostMemory.Protect((ulong)ptr, stubSize, HostPageProtection.ReadWriteExecute, out oldProtect))
+			if (!_hostMemory.Protect((ulong)ptr, stubSize, HostPageProtection.ReadExecute, out oldProtect))
 			{
 				reason = $"VirtualProtect failed for guest continuation stub at 0x{(nint)ptr:X16}";
 				return GuestNativeCallExitReason.Exception;
@@ -4960,6 +4986,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			_activeGuestHardwareExceptionCode = previousHardwareExceptionCode;
 			_activeGuestHardwareExceptionAccessType = previousHardwareExceptionAccessType;
 			_activeGuestHardwareExceptionAccessAddress = previousHardwareExceptionAccessAddress;
+			_hostMemory.Free(hostRspSlot);
 			_hostMemory.Free((ulong)ptr);
 		}
 	}
@@ -5043,9 +5070,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			return false;
 		}
 		Console.Error.WriteLine($"[LOADER][INFO] StackTop: 0x{num:X16}");
-		const uint stubSize = 512u;
-		void* ptr = (void*)_hostMemory.Allocate(0, stubSize, HostPageProtection.ReadWriteExecute);
-		if (ptr == null)
+		const uint stubSize = NativeEntryStubSize;
+		if (!TryAllocateNativeEntryStub(out var ptr, out var num2))
 		{
 			LastError = "Failed to allocate executable memory for stub";
 			result = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
@@ -5085,7 +5111,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			BindActiveGuestStackRange(context);
 			BindTlsBase(context);
 			byte* ptr2 = (byte*)ptr;
-			ulong num2 = (ulong)ptr + stubSize - 16uL;
 			int num3 = 0;
 			ptr2[num3++] = 83;
 			ptr2[num3++] = 85;
@@ -5202,7 +5227,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 			guestStackSlotPatched = true;
 			uint num5 = default(uint);
-			if (!_hostMemory.Protect((ulong)ptr, stubSize, HostPageProtection.ReadWriteExecute, out num5))
+			if (!_hostMemory.Protect((ulong)ptr, stubSize, HostPageProtection.ReadExecute, out num5))
 			{
 				LastError = $"VirtualProtect failed for guest entry stub at 0x{(nint)ptr:X16}";
 				result = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
@@ -5304,6 +5329,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			_activeGuestHardwareExceptionCode = previousHardwareExceptionCode;
 			_activeGuestHardwareExceptionAccessType = previousHardwareExceptionAccessType;
 			_activeGuestHardwareExceptionAccessAddress = previousHardwareExceptionAccessAddress;
+			_hostMemory.Free(num2);
 			_hostMemory.Free((ulong)ptr);
 		}
 	}
