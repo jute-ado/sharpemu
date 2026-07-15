@@ -30,6 +30,8 @@ public static class VideoOutExports
     private const int MaxDisplayBufferGroups = 4;
     private const int MaxFrameDumps = 8;
     private const int VideoOutFlipStatusSize = 0x28;
+    private const int VideoOutEventIdFieldsSize = 0x0A;
+    private const int VideoOutEventDataFieldsSize = 0x18;
     private const int VideoOutBufferAttributeSize = 0x28;
     private const int VideoOutBufferAttribute2Size = 0x50;
     private const int VideoOutBuffersEntrySize = 0x20;
@@ -730,6 +732,11 @@ public static class VideoOutExports
             return OrbisVideoOutErrorInvalidAddress;
         }
 
+        if (!GuestAddress.IsRangeValid(eventAddress, VideoOutEventIdFieldsSize))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
         if (!ctx.TryReadUInt64(eventAddress, out var ident) ||
             !TryReadInt16(ctx, eventAddress + 0x08, out var filter))
         {
@@ -757,6 +764,11 @@ public static class VideoOutExports
         if (eventAddress == 0 || dataAddress == 0)
         {
             return OrbisVideoOutErrorInvalidAddress;
+        }
+
+        if (!GuestAddress.IsRangeValid(eventAddress, VideoOutEventDataFieldsSize))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
         if (!ctx.TryReadUInt64(eventAddress, out var ident) ||
