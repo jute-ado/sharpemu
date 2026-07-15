@@ -96,6 +96,79 @@ public sealed class SharpEmuRuntimeTests
     }
 
     [WindowsX64Fact]
+    public void RuntimeStillRejectsNonZeroProcessEntryReturnValue()
+    {
+        var execution = RunSyntheticExecutable(
+        [
+            0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
+            0xC3,                         // ret
+        ]);
+
+        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP, execution.Result);
+        Assert.Contains("reason=CpuTrap", execution.SessionSummary, StringComparison.Ordinal);
+    }
+
+    [WindowsX64Fact]
+    public async Task RuntimeExecutesAdjacentModuleInitializerBeforeMainEntry()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0xC3], // main entry would return successfully if reached
+            requestReport: true,
+            adjacentModuleImage: SyntheticElfImage.CreateModuleWithInitializer(
+                [0x0F, 0x0B])); // ud2
+
+        Assert.Equal(4, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var document = JsonDocument.Parse(execution.ReportJson);
+        var root = document.RootElement;
+        Assert.Equal(
+            "ORBIS_GEN2_ERROR_CPU_TRAP",
+            root.GetProperty("result").GetProperty("name").GetString());
+        Assert.Equal("CpuTrap", root.GetProperty("cpuSession").GetProperty("reason").GetString());
+        Assert.Equal("0x0F", root.GetProperty("cpuTrap").GetProperty("opcode").GetString());
+        var module = Assert.Single(root.GetProperty("modules").EnumerateArray());
+        Assert.Equal("sce_module/synthetic.prx", module.GetProperty("path").GetString());
+        Assert.StartsWith(
+            "0x",
+            module.GetProperty("image").GetProperty("initFunctionEntryPoint").GetString(),
+            StringComparison.Ordinal);
+        Assert.Contains("Starting module synthetic.prx", execution.StandardOutput, StringComparison.Ordinal);
+        Assert.Contains(
+            "Initializer dispatch failed",
+            execution.StandardOutput + execution.StandardError,
+            StringComparison.Ordinal);
+    }
+
+    [WindowsX64Fact]
+    public async Task RuntimeContinuesToMainEntryAfterModuleInitializerReturns()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0x0F, 0x0B], // ud2 in the main image
+            requestReport: true,
+            adjacentModuleImage: SyntheticElfImage.CreateModuleWithInitializer(
+                [0xC3])); // ret
+
+        Assert.Equal(4, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var document = JsonDocument.Parse(execution.ReportJson);
+        var root = document.RootElement;
+        var mainEntryPoint = root.GetProperty("image").GetProperty("entryPoint").GetString();
+        var trapInstructionPointer = root.GetProperty("cpuTrap").GetProperty("instructionPointer").GetString();
+        Assert.True(
+            string.Equals(mainEntryPoint, trapInstructionPointer, StringComparison.Ordinal),
+            $"Expected trap at main entry {mainEntryPoint}, got {trapInstructionPointer}. " +
+            $"Report: {execution.ReportJson} Output: {execution.StandardOutput} Error: {execution.StandardError}");
+        Assert.Equal("0x0F", root.GetProperty("cpuTrap").GetProperty("opcode").GetString());
+        Assert.Equal("CpuTrap", root.GetProperty("cpuSession").GetProperty("reason").GetString());
+        Assert.Single(root.GetProperty("modules").EnumerateArray());
+        Assert.Contains("Starting module synthetic.prx", execution.StandardOutput, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "Initializer dispatch failed",
+            execution.StandardOutput + execution.StandardError,
+            StringComparison.Ordinal);
+    }
+
+    [WindowsX64Fact]
     public Task CliReportsSyntheticIllegalInstructionWithoutCrashingHostProcess()
     {
         return AssertSyntheticGuestTrapAsync(
@@ -586,7 +659,8 @@ public sealed class SharpEmuRuntimeTests
         byte[]? adjacentModuleCode = null,
         bool writeInvalidAdjacentModule = false,
         bool writeSkippedCoreModule = false,
-        string? expectedBundleSha256 = null) =>
+        string? expectedBundleSha256 = null,
+        byte[]? adjacentModuleImage = null) =>
         SyntheticCliGuest.RunAsync(
             code,
             requestReport,
@@ -598,7 +672,8 @@ public sealed class SharpEmuRuntimeTests
             adjacentModuleCode,
             writeInvalidAdjacentModule,
             writeSkippedCoreModule,
-            expectedBundleSha256);
+            expectedBundleSha256,
+            adjacentModuleImage);
 
     private readonly record struct SyntheticRuntimeExecution(
         OrbisGen2Result Result,

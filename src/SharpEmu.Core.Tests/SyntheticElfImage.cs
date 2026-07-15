@@ -55,4 +55,81 @@ internal static class SyntheticElfImage
         code.CopyTo(image.AsSpan(payloadOffset));
         return image;
     }
+
+    public static byte[] CreateModuleWithInitializer(
+        ReadOnlySpan<byte> initializerCode,
+        byte abiVersion = 2)
+    {
+        if (initializerCode.IsEmpty)
+        {
+            throw new ArgumentException("Synthetic initializer code cannot be empty.", nameof(initializerCode));
+        }
+
+        const int dynamicEntrySize = 16;
+        const int dynamicEntryCount = 2;
+        const int dynamicVirtualAddress = 0x20;
+        const int initializerVirtualAddress = 0x100;
+        const int payloadSize = 0x200;
+        const long dynamicTagInit = 0x0C;
+        if (initializerCode.Length > payloadSize - initializerVirtualAddress)
+        {
+            throw new ArgumentOutOfRangeException(nameof(initializerCode));
+        }
+
+        var payloadOffset = ElfHeaderSize + (2 * ProgramHeaderSize);
+        var image = new byte[payloadOffset + payloadSize];
+        var elfHeader = image.AsSpan(0, ElfHeaderSize);
+        elfHeader[0] = 0x7F;
+        elfHeader[1] = (byte)'E';
+        elfHeader[2] = (byte)'L';
+        elfHeader[3] = (byte)'F';
+        elfHeader[4] = 2;
+        elfHeader[5] = 1;
+        elfHeader[6] = 1;
+        elfHeader[8] = abiVersion;
+        BinaryPrimitives.WriteUInt16LittleEndian(elfHeader[16..], 2);
+        BinaryPrimitives.WriteUInt16LittleEndian(elfHeader[18..], 0x3E);
+        BinaryPrimitives.WriteUInt32LittleEndian(elfHeader[20..], 1);
+        BinaryPrimitives.WriteUInt64LittleEndian(elfHeader[32..], ElfHeaderSize);
+        BinaryPrimitives.WriteUInt16LittleEndian(elfHeader[52..], ElfHeaderSize);
+        BinaryPrimitives.WriteUInt16LittleEndian(elfHeader[54..], ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt16LittleEndian(elfHeader[56..], 2);
+
+        var loadHeader = image.AsSpan(ElfHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(loadHeader, (uint)ProgramHeaderType.Load);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            loadHeader[4..],
+            (uint)(ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute));
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[8..], (ulong)payloadOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[32..], payloadSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[40..], payloadSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[48..], 0x10);
+
+        var dynamicHeader = image.AsSpan(
+            ElfHeaderSize + ProgramHeaderSize,
+            ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(dynamicHeader, (uint)ProgramHeaderType.Dynamic);
+        BinaryPrimitives.WriteUInt32LittleEndian(dynamicHeader[4..], (uint)ProgramHeaderFlags.Read);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            dynamicHeader[8..],
+            (ulong)(payloadOffset + dynamicVirtualAddress));
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[16..], dynamicVirtualAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            dynamicHeader[32..],
+            dynamicEntryCount * dynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            dynamicHeader[40..],
+            dynamicEntryCount * dynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[48..], 8);
+
+        var dynamicTable = image.AsSpan(
+            payloadOffset + dynamicVirtualAddress,
+            dynamicEntryCount * dynamicEntrySize);
+        BinaryPrimitives.WriteInt64LittleEndian(dynamicTable, dynamicTagInit);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            dynamicTable[sizeof(long)..],
+            initializerVirtualAddress);
+        initializerCode.CopyTo(image.AsSpan(payloadOffset + initializerVirtualAddress));
+        return image;
+    }
 }

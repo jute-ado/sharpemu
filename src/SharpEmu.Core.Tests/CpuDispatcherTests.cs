@@ -102,6 +102,9 @@ public sealed class CpuDispatcherTests
         }
 
         Assert.Equal(40, backend.ExecutionCount);
+        Assert.All(
+            backend.ReturnContracts,
+            contract => Assert.Equal(NativeEntryReturnContract.IgnoreReturnValue, contract));
         Assert.Equal(3, memory.SnapshotRegions().Count);
     }
 
@@ -124,6 +127,9 @@ public sealed class CpuDispatcherTests
         }
 
         Assert.Equal(20, backend.ExecutionCount);
+        Assert.All(
+            backend.ReturnContracts,
+            contract => Assert.Equal(NativeEntryReturnContract.RequireZero, contract));
         Assert.Equal(4, memory.SnapshotRegions().Count);
     }
 
@@ -249,6 +255,7 @@ public sealed class CpuDispatcherTests
             IReadOnlyDictionary<ulong, string> importStubs,
             IReadOnlyDictionary<string, ulong> runtimeSymbols,
             CpuExecutionOptions executionOptions,
+            NativeEntryReturnContract returnContract,
             out OrbisGen2Result executionResult)
         {
             if (lastTrapInfo is { } trapInfo)
@@ -268,6 +275,8 @@ public sealed class CpuDispatcherTests
 
         public int ExecutionCount { get; private set; }
 
+        public List<NativeEntryReturnContract> ReturnContracts { get; } = [];
+
         public bool TryExecute(
             CpuContext context,
             ulong entryPoint,
@@ -275,9 +284,11 @@ public sealed class CpuDispatcherTests
             IReadOnlyDictionary<ulong, string> importStubs,
             IReadOnlyDictionary<string, ulong> runtimeSymbols,
             CpuExecutionOptions executionOptions,
+            NativeEntryReturnContract returnContract,
             out OrbisGen2Result executionResult)
         {
             ExecutionCount++;
+            ReturnContracts.Add(returnContract);
             executionResult = OrbisGen2Result.ORBIS_GEN2_OK;
             return true;
         }
@@ -298,6 +309,7 @@ public sealed class CpuDispatcherTests
             IReadOnlyDictionary<ulong, string> importStubs,
             IReadOnlyDictionary<string, ulong> runtimeSymbols,
             CpuExecutionOptions executionOptions,
+            NativeEntryReturnContract returnContract,
             out OrbisGen2Result executionResult)
         {
             var stackProbe = context[CpuRegister.Rsp] - 0x100;
