@@ -10,6 +10,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <Nullable>enable</Nullable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <SharpEmuVersion>0.0.1</SharpEmuVersion>
+    <Version>$(SharpEmuVersion)</Version>
 
     <RepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)'))</RepoRoot>
     <SharpEmuHostPlatform Condition="'$(OS)' == 'Windows_NT'">windows</SharpEmuHostPlatform>
