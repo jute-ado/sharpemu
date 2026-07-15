@@ -408,6 +408,42 @@ public sealed class NativeCpuConformanceTests
             ]
         },
         {
+            "stack-canary-sub-uses-seeded-tls-value-and-flags",
+            [
+                0x49, 0xBF, 0xBF, 0xBA, 0xFE, 0xCA,
+                0xDE, 0xC0, 0xDE, 0xC0,             // mov r15, 0xC0DEC0DECAFEBABF
+                0x64, 0x4C, 0x2B, 0x3C, 0x25,
+                0x28, 0x00, 0x00, 0x00,             // sub r15, fs:[0x28]
+                0x74, 0x09,                         // jz failure
+                0x49, 0x83, 0xFF, 0x01,             // cmp r15, 1
+                0x75, 0x03,                         // jne failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
+            "stack-canary-arithmetic-keeps-distinct-helpers",
+            [
+                0x48, 0xB8, 0xBE, 0xBA, 0xFE, 0xCA,
+                0xDE, 0xC0, 0xDE, 0xC0,             // mov rax, 0xC0DEC0DECAFEBABE
+                0x64, 0x48, 0x33, 0x04, 0x25,
+                0x28, 0x00, 0x00, 0x00,             // xor rax, fs:[0x28]
+                0x75, 0x1C,                         // jne failure
+                0x48, 0xB8, 0xC0, 0xBA, 0xFE, 0xCA,
+                0xDE, 0xC0, 0xDE, 0xC0,             // mov rax, 0xC0DEC0DECAFEBAC0
+                0x64, 0x48, 0x2B, 0x04, 0x25,
+                0x28, 0x00, 0x00, 0x00,             // sub rax, fs:[0x28]
+                0x48, 0x83, 0xF8, 0x02,             // cmp rax, 2
+                0x75, 0x03,                         // jne failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
             "tls-register-store-roundtrips-volatile-source",
             [
                 0x48, 0xB8, 0x88, 0x77, 0x66, 0x55,

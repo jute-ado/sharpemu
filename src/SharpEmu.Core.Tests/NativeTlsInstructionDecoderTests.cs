@@ -55,6 +55,10 @@ public sealed class NativeTlsInstructionDecoderTests
             [(int)NativeTlsInstructionKind.StackCanaryXor, 9, 15, 0x28, 0, 1, 8, 0]
         },
         {
+            [0x64, 0x4C, 0x2B, 0x3C, 0x25, 0x28, 0x00, 0x00, 0x00],
+            [(int)NativeTlsInstructionKind.StackCanarySub, 9, 15, 0x28, 0, 1, 8, 0]
+        },
+        {
             [0x64, 0x44, 0x0F, 0xB6, 0x04, 0x25, 0x74, 0x00, 0x00, 0x00],
             [(int)NativeTlsInstructionKind.Load, 10, 8, 0x74, 0, 0, 1, 0]
         },
@@ -86,6 +90,7 @@ public sealed class NativeTlsInstructionDecoderTests
         { [0x67, 0x64, 0x48, 0x8B, 0x05, 0, 0, 0, 0] }, // 32-bit address size.
         { [0x66, 0x64, 0x8B, 0x04, 0x25, 0, 0, 0, 0] }, // Unsupported 16-bit load.
         { [0x64, 0x48, 0x33, 0x04, 0x25, 0x20, 0, 0, 0] }, // Non-canary XOR.
+        { [0x64, 0x48, 0x2B, 0x04, 0x25, 0x20, 0, 0, 0] }, // Non-canary SUB.
     };
 
     [Theory]

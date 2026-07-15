@@ -11,6 +11,7 @@ internal enum NativeTlsInstructionKind
     RegisterStore,
     ImmediateStore,
     StackCanaryXor,
+    StackCanarySub,
 }
 
 internal readonly record struct NativeTlsInstruction(
@@ -158,6 +159,23 @@ internal static class NativeTlsInstructionDecoder
                         displacement,
                         instruction.Code == Code.Xor_r64_rm64,
                         instruction.Code == Code.Xor_r64_rm64 ? 8 : 4,
+                        signExtend: false,
+                        out tlsInstruction);
+
+                case Code.Sub_r32_rm32:
+                case Code.Sub_r64_rm64:
+                    if (displacement != 0x28)
+                    {
+                        return false;
+                    }
+
+                    return TryCreateRegisterInstruction(
+                        in instruction,
+                        NativeTlsInstructionKind.StackCanarySub,
+                        instruction.Op0Register,
+                        displacement,
+                        instruction.Code == Code.Sub_r64_rm64,
+                        instruction.Code == Code.Sub_r64_rm64 ? 8 : 4,
                         signExtend: false,
                         out tlsInstruction);
 
