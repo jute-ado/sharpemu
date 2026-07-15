@@ -36,13 +36,61 @@ public static class KernelEventFlagCompatExports
         public object Gate { get; } = new();
     }
 
-    private sealed class TimedEventFlagWaiter
+    private sealed class EventFlagWaiter : IGuestThreadBlockWaiter
     {
+        public required CpuContext Ctx { get; init; }
+        public required EventFlagState State { get; init; }
         public required ulong Pattern { get; init; }
         public required uint WaitMode { get; init; }
         public required ulong ResultAddress { get; init; }
+        public bool Timed { get; init; }
+
+        // Timed-wait completion state; unused when Timed is false.
+        public ulong TimeoutAddress { get; init; }
+        public long DeadlineTimestamp { get; init; }
+
         public required int CancelEpochAtBlock { get; init; }
         public OrbisGen2Result? Result { get; set; }
+
+        // Untimed waits stash the prepared result here at wake and return it at resume.
+        private OrbisGen2Result _blockedResult = OrbisGen2Result.ORBIS_GEN2_OK;
+
+        public int Resume() => Timed
+            ? CompleteBlockedTimedEventFlagWait(
+                Ctx,
+                State,
+                this,
+                TimeoutAddress,
+                DeadlineTimestamp)
+            : (int)_blockedResult;
+
+        public bool TryWake()
+        {
+            if (Timed)
+            {
+                return TryPrepareBlockedTimedEventFlagWait(
+                    Ctx,
+                    State,
+                    this,
+                    TimeoutAddress,
+                    DeadlineTimestamp);
+            }
+
+            if (!TryPrepareBlockedWait(
+                    Ctx,
+                    State,
+                    Pattern,
+                    WaitMode,
+                    ResultAddress,
+                    CancelEpochAtBlock,
+                    out var preparedResult))
+            {
+                return false;
+            }
+
+            _blockedResult = preparedResult;
+            return true;
+        }
     }
 
     [SysAbiExport(
@@ -286,30 +334,24 @@ public static class KernelEventFlagCompatExports
             {
                 var deadlineTimestamp = GuestThreadExecution.ComputeDeadlineTimestamp(
                     TimeSpan.FromTicks((long)timeoutUsec * 10L));
-                var timedWaiter = new TimedEventFlagWaiter
+                var timedWaiter = new EventFlagWaiter
                 {
+                    Ctx = ctx,
+                    State = state,
                     Pattern = pattern,
                     WaitMode = waitMode,
                     ResultAddress = resultAddress,
+                    Timed = true,
+                    TimeoutAddress = timeoutAddress,
+                    DeadlineTimestamp = deadlineTimestamp,
                     CancelEpochAtBlock = state.CancelEpoch,
                 };
                 if (GuestThreadExecution.RequestCurrentThreadBlock(
                         ctx,
                         "sceKernelWaitEventFlag",
                         GetEventFlagWakeKey(handle),
-                        () => CompleteBlockedTimedEventFlagWait(
-                            ctx,
-                            state,
-                            timedWaiter,
-                            timeoutAddress,
-                            deadlineTimestamp),
-                        () => TryPrepareBlockedTimedEventFlagWait(
-                            ctx,
-                            state,
-                            timedWaiter,
-                            timeoutAddress,
-                            deadlineTimestamp),
-                        deadlineTimestamp))
+                        timedWaiter,
+                        blockDeadlineTimestamp: deadlineTimestamp))
                 {
                     state.WaitingThreads++;
                     TraceEventFlag(
@@ -334,28 +376,18 @@ public static class KernelEventFlagCompatExports
             var currentFiber = FiberExports.GetCurrentFiberAddressForDiagnostics(ctx);
             var managedThread = Environment.CurrentManagedThreadId;
             var cancelEpochAtBlock = state.CancelEpoch;
-            var blockedWaitResult = OrbisGen2Result.ORBIS_GEN2_OK;
             var requestedBlock = GuestThreadExecution.RequestCurrentThreadBlock(
                 ctx,
                 "sceKernelWaitEventFlag",
                 GetEventFlagWakeKey(handle),
-                () => (int)blockedWaitResult,
-                () =>
+                new EventFlagWaiter
                 {
-                    if (!TryPrepareBlockedWait(
-                            ctx,
-                            state,
-                            pattern,
-                            waitMode,
-                            resultAddress,
-                            cancelEpochAtBlock,
-                            out var preparedResult))
-                    {
-                        return false;
-                    }
-
-                    blockedWaitResult = preparedResult;
-                    return true;
+                    Ctx = ctx,
+                    State = state,
+                    Pattern = pattern,
+                    WaitMode = waitMode,
+                    ResultAddress = resultAddress,
+                    CancelEpochAtBlock = cancelEpochAtBlock,
                 });
             TraceEventFlag($"wait-unsatisfied handle=0x{handle:X16} pattern=0x{pattern:X16} bits=0x{state.Bits:X16} guest_thread=0x{currentGuestThread:X16} fiber=0x{currentFiber:X16} managed={managedThread} block={requestedBlock} ret=0x{returnRip:X16} frames={FormatFrameChain(ctx)}");
             TraceEventFlag($"wait-object handle=0x{handle:X16} name='{state.Name}' {FormatGuestWaitObject(ctx)}");
@@ -598,7 +630,7 @@ public static class KernelEventFlagCompatExports
     private static bool TryPrepareBlockedTimedEventFlagWait(
         CpuContext ctx,
         EventFlagState state,
-        TimedEventFlagWaiter waiter,
+        EventFlagWaiter waiter,
         ulong timeoutAddress,
         long deadlineTimestamp)
     {
@@ -616,7 +648,7 @@ public static class KernelEventFlagCompatExports
     private static bool TryPrepareBlockedTimedEventFlagWaitLocked(
         CpuContext ctx,
         EventFlagState state,
-        TimedEventFlagWaiter waiter,
+        EventFlagWaiter waiter,
         ulong timeoutAddress,
         long deadlineTimestamp)
     {
@@ -677,7 +709,7 @@ public static class KernelEventFlagCompatExports
     private static int CompleteBlockedTimedEventFlagWait(
         CpuContext ctx,
         EventFlagState state,
-        TimedEventFlagWaiter waiter,
+        EventFlagWaiter waiter,
         ulong timeoutAddress,
         long deadlineTimestamp)
     {

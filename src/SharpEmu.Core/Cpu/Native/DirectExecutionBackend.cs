@@ -498,9 +498,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 		public string? BlockWakeKey { get; set; }
 
-		public Func<int>? BlockResumeHandler { get; set; }
-
-		public Func<bool>? BlockWakeHandler { get; set; }
+		// Stays set through the wake transition; Resume() consumes it when the thread pumps.
+		public IGuestThreadBlockWaiter? BlockWaiter { get; set; }
 
 		public long BlockDeadlineTimestamp { get; set; }
 
@@ -3766,14 +3765,13 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					continue;
 				}
 
-				if (thread.BlockWakeHandler is not null && !thread.BlockWakeHandler())
+				if (thread.BlockWaiter is not null && !thread.BlockWaiter.TryWake())
 				{
 					continue;
 				}
 
 				thread.State = GuestThreadRunState.Ready;
 				thread.BlockReason = null;
-				thread.BlockWakeHandler = null;
 				thread.BlockDeadlineTimestamp = 0;
 				_readyGuestThreads.Enqueue(thread);
 				Interlocked.Increment(ref _readyGuestThreadCount);
@@ -3824,8 +3822,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		ulong guestThreadHandle,
 		GuestCpuContinuation continuation,
 		string wakeKey,
-		Func<int>? resumeHandler,
-		Func<bool>? wakeHandler,
+		IGuestThreadBlockWaiter? waiter,
 		long blockDeadlineTimestamp)
 	{
 		if (guestThreadHandle == 0 || continuation.Rip < 65536 || continuation.Rsp == 0)
@@ -3843,8 +3840,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			thread.BlockedContinuation = continuation;
 			thread.HasBlockedContinuation = true;
 			thread.BlockWakeKey = wakeKey;
-			thread.BlockResumeHandler = resumeHandler;
-			thread.BlockWakeHandler = wakeHandler;
+			thread.BlockWaiter = waiter;
 			thread.BlockDeadlineTimestamp = blockDeadlineTimestamp;
 		}
 	}
@@ -3867,7 +3863,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 				thread.State = GuestThreadRunState.Ready;
 				thread.BlockReason = null;
-				thread.BlockWakeHandler = null;
 				thread.BlockDeadlineTimestamp = 0;
 				_readyGuestThreads.Enqueue(thread);
 				Interlocked.Increment(ref _readyGuestThreadCount);
@@ -4548,7 +4543,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		{
 			LastError = null;
 			GuestCpuContinuation continuation = default;
-			Func<int>? resumeHandler = null;
+			IGuestThreadBlockWaiter? blockWaiter = null;
 			var resumeContinuation = false;
 			lock (_guestThreadGate)
 			{
@@ -4558,17 +4553,16 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					thread.BlockedContinuation = default;
 					thread.HasBlockedContinuation = false;
 					thread.BlockWakeKey = null;
-					resumeHandler = thread.BlockResumeHandler;
-					thread.BlockResumeHandler = null;
-					thread.BlockWakeHandler = null;
+					blockWaiter = thread.BlockWaiter;
+					thread.BlockWaiter = null;
 					thread.BlockDeadlineTimestamp = 0;
 					resumeContinuation = true;
 				}
 			}
 
-			if (resumeHandler is not null)
+			if (blockWaiter is not null)
 			{
-				continuation = continuation with { Rax = unchecked((ulong)(long)resumeHandler()) };
+				continuation = continuation with { Rax = unchecked((ulong)(long)blockWaiter.Resume()) };
 			}
 
 			if (_logGuestThreads)
@@ -4593,12 +4587,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 						thread.State = GuestThreadRunState.Blocked;
 						thread.BlockReason = blockReason;
 						if (thread.HasBlockedContinuation &&
-							thread.BlockWakeHandler is not null &&
-							thread.BlockWakeHandler())
+							thread.BlockWaiter is not null &&
+							thread.BlockWaiter.TryWake())
 						{
 							thread.State = GuestThreadRunState.Ready;
 							thread.BlockReason = null;
-							thread.BlockWakeHandler = null;
 							thread.BlockDeadlineTimestamp = 0;
 							_readyGuestThreads.Enqueue(thread);
 							Interlocked.Increment(ref _readyGuestThreadCount);

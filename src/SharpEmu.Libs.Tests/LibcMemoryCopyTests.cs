@@ -12,13 +12,13 @@ public sealed class LibcMemoryCopyTests
 {
     private const ulong BufferAddress = 0x1000;
     private const ulong SourceAddress = 0x10_0000;
-    private const int MaxTransferSize = 16 * 1024;
+    private const int MaxTransferSize = 256 * 1024;
     private const byte Canary = 0xA5;
 
     [Fact]
     public void MemcpyStreamsLargeCopyAndPreservesCanaries()
     {
-        const int count = 40_000;
+        const int count = 600_000;
         var source = CreatePattern(count);
         var destination = Enumerable.Repeat(Canary, count + 16).ToArray();
         var inner = new FakeGuestMemory();
@@ -41,7 +41,7 @@ public sealed class LibcMemoryCopyTests
     [InlineData(1000, 0)]
     public void MemmovePreservesCrossChunkOverlappingCopies(int sourceOffset, int destinationOffset)
     {
-        const int count = 40_000;
+        const int count = 600_000;
         var backing = CreatePattern(count + 2_000);
         var expected = backing.ToArray();
         Array.Copy(expected, sourceOffset, expected, destinationOffset, count);
@@ -75,7 +75,7 @@ public sealed class LibcMemoryCopyTests
             ? KernelMemoryCompatExports.Memmove(context)
             : KernelMemoryCompatExports.Memcpy(context);
 
-        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT, result);
         Assert.Equal(BufferAddress, context[CpuRegister.Rax]);
     }
 
