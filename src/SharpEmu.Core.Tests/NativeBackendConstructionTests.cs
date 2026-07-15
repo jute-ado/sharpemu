@@ -918,6 +918,8 @@ public sealed class NativeBackendConstructionTests
         {
             [CpuRegister.Rsp] = stackAddress,
         };
+        var activeAllocationsBefore = memory.ActiveAllocations.Count;
+        var allocationCallStart = memory.AllocationCalls.Count;
 
         try
         {
@@ -934,6 +936,73 @@ public sealed class NativeBackendConstructionTests
             Assert.False(executed);
             Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
             Assert.Equal(originalStackValue, guestMemory.Value);
+            Assert.Equal(activeAllocationsBefore + 1, memory.ActiveAllocations.Count);
+            var entryAllocations = memory.AllocationCalls.Skip(allocationCallStart).ToArray();
+            Assert.Collection(
+                entryAllocations[^2..],
+                allocation =>
+                {
+                    Assert.Equal(512UL, allocation.Size);
+                    Assert.Equal(HostPageProtection.ReadWrite, allocation.Protection);
+                },
+                allocation =>
+                {
+                    Assert.Equal(8UL, allocation.Size);
+                    Assert.Equal(HostPageProtection.ReadWrite, allocation.Protection);
+                });
+            Assert.Equal(
+                HostPageProtection.ReadExecute,
+                memory.ProtectionCalls[^1].Protection);
+        }
+        finally
+        {
+            backend.Dispose();
+        }
+    }
+
+    [Fact]
+    public void FailedEntryStubHostRspSlotAllocationReleasesCodeStub()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(failedAllocation: 7);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        const ulong stackAddress = 0x1000;
+        const ulong originalStackValue = 0x1122_3344_5566_7788;
+        var guestMemory = new StackSlotMemory(stackAddress, originalStackValue);
+        var context = new CpuContext(guestMemory, Generation.Gen5)
+        {
+            [CpuRegister.Rsp] = stackAddress,
+        };
+        var activeAllocationsBefore = memory.ActiveAllocations.Count;
+
+        try
+        {
+            var executed = backend.TryExecute(
+                context,
+                entryPoint: 0x2000,
+                Generation.Gen5,
+                new Dictionary<ulong, string>(),
+                new Dictionary<string, ulong>(),
+                default,
+                NativeEntryReturnContract.RequireZero,
+                out var result);
+
+            Assert.False(executed);
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+            Assert.Contains("allocate executable memory", backend.LastError, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(originalStackValue, guestMemory.Value);
+            Assert.Equal(activeAllocationsBefore + 1, memory.ActiveAllocations.Count);
+            var codeAllocation = memory.AllocationCalls[^1];
+            Assert.Equal(512UL, codeAllocation.Size);
+            Assert.Equal(HostPageProtection.ReadWrite, codeAllocation.Protection);
+            Assert.Contains(codeAllocation.Address, memory.FreedAddresses);
         }
         finally
         {
@@ -1085,6 +1154,8 @@ public sealed class NativeBackendConstructionTests
 
         public List<ulong> FreedAddresses { get; } = [];
 
+        public List<(ulong Address, ulong Size, HostPageProtection Protection)> AllocationCalls { get; } = [];
+
         public List<(ulong Address, HostPageProtection Protection)> ProtectionCalls { get; } = [];
 
         public List<ulong> QueryAddresses { get; } = [];
@@ -1102,6 +1173,7 @@ public sealed class NativeBackendConstructionTests
 
             var address = (ulong)NativeMemory.AllocZeroed((nuint)size);
             ActiveAllocations.Add(address);
+            AllocationCalls.Add((address, size, protection));
             return address;
         }
 
