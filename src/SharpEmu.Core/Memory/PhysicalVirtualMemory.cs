@@ -1037,6 +1037,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     public bool TryCompare(ulong virtualAddress, ReadOnlySpan<byte> expected)
     {
         ThrowIfDisposed();
+        var requiresExclusiveAccess = false;
         _gate.EnterReadLock();
         try
         {
@@ -1056,17 +1057,34 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                     size,
                     firstRegionIndex,
                     write: false,
-                    out var requiresExclusiveAccess) ||
-                requiresExclusiveAccess)
+                    out requiresExclusiveAccess))
             {
                 return false;
             }
 
-            return new ReadOnlySpan<byte>((void*)virtualAddress, expected.Length).SequenceEqual(expected);
+            if (!requiresExclusiveAccess)
+            {
+                return new ReadOnlySpan<byte>((void*)virtualAddress, expected.Length).SequenceEqual(expected);
+            }
         }
         finally
         {
             _gate.ExitReadLock();
+        }
+
+        if (!requiresExclusiveAccess)
+        {
+            return false;
+        }
+
+        _gate.EnterWriteLock();
+        try
+        {
+            return TryCompareExclusive(virtualAddress, expected);
+        }
+        finally
+        {
+            _gate.ExitWriteLock();
         }
     }
 
@@ -1156,6 +1174,27 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             }
 
             return true;
+        }
+        finally
+        {
+            RestorePageProtections(touchedPages);
+        }
+    }
+
+    private bool TryCompareExclusive(ulong virtualAddress, ReadOnlySpan<byte> expected)
+    {
+        if (!TryPrepareRangeForExclusiveAccess(
+                virtualAddress,
+                (ulong)expected.Length,
+                write: false,
+                out var touchedPages))
+        {
+            return false;
+        }
+
+        try
+        {
+            return new ReadOnlySpan<byte>((void*)virtualAddress, expected.Length).SequenceEqual(expected);
         }
         finally
         {
