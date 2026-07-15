@@ -154,6 +154,58 @@ public sealed class NativeBackendConstructionTests
         Assert.Empty(memory.ActiveAllocations);
     }
 
+    [Fact]
+    public void FailedTlsHandlerProtectionDoesNotRetainUnusableAllocation()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(
+            failedAllocation: int.MaxValue,
+            failedProtection: 3);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        var activeAllocationsBefore = memory.ActiveAllocations.Count;
+        try
+        {
+            Assert.False(backend.TryCreateTlsHandler());
+
+            Assert.Equal(activeAllocationsBefore, memory.ActiveAllocations.Count);
+        }
+        finally
+        {
+            backend.Dispose();
+        }
+    }
+
+    [Fact]
+    public void SuccessfulTlsHandlersRemainOwnedUntilBackendDisposal()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(failedAllocation: int.MaxValue);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        var activeAllocationsBefore = memory.ActiveAllocations.Count;
+
+        Assert.True(backend.TryCreateTlsHandler());
+        Assert.True(backend.TryCreateTlsHandler());
+        Assert.Equal(activeAllocationsBefore + 2, memory.ActiveAllocations.Count);
+
+        backend.Dispose();
+
+        Assert.Empty(memory.ActiveAllocations);
+    }
+
     private sealed class StubHostPlatform(
         IHostThreading threading,
         IHostMemory? memory = null,

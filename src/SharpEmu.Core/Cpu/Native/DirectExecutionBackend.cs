@@ -172,6 +172,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private nint _tlsHandlerAddress;
 
+	private readonly List<nint> _tlsHandlerAllocations = new();
+
 	private nint _tlsBaseAddress;
 
 	private nint _ownedTlsBaseAddress;
@@ -1092,7 +1094,15 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				result = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
 				return false;
 			}
-			CreateTlsHandler();
+			if (!TryCreateTlsHandler())
+			{
+				if (string.IsNullOrEmpty(LastError))
+				{
+					LastError = "Failed to create TLS handler";
+				}
+				result = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+				return false;
+			}
 			PatchTlsPatterns();
 			return ExecuteEntry(context, entryPoint, returnContract, out result);
 		}
@@ -2060,7 +2070,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_importHandlerTrampolines.Clear();
 	}
 
-	private unsafe void CreateTlsHandler()
+	internal unsafe bool TryCreateTlsHandler()
 	{
 		_tlsLoadHelpers.Clear();
 		_tlsStoreHelpers.Clear();
@@ -2072,7 +2082,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 		if (_tlsHandlerAddress == 0)
 		{
-			throw new OutOfMemoryException("Failed to allocate TLS handler");
+			LastError = "Failed to allocate TLS handler";
+			return false;
 		}
 		// A patched `mov reg, fs:[0]` preserves all registers other than its
 		// destination as well as the arithmetic flags. TlsGetValue follows the
@@ -2126,10 +2137,15 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		if (!_hostMemory.Protect((ulong)(void*)_tlsHandlerAddress, TlsHandlerRegionSize, HostPageProtection.ReadExecute, out num2))
 		{
 			Console.Error.WriteLine($"[LOADER][ERROR] VirtualProtect failed for TLS handler at 0x{_tlsHandlerAddress:X16}");
-			return;
+			LastError = $"Failed to protect TLS handler at 0x{_tlsHandlerAddress:X16}";
+			_hostMemory.Free((ulong)_tlsHandlerAddress);
+			_tlsHandlerAddress = 0;
+			return false;
 		}
+		_tlsHandlerAllocations.Add(_tlsHandlerAddress);
 		_hostMemory.FlushInstructionCache((ulong)(void*)_tlsHandlerAddress, TlsHandlerRegionSize);
 		Console.Error.WriteLine($"[LOADER][INFO] TLS handler at 0x{_tlsHandlerAddress:X16}");
+		return true;
 	}
 
 	private unsafe nint CreateUnresolvedReturnStub()
@@ -5239,11 +5255,15 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 			_tlsModuleBases.Clear();
 		}
-		if (_tlsHandlerAddress != 0)
+		foreach (var tlsHandlerAddress in _tlsHandlerAllocations)
 		{
-			_hostMemory.Free((ulong)_tlsHandlerAddress);
-			_tlsHandlerAddress = 0;
+			if (tlsHandlerAddress != 0)
+			{
+				_hostMemory.Free((ulong)tlsHandlerAddress);
+			}
 		}
+		_tlsHandlerAllocations.Clear();
+		_tlsHandlerAddress = 0;
 		if (_hostRspSlotStorage != 0)
 		{
 			_hostMemory.Free((ulong)_hostRspSlotStorage);
