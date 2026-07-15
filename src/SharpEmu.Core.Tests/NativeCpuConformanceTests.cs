@@ -102,8 +102,7 @@ public sealed class NativeCpuConformanceTests
         {
             "tls-load-supports-redundant-prefixes",
             [
-                0x66, 0x66, 0x66,
-                0x64, 0x48, 0x8B, 0x04, 0x25,
+                0xF3, 0x64, 0x48, 0x8B, 0x04, 0x25,
                 0x00, 0x00, 0x00, 0x00,             // mov rax, fs:[0]
                 0x48, 0x85, 0xC0,                   // test rax, rax
                 0x74, 0x03,                         // jz failure
@@ -349,13 +348,58 @@ public sealed class NativeCpuConformanceTests
             ]
         },
         {
-            "stack-canary-xor-clears-extended-register",
+            "stack-canary-xor-uses-seeded-tls-value",
             [
                 0x49, 0xBF, 0x88, 0x77, 0x66, 0x55,
                 0x44, 0x33, 0x22, 0x11,             // mov r15, 0x1122334455667788
                 0x64, 0x4C, 0x33, 0x3C, 0x25,
                 0x28, 0x00, 0x00, 0x00,             // xor r15, fs:[0x28]
-                0x4D, 0x85, 0xFF,                   // test r15, r15
+                0x48, 0xB8, 0x36, 0xCD, 0x98, 0x9F,
+                0x9A, 0xF3, 0xFC, 0xD1,             // mov rax, 0xD1FCF39A9F98CD36
+                0x49, 0x39, 0xC7,                   // cmp r15, rax
+                0x75, 0x03,                         // jne failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
+            "stack-canary-xor-updates-zero-flag",
+            [
+                0x31, 0xC0,                         // xor eax, eax
+                0x64, 0x48, 0x33, 0x04, 0x25,
+                0x28, 0x00, 0x00, 0x00,             // xor rax, fs:[0x28]
+                0x74, 0x03,                         // jz failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
+            "stack-canary-xor-supports-dword-destination",
+            [
+                0xB8, 0x44, 0x33, 0x22, 0x11,       // mov eax, 0x11223344
+                0x64, 0x33, 0x04, 0x25,
+                0x28, 0x00, 0x00, 0x00,             // xor eax, dword fs:[0x28]
+                0x3D, 0xFA, 0x89, 0xDC, 0xDB,       // cmp eax, 0xDBDC89FA
+                0x75, 0x03,                         // jne failure
+                0x31, 0xC0,                         // xor eax, eax
+                0xC3,                               // ret
+                0xB8, 0x01, 0x00, 0x00, 0x00,       // failure: mov eax, 1
+                0xC3,                               // ret
+            ]
+        },
+        {
+            "stack-canary-xor-supports-extended-volatile-destination",
+            [
+                0x45, 0x31, 0xC0,                   // xor r8d, r8d
+                0x64, 0x4C, 0x33, 0x04, 0x25,
+                0x28, 0x00, 0x00, 0x00,             // xor r8, fs:[0x28]
+                0x48, 0xB8, 0xBE, 0xBA, 0xFE, 0xCA,
+                0xDE, 0xC0, 0xDE, 0xC0,             // mov rax, 0xC0DEC0DECAFEBABE
+                0x49, 0x39, 0xC0,                   // cmp r8, rax
                 0x75, 0x03,                         // jne failure
                 0x31, 0xC0,                         // xor eax, eax
                 0xC3,                               // ret

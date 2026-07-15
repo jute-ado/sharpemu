@@ -219,7 +219,9 @@ public sealed class NativeBackendConstructionTests
     public unsafe void PatchesDecodedTlsInstructionWithLeadingLegacyPrefix()
     {
         var threading = new RecordingHostThreading([17u, 23u]);
-        var memory = new AllocatingHostMemory(failedAllocation: int.MaxValue);
+        var memory = new AllocatingHostMemory(
+            failedAllocation: int.MaxValue,
+            contiguousAllocationCapacity: 0x0010_0000);
         var platform = new StubHostPlatform(
             threading,
             memory,
@@ -240,6 +242,8 @@ public sealed class NativeBackendConstructionTests
 
         try
         {
+            Assert.True(backend.TryCreateTlsHandler());
+
             var patched = backend.TryPatchTlsInstruction(
                 (nint)instructionAddress,
                 (byte*)instructionAddress,
@@ -1210,12 +1214,15 @@ public sealed class NativeBackendConstructionTests
         int failedAllocation,
         int failedProtection = 0,
         int failedRawProtection = 0,
-        int throwingQuery = 0) : IHostMemory
+        int throwingQuery = 0,
+        ulong contiguousAllocationCapacity = 0) : IHostMemory
     {
         private int _allocationCount;
         private int _protectionCount;
         private int _rawProtectionCount;
         private int _queryCount;
+        private ulong _contiguousAllocationBase;
+        private ulong _contiguousAllocationOffset;
 
         public HashSet<ulong> ActiveAllocations { get; } = [];
 
@@ -1238,7 +1245,34 @@ public sealed class NativeBackendConstructionTests
                 return 0;
             }
 
-            var address = (ulong)NativeMemory.AllocZeroed((nuint)size);
+            ulong address;
+            if (contiguousAllocationCapacity != 0)
+            {
+                if (_contiguousAllocationBase == 0)
+                {
+                    _contiguousAllocationBase = (ulong)NativeMemory.AllocZeroed(
+                        (nuint)contiguousAllocationCapacity);
+                    if (_contiguousAllocationBase == 0)
+                    {
+                        return 0;
+                    }
+                    _contiguousAllocationOffset = 0;
+                }
+
+                var alignedOffset = (_contiguousAllocationOffset + 15UL) & ~15UL;
+                if (alignedOffset > contiguousAllocationCapacity ||
+                    size > contiguousAllocationCapacity - alignedOffset)
+                {
+                    return 0;
+                }
+
+                address = _contiguousAllocationBase + alignedOffset;
+                _contiguousAllocationOffset = alignedOffset + Math.Max(size, 16UL);
+            }
+            else
+            {
+                address = (ulong)NativeMemory.AllocZeroed((nuint)size);
+            }
             ActiveAllocations.Add(address);
             AllocationCalls.Add((address, size, protection));
             return address;
@@ -1255,8 +1289,17 @@ public sealed class NativeBackendConstructionTests
                 return false;
             }
 
-            NativeMemory.Free((void*)address);
             FreedAddresses.Add(address);
+            if (contiguousAllocationCapacity == 0)
+            {
+                NativeMemory.Free((void*)address);
+            }
+            else if (ActiveAllocations.Count == 0)
+            {
+                NativeMemory.Free((void*)_contiguousAllocationBase);
+                _contiguousAllocationBase = 0;
+                _contiguousAllocationOffset = 0;
+            }
             return true;
         }
 
