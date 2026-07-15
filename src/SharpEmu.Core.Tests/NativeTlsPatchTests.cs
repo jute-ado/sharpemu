@@ -39,4 +39,19 @@ public sealed class NativeTlsPatchTests
         Assert.Equal(ulong.MaxValue - 0x1000UL, range.Start);
         Assert.Equal(ulong.MaxValue, range.End);
     }
+
+    [Theory]
+    [InlineData(0x1000UL, 0x2000UL, 0x2000UL)]
+    [InlineData(0x0000_0008_0000_0000UL, 0x0000_0008_8000_0000UL, 0x0000_0008_0100_0000UL)]
+    [InlineData(ulong.MaxValue - 0x0200_0000UL, ulong.MaxValue, ulong.MaxValue - 0x0100_0000UL)]
+    [InlineData(0x2000UL, 0x1000UL, 0x2000UL)]
+    public void ExecutableScanChunksHaveBoundedNonoverflowingEnds(
+        ulong regionStart,
+        ulong regionEnd,
+        ulong expectedEnd)
+    {
+        Assert.Equal(
+            expectedEnd,
+            DirectExecutionBackend.GetTlsScanChunkEnd(regionStart, regionEnd));
+    }
 }
