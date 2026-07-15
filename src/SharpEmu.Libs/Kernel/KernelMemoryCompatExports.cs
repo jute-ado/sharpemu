@@ -1635,14 +1635,15 @@ public static partial class KernelMemoryCompatExports
         Span<byte> current = stackalloc byte[1];
         for (ulong index = 0; index < 1_048_576; index++)
         {
-            if (!TryReadCompat(ctx, address + index, current))
+            if (!TryAddU64(address, index, out var currentAddress) ||
+                !TryReadCompat(ctx, currentAddress, current))
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
             }
 
             if (current[0] == needle)
             {
-                ctx[CpuRegister.Rax] = address + index;
+                ctx[CpuRegister.Rax] = currentAddress;
                 return (int)OrbisGen2Result.ORBIS_GEN2_OK;
             }
 
@@ -1675,14 +1676,15 @@ public static partial class KernelMemoryCompatExports
         Span<byte> current = stackalloc byte[1];
         for (ulong index = 0; index < 1_048_576; index++)
         {
-            if (!TryReadCompat(ctx, address + index, current))
+            if (!TryAddU64(address, index, out var currentAddress) ||
+                !TryReadCompat(ctx, currentAddress, current))
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
             }
 
             if (current[0] == needle)
             {
-                match = address + index;
+                match = currentAddress;
                 found = true;
             }
 
