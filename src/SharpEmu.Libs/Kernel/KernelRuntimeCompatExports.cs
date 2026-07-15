@@ -49,6 +49,7 @@ public static class KernelRuntimeCompatExports
     private const int MapFlagFixed = 0x10;
     private const ulong DefaultVirtualRangeAlignment = 0x4000UL;
     private const int AioInitParamSize = 0x3C;
+    private const ulong RdtscStubAllocationSize = 16;
     private static readonly object _stateGate = new();
     private static readonly long _processStartCounter = Stopwatch.GetTimestamp();
     private static readonly RdtscDelegate? _rdtscReader = CreateRdtscReader();
@@ -1953,35 +1954,71 @@ public static class KernelRuntimeCompatExports
             return null;
         }
 
+        var hostMemory = HostPlatform.Current.Memory;
+        var stubAddress = CreateRdtscStub(hostMemory);
+        if (stubAddress == 0)
+        {
+            return null;
+        }
+
         try
         {
-            nint stubAddress = unchecked((nint)HostPlatform.Current.Memory.Allocate(0, 16, HostPageProtection.ReadWriteExecute));
-            if (stubAddress == 0)
-            {
-                return null;
-            }
-
-            ReadOnlySpan<byte> stub = stackalloc byte[]
-            {
-                0x0F, 0x31,
-                0x48, 0xC1, 0xE2, 0x20,
-                0x48, 0x09, 0xD0,
-                0xC3,
-            };
-
-            unsafe
-            {
-                fixed (byte* src = stub)
-                {
-                    Buffer.MemoryCopy(src, (void*)stubAddress, stub.Length, stub.Length);
-                }
-            }
-
             return Marshal.GetDelegateForFunctionPointer<RdtscDelegate>(stubAddress);
         }
         catch
         {
+            _ = hostMemory.Free(unchecked((ulong)stubAddress));
             return null;
+        }
+    }
+
+    internal static unsafe nint CreateRdtscStub(IHostMemory hostMemory)
+    {
+        ReadOnlySpan<byte> stub =
+        [
+            0x0F, 0x31,
+            0x48, 0xC1, 0xE2, 0x20,
+            0x48, 0x09, 0xD0,
+            0xC3,
+        ];
+
+        var stubAddress = unchecked((nint)hostMemory.Allocate(
+            0,
+            RdtscStubAllocationSize,
+            HostPageProtection.ReadWrite));
+        if (stubAddress == 0)
+        {
+            return 0;
+        }
+
+        try
+        {
+            fixed (byte* source = stub)
+            {
+                Buffer.MemoryCopy(
+                    source,
+                    (void*)stubAddress,
+                    checked((long)RdtscStubAllocationSize),
+                    stub.Length);
+            }
+
+            if (!hostMemory.Protect(
+                    unchecked((ulong)stubAddress),
+                    RdtscStubAllocationSize,
+                    HostPageProtection.ReadExecute,
+                    out _))
+            {
+                _ = hostMemory.Free(unchecked((ulong)stubAddress));
+                return 0;
+            }
+
+            hostMemory.FlushInstructionCache(unchecked((ulong)stubAddress), (ulong)stub.Length);
+            return stubAddress;
+        }
+        catch
+        {
+            _ = hostMemory.Free(unchecked((ulong)stubAddress));
+            return 0;
         }
     }
 
