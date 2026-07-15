@@ -209,6 +209,56 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public void FailedTlsLoadHelperFinalizationReusesArenaReservationOnRetry()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(
+            failedAllocation: int.MaxValue,
+            failedProtection: 5);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+
+        try
+        {
+            Assert.True(backend.TryCreateTlsHandler());
+            var protectionCallStart = memory.ProtectionCalls.Count;
+
+            var failedHelper = backend.GetOrCreateTlsLoadHelper(
+                destinationRegister: 0,
+                displacement: 0,
+                is64Bit: true,
+                memorySize: 8,
+                signExtend: false);
+            var retriedHelper = backend.GetOrCreateTlsLoadHelper(
+                destinationRegister: 0,
+                displacement: 0,
+                is64Bit: true,
+                memorySize: 8,
+                signExtend: false);
+
+            Assert.Equal(0, failedHelper);
+            Assert.NotEqual(0, retriedHelper);
+            var writableReservations = memory.ProtectionCalls
+                .Skip(protectionCallStart)
+                .Where(call => call.Protection == HostPageProtection.ReadWriteExecute)
+                .Select(call => call.Address)
+                .ToArray();
+            Assert.Equal(2, writableReservations.Length);
+            Assert.Equal(writableReservations[0], writableReservations[1]);
+        }
+        finally
+        {
+            backend.Dispose();
+        }
+    }
+
+    [Fact]
     public unsafe void FailedImportSetupRestoresPatchedSlotsAndAttemptAllocations()
     {
         var threading = new RecordingHostThreading([17u, 23u]);
@@ -528,6 +578,8 @@ public sealed class NativeBackendConstructionTests
 
         public List<ulong> FreedAddresses { get; } = [];
 
+        public List<(ulong Address, HostPageProtection Protection)> ProtectionCalls { get; } = [];
+
         public ulong Allocate(ulong desiredAddress, ulong size, HostPageProtection protection)
         {
             if (++_allocationCount == failedAllocation)
@@ -563,6 +615,7 @@ public sealed class NativeBackendConstructionTests
             out uint rawOldProtection)
         {
             rawOldProtection = 0;
+            ProtectionCalls.Add((address, protection));
             return ++_protectionCount != failedProtection;
         }
 
