@@ -60,6 +60,7 @@ jobs:
           -warnaserror
           --logger trx
           --results-directory artifacts/test-results/${{ runner.os }}
+          --blame-crash
           --blame-hang
           --blame-hang-timeout 2m
 
