@@ -29,6 +29,7 @@ public static class VideoOutExports
     private const int MaxDisplayBuffers = 16;
     private const int MaxDisplayBufferGroups = 4;
     private const int MaxFrameDumps = 8;
+    private const int VideoOutFlipStatusSize = 0x28;
     private const int VideoOutBufferAttributeSize = 0x28;
     private const int VideoOutBufferAttribute2Size = 0x50;
     private const int VideoOutBuffersEntrySize = 0x20;
@@ -427,6 +428,11 @@ public static class VideoOutExports
             return OrbisVideoOutErrorInvalidAddress;
         }
 
+        if (!GuestAddress.IsRangeValid(statusAddress, VideoOutFlipStatusSize))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
         if (!TryGetPort(handle, out var port))
         {
             return OrbisVideoOutErrorInvalidHandle;
@@ -680,11 +686,15 @@ public static class VideoOutExports
             currentBuffer = unchecked((uint)port.CurrentBuffer);
         }
 
-        KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, statusAddress + 0x00, count);
-        KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, statusAddress + 0x08, 0);
-        KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, statusAddress + 0x10, 0);
-        KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, statusAddress + 0x18, unchecked((ulong)flipArg));
-        KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, statusAddress + 0x20, currentBuffer);
+        Span<byte> status = stackalloc byte[VideoOutFlipStatusSize];
+        status.Clear();
+        BinaryPrimitives.WriteUInt64LittleEndian(status[0x00..], count);
+        BinaryPrimitives.WriteUInt64LittleEndian(status[0x18..], unchecked((ulong)flipArg));
+        BinaryPrimitives.WriteUInt32LittleEndian(status[0x20..], currentBuffer);
+        if (!ctx.Memory.TryWrite(statusAddress, status))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
 
         TraceVideoOut($"videoout.get_flip_status handle={handle} count={count} currentBuffer={currentBuffer}");
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
