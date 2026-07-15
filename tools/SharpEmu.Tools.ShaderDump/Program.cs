@@ -319,6 +319,20 @@ const ulong ProgramAddress = 0x100000;
         0xE0700008, 0x80020500, // buffer_store_dword v5, off, s[8:11], 0 offset:8
         0xBF810000,             // s_endpgm
     ]),
+    // A successful compare/swap updates memory and returns the old value. A
+    // second operation with a stale comparator must fail while still returning
+    // the value that prevented the exchange.
+    ("exec-buffer-cmpswap", true, [
+        0x7E0802FF, 0x00000063, // v_mov_b32 v4, 99 (desired value)
+        0x7E0A02FF, 0x0000000A, // v_mov_b32 v5, 10 (matching comparator)
+        0xE0C44000, 0x80020400, // buffer_atomic_cmpswap v[4:5], off, s[8:11], 0 glc
+        0xE0700004, 0x80020400, // buffer_store_dword v4, off, s[8:11], 0 offset:4
+        0x7E0C02FF, 0x0000004D, // v_mov_b32 v6, 77 (rejected desired value)
+        0x7E0E02FF, 0x0000000A, // v_mov_b32 v7, 10 (stale comparator)
+        0xE0C44000, 0x80020600, // buffer_atomic_cmpswap v[6:7], off, s[8:11], 0 glc
+        0xE0700008, 0x80020600, // buffer_store_dword v6, off, s[8:11], 0 offset:8
+        0xBF810000,             // s_endpgm
+    ]),
     // Four invocations publish their local IDs to distinct LDS slots, meet at
     // a workgroup barrier, then read the slot owned by the opposite lane.
     ("exec-lds-barrier", true, [
@@ -784,6 +798,15 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
             labels[0] = "atomic add followed by atomic sub updates the counter";
             labels[1] = "GLC atomic add returns its pre-operation value";
             labels[2] = "GLC atomic sub returns its pre-operation value";
+            break;
+        case "exec-buffer-cmpswap":
+            initialWords[0] = 10;
+            expectedWords[0] = 99;
+            expectedWords[1] = 10;
+            expectedWords[2] = 99;
+            labels[0] = "matching compare/swap updates the target value";
+            labels[1] = "successful GLC compare/swap returns the old value";
+            labels[2] = "failed GLC compare/swap returns the mismatched value";
             break;
         case "exec-lds-barrier":
             for (uint index = 0; index < 4; index++)
