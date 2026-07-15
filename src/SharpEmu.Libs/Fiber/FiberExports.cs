@@ -492,6 +492,13 @@ public static class FiberExports
             return ctx.SetReturn(FiberErrorInvalid);
         }
 
+        var contextEnd = 0UL;
+        if (contextAddress != 0 &&
+            !GuestAddress.TryAdd(contextAddress, contextSize, out contextEnd))
+        {
+            return ctx.SetReturn(FiberErrorInvalid);
+        }
+
         if (optParam != 0 &&
             (!ctx.TryReadUInt32(optParam, out var optMagic) || optMagic != FiberOptSignature))
         {
@@ -518,7 +525,7 @@ public static class FiberExports
             !ctx.TryWriteUInt64(fiber + FiberContextPointerOffset, 0) ||
             !ctx.TryWriteUInt32(fiber + FiberFlagsOffset, flags) ||
             !ctx.TryWriteUInt64(fiber + FiberContextStartOffset, contextAddress) ||
-            !ctx.TryWriteUInt64(fiber + FiberContextEndOffset, contextAddress == 0 ? 0 : contextAddress + contextSize) ||
+            !ctx.TryWriteUInt64(fiber + FiberContextEndOffset, contextEnd) ||
             !ctx.TryWriteUInt32(fiber + FiberMagicEndOffset, FiberSignature1))
         {
             return ctx.SetReturn(FiberErrorInvalid);
@@ -790,10 +797,15 @@ public static class FiberExports
             return FiberErrorInvalid;
         }
 
+        if (!GuestAddress.TryAdd(contextAddress, contextSize, out var contextEnd))
+        {
+            return FiberErrorInvalid;
+        }
+
         if (!ctx.TryWriteUInt64(fiber + FiberContextAddressOffset, contextAddress) ||
             !ctx.TryWriteUInt64(fiber + FiberContextSizeOffset, contextSize) ||
             !ctx.TryWriteUInt64(fiber + FiberContextStartOffset, contextAddress) ||
-            !ctx.TryWriteUInt64(fiber + FiberContextEndOffset, contextAddress + contextSize) ||
+            !ctx.TryWriteUInt64(fiber + FiberContextEndOffset, contextEnd) ||
             !ctx.TryWriteUInt64(contextAddress, FiberStackSignature))
         {
             return FiberErrorInvalid;
@@ -970,6 +982,9 @@ public static class FiberExports
     private readonly record struct FiberStackRange(ulong Start, ulong Size)
     {
         public bool Contains(ulong address) =>
-            Size != 0 && address >= Start && address < Start + Size;
+            Size != 0 &&
+            GuestAddress.TryAdd(Start, Size, out var end) &&
+            address >= Start &&
+            address < end;
     }
 }
