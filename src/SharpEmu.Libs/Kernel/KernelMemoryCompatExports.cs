@@ -1068,14 +1068,16 @@ public static partial class KernelMemoryCompatExports
     {
         for (ulong index = 0; index < 1_048_576; index++)
         {
-            if (!TryReadUInt16Compat(ctx, address + (index * WideCharSize), out var unit))
+            var offset = index * WideCharSize;
+            if (!TryAddU64(address, offset, out var currentAddress) ||
+                !TryReadUInt16Compat(ctx, currentAddress, out var unit))
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
             }
 
             if (unit == needle)
             {
-                ctx[CpuRegister.Rax] = address + (index * WideCharSize);
+                ctx[CpuRegister.Rax] = currentAddress;
                 return (int)OrbisGen2Result.ORBIS_GEN2_OK;
             }
 
@@ -5575,7 +5577,9 @@ public static partial class KernelMemoryCompatExports
         var buffer = new List<ushort>(Math.Min(limit, 256));
         for (var i = 0; i < limit; i++)
         {
-            if (!TryReadUInt16Compat(ctx, address + ((ulong)i * WideCharSize), out var unit))
+            var offset = (ulong)i * WideCharSize;
+            if (!TryAddU64(address, offset, out var currentAddress) ||
+                !TryReadUInt16Compat(ctx, currentAddress, out var unit))
             {
                 return false;
             }
@@ -5606,7 +5610,9 @@ public static partial class KernelMemoryCompatExports
         var buffer = new List<ushort>(Math.Min(limit, 256));
         for (var i = 0; i < limit; i++)
         {
-            if (!TryReadUInt16Compat(ctx, address + ((ulong)i * WideCharSize), out var unit))
+            var offset = (ulong)i * WideCharSize;
+            if (!TryAddU64(address, offset, out var currentAddress) ||
+                !TryReadUInt16Compat(ctx, currentAddress, out var unit))
             {
                 return false;
             }
