@@ -1370,7 +1370,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		{
 			var (address, originalBytes) = checkpoint.PatchedStubs[index];
 			uint oldProtection = 0;
-			if (!_hostMemory.Protect(address, (nuint)originalBytes.Length, HostPageProtection.ReadWriteExecute, out oldProtection))
+			if (!_hostMemory.Protect(address, (nuint)originalBytes.Length, HostPageProtection.ReadWrite, out oldProtection))
 			{
 				Console.Error.WriteLine($"[LOADER][ERROR] Failed to restore import stub at 0x{address:X16} during setup rollback");
 				continue;
@@ -1960,7 +1960,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 
 		uint oldProtect = default;
-		if (!_hostMemory.Protect((ulong)(void*)_tlsHandlerAddress, 16u, HostPageProtection.ReadWriteExecute, out oldProtect))
+		if (!_hostMemory.Protect((ulong)(void*)_tlsHandlerAddress, 16u, HostPageProtection.ReadWrite, out oldProtect))
 		{
 			return;
 		}
@@ -2223,7 +2223,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private unsafe bool PatchImportStub(nint address, nint trampoline)
 	{
 		uint flNewProtect = default(uint);
-		if (!_hostMemory.Protect((ulong)(void*)address, 16u, HostPageProtection.ReadWriteExecute, out flNewProtect))
+		if (!_hostMemory.Protect((ulong)(void*)address, 16u, HostPageProtection.ReadWrite, out flNewProtect))
 		{
 			Console.Error.WriteLine($"[LOADER][ERROR] VirtualProtect failed for import stub at 0x{address:X16}");
 			return false;
@@ -2632,7 +2632,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			if (!_hostMemory.Protect(
 				(ulong)(void*)address,
 				(nuint)originalBytes.Length,
-				HostPageProtection.ReadWriteExecute,
+				HostPageProtection.ReadWrite,
 				out var oldProtection))
 			{
 				Console.Error.WriteLine($"[LOADER][ERROR] Failed to reopen TLS instruction at 0x{address:X16} during scan rollback");
@@ -2698,7 +2698,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		var modRm = (byte)(0xC0 | (registerBits << 3) | registerBits);
 		var originalBytes = new ReadOnlySpan<byte>((void*)address, instruction.Length).ToArray();
 		uint flNewProtect = default(uint);
-		if (!_hostMemory.Protect((ulong)(void*)address, (nuint)instruction.Length, HostPageProtection.ReadWriteExecute, out flNewProtect))
+		if (!_hostMemory.Protect((ulong)(void*)address, (nuint)instruction.Length, HostPageProtection.ReadWrite, out flNewProtect))
 		{
 			return false;
 		}
@@ -2803,7 +2803,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 		var originalBytes = new ReadOnlySpan<byte>((void*)address, instructionLength).ToArray();
 		uint flNewProtect = default(uint);
-		if (!_hostMemory.Protect((ulong)(void*)address, (nuint)instructionLength, HostPageProtection.ReadWriteExecute, out flNewProtect))
+		if (!_hostMemory.Protect((ulong)(void*)address, (nuint)instructionLength, HostPageProtection.ReadWrite, out flNewProtect))
 		{
 			return false;
 		}
@@ -3228,7 +3228,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 		nint result = _tlsHandlerAddress + _tlsPatchStubOffset;
 		uint flNewProtect = default(uint);
-		if (!_hostMemory.Protect((ulong)(void*)result, (nuint)num, HostPageProtection.ReadWriteExecute, out flNewProtect))
+		if (!_hostMemory.Protect((ulong)(void*)result, (nuint)num, HostPageProtection.ReadWrite, out flNewProtect))
 		{
 			return 0;
 		}
@@ -3271,7 +3271,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 		var originalBytes = new ReadOnlySpan<byte>((void*)address, instructionLength).ToArray();
 		uint flNewProtect = default(uint);
-		if (!_hostMemory.Protect((ulong)(void*)address, (nuint)instructionLength, HostPageProtection.ReadWriteExecute, out flNewProtect))
+		if (!_hostMemory.Protect((ulong)(void*)address, (nuint)instructionLength, HostPageProtection.ReadWrite, out flNewProtect))
 		{
 			return false;
 		}
@@ -3317,7 +3317,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		if (patchComplete && !_hostMemory.Protect(
 			(ulong)(void*)address,
 			(nuint)originalBytes.Length,
-			HostPageProtection.ReadWriteExecute,
+			HostPageProtection.ReadWrite,
 			out _))
 		{
 			Console.Error.WriteLine($"[LOADER][ERROR] Failed to reopen TLS patch at 0x{address:X16} for rollback");
