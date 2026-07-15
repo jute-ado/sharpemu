@@ -1103,7 +1103,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				result = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
 				return false;
 			}
-			PatchTlsPatterns();
+			if (!PatchTlsPatterns())
+			{
+				LastError = "TLS patch preparation failed for one or more recognized guest instructions";
+				result = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+				return false;
+			}
 			return ExecuteEntry(context, entryPoint, returnContract, out result);
 		}
 		catch (Exception ex)
@@ -2369,7 +2374,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return true;
 	}
 
-	private unsafe void PatchTlsPatterns()
+	private unsafe bool PatchTlsPatterns()
 	{
 		var (scanStart, scanEnd) = GetTlsPatchScanRange(_entryPoint);
 		ulong num = scanStart;
@@ -2377,6 +2382,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		int num3 = 0;
 		int num4 = 0;
 		int num9 = 0;
+		int failedPatchCount = 0;
 		while (num < num2)
 		{
 			if (!_hostMemory.Query(num, out var lpBuffer) || lpBuffer.RegionSize == 0)
@@ -2401,6 +2407,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				{
 					nint address = (nint)(ptr + i);
 					int remainingBytes = scanBytes - i;
+					var candidateLength = Math.Min(15, remainingBytes);
+					if (!NativeTlsInstructionDecoder.TryDecode(
+						new ReadOnlySpan<byte>(ptr + i, candidateLength),
+						out var recognizedInstruction))
+					{
+						continue;
+					}
+
 					if (TryPatchTlsInstruction(
 						address,
 						ptr + i,
@@ -2420,11 +2434,21 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 							num9++;
 						}
 					}
+					else
+					{
+						failedPatchCount++;
+						Console.Error.WriteLine(
+							$"[LOADER][ERROR] Failed to patch recognized {recognizedInstruction.Kind} TLS instruction at 0x{address:X16}");
+					}
+
+					i += recognizedInstruction.Length - 1;
 				}
 			}
 			num = num6 > num ? num6 : num + 4096uL;
 		}
-		Console.Error.WriteLine($"[LOADER][INFO] Patched {num3} TLS loads, {num9} TLS stores, {num4} stack-canary accesses");
+		Console.Error.WriteLine(
+			$"[LOADER][INFO] Patched {num3} TLS loads, {num9} TLS stores, {num4} stack-canary accesses; failures={failedPatchCount}");
+		return failedPatchCount == 0;
 	}
 
 	internal static (ulong Start, ulong End) GetTlsPatchScanRange(ulong entryPoint)
