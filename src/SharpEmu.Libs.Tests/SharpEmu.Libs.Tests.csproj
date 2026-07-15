@@ -8,9 +8,11 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\SharpEmu.Core\SharpEmu.Core.csproj" />
     <ProjectReference Include="..\SharpEmu.Libs\SharpEmu.Libs.csproj" />
   </ItemGroup>
 

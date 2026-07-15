@@ -97,28 +97,19 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
 
         lock (_gate)
         {
-            foreach (var existing in _regions)
+            var insertionIndex = FindInsertionIndex(virtualAddress);
+            if ((insertionIndex > 0 && virtualAddress < _regions[insertionIndex - 1].EndAddress) ||
+                (insertionIndex < _regions.Count && endAddress > _regions[insertionIndex].Region.VirtualAddress))
             {
-                if (virtualAddress < existing.EndAddress && endAddress > existing.Region.VirtualAddress)
-                {
-                    throw new InvalidOperationException("Attempted to map an overlapping virtual memory region.");
-                }
+                throw new InvalidOperationException("Attempted to map an overlapping virtual memory region.");
             }
 
             var backingMemory = new byte[(int)memorySize];
             fileData.CopyTo(backingMemory);
-            var mappedRegion = new MappedRegion(
+            _regions.Insert(insertionIndex, new MappedRegion(
                 new VirtualMemoryRegion(virtualAddress, memorySize, fileOffset, (ulong)fileData.Length, protection),
                 endAddress,
-                backingMemory);
-            var insertionIndex = 0;
-            while (insertionIndex < _regions.Count &&
-                   _regions[insertionIndex].Region.VirtualAddress < virtualAddress)
-            {
-                insertionIndex++;
-            }
-
-            _regions.Insert(insertionIndex, mappedRegion);
+                backingMemory));
         }
     }
 
@@ -394,6 +385,26 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
             region.Region.VirtualAddress,
             region.Region.MemorySize,
             protection);
+    }
+
+    private int FindInsertionIndex(ulong virtualAddress)
+    {
+        var lower = 0;
+        var upper = _regions.Count;
+        while (lower < upper)
+        {
+            var middle = lower + ((upper - lower) / 2);
+            if (_regions[middle].Region.VirtualAddress < virtualAddress)
+            {
+                lower = middle + 1;
+            }
+            else
+            {
+                upper = middle;
+            }
+        }
+
+        return lower;
     }
 
     private readonly record struct MappedRegion(VirtualMemoryRegion Region, ulong EndAddress, byte[] BackingMemory);

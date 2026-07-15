@@ -1251,7 +1251,8 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         try
         {
             var region = FindRegion(virtualAddress, 1);
-            if (region is null || !EnsureRangeCommitted(virtualAddress, 1, region))
+            if (region is null ||
+                (region.IsReservedOnly && !EnsureRangeCommitted(virtualAddress, 1, region)))
             {
                 return null;
             }
