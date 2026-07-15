@@ -1154,12 +1154,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		bool TryPatchTracked(ulong stubAddress, nint targetAddress)
 		{
 			var originalBytes = new ReadOnlySpan<byte>((void*)stubAddress, 16).ToArray();
+			patchedStubs.Add((stubAddress, originalBytes));
 			if (!PatchImportStub((nint)stubAddress, targetAddress))
 			{
 				return false;
 			}
 
-			patchedStubs.Add((stubAddress, originalBytes));
 			return true;
 		}
 
@@ -2109,6 +2109,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			Console.Error.WriteLine($"[LOADER][ERROR] VirtualProtect failed for import stub at 0x{address:X16}");
 			return false;
 		}
+		var protectionRestored = false;
 		try
 		{
 			*(sbyte*)address = 72;
@@ -2120,13 +2121,21 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			*(sbyte*)(address + 13) = -112;
 			*(sbyte*)(address + 14) = -112;
 			*(sbyte*)(address + 15) = -112;
-			return true;
 		}
 		finally
 		{
-			_hostMemory.ProtectRaw((ulong)(void*)address, 16u, flNewProtect, out flNewProtect);
+			protectionRestored = _hostMemory.ProtectRaw(
+				(ulong)(void*)address,
+				16u,
+				flNewProtect,
+				out flNewProtect);
 			_hostMemory.FlushInstructionCache((ulong)(void*)address, 16u);
 		}
+		if (!protectionRestored)
+		{
+			Console.Error.WriteLine($"[LOADER][ERROR] Failed to restore protection for import stub at 0x{address:X16}");
+		}
+		return protectionRestored;
 	}
 
 	private unsafe void ClearImportHandlerTrampolines()

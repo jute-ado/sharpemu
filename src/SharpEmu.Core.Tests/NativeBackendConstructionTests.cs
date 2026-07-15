@@ -304,6 +304,44 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public unsafe void FailedImportProtectionRestoreRollsBackGuestSlotAndTrampoline()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(
+            failedAllocation: int.MaxValue,
+            failedRawProtection: 1);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        var stub = memory.Allocate(0, 16, HostPageProtection.ReadWriteExecute);
+        var original = Enumerable.Repeat((byte)0xA5, 16).ToArray();
+        original.CopyTo(new Span<byte>((void*)stub, original.Length));
+        var activeAllocationsBefore = memory.ActiveAllocations.Count;
+
+        try
+        {
+            var setupResult = backend.SetupImportStubs(new Dictionary<ulong, string>
+            {
+                [stub] = "unknown-import",
+            });
+
+            Assert.False(setupResult);
+            Assert.Equal(original, new ReadOnlySpan<byte>((void*)stub, original.Length).ToArray());
+            Assert.Equal(activeAllocationsBefore, memory.ActiveAllocations.Count);
+        }
+        finally
+        {
+            backend.Dispose();
+            memory.Free(stub);
+        }
+    }
+
+    [Fact]
     public void FailedEntryStubProtectionRestoresGuestStackSlot()
     {
         var threading = new RecordingHostThreading([17u, 23u]);
@@ -479,10 +517,12 @@ public sealed class NativeBackendConstructionTests
 
     private sealed unsafe class AllocatingHostMemory(
         int failedAllocation,
-        int failedProtection = 0) : IHostMemory
+        int failedProtection = 0,
+        int failedRawProtection = 0) : IHostMemory
     {
         private int _allocationCount;
         private int _protectionCount;
+        private int _rawProtectionCount;
 
         public HashSet<ulong> ActiveAllocations { get; } = [];
 
@@ -533,7 +573,7 @@ public sealed class NativeBackendConstructionTests
             out uint rawOldProtection)
         {
             rawOldProtection = 0;
-            return true;
+            return ++_rawProtectionCount != failedRawProtection;
         }
 
         public bool Query(ulong address, out HostRegionInfo info)
