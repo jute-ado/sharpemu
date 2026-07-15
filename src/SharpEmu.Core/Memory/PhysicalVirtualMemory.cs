@@ -74,12 +74,13 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     {
         ThrowIfDisposed();
         actualAddress = 0;
-        if (size == 0)
+        if (size == 0 ||
+            !TryAlignAllocationSize(size, out var alignedSize) ||
+            (desiredAddress != 0 && desiredAddress > ulong.MaxValue - alignedSize))
         {
             return false;
         }
 
-        var alignedSize = (size + 0xFFF) & ~0xFFFUL;
         var protection = executable ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
         var hostProtection = executable ? HostPageProtection.ReadWriteExecute : HostPageProtection.ReadWrite;
         var result = _hostMemory.Allocate(desiredAddress, alignedSize, hostProtection);
@@ -124,7 +125,16 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         if (size == 0)
             throw new ArgumentOutOfRangeException(nameof(size), "Size must be greater than zero");
 
-        var alignedSize = (size + 0xFFF) & ~0xFFFUL;
+        if (!TryAlignAllocationSize(size, out var alignedSize))
+        {
+            throw new ArgumentOutOfRangeException(nameof(size), "Size exceeds the guest address space.");
+        }
+        if (desiredAddress != 0 && desiredAddress > ulong.MaxValue - alignedSize)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(desiredAddress),
+                "Requested allocation range exceeds the guest address space.");
+        }
 
         var protection = executable ? PAGE_EXECUTE_READWRITE : PAGE_READWRITE;
         var hostProtection = executable ? HostPageProtection.ReadWriteExecute : HostPageProtection.ReadWrite;
@@ -1682,6 +1692,20 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     {
         var mask = alignment - 1;
         return checked((value + mask) & ~mask);
+    }
+
+    private static bool TryAlignAllocationSize(ulong size, out ulong alignedSize)
+    {
+        try
+        {
+            alignedSize = AlignUp(size, PageSize);
+            return true;
+        }
+        catch (OverflowException)
+        {
+            alignedSize = 0;
+            return false;
+        }
     }
 
     private static ulong ResolveLazyReservePrimeBytes()
