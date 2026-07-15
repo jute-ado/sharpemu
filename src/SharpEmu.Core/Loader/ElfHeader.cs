@@ -44,6 +44,8 @@ public readonly struct ElfHeader
 
     public bool IsLittleEndian => _ident5 == 1;
 
+    public byte IdentificationVersion => _ident6;
+
     public byte Abi => _ident7;
 
     public byte AbiVersion => _ident8;

@@ -89,6 +89,42 @@ public sealed class SelfLoaderTests
         Assert.IsType<InvalidDataException>(exception);
     }
 
+    [Theory]
+    [InlineData(6, 1, 0UL, "identification version")]
+    [InlineData(18, 2, 0xB7UL, "machine")]
+    [InlineData(20, 4, 2UL, "version")]
+    [InlineData(52, 2, ElfHeaderSize - 1UL, "header size")]
+    public void RejectedUnsupportedElfIdentityDoesNotClearExistingGuestMemory(
+        int fieldOffset,
+        int fieldSize,
+        ulong value,
+        string expectedMessage)
+    {
+        var memory = CreateSentinelMemory();
+        var malformed = CreateElf();
+        var field = malformed.AsSpan(fieldOffset, fieldSize);
+        switch (fieldSize)
+        {
+            case 1:
+                field[0] = checked((byte)value);
+                break;
+            case 2:
+                BinaryPrimitives.WriteUInt16LittleEndian(field, checked((ushort)value));
+                break;
+            case 4:
+                BinaryPrimitives.WriteUInt32LittleEndian(field, checked((uint)value));
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(fieldSize));
+        }
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            new SelfLoader().Load(malformed, memory));
+
+        Assert.Contains(expectedMessage, exception.Message, StringComparison.OrdinalIgnoreCase);
+        AssertSentinelMemoryPreserved(memory);
+    }
+
     [Fact]
     public void RejectsProgramHeaderOffsetsOutsideTheImage()
     {

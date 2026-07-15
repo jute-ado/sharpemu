@@ -18,6 +18,8 @@ public sealed class SelfLoader : ISelfLoader
 {
     private static readonly SharpEmuLogger Log = SharpEmuLog.For("Loader");
     private const uint ElfMagic = 0x7F454C46;
+    private const byte CurrentElfVersion = 1;
+    private const ushort Amd64Machine = 0x3E;
     private const uint Ps4SelfMagic  = 0x4F153D1D;
     private const uint Ps5SelfMagic  = 0x5414F5EE;
     private const ulong SelfSegmentFlag = 0x800;
@@ -2534,6 +2536,29 @@ public sealed class SelfLoader : ISelfLoader
         if (!header.IsLittleEndian)
         {
             throw new InvalidDataException("Only little-endian ELF images are currently supported.");
+        }
+
+        if (header.IdentificationVersion != CurrentElfVersion)
+        {
+            throw new InvalidDataException(
+                $"Unsupported ELF identification version: {header.IdentificationVersion}.");
+        }
+
+        if (header.Machine != Amd64Machine)
+        {
+            throw new InvalidDataException(
+                $"Unsupported ELF machine: 0x{header.Machine:X4}. Expected AMD64.");
+        }
+
+        if (header.Version != CurrentElfVersion)
+        {
+            throw new InvalidDataException($"Unsupported ELF version: {header.Version}.");
+        }
+
+        if (header.HeaderSize != Unsafe.SizeOf<ElfHeader>())
+        {
+            throw new InvalidDataException(
+                $"Unsupported ELF header size: {header.HeaderSize}.");
         }
 
         if (header.ProgramHeaderEntrySize != ProgramHeaderSize)
