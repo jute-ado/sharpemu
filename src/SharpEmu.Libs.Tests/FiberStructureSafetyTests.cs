@@ -89,6 +89,26 @@ public sealed class FiberStructureSafetyTests
         Assert.All(wrappedOutput, value => Assert.Equal(Canary, value));
     }
 
+    [Fact]
+    public void InitializeRejectsContextWithUnrepresentableExclusiveEndBeforeWriting()
+    {
+        const ulong contextSize = 512;
+        var contextAddress = ulong.MaxValue - contextSize + 1;
+        var fiber = Enumerable.Repeat(Canary, 108).ToArray();
+        var fiberContext = Enumerable.Repeat(Canary, (int)contextSize).ToArray();
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(FiberAddress, fiber);
+        memory.AddRegion(NameAddress, Encoding.UTF8.GetBytes($"{FiberName}\0"));
+        memory.AddRegion(contextAddress, fiberContext);
+        var context = CreateInitializeContext(memory, FiberAddress);
+        context[CpuRegister.R8] = contextAddress;
+        context[CpuRegister.R9] = contextSize;
+
+        Assert.Equal(FiberErrorInvalid, FiberExports.FiberInitialize(context));
+        Assert.All(fiber, value => Assert.Equal(Canary, value));
+        Assert.All(fiberContext, value => Assert.Equal(Canary, value));
+    }
+
     private static CpuContext CreateInitializeContext(FakeGuestMemory memory, ulong fiberAddress)
     {
         memory.AddRegion(StackAddress, new byte[32]);
