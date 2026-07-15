@@ -395,6 +395,39 @@ const ulong ProgramAddress = 0x100000;
         0xE0700028, 0x80020F00, // buffer_store_dword v15, off, s[8:11], 0 offset:40
         0xBF810000,             // s_endpgm
     ]),
+    // Zero five aligned scratch words, write four registers starting at byte
+    // offset three, then observe both the x4 round-trip and the five-word
+    // little-endian layout. Independent aligned loads expose loop-index bugs.
+    ("exec-scratch-dwordx4", true, [
+        0xE0300000, 0x80020500, // buffer_load_dword v5, off, s[8:11], 0
+        0xE0300004, 0x80020600, // buffer_load_dword v6, off, s[8:11], 0 offset:4
+        0xE0300008, 0x80020700, // buffer_load_dword v7, off, s[8:11], 0 offset:8
+        0xE030000C, 0x80020800, // buffer_load_dword v8, off, s[8:11], 0 offset:12
+        0xE0300010, 0x80020900, // buffer_load_dword v9, off, s[8:11], 0 offset:16
+        0x7E080280,             // v_mov_b32 v4, 0 (scratch byte address)
+        0xDC704000, 0x007F0904, // scratch_store_dword v4, v9
+        0xDC704004, 0x007F0904, // scratch_store_dword v4, v9 offset:4
+        0xDC704008, 0x007F0904, // scratch_store_dword v4, v9 offset:8
+        0xDC70400C, 0x007F0904, // scratch_store_dword v4, v9 offset:12
+        0xDC704010, 0x007F0904, // scratch_store_dword v4, v9 offset:16
+        0xDC784003, 0x007F0504, // scratch_store_dwordx4 v4, v[5:8] offset:3
+        0xDC384003, 0x0A7F0004, // scratch_load_dwordx4 v[10:13], v4 offset:3
+        0xDC304000, 0x0E7F0004, // scratch_load_dword v14, v4
+        0xDC304004, 0x0F7F0004, // scratch_load_dword v15, v4 offset:4
+        0xDC304008, 0x107F0004, // scratch_load_dword v16, v4 offset:8
+        0xDC30400C, 0x117F0004, // scratch_load_dword v17, v4 offset:12
+        0xDC304010, 0x127F0004, // scratch_load_dword v18, v4 offset:16
+        0xE0700014, 0x80020A00, // buffer_store_dword v10, off, s[8:11], 0 offset:20
+        0xE0700018, 0x80020B00, // buffer_store_dword v11, off, s[8:11], 0 offset:24
+        0xE070001C, 0x80020C00, // buffer_store_dword v12, off, s[8:11], 0 offset:28
+        0xE0700020, 0x80020D00, // buffer_store_dword v13, off, s[8:11], 0 offset:32
+        0xE0700024, 0x80020E00, // buffer_store_dword v14, off, s[8:11], 0 offset:36
+        0xE0700028, 0x80020F00, // buffer_store_dword v15, off, s[8:11], 0 offset:40
+        0xE070002C, 0x80021000, // buffer_store_dword v16, off, s[8:11], 0 offset:44
+        0xE0700030, 0x80021100, // buffer_store_dword v17, off, s[8:11], 0 offset:48
+        0xE0700034, 0x80021200, // buffer_store_dword v18, off, s[8:11], 0 offset:52
+        0xBF810000,             // s_endpgm
+    ]),
     // A finite backward branch exercises the structured program-counter loop,
     // dynamic SCC updates, and scalar-to-vector transfer. The dispatch runner
     // has a fence deadline, so a broken termination condition fails boundedly.
@@ -1176,6 +1209,37 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
             labels[8] = "atomic AND combines complementary bit fields";
             labels[9] = "atomic OR combines complementary bit fields";
             labels[10] = "atomic XOR combines complementary bit fields";
+            break;
+        case "exec-scratch-dwordx4":
+            initialWords[0] = 0x11223344;
+            initialWords[1] = 0x55667788;
+            initialWords[2] = 0x99AABBCC;
+            initialWords[3] = 0xDDEEFF00;
+            initialWords[4] = 0;
+            for (var index = 0; index < 5; index++)
+            {
+                expectedWords[index] = initialWords[index];
+                labels[index] = $"dwordx4 input word {index} remains unchanged";
+            }
+
+            expectedWords[5] = initialWords[0];
+            expectedWords[6] = initialWords[1];
+            expectedWords[7] = initialWords[2];
+            expectedWords[8] = initialWords[3];
+            expectedWords[9] = 0x44000000;
+            expectedWords[10] = 0x88112233;
+            expectedWords[11] = 0xCC556677;
+            expectedWords[12] = 0x0099AABB;
+            expectedWords[13] = 0x00DDEEFF;
+            labels[5] = "unaligned dwordx4 load returns component zero";
+            labels[6] = "unaligned dwordx4 load returns component one";
+            labels[7] = "unaligned dwordx4 load returns component two";
+            labels[8] = "unaligned dwordx4 load returns component three";
+            labels[9] = "unaligned dwordx4 layout begins in aligned word zero";
+            labels[10] = "component zero crosses into aligned word one";
+            labels[11] = "component one crosses into aligned word two";
+            labels[12] = "component two crosses into aligned word three";
+            labels[13] = "component three crosses into aligned word four";
             break;
         case "exec-scalar-loop":
             expectedWords[0] = 4;
