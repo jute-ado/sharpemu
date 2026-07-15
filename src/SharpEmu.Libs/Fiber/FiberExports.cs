@@ -42,6 +42,7 @@ public static class FiberExports
     private const int FiberContextStartOffset = 88;
     private const int FiberContextEndOffset = 96;
     private const int FiberMagicEndOffset = 104;
+    private const ulong FiberControlBlockSize = (ulong)FiberMagicEndOffset + sizeof(uint);
 
     private static int _contextSizeCheck;
 
@@ -337,6 +338,11 @@ public static class FiberExports
             return ctx.SetReturn(FiberErrorNull);
         }
 
+        if (!GuestAddress.IsRangeValid(info, FiberInfoSize))
+        {
+            return ctx.SetReturn(FiberErrorInvalid);
+        }
+
         if (!TryValidateFiber(ctx, fiber, out var error))
         {
             return ctx.SetReturn(error);
@@ -467,6 +473,11 @@ public static class FiberExports
             (optParam & 7) != 0)
         {
             return ctx.SetReturn(FiberErrorAlignment);
+        }
+
+        if (!GuestAddress.IsRangeValid(fiber, FiberControlBlockSize))
+        {
+            return ctx.SetReturn(FiberErrorInvalid);
         }
 
         if (contextSize != 0 && contextSize < FiberContextMinimumSize)
@@ -836,6 +847,12 @@ public static class FiberExports
         if ((fiber & 7) != 0)
         {
             error = FiberErrorAlignment;
+            return false;
+        }
+
+        if (!GuestAddress.IsRangeValid(fiber, FiberControlBlockSize))
+        {
+            error = FiberErrorInvalid;
             return false;
         }
 
