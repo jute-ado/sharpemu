@@ -202,6 +202,18 @@ const ulong ProgramAddress = 0x100000;
         0xE0700004, 0x80020500, // buffer_store_dword v5, off, s[8:11], 0 offset:4
         0xBF810000,             // s_endpgm
     ]),
+    // Descriptor stride, vector index, and vector offset all contribute to a
+    // MUBUF byte address. Copy the indexed source values into a separate
+    // descriptor so the source address calculation remains observable.
+    ("exec-buffer-indexed", true, [
+        0x7E080282,             // v_mov_b32 v4, 2 (element index)
+        0x7E0A0284,             // v_mov_b32 v5, 4 (in-element byte offset)
+        0xE0302000, 0x80020604, // buffer_load_dword v6, v4, s[8:11], 0 idxen
+        0xE0303000, 0x80020704, // buffer_load_dword v7, v[4:5], s[8:11], 0 idxen offen
+        0xE0700000, 0x80030600, // buffer_store_dword v6, off, s[12:15], 0
+        0xE0700004, 0x80030700, // buffer_store_dword v7, off, s[12:15], 0 offset:4
+        0xBF810000,             // s_endpgm
+    ]),
     // A finite backward branch exercises the structured program-counter loop,
     // dynamic SCC updates, and scalar-to-vector transfer. The dispatch runner
     // has a fence deadline, so a broken termination condition fails boundedly.
@@ -475,8 +487,23 @@ foreach (var (name, expectTranslate, words) in testPrograms)
         new uint[16],
         Metadata: null,
         ComputeSystemRegisters: computeSystemRegisters);
+    var initialScalarRegisters = new uint[256];
+    if (conformanceCase?.InitialScalarRegisters is not null)
+    {
+        foreach (var (register, value) in conformanceCase.InitialScalarRegisters)
+        {
+            if (register >= initialScalarRegisters.Length)
+            {
+                throw new InvalidOperationException(
+                    $"conformance scalar register s{register} is outside the compiler range");
+            }
+
+            initialScalarRegisters[register] = value;
+        }
+    }
+
     var evaluation = new Gen5ShaderEvaluation(
-        new uint[256],
+        initialScalarRegisters,
         new uint[256],
         new Dictionary<uint, IReadOnlyList<uint>>(),
         Array.Empty<Gen5ImageBinding>(),
@@ -733,6 +760,43 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
                         secondLabels),
                 ]);
         }
+        case "exec-buffer-indexed":
+        {
+            const uint indexedValue = 0x12345678;
+            const uint offsetValue = 0x89ABCDEF;
+            initialWords[8] = indexedValue;
+            initialWords[9] = offsetValue;
+            expectedWords[8] = indexedValue;
+            expectedWords[9] = offsetValue;
+            labels[8] = "indexed source at element 2 remains unchanged";
+            labels[9] = "indexed-plus-offset source remains unchanged";
+
+            var outputInitialWords = Enumerable.Repeat(sentinel, 16).ToArray();
+            var outputExpectedWords = (uint[])outputInitialWords.Clone();
+            var outputLabels = Enumerable.Range(0, outputInitialWords.Length)
+                .Select(index => $"output trailing word [{index}] remains sentinel")
+                .ToArray();
+            outputExpectedWords[0] = indexedValue;
+            outputExpectedWords[1] = offsetValue;
+            outputLabels[0] = "idxen uses element index 2 with descriptor stride 16";
+            outputLabels[1] = "offen adds four bytes inside indexed element 2";
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                AdditionalBuffers:
+                [
+                    new SyntheticConformanceBuffer(
+                        "guest buffer 1",
+                        outputInitialWords,
+                        outputExpectedWords,
+                        outputLabels),
+                ],
+                InitialScalarRegisters: new Dictionary<uint, uint>
+                {
+                    [9] = 16u << 16,
+                });
+        }
         case "exec-scalar-loop":
             expectedWords[0] = 4;
             labels[0] = "backward scalar loop terminates after four iterations";
@@ -936,7 +1000,8 @@ internal sealed record SyntheticConformanceCase(
     uint? WorkGroupYRegister = null,
     uint? WorkGroupZRegister = null,
     uint? ThreadGroupSizeRegister = null,
-    IReadOnlyList<SyntheticConformanceBuffer>? AdditionalBuffers = null);
+    IReadOnlyList<SyntheticConformanceBuffer>? AdditionalBuffers = null,
+    IReadOnlyDictionary<uint, uint>? InitialScalarRegisters = null);
 
 internal sealed record SyntheticConformanceBuffer(
     string Name,
