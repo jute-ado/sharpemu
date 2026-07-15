@@ -117,6 +117,33 @@ public static class SaveDataExports
             var setNum = result.DirNamesNum == 0
                 ? 0
                 : Math.Min(result.DirNamesNum, entries.Count);
+            if (setNum != 0)
+            {
+                if (result.DirNamesAddress == 0)
+                {
+                    return ctx.SetReturn(OrbisSaveDataErrorParameter);
+                }
+
+                var outputCount = checked((ulong)setNum);
+                if (!IsOutputArrayRangeValid(
+                        result.DirNamesAddress,
+                        outputCount,
+                        SaveDataDirNameSize) ||
+                    (result.ParamsAddress != 0 &&
+                     !IsOutputArrayRangeValid(
+                         result.ParamsAddress,
+                         outputCount,
+                         SaveDataParamSize)) ||
+                    (result.InfosAddress != 0 &&
+                     !IsOutputArrayRangeValid(
+                         result.InfosAddress,
+                         outputCount,
+                         SaveDataSearchInfoSize)))
+                {
+                    return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+            }
+
             if (!ctx.TryWriteUInt32(resultAddress + ResultHitNumOffset, checked((uint)entries.Count)) ||
                 !ctx.TryWriteUInt32(resultAddress + ResultSetNumOffset, checked((uint)setNum)))
             {
@@ -127,11 +154,6 @@ public static class SaveDataExports
             {
                 TraceSaveData($"dir_name_search user={cond.UserId} title={titleId} hits={entries.Count} set=0 root='{root}'");
                 return ctx.SetReturn(0);
-            }
-
-            if (result.DirNamesAddress == 0)
-            {
-                return ctx.SetReturn(OrbisSaveDataErrorParameter);
             }
 
             for (var i = 0; i < setNum; i++)
@@ -483,6 +505,13 @@ public static class SaveDataExports
         BinaryPrimitives.WriteUInt64LittleEndian(info[0x00..], blocks);
         BinaryPrimitives.WriteUInt64LittleEndian(info[0x08..], blocks - usedBlocks);
         return ctx.Memory.TryWrite(address, info);
+    }
+
+    private static bool IsOutputArrayRangeValid(ulong address, ulong count, int elementSize)
+    {
+        var unsignedElementSize = checked((ulong)elementSize);
+        return count <= ulong.MaxValue / unsignedElementSize &&
+               GuestAddress.IsRangeValid(address, count * unsignedElementSize);
     }
 
     private static long GetDirectorySize(string root)
