@@ -1,4 +1,4 @@
-﻿<!--
+<!--
 Copyright (C) 2026 SharpEmu Emulator Project
 SPDX-License-Identifier: GPL-2.0-or-later
 -->
@@ -10,7 +10,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 </p>
 
 <p align="center">
-  An experimental PlayStation 5 emulator for Windows, Linux and macOS.  
+  An experimental PlayStation 5 emulator for Windows, Linux and macOS.
 </p>
 
 <p align="center">
@@ -19,145 +19,128 @@ SPDX-License-Identifier: GPL-2.0-or-later
   </a>
 </p>
 
-<p align="center">
-  <strong>Join our Discord for development updates, compatibility discussions, support, and community chat.</strong>
-</p>
+> [!NOTE]
+> SharpEmu supports Windows x64, Linux x64, and macOS x64. Apple Silicon Macs
+> can run the macOS x64 build through Rosetta 2.
 
----
-
-> [!WARNING]  
-> Currently the primary development target is Windows.
-
-> [!WARNING]  
-> SharpEmu is an experimental PS5 emulator developed from scratch in C#. The current focus is on accuracy and infrastructure setup rather than game-specific compatibility.
+> [!WARNING]
+> SharpEmu is an experimental PS5 emulator developed from scratch in C#. The
+> current focus is accuracy and infrastructure rather than game-specific hacks.
 
 ## Info
 
-SharpEmu is an emulator project currently in its early stages of development.
-
-This project is developed purely for research and educational purposes. There are no commercial goals associated with it. We enjoy learning about system architecture and reverse engineering.
-
-SharpEmu focuses exclusively on the PlayStation 5.  
-Our goal is **not** to emulate PS4 games, as there is already an excellent emulator dedicated to that platform: **ShadPS4**.
+SharpEmu is an early-stage emulator developed for research and educational
+purposes. It focuses exclusively on PlayStation 5 software; PS4 emulation is
+outside the project's scope.
 
 ## Status
 
-The emulator can currently load the `eboot.bin` of real games, execute native CPU instructions, and partially handle kernel-related functionality. However, several critical components are still missing.
+The emulator can load `eboot.bin`, ELF, SELF, PRX, and system-module images,
+execute native x86-64 guest code, dispatch a growing HLE surface, translate AGC
+shaders to SPIR-V/Vulkan, and present video for some games.
 
 Current capabilities include:
 
-* Loading `eboot.bin` and `.elf` files
-* Executing native CPU instructions
-* Reading basic game metadata (title, version, etc.)
-* Loading system modules (`prx` / `sys_module`)
-* Partial support for some kernel functions  
-* `Fiber` and `AMPR` exports
-* PlayGo scenarios
-* Initial loading game files
-* Shader/resource submits and AGC initial
-* Video outputs in some games
+- ELF/SELF loading, relocation, imports, TLS, and module initialization
+- Native CPU execution with structured trap and execution diagnostics
+- Application metadata and content-bundle inspection
+- Partial kernel, libc, Fiber, AMPR, PlayGo, audio, input, and savedata support
+- Vulkan video output on Windows and Linux and MoltenVK output on macOS
+- Windows, Linux, and macOS x64 release archives
 
-Some games have reached like `sceVideoOut` and AGC stages.
-
-Currently the project primarily targets Windows. Cross-platform support (Linux and macOS) is planned, but development is currently focused on Windows to simplify early-stage debugging and iteration.
+Platform support remains experimental. Compatibility and performance vary by
+game, operating system, and GPU driver.
 
 ## Using
 
-* Build or Publish project or download in release tab.
-* Open Powershell.
-  * Run Emulator GUI.
-  * Or command: `.\SharpEmu "eboot.bin" 2>&1 | Tee-Object -FilePath "log.txt"`
-  * For automation, add `--report-json execution.json` to atomically write a
-    versioned machine-readable result. Schema version 3 includes the execution
-    mode, loaded-image summary, ordered module-initializer outcomes, result
-    code, typed CPU session/fault objects with hex-safe addresses, diagnostics,
-    traces, application identity, an executable SHA-256 fingerprint, elapsed
-    time, build/host provenance, and any host-side error.
-    Native watchdog termination returns exit code 6 and reports
-    `EXECUTION_STALLED` instead of leaving automation without a result.
-  * Add `--load-only` to validate and map the primary executable without
-    dispatching guest code. Combined with `--report-json`, this records ELF/SELF
-    identity, generation, addresses, mapping/import/relocation counts, and
-    application metadata for safe cross-platform loader automation. Adjacent
-    PRX/SPRX modules are prepared through the same pre-execution path as a real
-    run, with module image summaries, intentional HLE-core skips, and structured
-    load failures included in the report. A path-independent bundle manifest
-    includes loaded, skipped, and failed inputs and records file sizes and
-    SHA-256 fingerprints and derives one deterministic bundle SHA-256, allowing
-    local regression baselines to identify exact content without storing game
-    files. It uses a managed inspection memory backend and does not reserve
-    executable host memory. Execution timeouts are not accepted in load-only
-    mode because no guest execution occurs.
-  * Add `--expect-bundle-sha256 HASH` to load-only mode to assert the exact
-    bundle before a test proceeds. A mismatch writes the actual manifest and
-    `BUNDLE_FINGERPRINT_MISMATCH` result to the report, then exits with code 8.
-  * On Windows, add `--timeout-seconds N` to enforce a wall-clock execution
-    budget. A timeout returns exit code 7 and reports `EXECUTION_TIMED_OUT`.
+Download the release archive for your operating system, extract it, and launch
+SharpEmu with the path to a legally obtained game's `eboot.bin`.
+
+Windows PowerShell:
+
+```powershell
+.\SharpEmu.exe "C:\path\to\game\eboot.bin" 2>&1 |
+  Tee-Object -FilePath "SharpEmu.log"
+```
+
+Linux and macOS:
+
+```bash
+chmod +x ./SharpEmu
+./SharpEmu "/path/to/game/eboot.bin" 2>&1 | tee SharpEmu.log
+```
+
+A Vulkan-capable GPU and current graphics driver are required. The macOS
+release includes MoltenVK.
+
+### Automation and inspection
+
+- Add `--report-json execution.json` to atomically write a versioned,
+  machine-readable execution result. Schema version 3 includes execution mode,
+  loaded-image and module-initializer summaries, typed CPU/fault information,
+  traces, application identity, executable SHA-256, timing, and host/build
+  provenance.
+- Add `--load-only` to validate and map the primary executable and adjacent
+  modules without dispatching guest code. The report includes a
+  path-independent bundle manifest with file sizes and SHA-256 fingerprints,
+  making local regression baselines possible without storing copyrighted game
+  files.
+- Add `--expect-bundle-sha256 HASH` in load-only mode to require an exact local
+  content bundle. A mismatch reports `BUNDLE_FINGERPRINT_MISMATCH` and exits
+  with code 8.
+- On Windows, add `--timeout-seconds N` to enforce a wall-clock execution
+  budget. A timeout reports `EXECUTION_TIMED_OUT` and exits with code 7.
+- Native watchdog termination reports `EXECUTION_STALLED` and exits with code
+  6 instead of leaving automation without a result.
 
 ## Games Tested
 
-* **Demon's Souls Remake**
-  * [Demon's Souls [PPSA01341]](https://github.com/par274/sharpemu/issues/2)
-  * Demon's Souls is now video loop. Shaders are ready to be converted to SPIR-V/Vulkan. We are continuing our work on this.
-  ![DeS videoOut submit first frame](./.github/images/des-videoout-shaders.jpg)
+- **Demon's Souls Remake**
+  - [Demon's Souls [PPSA01341]](https://github.com/par274/sharpemu/issues/2)
+  - Reaches a video loop while shader conversion work continues.
+  ![Demon's Souls video output](./.github/images/des-videoout-shaders.jpg)
+- **Poppy Playtime Chapter 1**
+  - [Poppy Playtime Chapter 1 [PPSA20591]](https://github.com/par274/sharpemu/issues/3)
+- **SILENT HILL: The Short Message**
+  - [SILENT HILL: The Short Message [PPSA10112]](https://github.com/par274/sharpemu/issues/4)
+- **Dreaming Sarah**
+  - [Dreaming Sarah [PPSA02929]](https://github.com/par274/sharpemu/issues/9)
+  - Reaches rendered gameplay on supported host/GPU configurations.
+  ![Dreaming Sarah texture rendering](./.github/images/dreaming-sarah.jpg)
 
-* **Poppy Playtime Chapter 1**
-  * [Poppy Playtime Chapter 1 [PPSA20591]](https://github.com/par274/sharpemu/issues/3)
-
-* **SILENT HILL: The Short Message**
-  * [SILENT HILL: The Short Message [PPSA10112]](https://github.com/par274/sharpemu/issues/4)
-
-* **Dreaming Sarah**
-  * [Dreaming Sarah [PPSA02929]](https://github.com/par274/sharpemu/issues/9)
-  * Real texture rendering for this game;
-  ![Splash texture](./.github/images/dreaming-sarah.jpg)
-
-
-> [!IMPORTANT]  
-> This project does **not** support or condone piracy.  
-> All games used during development and testing are dumped from consoles that we personally own.  
-> Users are expected to use legally obtained copies of their games.
+> [!IMPORTANT]
+> This project does not support or condone piracy. All development and testing
+> must use legally obtained software dumped from hardware owned by the user.
 
 ## Build
 
-1. Install the **.NET SDK**.
+1. Install the .NET SDK version specified in [`global.json`](./global.json).
 2. Clone the repository: `git clone https://github.com/par274/sharpemu.git`
-3. Open the solution file (`SharpEmu.slnx`) in **VSCode**.
-4. Build the project: `dotnet build` or `dotnet publish`
-5. Build artifacts will be located in the `artifacts` directory.
+3. Open `SharpEmu.slnx` in an IDE, or build with `dotnet build`.
+4. Build artifacts are written below the `artifacts` directory.
+
+The repository also provides `scripts/test-linux-docker.sh` for a pinned Linux
+container smoke test and `scripts/fetch-macos-moltenvk.sh` for staging the
+universal MoltenVK runtime used by macOS publishing.
 
 ## Disclaimer
 
-SharpEmu is an experimental emulator intended for research and educational purposes.
-
-This project does not contain any copyrighted system firmware, game data, or proprietary PlayStation assets.
+SharpEmu is intended for research and education. It contains no copyrighted
+system firmware, game data, or proprietary PlayStation assets.
 
 ## Special Thanks
 
-The following projects were extremely helpful during development:
-
-* **[ShadPS4](https://github.com/shadps4-emu/shadPS4)**  
-Helped with understanding the basic architecture of the PlayStation 4.
-
-* **[Kyty](https://github.com/InoriRus/Kyty)**  
-One of the few PS5 emulator projects available and very useful for studying native code execution.
-
-* **Ryujinx**  
-Provided valuable references for filesystem handling and low-level C# implementation patterns.
+- **[ShadPS4](https://github.com/shadps4-emu/shadPS4)** — architecture and
+  low-level emulation references.
+- **[Kyty](https://github.com/InoriRus/Kyty)** — PS5 native-execution research.
+- **Ryujinx** — filesystem and low-level C# implementation references.
 
 # License
 
-- [**GPL-2.0 license**](https://github.com/par274/sharpemu/blob/main/LICENSE)
+[GPL-2.0 license](https://github.com/par274/sharpemu/blob/main/LICENSE)
 
 ## Contributing
 
-Before opening an issue or pull request, please read our contribution guidelines:
-
-**[CONTRIBUTING.md](./CONTRIBUTING.md)**
-
-The guide covers:
-- Coding style and formatting
-- AI-assisted contributions
-- Pull request expectations
-- Testing guidelines
-- Legal and reverse engineering policy
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or pull
+request. It documents coding style, AI-assisted contributions, testing, pull
+request expectations, and the project's legal/reverse-engineering policy.
