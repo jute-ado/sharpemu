@@ -467,6 +467,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
     public bool TryProtect(ulong address, ulong size, GuestPageProtection protection)
     {
+        ThrowIfDisposed();
         if (size == 0)
         {
             return false;
