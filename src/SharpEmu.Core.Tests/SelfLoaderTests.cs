@@ -163,6 +163,41 @@ public sealed class SelfLoaderTests
     }
 
     [Fact]
+    public void RejectedOverflowingEntryPointDoesNotClearExistingGuestMemory()
+    {
+        var memory = CreateSentinelMemory();
+        var malformed = CreateElf();
+        BinaryPrimitives.WriteUInt64LittleEndian(malformed.AsSpan(24), ulong.MaxValue);
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            new SelfLoader().Load(malformed, memory));
+
+        Assert.Contains("entry point", exception.Message, StringComparison.OrdinalIgnoreCase);
+        AssertSentinelMemoryPreserved(memory);
+    }
+
+    [Fact]
+    public void RejectedOverflowingProcParamAddressDoesNotClearExistingGuestMemory()
+    {
+        var memory = CreateSentinelMemory();
+        var malformed = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 1);
+        Array.Resize(ref malformed, ElfHeaderSize + ProgramHeaderSize);
+        var procParamHeader = malformed.AsSpan(ElfHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            procParamHeader,
+            (uint)ProgramHeaderType.SceProcParam);
+        BinaryPrimitives.WriteUInt64LittleEndian(procParamHeader[16..], ulong.MaxValue);
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            new SelfLoader().Load(malformed, memory));
+
+        Assert.Contains("proc param", exception.Message, StringComparison.OrdinalIgnoreCase);
+        AssertSentinelMemoryPreserved(memory);
+    }
+
+    [Fact]
     public void RejectedOversizedDynamicMetadataDoesNotClearExistingGuestMemory()
     {
         var memory = new VirtualMemory();
@@ -872,6 +907,27 @@ public sealed class SelfLoaderTests
         }
 
         return code.ToArray();
+    }
+
+    private static VirtualMemory CreateSentinelMemory()
+    {
+        var memory = new VirtualMemory();
+        memory.Map(
+            virtualAddress: 0x1000,
+            memorySize: 4,
+            fileOffset: 0,
+            fileData: new byte[] { 1, 2, 3, 4 },
+            protection: ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        return memory;
+    }
+
+    private static void AssertSentinelMemoryPreserved(VirtualMemory memory)
+    {
+        var region = Assert.Single(memory.SnapshotRegions());
+        Assert.Equal(0x1000UL, region.VirtualAddress);
+        Span<byte> contents = stackalloc byte[4];
+        Assert.True(memory.TryRead(0x1000, contents));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, contents.ToArray());
     }
 
     private static byte[] CreateElf(
