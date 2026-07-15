@@ -1001,7 +1001,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		SetupExceptionHandler();
 	}
 
-	public bool TryExecute(CpuContext context, ulong entryPoint, Generation generation, IReadOnlyDictionary<ulong, string> importStubs, IReadOnlyDictionary<string, ulong> runtimeSymbols, CpuExecutionOptions executionOptions, out OrbisGen2Result result)
+	public bool TryExecute(CpuContext context, ulong entryPoint, Generation generation, IReadOnlyDictionary<ulong, string> importStubs, IReadOnlyDictionary<string, ulong> runtimeSymbols, CpuExecutionOptions executionOptions, NativeEntryReturnContract returnContract, out OrbisGen2Result result)
 	{
 		Console.Error.WriteLine("[LOADER][INFO] === Execute START ===");
 		Console.Error.WriteLine($"[LOADER][INFO] EntryPoint: 0x{entryPoint:X16}, ImportStubs: {importStubs.Count}");
@@ -1089,7 +1089,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 			CreateTlsHandler();
 			PatchTlsPatterns();
-			return ExecuteEntry(context, entryPoint, out result);
+			return ExecuteEntry(context, entryPoint, returnContract, out result);
 		}
 		catch (Exception ex)
 		{
@@ -4731,7 +4731,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 	}
 
-	private unsafe bool ExecuteEntry(CpuContext context, ulong entryPoint, out OrbisGen2Result result)
+	private unsafe bool ExecuteEntry(CpuContext context, ulong entryPoint, NativeEntryReturnContract returnContract, out OrbisGen2Result result)
 	{
 		Console.Error.WriteLine($"[LOADER][INFO] ExecuteEntry starting at 0x{entryPoint:X16}");
 		Console.Error.WriteLine($"[LOADER][INFO] RSP=0x{context[CpuRegister.Rsp]:X16}, RDI=0x{context[CpuRegister.Rdi]:X16}");
@@ -4955,7 +4955,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				RequestGuestThreadTeardown(3000);
 				return false;
 			}
-			if (num6 == 0)
+			if (num6 == 0 || returnContract == NativeEntryReturnContract.IgnoreReturnValue)
 			{
 				result = OrbisGen2Result.ORBIS_GEN2_OK;
 				LastError = null;

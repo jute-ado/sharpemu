@@ -5,6 +5,12 @@ using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Cpu.Native;
 
+public enum NativeEntryReturnContract
+{
+    RequireZero,
+    IgnoreReturnValue,
+}
+
 public interface INativeCpuBackend
 {
     string BackendName { get; }
@@ -20,5 +26,6 @@ public interface INativeCpuBackend
         IReadOnlyDictionary<ulong, string> importStubs,
         IReadOnlyDictionary<string, ulong> runtimeSymbols,
         CpuExecutionOptions executionOptions,
+        NativeEntryReturnContract returnContract,
         out OrbisGen2Result result);
 }

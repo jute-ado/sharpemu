@@ -285,6 +285,9 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                 effectiveImportStubs,
                 runtimeSymbols ?? new Dictionary<string, ulong>(StringComparer.Ordinal),
                 executionOptions,
+                frameKind == EntryFrameKind.ModuleInitializer
+                    ? NativeEntryReturnContract.IgnoreReturnValue
+                    : NativeEntryReturnContract.RequireZero,
                 out var nativeResult))
         {
             LastSessionSummary = new CpuSessionSummary(

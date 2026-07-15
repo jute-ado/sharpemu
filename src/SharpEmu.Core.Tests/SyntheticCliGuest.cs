@@ -21,7 +21,8 @@ internal static class SyntheticCliGuest
         byte[]? adjacentModuleCode = null,
         bool writeInvalidAdjacentModule = false,
         bool writeSkippedCoreModule = false,
-        string? expectedBundleSha256 = null)
+        string? expectedBundleSha256 = null,
+        byte[]? adjacentModuleImage = null)
     {
         var testDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -46,15 +47,18 @@ internal static class SyntheticCliGuest
                 Directory.CreateDirectory(systemDirectory);
                 File.WriteAllText(Path.Combine(systemDirectory, "param.json"), paramJson);
             }
-            if (adjacentModuleCode is not null || writeInvalidAdjacentModule || writeSkippedCoreModule)
+            if (adjacentModuleCode is not null ||
+                adjacentModuleImage is not null ||
+                writeInvalidAdjacentModule ||
+                writeSkippedCoreModule)
             {
                 var moduleDirectory = Path.Combine(testDirectory, "sce_module");
                 Directory.CreateDirectory(moduleDirectory);
-                if (adjacentModuleCode is not null)
+                if (adjacentModuleCode is not null || adjacentModuleImage is not null)
                 {
                     File.WriteAllBytes(
                         Path.Combine(moduleDirectory, "synthetic.prx"),
-                        SyntheticElfImage.CreateExecutable(adjacentModuleCode));
+                        adjacentModuleImage ?? SyntheticElfImage.CreateExecutable(adjacentModuleCode!));
                 }
 
                 if (writeInvalidAdjacentModule)
