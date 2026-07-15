@@ -2245,6 +2245,379 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void FormatBufferLoadR8UnormEmitsConversion()
+    {
+        var ctx = CreateContext(
+        [
+            0xE0000000u, 0x80000800u, // buffer_load_format_x v8, off, s[0:3], 0
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal("BufferLoadFormatX", program.Instructions[0].Opcode);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[0] = 0x2000_0000;
+        scalarRegisters[1] = 0x0000;
+        scalarRegisters[2] = 0x0000_0100;
+        scalarRegisters[3] = 0x0000_1000;
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    [program.Instructions[0].Pc],
+                    new byte[64]),
+            ],
+            BufferFormatBindings:
+            [
+                new Gen5BufferFormatBinding(
+                    program.Instructions[0].Pc,
+                    DataFormat: 1,
+                    NumberFormat: 0),
+            ]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ConvertUToF) >= 1);
+        Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FDiv) >= 1);
+    }
+
+    [Fact]
+    public void FormatBufferLoadR16FloatEmitsHalfConversion()
+    {
+        var ctx = CreateContext(
+        [
+            0xE0040000u, 0x80000800u, // buffer_load_format_xy v[8:9], off, s[0:3], 0
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal("BufferLoadFormatXy", program.Instructions[0].Opcode);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[0] = 0x2000_0000;
+        scalarRegisters[1] = 0x0000;
+        scalarRegisters[2] = 0x0000_0100;
+        scalarRegisters[3] = 0x0000_9000;
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    [program.Instructions[0].Pc],
+                    new byte[64]),
+            ],
+            BufferFormatBindings:
+            [
+                new Gen5BufferFormatBinding(
+                    program.Instructions[0].Pc,
+                    DataFormat: 2,
+                    NumberFormat: 7),
+            ]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FConvert) >= 1);
+    }
+
+    [Fact]
+    public void FormatBufferLoadR32FloatPassthroughNoConversion()
+    {
+        var ctx = CreateContext(
+        [
+            0xE0000000u, 0x80000800u, // buffer_load_format_x v8, off, s[0:3], 0
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[0] = 0x2000_0000;
+        scalarRegisters[1] = 0x0000;
+        scalarRegisters[2] = 0x0000_0100;
+        scalarRegisters[3] = 0x0001_6000;
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    [program.Instructions[0].Pc],
+                    new byte[64]),
+            ],
+            BufferFormatBindings:
+            [
+                new Gen5BufferFormatBinding(
+                    program.Instructions[0].Pc,
+                    DataFormat: 4,
+                    NumberFormat: 7),
+            ]);
+        var baseline = CountSpirvOpcodes(
+            CompileWithFormatBinding(
+                state, evaluation, dataFormat: 0, numberFormat: 0));
+        var withFormat = CountSpirvOpcodes(
+            CompileWithFormatBinding(
+                state, evaluation, dataFormat: 4, numberFormat: 7));
+        Assert.Equal(baseline, withFormat);
+    }
+
+    [Fact]
+    public void FormatBufferStoreR8UnormEmitsPackConversion()
+    {
+        var ctx = CreateContext(
+        [
+            0xE0100000u, 0x80000800u, // buffer_store_format_x v8, off, s[0:3], 0
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal("BufferStoreFormatX", program.Instructions[0].Opcode);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[0] = 0x2000_0000;
+        scalarRegisters[1] = 0x0000;
+        scalarRegisters[2] = 0x0000_0100;
+        scalarRegisters[3] = 0x0000_1000;
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    [program.Instructions[0].Pc],
+                    new byte[64]),
+            ],
+            BufferFormatBindings:
+            [
+                new Gen5BufferFormatBinding(
+                    program.Instructions[0].Pc,
+                    DataFormat: 1,
+                    NumberFormat: 0),
+            ]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ConvertFToU) >= 1);
+    }
+
+    [Fact]
+    public void FormatBufferLoadRGBA8UnormEmitsFourConversions()
+    {
+        var ctx = CreateContext(
+        [
+            0xE00C0000u, 0x80000800u, // buffer_load_format_xyzw v[8:11], off, s[0:3], 0
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal("BufferLoadFormatXyzw", program.Instructions[0].Opcode);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[0] = 0x2000_0000;
+        scalarRegisters[1] = 0x0000;
+        scalarRegisters[2] = 0x0000_0100;
+        scalarRegisters[3] = 0x0000_1000;
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    [program.Instructions[0].Pc],
+                    new byte[64]),
+            ],
+            BufferFormatBindings:
+            [
+                new Gen5BufferFormatBinding(
+                    program.Instructions[0].Pc,
+                    DataFormat: 10,
+                    NumberFormat: 0),
+            ]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ConvertUToF) >= 4);
+    }
+
+    [Fact]
+    public void FormatBufferLoadA2B10G10R10UnormEmitsConversion()
+    {
+        var ctx = CreateContext(
+        [
+            0xE00C0000u, 0x80000800u, // buffer_load_format_xyzw v[8:11], off, s[0:3], 0
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[0] = 0x2000_0000;
+        scalarRegisters[1] = 0x0000;
+        scalarRegisters[2] = 0x0000_0100;
+        scalarRegisters[3] = 0x0000_8000;
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    [program.Instructions[0].Pc],
+                    new byte[64]),
+            ],
+            BufferFormatBindings:
+            [
+                new Gen5BufferFormatBinding(
+                    program.Instructions[0].Pc,
+                    DataFormat: 8,
+                    NumberFormat: 0),
+            ]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ConvertUToF) >= 1);
+    }
+
+    private byte[] CompileWithFormatBinding(
+        Gen5ShaderState state,
+        Gen5ShaderEvaluation evaluation,
+        uint dataFormat,
+        uint numberFormat)
+    {
+        Gen5ShaderEvaluation evalWithFormat = evaluation with
+        {
+            BufferFormatBindings =
+                new List<Gen5BufferFormatBinding>
+                {
+                    new Gen5BufferFormatBinding(
+                        state.Program.Instructions[0].Pc,
+                        dataFormat,
+                        numberFormat),
+                }
+        };
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evalWithFormat,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        return shader.Spirv;
+    }
+
+    private static int CountSpirvOpcodes(byte[] spirv)
+    {
+        var count = 0;
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var wordCount = BitConverter.ToUInt32(spirv, offset) >> 16;
+            if (wordCount == 0)
+            {
+                break;
+            }
+
+            count++;
+            offset += checked((int)wordCount * sizeof(uint));
+        }
+
+        return count;
+    }
+
+    [Fact]
     public void CompilesBufferD16MemoryOperationsToSpirv()
     {
         var ctx = CreateContext(

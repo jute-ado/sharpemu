@@ -273,6 +273,11 @@ public sealed record Gen5GlobalMemoryBinding(
     IReadOnlyList<uint> InstructionPcs,
     byte[] Data);
 
+public sealed record Gen5BufferFormatBinding(
+    uint Pc,
+    uint DataFormat,
+    uint NumberFormat);
+
 public sealed record Gen5VertexInputBinding(
     uint Pc,
     uint Location,
@@ -292,7 +297,8 @@ public sealed record Gen5ShaderEvaluation(
     IReadOnlyList<Gen5GlobalMemoryBinding> GlobalMemoryBindings,
     Gen5ComputeSystemRegisters? ComputeSystemRegisters = null,
     IReadOnlySet<uint>? RuntimeScalarRegisters = null,
-    IReadOnlyList<Gen5VertexInputBinding>? VertexInputs = null);
+    IReadOnlyList<Gen5VertexInputBinding>? VertexInputs = null,
+    IReadOnlyList<Gen5BufferFormatBinding>? BufferFormatBindings = null);
 
 public sealed record Gen5ShaderInstruction(
     uint Pc,
