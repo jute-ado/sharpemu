@@ -333,6 +333,24 @@ const ulong ProgramAddress = 0x100000;
         0xE0700008, 0x80020600, // buffer_store_dword v6, off, s[8:11], 0 offset:8
         0xBF810000,             // s_endpgm
     ]),
+    // INC wraps at its operand and DEC wraps at zero. Together these four
+    // operations exercise both branches of each compare-exchange loop while
+    // GLC exposes the value observed by every successful exchange.
+    ("exec-buffer-inc-dec", true, [
+        0x7E0802FF, 0x00000005, // v_mov_b32 v4, 5 (INC limit)
+        0xE0F04000, 0x80020400, // buffer_atomic_inc v4, off, s[8:11], 0 glc
+        0xE0700004, 0x80020400, // buffer_store_dword v4, off, s[8:11], 0 offset:4
+        0x7E0A02FF, 0x00000003, // v_mov_b32 v5, 3 (INC limit)
+        0xE0F04000, 0x80020500, // buffer_atomic_inc v5, off, s[8:11], 0 glc
+        0xE0700008, 0x80020500, // buffer_store_dword v5, off, s[8:11], 0 offset:8
+        0x7E0C02FF, 0x00000003, // v_mov_b32 v6, 3 (DEC limit)
+        0xE0F44000, 0x80020600, // buffer_atomic_dec v6, off, s[8:11], 0 glc
+        0xE070000C, 0x80020600, // buffer_store_dword v6, off, s[8:11], 0 offset:12
+        0x7E0E02FF, 0x00000003, // v_mov_b32 v7, 3 (DEC limit)
+        0xE0F44000, 0x80020700, // buffer_atomic_dec v7, off, s[8:11], 0 glc
+        0xE0700010, 0x80020700, // buffer_store_dword v7, off, s[8:11], 0 offset:16
+        0xBF810000,             // s_endpgm
+    ]),
     // Four invocations publish their local IDs to distinct LDS slots, meet at
     // a workgroup barrier, then read the slot owned by the opposite lane.
     ("exec-lds-barrier", true, [
@@ -807,6 +825,19 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
             labels[0] = "matching compare/swap updates the target value";
             labels[1] = "successful GLC compare/swap returns the old value";
             labels[2] = "failed GLC compare/swap returns the mismatched value";
+            break;
+        case "exec-buffer-inc-dec":
+            initialWords[0] = 5;
+            expectedWords[0] = 3;
+            expectedWords[1] = 5;
+            expectedWords[2] = 0;
+            expectedWords[3] = 1;
+            expectedWords[4] = 0;
+            labels[0] = "INC and DEC boundary sequence ends at its DEC limit";
+            labels[1] = "INC at its limit returns the limit before wrapping to zero";
+            labels[2] = "INC below its limit returns zero before incrementing";
+            labels[3] = "DEC inside its range returns one before decrementing";
+            labels[4] = "DEC at zero returns zero before wrapping to its limit";
             break;
         case "exec-lds-barrier":
             for (uint index = 0; index < 4; index++)
