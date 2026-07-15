@@ -8,6 +8,8 @@ namespace SharpEmu.Libs.Agc;
 internal static class Gen5ShaderMetadataReader
 {
     private const ulong ShaderUserDataOffset = 0x08;
+    private const ulong ShaderHeaderSize = 0x10;
+    private const ulong UserDataSize = 0x36;
     private const int ResourceClassCount = 4;
     private const int MaxMetadataEntries = 4096;
 
@@ -17,8 +19,10 @@ internal static class Gen5ShaderMetadataReader
         out Gen5ShaderMetadata metadata)
     {
         metadata = default!;
-        if (!ctx.TryReadUInt64(shaderHeaderAddress + ShaderUserDataOffset, out var userDataAddress) ||
+        if (!GuestAddress.IsRangeValid(shaderHeaderAddress, ShaderHeaderSize) ||
+            !ctx.TryReadUInt64(shaderHeaderAddress + ShaderUserDataOffset, out var userDataAddress) ||
             userDataAddress == 0 ||
+            !GuestAddress.IsRangeValid(userDataAddress, UserDataSize) ||
             !ctx.TryReadUInt64(userDataAddress, out var directResourceOffsetsAddress))
         {
             return false;
@@ -58,7 +62,10 @@ internal static class Gen5ShaderMetadataReader
         var directResources = new Dictionary<uint, uint>();
         if (directResourceCount != 0)
         {
-            if (directResourceOffsetsAddress == 0)
+            if (directResourceOffsetsAddress == 0 ||
+                !GuestAddress.IsRangeValid(
+                    directResourceOffsetsAddress,
+                    (ulong)directResourceCount * sizeof(ushort)))
             {
                 return false;
             }
@@ -86,7 +93,10 @@ internal static class Gen5ShaderMetadataReader
                 continue;
             }
 
-            if (resourceOffsets[resourceClass] == 0)
+            if (resourceOffsets[resourceClass] == 0 ||
+                !GuestAddress.IsRangeValid(
+                    resourceOffsets[resourceClass],
+                    (ulong)count * sizeof(ushort)))
             {
                 return false;
             }
