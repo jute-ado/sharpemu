@@ -9,8 +9,8 @@
 // resulting vertex, pixel, and compute SPIR-V blobs to disk. The blobs can then be
 // checked with spirv-val / spirv-dis.
 //
-// Programs that contain buffer_store_dword automatically get a single
-// global-memory binding covering every store, which the emitter exposes as
+// Programs that contain buffer memory operations automatically get a single
+// global-memory binding covering every load/store, which the emitter exposes as
 // guestBuffers[0] (descriptor set 0, binding 0).
 //
 // Each program carries an expectation: ExpectTranslate=true programs must
@@ -181,6 +181,18 @@ const ulong ProgramAddress = 0x100000;
         0xE0700014, 0x80020100, // buffer_store_dword v1, off, s[8:11], 0 offset:20
         0xBF810000,             // s_endpgm
     ]),
+    // Read initialized descriptor memory, feed it through an ALU operation,
+    // and copy a two-dword vector load elsewhere in the same buffer.
+    ("exec-buffer-load", true, [
+        0x7E0202FF, 0x00000004, // v_mov_b32 v1, 4
+        0xE0300000, 0x80020200, // buffer_load_dword v2, off, s[8:11], 0
+        0xD77F0003, 0x00020302, // v_add_nc_i32 v3, v2, v1
+        0xE0700004, 0x80020300, // buffer_store_dword v3, off, s[8:11], 0 offset:4
+        0xE0340008, 0x80020400, // buffer_load_dwordx2 v[4:5], off, s[8:11], 0 offset:8
+        0xE0700010, 0x80020400, // buffer_store_dword v4, off, s[8:11], 0 offset:16
+        0xE0700014, 0x80020500, // buffer_store_dword v5, off, s[8:11], 0 offset:20
+        0xBF810000,             // s_endpgm
+    ]),
 ];
 
 var assembly = typeof(CxaGuardExports).Assembly;
@@ -262,33 +274,35 @@ foreach (var (name, expectTranslate, words) in testPrograms)
         continue;
     }
 
-    // Buffer stores need a global-memory binding; the emitter resolves them by
-    // instruction PC, so collect store PCs from the decoded program itself.
+    // Buffer memory operations need a global-memory binding; the emitter
+    // resolves them by instruction PC, so collect every buffer PC from the
+    // decoded program itself.
     var programObj = decodeArgs[2]!;
     var instructions = (System.Collections.IEnumerable)programObj
         .GetType().GetProperty("Instructions")!.GetValue(programObj)!;
-    var storePcs = new List<uint>();
+    var bufferPcs = new List<uint>();
     foreach (var instruction in instructions)
     {
         var op = (string)instruction.GetType().GetProperty("Opcode")!.GetValue(instruction)!;
-        if (op.StartsWith("BufferStore", StringComparison.Ordinal))
+        if (op.StartsWith("Buffer", StringComparison.Ordinal) ||
+            op.StartsWith("TBuffer", StringComparison.Ordinal))
         {
-            storePcs.Add((uint)instruction.GetType().GetProperty("Pc")!.GetValue(instruction)!);
+            bufferPcs.Add((uint)instruction.GetType().GetProperty("Pc")!.GetValue(instruction)!);
         }
     }
 
     // The binding's scalar base (8 -> s[8:11]) must match the srsrc field of
     // the hand-assembled buffer_store words, and the 64-byte backing store
-    // must cover every hand-assembled store offset.
-    var globalBindings = Array.CreateInstance(globalBindingType, storePcs.Count > 0 ? 1 : 0);
-    if (storePcs.Count > 0)
+    // must cover every hand-assembled load/store offset.
+    var globalBindings = Array.CreateInstance(globalBindingType, bufferPcs.Count > 0 ? 1 : 0);
+    if (bufferPcs.Count > 0)
     {
         globalBindings.SetValue(
             Activator.CreateInstance(
                 globalBindingType,
                 8u,
                 0UL,
-                (IReadOnlyList<uint>)storePcs,
+                (IReadOnlyList<uint>)bufferPcs,
                 new byte[64]),
             0);
     }
@@ -541,6 +555,23 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
             labels[3] = "execution continues after conditional fallthrough";
             labels[4] = "s_branch suppresses skipped store";
             labels[5] = "execution resumes at unconditional target";
+            break;
+        case "exec-buffer-load":
+            initialWords[0] = 0x7FFFFFFE;
+            initialWords[2] = 0x01234567;
+            initialWords[3] = 0x89ABCDEF;
+            expectedWords[0] = initialWords[0];
+            expectedWords[1] = 0x80000002;
+            expectedWords[2] = initialWords[2];
+            expectedWords[3] = initialWords[3];
+            expectedWords[4] = initialWords[2];
+            expectedWords[5] = initialWords[3];
+            labels[0] = "buffer_load_dword source remains unchanged";
+            labels[1] = "loaded dword plus 4 wraps across signed boundary";
+            labels[2] = "buffer_load_dwordx2 low source remains unchanged";
+            labels[3] = "buffer_load_dwordx2 high source remains unchanged";
+            labels[4] = "buffer_load_dwordx2 low result copied to offset 16";
+            labels[5] = "buffer_load_dwordx2 high result copied to offset 20";
             break;
         default:
             return null;
