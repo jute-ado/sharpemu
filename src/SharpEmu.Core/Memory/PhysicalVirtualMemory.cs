@@ -1162,6 +1162,8 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             return false;
         }
 
+        var readSucceeded = false;
+        var protectionsRestored = false;
         try
         {
             fixed (byte* destPtr = destination)
@@ -1172,13 +1174,14 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                     (nuint)destination.Length,
                     (nuint)destination.Length);
             }
-
-            return true;
+            readSucceeded = true;
         }
         finally
         {
-            RestorePageProtections(touchedPages);
+            protectionsRestored = RestorePageProtections(touchedPages);
         }
+
+        return readSucceeded && protectionsRestored;
     }
 
     private bool TryCompareExclusive(ulong virtualAddress, ReadOnlySpan<byte> expected)
@@ -1192,14 +1195,18 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             return false;
         }
 
+        var matches = false;
+        var protectionsRestored = false;
         try
         {
-            return new ReadOnlySpan<byte>((void*)virtualAddress, expected.Length).SequenceEqual(expected);
+            matches = new ReadOnlySpan<byte>((void*)virtualAddress, expected.Length).SequenceEqual(expected);
         }
         finally
         {
-            RestorePageProtections(touchedPages);
+            protectionsRestored = RestorePageProtections(touchedPages);
         }
+
+        return protectionsRestored && matches;
     }
 
     private bool TryWriteExclusive(ulong virtualAddress, ReadOnlySpan<byte> source)
@@ -1214,6 +1221,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         }
 
         var memoryModified = false;
+        var protectionsRestored = false;
         try
         {
             memoryModified = true;
@@ -1225,17 +1233,17 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                     (nuint)source.Length,
                     (nuint)source.Length);
             }
-
-            return true;
         }
         finally
         {
-            RestorePageProtections(touchedPages);
+            protectionsRestored = RestorePageProtections(touchedPages);
             if (memoryModified)
             {
                 FlushModifiedExecutablePages(touchedPages);
             }
         }
+
+        return protectionsRestored;
     }
 
     private bool TryPrepareRangeForExclusiveAccess(
@@ -1258,7 +1266,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             var length = GetRangeLengthInRegion(address, remaining, region);
             if (!EnsureRangeCommitted(address, length, region))
             {
-                RestorePageProtections(touchedPages);
+                _ = RestorePageProtections(touchedPages);
                 touchedPages.Clear();
                 return false;
             }
@@ -1270,7 +1278,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             {
                 if (!TryTemporarilyProtectForAccess(address, length, region, out var regionPages))
                 {
-                    RestorePageProtections(touchedPages);
+                    _ = RestorePageProtections(touchedPages);
                     touchedPages.Clear();
                     return false;
                 }
@@ -1690,7 +1698,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         {
             if (!_hostMemory.Protect(pageAddress, PageSize, temporaryProtection, out var oldProtection))
             {
-                RestorePageProtections(touchedPages);
+                _ = RestorePageProtections(touchedPages);
                 touchedPages.Clear();
                 return false;
             }
@@ -1701,12 +1709,19 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         return true;
     }
 
-    private void RestorePageProtections(List<(ulong Address, uint Protection)> touchedPages)
+    private bool RestorePageProtections(List<(ulong Address, uint Protection)> touchedPages)
     {
-        foreach (var (pageAddress, protection) in touchedPages)
+        var restored = true;
+        for (var index = touchedPages.Count - 1; index >= 0; index--)
         {
-            _hostMemory.ProtectRaw(pageAddress, PageSize, protection, out _);
+            var (pageAddress, protection) = touchedPages[index];
+            if (!_hostMemory.ProtectRaw(pageAddress, PageSize, protection, out _))
+            {
+                restored = false;
+            }
         }
+
+        return restored;
     }
 
     private void FlushModifiedExecutablePages(

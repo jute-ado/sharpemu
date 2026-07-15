@@ -4,6 +4,7 @@
 using System.Runtime.InteropServices;
 using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
+using SharpEmu.HLE.Host;
 using Xunit;
 
 namespace SharpEmu.Core.Tests;
@@ -178,6 +179,31 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Equal(PageExecuteRead, QueryPage(address).Protect);
         Assert.False(memory.TryCompare(address, [1, 2, 3, 5]));
         Assert.Equal(PageExecuteRead, QueryPage(address).Protect);
+    }
+
+    [WindowsX64Fact]
+    public void TemporaryAccessOperationsReportProtectionRestoreFailure()
+    {
+        var hostMemory = new FailingRawProtectionHostMemory(HostPlatform.Current.Memory);
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+        var address = memory.AllocateAt(0, 0x1000, executable: true);
+        byte[] payload = [1, 2, 3, 4];
+        memory.Map(
+            address,
+            0x1000,
+            fileOffset: 0,
+            fileData: payload,
+            ProgramHeaderFlags.Execute);
+        hostMemory.FailNextRawProtection = true;
+
+        Assert.False(memory.TryCompare(address, payload));
+        Span<byte> read = stackalloc byte[payload.Length];
+        hostMemory.FailNextRawProtection = true;
+        Assert.False(memory.TryRead(address, read));
+        Assert.Equal(payload, read.ToArray());
+        hostMemory.FailNextRawProtection = true;
+        Assert.False(memory.TryWrite(address, [5, 6, 7, 8]));
+        Assert.Equal(3, hostMemory.FailedRawProtectionCalls);
     }
 
     [WindowsX64Fact]
@@ -448,6 +474,54 @@ public sealed class PhysicalVirtualMemoryTests
         public uint Protect;
         public uint Type;
         public uint Alignment2;
+    }
+
+    private sealed class FailingRawProtectionHostMemory(IHostMemory inner) : IHostMemory
+    {
+        public bool FailNextRawProtection { get; set; }
+
+        public int FailedRawProtectionCalls { get; private set; }
+
+        public ulong Allocate(ulong desiredAddress, ulong size, HostPageProtection protection) =>
+            inner.Allocate(desiredAddress, size, protection);
+
+        public ulong Reserve(ulong desiredAddress, ulong size, HostPageProtection protection) =>
+            inner.Reserve(desiredAddress, size, protection);
+
+        public bool Commit(ulong address, ulong size, HostPageProtection protection) =>
+            inner.Commit(address, size, protection);
+
+        public bool Free(ulong address) => inner.Free(address);
+
+        public bool Protect(
+            ulong address,
+            ulong size,
+            HostPageProtection protection,
+            out uint rawOldProtection) =>
+            inner.Protect(address, size, protection, out rawOldProtection);
+
+        public bool ProtectRaw(
+            ulong address,
+            ulong size,
+            uint rawProtection,
+            out uint rawOldProtection)
+        {
+            if (FailNextRawProtection)
+            {
+                FailNextRawProtection = false;
+                FailedRawProtectionCalls++;
+                rawOldProtection = 0;
+                return false;
+            }
+
+            return inner.ProtectRaw(address, size, rawProtection, out rawOldProtection);
+        }
+
+        public bool Query(ulong address, out HostRegionInfo info) =>
+            inner.Query(address, out info);
+
+        public void FlushInstructionCache(ulong address, ulong size) =>
+            inner.FlushInstructionCache(address, size);
     }
 
     [Theory]
