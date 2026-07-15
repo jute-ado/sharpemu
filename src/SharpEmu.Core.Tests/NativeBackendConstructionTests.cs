@@ -122,6 +122,38 @@ public sealed class NativeBackendConstructionTests
         Assert.Equal(expectedRemovedHandlers, faultHandling.RemovedHandlers.Count);
     }
 
+    [Theory]
+    [InlineData(3, 0, "Failed to create unresolved return stub", 2)]
+    [InlineData(int.MaxValue, 1, "Failed to create unresolved return stub", 3)]
+    [InlineData(int.MaxValue, 2, "Failed to create guest return stub", 4)]
+    public void ConstructorRejectsRequiredReturnStubFailureWithoutLeakingHostMemory(
+        int failedAllocation,
+        int failedProtection,
+        string expectedMessage,
+        int expectedFreedAllocations)
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(failedAllocation, failedProtection);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        DirectExecutionBackend? backend = null;
+
+        var constructionException = Record.Exception(() =>
+            backend = new DirectExecutionBackend(
+                new ModuleManager(),
+                platform,
+                new StubFaultHandling(succeed: true)));
+        backend?.Dispose();
+
+        var outOfMemory = Assert.IsType<OutOfMemoryException>(constructionException);
+        Assert.Equal(expectedMessage, outOfMemory.Message);
+        Assert.Equal([17u, 23u], threading.FreedSlots);
+        Assert.Equal(expectedFreedAllocations, memory.FreedAddresses.Count);
+        Assert.Empty(memory.ActiveAllocations);
+    }
+
     private sealed class StubHostPlatform(
         IHostThreading threading,
         IHostMemory? memory = null,
@@ -222,9 +254,12 @@ public sealed class NativeBackendConstructionTests
         }
     }
 
-    private sealed unsafe class AllocatingHostMemory(int failedAllocation) : IHostMemory
+    private sealed unsafe class AllocatingHostMemory(
+        int failedAllocation,
+        int failedProtection = 0) : IHostMemory
     {
         private int _allocationCount;
+        private int _protectionCount;
 
         public HashSet<ulong> ActiveAllocations { get; } = [];
 
@@ -265,7 +300,7 @@ public sealed class NativeBackendConstructionTests
             out uint rawOldProtection)
         {
             rawOldProtection = 0;
-            return true;
+            return ++_protectionCount != failedProtection;
         }
 
         public bool ProtectRaw(

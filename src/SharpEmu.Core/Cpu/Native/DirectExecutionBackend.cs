@@ -979,10 +979,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				throw new OutOfMemoryException("Failed to allocate host stack slot storage");
 			}
 			_unresolvedReturnStub = CreateUnresolvedReturnStub();
+			if (_unresolvedReturnStub == 0)
+			{
+				throw new OutOfMemoryException("Failed to create unresolved return stub");
+			}
 			_guestReturnStub = CreateGuestReturnStub();
 			if (_guestReturnStub == 0)
 			{
-				throw new OutOfMemoryException("Failed to allocate guest return stub");
+				throw new OutOfMemoryException("Failed to create guest return stub");
 			}
 			SetupExceptionHandler();
 		}
@@ -2147,6 +2151,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		if (!_hostMemory.Protect((ulong)ptr, 4096u, HostPageProtection.ReadExecute, out num))
 		{
 			Console.Error.WriteLine($"[LOADER][ERROR] VirtualProtect failed for unresolved return stub at 0x{(nint)ptr:X16}");
+			_hostMemory.Free((ulong)ptr);
 			return 0;
 		}
 		_hostMemory.FlushInstructionCache((ulong)ptr, 16u);
@@ -2213,6 +2218,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		if (!_hostMemory.Protect((ulong)ptr, stubSize, HostPageProtection.ReadExecute, out oldProtect))
 		{
 			Console.Error.WriteLine($"[LOADER][ERROR] VirtualProtect failed for guest return stub at 0x{(nint)ptr:X16}");
+			_hostMemory.Free((ulong)ptr);
 			return 0;
 		}
 		_hostMemory.FlushInstructionCache((ulong)ptr, (nuint)offset);
