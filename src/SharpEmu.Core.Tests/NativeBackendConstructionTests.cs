@@ -1311,6 +1311,7 @@ public sealed class NativeBackendConstructionTests
         int throwingQuery = 0,
         ulong contiguousAllocationCapacity = 0) : IHostMemory
     {
+        private const ulong HostPageSize = 4096;
         private int _allocationCount;
         private int _protectionCount;
         private int _rawProtectionCount;
@@ -1344,8 +1345,7 @@ public sealed class NativeBackendConstructionTests
             {
                 if (_contiguousAllocationBase == 0)
                 {
-                    _contiguousAllocationBase = (ulong)NativeMemory.AllocZeroed(
-                        (nuint)contiguousAllocationCapacity);
+                    _contiguousAllocationBase = AllocatePageAligned(contiguousAllocationCapacity);
                     if (_contiguousAllocationBase == 0)
                     {
                         return 0;
@@ -1365,7 +1365,7 @@ public sealed class NativeBackendConstructionTests
             }
             else
             {
-                address = (ulong)NativeMemory.AllocZeroed((nuint)size);
+                address = AllocatePageAligned(size);
             }
             ActiveAllocations.Add(address);
             AllocationCalls.Add((address, size, protection));
@@ -1386,15 +1386,41 @@ public sealed class NativeBackendConstructionTests
             FreedAddresses.Add(address);
             if (contiguousAllocationCapacity == 0)
             {
-                NativeMemory.Free((void*)address);
+                NativeMemory.AlignedFree((void*)address);
             }
             else if (ActiveAllocations.Count == 0)
             {
-                NativeMemory.Free((void*)_contiguousAllocationBase);
+                NativeMemory.AlignedFree((void*)_contiguousAllocationBase);
                 _contiguousAllocationBase = 0;
                 _contiguousAllocationOffset = 0;
             }
             return true;
+        }
+
+        private static ulong AllocatePageAligned(ulong size)
+        {
+            if (size == 0 ||
+                size > ulong.MaxValue - (HostPageSize - 1))
+            {
+                return 0;
+            }
+
+            var alignedSize = (size + (HostPageSize - 1)) & ~(HostPageSize - 1);
+            if (alignedSize > (ulong)nuint.MaxValue)
+            {
+                return 0;
+            }
+
+            var memory = NativeMemory.AlignedAlloc(
+                checked((nuint)alignedSize),
+                checked((nuint)HostPageSize));
+            if (memory == null)
+            {
+                return 0;
+            }
+
+            NativeMemory.Clear(memory, checked((nuint)alignedSize));
+            return (ulong)memory;
         }
 
         public bool Protect(
