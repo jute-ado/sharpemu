@@ -800,22 +800,37 @@ internal static unsafe class VulkanVideoPresenter
     {
         var format = (dataFormat, numberType) switch
         {
+            (1, 0) or (36, 0) => Format.R8Unorm,
+            (2, 7) => Format.R16Sfloat,
+            (3, 0) => Format.R8G8Unorm,
             (4, 4) => Format.R32Uint,
             (4, 5) => Format.R32Sint,
-            (4, 7) => Format.R32Sfloat,
+            (4, 7) or (4, 0) => Format.R32Sfloat,
+            (5, 0) => Format.R16G16Unorm,
             (5, 4) => Format.R16G16Uint,
             (5, 5) => Format.R16G16Sint,
             (5, 7) => Format.R16G16Sfloat,
+            (6, 7) or (7, 0) => Format.B10G11R11UfloatPack32,
             (9, _) => Format.A2R10G10B10UnormPack32,
             (10, 4) => Format.R8G8B8A8Uint,
             (10, 5) => Format.R8G8B8A8Sint,
             (10, _) => Format.R8G8B8A8Unorm,
+            (11, 4) => Format.R32G32Uint,
+            (11, 5) => Format.R32G32Sint,
+            (11, 7) => Format.R32G32Sfloat,
+            (12, 0) => Format.R16G16B16A16Unorm,
             (12, 4) => Format.R16G16B16A16Uint,
             (12, 5) => Format.R16G16B16A16Sint,
             (12, 7) => Format.R16G16B16A16Sfloat,
+            (13, 4) => Format.R32G32B32A32Uint,
+            (13, 5) => Format.R32G32B32A32Sint,
+            (13, _) => Format.R32G32B32A32Sfloat,
+            (14, 4) => Format.R32G32B32A32Uint,
+            (14, 5) => Format.R32G32B32A32Sint,
+            (14, _) => Format.R32G32B32A32Sfloat,
             (GuestFormatR32Uint, _) or (20, 0) => Format.R32Uint,
             (GuestFormatR32Sint, _) => Format.R32Sint,
-            (GuestFormatR32Sfloat, _) or (29, 0) or (4, 0) => Format.R32Sfloat,
+            (GuestFormatR32Sfloat, _) or (29, 0) => Format.R32Sfloat,
             (GuestFormatR16G16Uint, _) => Format.R16G16Uint,
             (GuestFormatR16G16Sint, _) => Format.R16G16Sint,
             (GuestFormatR16G16Sfloat, _) => Format.R16G16Sfloat,
@@ -823,16 +838,11 @@ internal static unsafe class VulkanVideoPresenter
             (GuestFormatR8G8B8A8Sint, _) => Format.R8G8B8A8Sint,
             (GuestFormatR16G16B16A16Uint, _) => Format.R16G16B16A16Uint,
             (GuestFormatR16G16B16A16Sint, _) => Format.R16G16B16A16Sint,
-            (1, 0) or (36, 0) => Format.R8Unorm,
+            (22, _) => Format.R16G16B16A16Sfloat,
             (49, 0) => Format.R8Uint,
-            (3, 0) => Format.R8G8Unorm,
-            (5, 0) => Format.R16G16Unorm,
-            (7, 0) => Format.B10G11R11UfloatPack32,
-            (12, 0) => Format.R16G16B16A16Unorm,
-            (13, 0) or (14, 0) => Format.R32G32B32A32Sfloat,
-            (22, 0) or (71, 0) => Format.R16G16B16A16Sfloat,
-            (56, 0) or (62, 0) or (64, 0) => Format.R8G8B8A8Unorm,
-            (75, 0) => Format.R32G32Sfloat,
+            (56, _) or (62, _) or (64, _) => Format.R8G8B8A8Unorm,
+            (71, _) => Format.R16G16B16A16Sfloat,
+            (75, _) => Format.R32G32Sfloat,
             _ => Format.Undefined,
         };
 
@@ -845,9 +855,11 @@ internal static unsafe class VulkanVideoPresenter
         var outputKind = format switch
         {
             Format.R8Uint or Format.R32Uint or Format.R16G16Uint or
-                Format.R8G8B8A8Uint or Format.R16G16B16A16Uint => Gen5PixelOutputKind.Uint,
+                Format.R8G8B8A8Uint or Format.R16G16B16A16Uint or
+                Format.R32G32Uint or Format.R32G32B32A32Uint => Gen5PixelOutputKind.Uint,
             Format.R32Sint or Format.R16G16Sint or Format.R8G8B8A8Sint or
-                Format.R16G16B16A16Sint => Gen5PixelOutputKind.Sint,
+                Format.R16G16B16A16Sint or
+                Format.R32G32Sint or Format.R32G32B32A32Sint => Gen5PixelOutputKind.Sint,
             _ => Gen5PixelOutputKind.Float,
         };
         result = new VulkanRenderTargetFormat(format, outputKind);
