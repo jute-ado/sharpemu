@@ -234,6 +234,21 @@ const ulong ProgramAddress = 0x100000;
         0xE0701000, 0x80020708, // buffer_store_dword v7, v8, s[8:11], 0 offen
         0xBF810000,             // s_endpgm
     ]),
+    // A 2x2 local size dispatched over a 2x2 workgroup grid combines local
+    // invocation X/Y (v0/v1) with workgroup X/Y (s0/s1) into a 4x4 index.
+    ("exec-dispatch-2d", true, [
+        0x7E080200,             // v_mov_b32 v4, s0 (workgroup X)
+        0x7E0A0201,             // v_mov_b32 v5, s1 (workgroup Y)
+        0x340E0881,             // v_lshlrev_b32 v7, 1, v4
+        0xD77F0007, 0x00020107, // v_add_nc_i32 v7, v7, v0 (global X)
+        0x34100A81,             // v_lshlrev_b32 v8, 1, v5
+        0xD77F0008, 0x00020308, // v_add_nc_i32 v8, v8, v1 (global Y)
+        0x34121082,             // v_lshlrev_b32 v9, 2, v8
+        0xD77F0009, 0x00020F09, // v_add_nc_i32 v9, v9, v7 (linear index)
+        0x34141282,             // v_lshlrev_b32 v10, 2, v9 (byte address)
+        0xE0701000, 0x8002090A, // buffer_store_dword v9, v10, s[8:11], 0 offen
+        0xBF810000,             // s_endpgm
+    ]),
     // Sixteen invocations contend on one storage-buffer counter. A plain
     // load/add/store would race; the deterministic final value proves that
     // buffer_atomic_add is emitted and synchronized as an actual atomic.
@@ -407,13 +422,17 @@ foreach (var (name, expectTranslate, words) in testPrograms)
     }
 
     var conformanceCase = CreateConformanceCase(name);
-    var computeSystemRegisters = conformanceCase?.WorkGroupXRegister is { } workGroupX
+    var computeSystemRegisters = conformanceCase is { } computeCase &&
+        (computeCase.WorkGroupXRegister is not null ||
+         computeCase.WorkGroupYRegister is not null ||
+         computeCase.WorkGroupZRegister is not null ||
+         computeCase.ThreadGroupSizeRegister is not null)
         ? Activator.CreateInstance(
             computeSystemRegistersType,
-            workGroupX,
-            null,
-            null,
-            conformanceCase.ThreadGroupSizeRegister)
+            computeCase.WorkGroupXRegister,
+            computeCase.WorkGroupYRegister,
+            computeCase.WorkGroupZRegister,
+            computeCase.ThreadGroupSizeRegister)
         : null;
 
     var state = Activator.CreateInstance(
@@ -743,6 +762,23 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
                 GroupCountX: 2,
                 WorkGroupXRegister: 0,
                 ThreadGroupSizeRegister: 1);
+        case "exec-dispatch-2d":
+            for (uint index = 0; index < 16; index++)
+            {
+                expectedWords[index] = index;
+                labels[index] = $"2D global invocation {index % 4},{index / 4} writes slot {index}";
+            }
+
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                LocalSizeX: 2,
+                LocalSizeY: 2,
+                GroupCountX: 2,
+                GroupCountY: 2,
+                WorkGroupXRegister: 0,
+                WorkGroupYRegister: 1);
         case "exec-buffer-atomic":
             initialWords[0] = 0;
             expectedWords[0] = 16;
@@ -804,6 +840,8 @@ internal sealed record SyntheticConformanceCase(
     uint GroupCountY = 1,
     uint GroupCountZ = 1,
     uint? WorkGroupXRegister = null,
+    uint? WorkGroupYRegister = null,
+    uint? WorkGroupZRegister = null,
     uint? ThreadGroupSizeRegister = null);
 
 internal sealed class FakeMemory : ICpuMemory
