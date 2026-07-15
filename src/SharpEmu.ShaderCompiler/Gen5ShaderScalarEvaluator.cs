@@ -100,6 +100,7 @@ public static class Gen5ShaderScalarEvaluator
         var globalMemoryBindings = new List<Gen5GlobalMemoryBinding>();
         var globalMemoryByAddress = new Dictionary<(uint ScalarAddress, ulong BaseAddress), Gen5GlobalMemoryBinding>();
         var vertexInputBindings = new List<Gen5VertexInputBinding>();
+        var bufferFormatBindings = new List<Gen5BufferFormatBinding>();
         var runtimeScalarRegisters = CollectRuntimeScalarRegisters(state.Program);
         var scalarRegisterSnapshots = new Dictionary<uint, IReadOnlyList<uint>>();
         var scalarConditionCode = false;
@@ -353,6 +354,16 @@ public static class Gen5ShaderScalarEvaluator
                     continue;
                 }
 
+                if (IsFormatBufferInstruction(instruction.Opcode) &&
+                    bufferDescriptor.DataFormat != 0)
+                {
+                    bufferFormatBindings.Add(
+                        new Gen5BufferFormatBinding(
+                            instruction.Pc,
+                            bufferDescriptor.DataFormat,
+                            bufferDescriptor.NumberFormat));
+                }
+
                 var key = (bufferMemory.ScalarResource, bufferDescriptor.BaseAddress);
                 if (globalMemoryByAddress.TryGetValue(key, out var existingBinding))
                 {
@@ -453,7 +464,8 @@ public static class Gen5ShaderScalarEvaluator
             globalMemoryBindings,
             state.ComputeSystemRegisters,
             runtimeScalarRegisters,
-            vertexInputBindings);
+            vertexInputBindings,
+            bufferFormatBindings);
         return true;
     }
 
@@ -503,6 +515,12 @@ public static class Gen5ShaderScalarEvaluator
         descriptor.Stride != 0 &&
         (instruction.Opcode.StartsWith("BufferLoadFormat", StringComparison.Ordinal) ||
          instruction.Opcode.StartsWith("TBufferLoadFormat", StringComparison.Ordinal));
+
+    private static bool IsFormatBufferInstruction(string opcode) =>
+        opcode.StartsWith("BufferLoadFormat", StringComparison.Ordinal) ||
+        opcode.StartsWith("TBufferLoadFormat", StringComparison.Ordinal) ||
+        opcode.StartsWith("BufferStoreFormat", StringComparison.Ordinal) ||
+        opcode.StartsWith("TBufferStoreFormat", StringComparison.Ordinal);
 
     private static HashSet<uint> CollectRuntimeScalarRegisters(Gen5ShaderProgram program)
     {

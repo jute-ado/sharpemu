@@ -157,6 +157,7 @@ public static partial class Gen5SpirvTranslator
         private readonly List<SpirvImageResource> _imageResources = [];
         private readonly Dictionary<uint, int> _imageBindingByPc = [];
         private readonly Dictionary<uint, int> _bufferBindingByPc = [];
+        private readonly Dictionary<uint, (uint DataFormat, uint NumberFormat)> _formatBindingByPc = [];
         private uint _voidType;
         private uint _boolType;
         private uint _uintType;
@@ -533,6 +534,16 @@ public static partial class Gen5SpirvTranslator
                 foreach (var pc in _evaluation.GlobalMemoryBindings[index].InstructionPcs)
                 {
                     _bufferBindingByPc.TryAdd(pc, _globalBufferBase + index);
+                }
+            }
+
+            if (_evaluation.BufferFormatBindings is { } formatBindings)
+            {
+                foreach (var binding in formatBindings)
+                {
+                    _formatBindingByPc.TryAdd(
+                        binding.Pc,
+                        (binding.DataFormat, binding.NumberFormat));
                 }
             }
 
@@ -2847,19 +2858,60 @@ public static partial class Gen5SpirvTranslator
             if (instruction.Opcode.StartsWith("BufferStoreDword", StringComparison.Ordinal) ||
                 IsFormatBufferStore(instruction.Opcode))
             {
-                EmitExecConditional(() =>
+                if (IsFormatBufferStore(instruction.Opcode) &&
+                    _formatBindingByPc.TryGetValue(instruction.Pc, out var formatInfo) &&
+                    !IsPassthroughFormat(formatInfo.DataFormat, formatInfo.NumberFormat))
                 {
-                    for (uint index = 0; index < control.DwordCount; index++)
+                    EmitExecConditional(() =>
                     {
-                        var address = index == 0
-                            ? dwordAddress
-                            : IAdd(dwordAddress, UInt(index));
-                        StoreBufferWord(
-                            bindingIndex,
-                            address,
-                            LoadV(control.VectorData + index));
-                    }
-                });
+                        var rawDwordCount = FormatRawDwordCount(
+                            formatInfo.DataFormat,
+                            formatInfo.NumberFormat,
+                            control.DwordCount);
+                        for (uint rawIndex = 0; rawIndex < rawDwordCount; rawIndex++)
+                        {
+                            var rawValue = UInt(0);
+                            var cpd = FormatComponentsPerDword(formatInfo.DataFormat);
+                            for (uint ci = 0; ci < cpd; ci++)
+                            {
+                                var componentIndex = rawIndex * cpd + ci;
+                                if (componentIndex >= control.DwordCount)
+                                {
+                                    break;
+                                }
+
+                                var componentVal = LoadV(control.VectorData + componentIndex);
+                                var packed = PackComponentForStore(
+                                    componentVal,
+                                    ci,
+                                    formatInfo.DataFormat,
+                                    formatInfo.NumberFormat);
+                                rawValue = BitwiseOr(rawValue, packed);
+                            }
+
+                            var address = rawIndex == 0
+                                ? dwordAddress
+                                : IAdd(dwordAddress, UInt(rawIndex));
+                            StoreBufferWord(bindingIndex, address, rawValue);
+                        }
+                    });
+                }
+                else
+                {
+                    EmitExecConditional(() =>
+                    {
+                        for (uint index = 0; index < control.DwordCount; index++)
+                        {
+                            var address = index == 0
+                                ? dwordAddress
+                                : IAdd(dwordAddress, UInt(index));
+                            StoreBufferWord(
+                                bindingIndex,
+                                address,
+                                LoadV(control.VectorData + index));
+                        }
+                    });
+                }
 
                 return true;
             }
@@ -2869,6 +2921,42 @@ public static partial class Gen5SpirvTranslator
             {
                 error = $"unsupported buffer opcode {instruction.Opcode}";
                 return false;
+            }
+
+            if (IsFormatBufferLoad(instruction.Opcode) &&
+                _formatBindingByPc.TryGetValue(instruction.Pc, out var loadFormatInfo) &&
+                !IsPassthroughFormat(loadFormatInfo.DataFormat, loadFormatInfo.NumberFormat))
+            {
+                var rawDwordCount = FormatRawDwordCount(
+                    loadFormatInfo.DataFormat,
+                    loadFormatInfo.NumberFormat,
+                    control.DwordCount);
+                for (uint rawIndex = 0; rawIndex < rawDwordCount; rawIndex++)
+                {
+                    var address = rawIndex == 0
+                        ? dwordAddress
+                        : IAdd(dwordAddress, UInt(rawIndex));
+                    var rawDword = LoadBufferWord(bindingIndex, address);
+                    var cpd = FormatComponentsPerDword(loadFormatInfo.DataFormat);
+                    for (uint ci = 0; ci < cpd; ci++)
+                    {
+                        var componentIndex = rawIndex * cpd + ci;
+                        if (componentIndex >= control.DwordCount)
+                        {
+                            break;
+                        }
+
+                        StoreV(
+                            control.VectorData + componentIndex,
+                            ConvertComponent(
+                                rawDword,
+                                ci,
+                                loadFormatInfo.DataFormat,
+                                loadFormatInfo.NumberFormat));
+                    }
+                }
+
+                return true;
             }
 
             for (uint index = 0; index < control.DwordCount; index++)
@@ -3160,6 +3248,1081 @@ public static partial class Gen5SpirvTranslator
         private static bool IsFormatBufferStore(string opcode) =>
             opcode.StartsWith("BufferStoreFormat", StringComparison.Ordinal) ||
             opcode.StartsWith("TBufferStoreFormat", StringComparison.Ordinal);
+
+        private static uint FormatComponentsPerDword(uint dataFormat) =>
+            dataFormat switch
+            {
+                1 => 4,
+                2 => 2,
+                3 => 2,
+                4 => 1,
+                5 => 2,
+                7 => 3,
+                8 or 9 => 4,
+                10 => 4,
+                11 or 13 => 1,
+                12 => 2,
+                14 => 1,
+                16 or 17 or 18 or 19 => 4,
+                34 => 3,
+                _ => 1,
+            };
+
+        private static uint FormatByteCount(
+            uint dataFormat,
+            uint numberFormat) =>
+            dataFormat switch
+            {
+                1 => 1,
+                2 => 2,
+                3 => 1,
+                4 => 4,
+                5 => 2,
+                6 or 7 => 4,
+                8 or 9 => 4,
+                10 => 1,
+                11 => 4,
+                12 => 2,
+                13 => 4,
+                14 => 4,
+                16 or 17 or 18 or 19 => 2,
+                34 => 4,
+                _ => 4,
+            };
+
+        private static uint FormatRawDwordCount(
+            uint dataFormat,
+            uint numberFormat,
+            uint componentCount)
+        {
+            if (dataFormat is 4 or 11 or 13 or 14 or 6 or 7 or 34)
+            {
+                return componentCount;
+            }
+
+            var bytesPerComponent = FormatByteCount(dataFormat, numberFormat);
+            var totalBytes = componentCount * bytesPerComponent;
+            return (totalBytes + 3) / 4;
+        }
+
+        private bool IsPassthroughFormat(
+            uint dataFormat,
+            uint numberFormat) =>
+            dataFormat is 4 && numberFormat is 4 or 5 or 7;
+
+        private bool IsFloat16Format(uint dataFormat, uint numberFormat) =>
+            numberFormat == 7 &&
+            dataFormat is 2 or 5 or 12;
+
+        private bool IsUintFormat(uint dataFormat, uint numberFormat) =>
+            numberFormat == 4 ||
+            (dataFormat is 4 or 11 or 13 or 14 && numberFormat is 4);
+
+        private bool IsSintFormat(uint dataFormat, uint numberFormat) =>
+            numberFormat == 5;
+
+        private uint ExtractByteComponent(uint rawDword, uint byteIndex) =>
+            BitwiseAnd(
+                ShiftRightLogical(rawDword, UInt(byteIndex * 8)),
+                UInt(0xFF));
+
+        private uint ExtractShortComponent(uint rawDword, uint shortIndex) =>
+            BitwiseAnd(
+                ShiftRightLogical(rawDword, UInt(shortIndex * 16)),
+                UInt(0xFFFF));
+
+        private uint ConvertByteToUnorm(uint byteValue)
+        {
+            var floatValue = _module.AddInstruction(
+                SpirvOp.ConvertUToF,
+                _floatType,
+                byteValue);
+            var divisor = Float(255.0f);
+            return Bitcast(
+                _uintType,
+                _module.AddInstruction(
+                    SpirvOp.FDiv,
+                    _floatType,
+                    floatValue,
+                    divisor));
+        }
+
+        private uint ConvertByteToSnorm(uint byteValue)
+        {
+            var signedValue = _module.AddInstruction(
+                SpirvOp.SConvert,
+                _intType,
+                _module.AddInstruction(
+                    SpirvOp.BitFieldSExtract,
+                    _intType,
+                    Bitcast(_intType, byteValue),
+                    UInt(0),
+                    UInt(8)));
+            var floatValue = _module.AddInstruction(
+                SpirvOp.SConvert,
+                    _floatType,
+                    signedValue);
+            var divisor = Float(127.0f);
+            return Bitcast(
+                _uintType,
+                _module.AddInstruction(
+                    SpirvOp.FDiv,
+                    _floatType,
+                    floatValue,
+                    divisor));
+        }
+
+        private uint ConvertShortToHalfFloat(uint shortValue)
+        {
+            var halfType = _module.TypeFloat(16);
+            var halfValue = Bitcast(halfType, shortValue);
+            return Bitcast(
+                _uintType,
+                _module.AddInstruction(
+                    SpirvOp.FConvert,
+                    _floatType,
+                    halfValue));
+        }
+
+        private uint ConvertShortToUnorm(uint shortValue)
+        {
+            var floatValue = _module.AddInstruction(
+                SpirvOp.ConvertUToF,
+                _floatType,
+                shortValue);
+            var divisor = Float(65535.0f);
+            return Bitcast(
+                _uintType,
+                _module.AddInstruction(
+                    SpirvOp.FDiv,
+                    _floatType,
+                    floatValue,
+                    divisor));
+        }
+
+        private uint ConvertShortToSnorm(uint shortValue)
+        {
+            var signedValue = Bitcast(
+                _intType,
+                _module.AddInstruction(
+                    SpirvOp.BitFieldSExtract,
+                    _intType,
+                    Bitcast(_intType, shortValue),
+                    UInt(0),
+                    UInt(16)));
+            var floatValue = _module.AddInstruction(
+                SpirvOp.SConvert,
+                    _floatType,
+                    signedValue);
+            var divisor = Float(32767.0f);
+            return Bitcast(
+                _uintType,
+                _module.AddInstruction(
+                    SpirvOp.FDiv,
+                    _floatType,
+                    floatValue,
+                    divisor));
+        }
+
+        private uint ConvertComponent(
+            uint rawDword,
+            uint componentIndex,
+            uint dataFormat,
+            uint numberFormat)
+        {
+            if (IsPassthroughFormat(dataFormat, numberFormat))
+            {
+                return rawDword;
+            }
+
+            if (dataFormat is 1 or 3 or 10)
+            {
+                var byteIndex = componentIndex % FormatComponentsPerDword(dataFormat);
+                var byteVal = ExtractByteComponent(rawDword, byteIndex);
+                return numberFormat switch
+                {
+                    0 or 6 => ConvertByteToUnorm(byteVal),
+                    1 => ConvertByteToSnorm(byteVal),
+                    4 => byteVal,
+                    5 => Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.BitFieldSExtract,
+                            _intType,
+                            Bitcast(_intType, byteVal),
+                            UInt(8))),
+                    9 => ConvertByteToUnorm(byteVal),
+                    _ => byteVal,
+                };
+            }
+
+            if (dataFormat is 2 && numberFormat is 7)
+            {
+                return ConvertShortToHalfFloat(rawDword);
+            }
+
+            if (dataFormat is 2)
+            {
+                var shortVal = ExtractShortComponent(rawDword, componentIndex);
+                return numberFormat switch
+                {
+                    0 or 6 => ConvertShortToUnorm(shortVal),
+                    1 => ConvertShortToSnorm(shortVal),
+                    4 => shortVal,
+                    5 => Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.BitFieldSExtract,
+                            _intType,
+                            Bitcast(_intType, shortVal),
+                            UInt(16))),
+                    _ => shortVal,
+                };
+            }
+
+            if (dataFormat is 5)
+            {
+                var shortVal = ExtractShortComponent(rawDword, componentIndex % 2);
+                return numberFormat switch
+                {
+                    7 => ConvertShortToHalfFloat(shortVal),
+                    0 or 6 => ConvertShortToUnorm(shortVal),
+                    1 => ConvertShortToSnorm(shortVal),
+                    2 => Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.ConvertUToF,
+                            _floatType,
+                            shortVal)),
+                    3 => Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.SConvert,
+                            _floatType,
+                            Bitcast(_intType, shortVal))),
+                    4 => shortVal,
+                    5 => Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.BitFieldSExtract,
+                            _intType,
+                            Bitcast(_intType, shortVal),
+                            UInt(16))),
+                    _ => shortVal,
+                };
+            }
+
+            if (dataFormat is 12)
+            {
+                var shortIndex = componentIndex / 2;
+                var shortInDword = componentIndex % 2;
+                var localRaw = shortIndex == 0
+                    ? rawDword
+                    : rawDword;
+                var shortVal = ExtractShortComponent(localRaw, shortInDword);
+                return numberFormat switch
+                {
+                    7 => ConvertShortToHalfFloat(shortVal),
+                    0 or 6 => ConvertShortToUnorm(shortVal),
+                    1 => ConvertShortToSnorm(shortVal),
+                    4 => shortVal,
+                    5 => Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.BitFieldSExtract,
+                            _intType,
+                            Bitcast(_intType, shortVal),
+                            UInt(16))),
+                    _ => shortVal,
+                };
+            }
+
+            if (dataFormat is 11)
+            {
+                return numberFormat switch
+                {
+                    7 => Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.Bitcast,
+                            _floatType,
+                            rawDword)),
+                    4 => rawDword,
+                    5 => Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.SConvert,
+                            _intType,
+                            Bitcast(_intType, rawDword))),
+                    _ => rawDword,
+                };
+            }
+
+            if (dataFormat is 13)
+            {
+                return numberFormat switch
+                {
+                    7 => Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.Bitcast,
+                            _floatType,
+                            rawDword)),
+                    4 => rawDword,
+                    5 => Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.SConvert,
+                            _intType,
+                            Bitcast(_intType, rawDword))),
+                    _ => rawDword,
+                };
+            }
+
+            if (dataFormat is 14)
+            {
+                return numberFormat switch
+                {
+                    7 => Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.Bitcast,
+                            _floatType,
+                            rawDword)),
+                    4 => rawDword,
+                    5 => Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.SConvert,
+                            _intType,
+                            Bitcast(_intType, rawDword))),
+                    _ => rawDword,
+                };
+            }
+
+            if (dataFormat is 8)
+            {
+                return componentIndex switch
+                {
+                    0 => ExtractAndConvert10Bit(rawDword, 0, numberFormat),
+                    1 => ExtractAndConvert10Bit(rawDword, 10, numberFormat),
+                    2 => ExtractAndConvert10Bit(rawDword, 20, numberFormat),
+                    3 => ExtractAndConvert2Bit(rawDword, 30, numberFormat),
+                    _ => rawDword,
+                };
+            }
+
+            if (dataFormat is 9)
+            {
+                return componentIndex switch
+                {
+                    0 => ExtractAndConvert10Bit(rawDword, 20, numberFormat),
+                    1 => ExtractAndConvert10Bit(rawDword, 10, numberFormat),
+                    2 => ExtractAndConvert10Bit(rawDword, 0, numberFormat),
+                    3 => ExtractAndConvert2Bit(rawDword, 30, numberFormat),
+                    _ => rawDword,
+                };
+            }
+
+            if (dataFormat is 7)
+            {
+                return componentIndex switch
+                {
+                    0 => ExtractAndConvert11Bit(rawDword, 0),
+                    1 => ExtractAndConvert11Bit(rawDword, 11),
+                    2 => ExtractAndConvert11Bit(rawDword, 22),
+                    _ => rawDword,
+                };
+            }
+
+            if (dataFormat is 16)
+            {
+                return componentIndex switch
+                {
+                    0 => ExtractAndConvert565Component(rawDword, 11, 5, numberFormat),
+                    1 => ExtractAndConvert565Component(rawDword, 5, 6, numberFormat),
+                    2 => ExtractAndConvert565Component(rawDword, 0, 5, numberFormat),
+                    _ => rawDword,
+                };
+            }
+
+            if (dataFormat is 17)
+            {
+                return componentIndex switch
+                {
+                    0 => ExtractAndConvert5551Component(rawDword, 11, 5, numberFormat),
+                    1 => ExtractAndConvert5551Component(rawDword, 6, 5, numberFormat),
+                    2 => ExtractAndConvert5551Component(rawDword, 1, 5, numberFormat),
+                    3 => ExtractAndConvert1Bit(rawDword, 0),
+                    _ => rawDword,
+                };
+            }
+
+            return rawDword;
+        }
+
+        private uint ExtractAndConvert10Bit(
+            uint rawDword,
+            uint bitOffset,
+            uint numberFormat)
+        {
+            var raw10 = BitwiseAnd(
+                ShiftRightLogical(rawDword, UInt(bitOffset)),
+                UInt(0x3FF));
+            return numberFormat switch
+            {
+                0 or 6 =>
+                    Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.FDiv,
+                            _floatType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertUToF,
+                                _floatType,
+                                raw10),
+                            Float(1023.0f))),
+                1 =>
+                    Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.FDiv,
+                            _floatType,
+                            _module.AddInstruction(
+                                SpirvOp.SConvert,
+                                _floatType,
+                                Bitcast(
+                                    _intType,
+                                    _module.AddInstruction(
+                                        SpirvOp.BitFieldSExtract,
+                                        _intType,
+                                        Bitcast(_intType, raw10),
+                                        UInt(0),
+                                        UInt(10)))),
+                            Float(511.0f))),
+                2 =>
+                    Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.ConvertUToF,
+                            _floatType,
+                            raw10)),
+                3 =>
+                    Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.SConvert,
+                            _floatType,
+                            Bitcast(_intType, raw10))),
+                4 => raw10,
+                5 => Bitcast(
+                    _uintType,
+                    _module.AddInstruction(
+                        SpirvOp.BitFieldSExtract,
+                        _intType,
+                        Bitcast(_intType, raw10),
+                        UInt(0),
+                        UInt(10))),
+                _ => raw10,
+            };
+        }
+
+        private uint ExtractAndConvert11Bit(
+            uint rawDword,
+            uint bitOffset)
+        {
+            var raw11 = BitwiseAnd(
+                ShiftRightLogical(rawDword, UInt(bitOffset)),
+                UInt(0x7FF));
+            var float11Type = _module.TypeFloat(16);
+            var float11 = _module.AddInstruction(
+                SpirvOp.ExtInst,
+                float11Type,
+                _glsl,
+                64,
+                raw11);
+            return Bitcast(
+                _uintType,
+                _module.AddInstruction(
+                    SpirvOp.FConvert,
+                    _floatType,
+                    float11));
+        }
+
+        private uint ExtractAndConvert2Bit(
+            uint rawDword,
+            uint bitOffset,
+            uint numberFormat)
+        {
+            var raw2 = BitwiseAnd(
+                ShiftRightLogical(rawDword, UInt(bitOffset)),
+                UInt(0x3));
+            return numberFormat switch
+            {
+                0 or 6 =>
+                    Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.FDiv,
+                            _floatType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertUToF,
+                                _floatType,
+                                raw2),
+                            Float(3.0f))),
+                4 => raw2,
+                _ =>
+                    Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.FDiv,
+                            _floatType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertUToF,
+                                _floatType,
+                                raw2),
+                            Float(3.0f))),
+            };
+        }
+
+        private uint ExtractAndConvert1Bit(uint rawDword, uint bitOffset)
+        {
+            var raw1 = BitwiseAnd(
+                ShiftRightLogical(rawDword, UInt(bitOffset)),
+                UInt(1));
+            return Bitcast(
+                _uintType,
+                _module.AddInstruction(
+                    SpirvOp.FDiv,
+                    _floatType,
+                    _module.AddInstruction(
+                        SpirvOp.ConvertUToF,
+                        _floatType,
+                        raw1),
+                    Float(1.0f)));
+        }
+
+        private uint ExtractAndConvert565Component(
+            uint rawDword,
+            uint bitOffset,
+            uint bitCount,
+            uint numberFormat)
+        {
+            var rawVal = BitwiseAnd(
+                ShiftRightLogical(rawDword, UInt(bitOffset)),
+                bitCount == 6 ? UInt(0x3F) : UInt(0x1F));
+            var maxVal = bitCount == 6 ? 63.0f : 31.0f;
+            return numberFormat switch
+            {
+                0 or 6 =>
+                    Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.FDiv,
+                            _floatType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertUToF,
+                                _floatType,
+                                rawVal),
+                            Float(maxVal))),
+                4 => rawVal,
+                _ =>
+                    Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.FDiv,
+                            _floatType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertUToF,
+                                _floatType,
+                                rawVal),
+                            Float(maxVal))),
+            };
+        }
+
+        private uint ExtractAndConvert5551Component(
+            uint rawDword,
+            uint bitOffset,
+            uint bitCount,
+            uint numberFormat)
+        {
+            var rawVal = BitwiseAnd(
+                ShiftRightLogical(rawDword, UInt(bitOffset)),
+                UInt(0x1F));
+            return numberFormat switch
+            {
+                0 or 6 =>
+                    Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.FDiv,
+                            _floatType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertUToF,
+                                _floatType,
+                                rawVal),
+                            Float(31.0f))),
+                4 => rawVal,
+                _ =>
+                    Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.FDiv,
+                            _floatType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertUToF,
+                                _floatType,
+                                rawVal),
+                            Float(31.0f))),
+            };
+        }
+
+        private uint PackComponentForStore(
+            uint componentValue,
+            uint componentIndex,
+            uint dataFormat,
+            uint numberFormat)
+        {
+            if (IsPassthroughFormat(dataFormat, numberFormat))
+            {
+                return componentValue;
+            }
+
+            if (dataFormat is 1 or 3 or 10)
+            {
+                var byteIndex = componentIndex % FormatComponentsPerDword(dataFormat);
+                var packed = PackByteForStore(componentValue, numberFormat);
+                return ShiftLeftLogical(packed, UInt(byteIndex * 8));
+            }
+
+            if (dataFormat is 2)
+            {
+                var shortValue = PackShortForStore(componentValue, numberFormat);
+                return ShiftLeftLogical(shortValue, UInt(componentIndex * 16));
+            }
+
+            if (dataFormat is 5)
+            {
+                var shortValue = PackShortForStore(componentValue, numberFormat);
+                return ShiftLeftLogical(shortValue, UInt((componentIndex % 2) * 16));
+            }
+
+            if (dataFormat is 12)
+            {
+                var shortValue = PackShortForStore(componentValue, numberFormat);
+                return ShiftLeftLogical(
+                    shortValue,
+                    UInt((componentIndex % 2) * 16));
+            }
+
+            if (dataFormat is 11 or 13 or 14)
+            {
+                return PackDwordForStore(componentValue, numberFormat);
+            }
+
+            if (dataFormat is 8)
+            {
+                return componentIndex switch
+                {
+                    0 => ShiftLeftLogical(
+                        Pack10BitForStore(componentValue, numberFormat),
+                        UInt(0)),
+                    1 => ShiftLeftLogical(
+                        Pack10BitForStore(componentValue, numberFormat),
+                        UInt(10)),
+                    2 => ShiftLeftLogical(
+                        Pack10BitForStore(componentValue, numberFormat),
+                        UInt(20)),
+                    3 => ShiftLeftLogical(
+                        Pack2BitForStore(componentValue, numberFormat),
+                        UInt(30)),
+                    _ => componentValue,
+                };
+            }
+
+            if (dataFormat is 9)
+            {
+                return componentIndex switch
+                {
+                    0 => ShiftLeftLogical(
+                        Pack10BitForStore(componentValue, numberFormat),
+                        UInt(20)),
+                    1 => ShiftLeftLogical(
+                        Pack10BitForStore(componentValue, numberFormat),
+                        UInt(10)),
+                    2 => ShiftLeftLogical(
+                        Pack10BitForStore(componentValue, numberFormat),
+                        UInt(0)),
+                    3 => ShiftLeftLogical(
+                        Pack2BitForStore(componentValue, numberFormat),
+                        UInt(30)),
+                    _ => componentValue,
+                };
+            }
+
+            if (dataFormat is 7)
+            {
+                return componentIndex switch
+                {
+                    0 => ShiftLeftLogical(
+                        Pack11BitFloatForStore(componentValue),
+                        UInt(0)),
+                    1 => ShiftLeftLogical(
+                        Pack11BitFloatForStore(componentValue),
+                        UInt(11)),
+                    2 => ShiftLeftLogical(
+                        Pack11BitFloatForStore(componentValue),
+                        UInt(22)),
+                    _ => componentValue,
+                };
+            }
+
+            if (dataFormat is 16)
+            {
+                return componentIndex switch
+                {
+                    0 => ShiftLeftLogical(
+                        Pack565ComponentForStore(componentValue, 5, numberFormat),
+                        UInt(11)),
+                    1 => ShiftLeftLogical(
+                        Pack565ComponentForStore(componentValue, 6, numberFormat),
+                        UInt(5)),
+                    2 => ShiftLeftLogical(
+                        Pack565ComponentForStore(componentValue, 5, numberFormat),
+                        UInt(0)),
+                    _ => componentValue,
+                };
+            }
+
+            if (dataFormat is 17)
+            {
+                return componentIndex switch
+                {
+                    0 => ShiftLeftLogical(
+                        Pack5551ComponentForStore(componentValue, numberFormat),
+                        UInt(11)),
+                    1 => ShiftLeftLogical(
+                        Pack5551ComponentForStore(componentValue, numberFormat),
+                        UInt(6)),
+                    2 => ShiftLeftLogical(
+                        Pack5551ComponentForStore(componentValue, numberFormat),
+                        UInt(1)),
+                    3 => ShiftLeftLogical(
+                        Pack1BitForStore(componentValue),
+                        UInt(0)),
+                    _ => componentValue,
+                };
+            }
+
+            return componentValue;
+        }
+
+        private uint PackByteForStore(uint componentValue, uint numberFormat)
+        {
+            var floatVal = Bitcast(_floatType, componentValue);
+            return numberFormat switch
+            {
+                0 or 6 =>
+                    BitwiseAnd(
+                        _module.AddInstruction(
+                            SpirvOp.UConvert,
+                            _uintType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertFToU,
+                                _uintType,
+                                ClampFloat01(floatVal))),
+                        UInt(0xFF)),
+                1 =>
+                    BitwiseAnd(
+                        _module.AddInstruction(
+                            SpirvOp.BitFieldSExtract,
+                            _intType,
+                            _module.AddInstruction(
+                                SpirvOp.SConvert,
+                                _intType,
+                                _module.AddInstruction(
+                                    SpirvOp.ConvertFToS,
+                                    _intType,
+                                    ClampFloatN11(floatVal))),
+                            UInt(0),
+                            UInt(8)),
+                        UInt(0xFF)),
+                4 => BitwiseAnd(componentValue, UInt(0xFF)),
+                5 => BitwiseAnd(
+                    _module.AddInstruction(
+                        SpirvOp.BitFieldSExtract,
+                        _intType,
+                        Bitcast(_intType, componentValue),
+                        UInt(0),
+                        UInt(8)),
+                    UInt(0xFF)),
+                _ => BitwiseAnd(componentValue, UInt(0xFF)),
+            };
+        }
+
+        private uint PackShortForStore(uint componentValue, uint numberFormat)
+        {
+            var floatVal = Bitcast(_floatType, componentValue);
+            return numberFormat switch
+            {
+                7 =>
+                    Bitcast(
+                        _uintType,
+                        _module.AddInstruction(
+                            SpirvOp.FConvert,
+                            _module.TypeFloat(16),
+                            floatVal)),
+                0 or 6 =>
+                    BitwiseAnd(
+                        _module.AddInstruction(
+                            SpirvOp.UConvert,
+                            _uintType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertFToU,
+                                _uintType,
+                                ClampFloat01(floatVal))),
+                        UInt(0xFFFF)),
+                1 =>
+                    BitwiseAnd(
+                        _module.AddInstruction(
+                            SpirvOp.BitFieldSExtract,
+                            _intType,
+                            _module.AddInstruction(
+                                SpirvOp.SConvert,
+                                _intType,
+                                _module.AddInstruction(
+                                    SpirvOp.ConvertFToS,
+                                    _intType,
+                                    ClampFloatN11(floatVal))),
+                            UInt(0),
+                            UInt(16)),
+                        UInt(0xFFFF)),
+                4 => BitwiseAnd(componentValue, UInt(0xFFFF)),
+                5 => BitwiseAnd(
+                    _module.AddInstruction(
+                        SpirvOp.BitFieldSExtract,
+                        _intType,
+                        Bitcast(_intType, componentValue),
+                        UInt(0),
+                        UInt(16)),
+                    UInt(0xFFFF)),
+                _ => BitwiseAnd(componentValue, UInt(0xFFFF)),
+            };
+        }
+
+        private uint PackDwordForStore(uint componentValue, uint numberFormat) =>
+            numberFormat switch
+            {
+                7 => Bitcast(
+                    _uintType,
+                    _module.AddInstruction(
+                        SpirvOp.Bitcast,
+                        _floatType,
+                        componentValue)),
+                4 => componentValue,
+                5 => Bitcast(
+                    _uintType,
+                    _module.AddInstruction(
+                        SpirvOp.SConvert,
+                        _intType,
+                        Bitcast(_intType, componentValue))),
+                _ => componentValue,
+            };
+
+        private uint Pack10BitForStore(uint componentValue, uint numberFormat)
+        {
+            var floatVal = Bitcast(_floatType, componentValue);
+            return numberFormat switch
+            {
+                0 or 6 =>
+                    BitwiseAnd(
+                        _module.AddInstruction(
+                            SpirvOp.UConvert,
+                            _uintType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertFToU,
+                                _uintType,
+                                _module.AddInstruction(
+                                    SpirvOp.FMul,
+                                    _floatType,
+                                    ClampFloat01(floatVal),
+                                    Float(1023.0f)))),
+                        UInt(0x3FF)),
+                1 =>
+                    BitwiseAnd(
+                        _module.AddInstruction(
+                            SpirvOp.UConvert,
+                            _uintType,
+                            _module.AddInstruction(
+                                SpirvOp.SConvert,
+                                _intType,
+                                _module.AddInstruction(
+                                    SpirvOp.ConvertFToS,
+                                    _intType,
+                                    _module.AddInstruction(
+                                        SpirvOp.FMul,
+                                        _floatType,
+                                        ClampFloatN11(floatVal),
+                                        Float(511.0f))))),
+                        UInt(0x3FF)),
+                4 => BitwiseAnd(componentValue, UInt(0x3FF)),
+                5 => BitwiseAnd(
+                    _module.AddInstruction(
+                        SpirvOp.BitFieldSExtract,
+                        _intType,
+                        Bitcast(_intType, componentValue),
+                        UInt(0),
+                        UInt(10)),
+                    UInt(0x3FF)),
+                _ => BitwiseAnd(componentValue, UInt(0x3FF)),
+            };
+        }
+
+        private uint Pack2BitForStore(uint componentValue, uint numberFormat)
+        {
+            var floatVal = Bitcast(_floatType, componentValue);
+            return numberFormat switch
+            {
+                0 or 6 =>
+                    BitwiseAnd(
+                        _module.AddInstruction(
+                            SpirvOp.UConvert,
+                            _uintType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertFToU,
+                                _uintType,
+                                _module.AddInstruction(
+                                    SpirvOp.FMul,
+                                    _floatType,
+                                    ClampFloat01(floatVal),
+                                    Float(3.0f)))),
+                        UInt(0x3)),
+                4 => BitwiseAnd(componentValue, UInt(0x3)),
+                _ =>
+                    BitwiseAnd(
+                        _module.AddInstruction(
+                            SpirvOp.UConvert,
+                            _uintType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertFToU,
+                                _uintType,
+                                _module.AddInstruction(
+                                    SpirvOp.FMul,
+                                    _floatType,
+                                    ClampFloat01(floatVal),
+                                    Float(3.0f)))),
+                        UInt(0x3)),
+            };
+        }
+
+        private uint Pack11BitFloatForStore(uint componentValue)
+        {
+            var floatVal = Bitcast(_floatType, componentValue);
+            var halfType = _module.TypeFloat(16);
+            var halfVal = _module.AddInstruction(
+                SpirvOp.FConvert,
+                halfType,
+                floatVal);
+            return _module.AddInstruction(
+                SpirvOp.Bitcast,
+                _uintType,
+                halfVal);
+        }
+
+        private uint Pack565ComponentForStore(
+            uint componentValue,
+            uint bitCount,
+            uint numberFormat)
+        {
+            var floatVal = Bitcast(_floatType, componentValue);
+            var maxVal = bitCount == 6 ? 63.0f : 31.0f;
+            var mask = bitCount == 6 ? 0x3Fu : 0x1Fu;
+            return numberFormat switch
+            {
+                0 or 6 =>
+                    BitwiseAnd(
+                        _module.AddInstruction(
+                            SpirvOp.UConvert,
+                            _uintType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertFToU,
+                                _uintType,
+                                _module.AddInstruction(
+                                    SpirvOp.FMul,
+                                    _floatType,
+                                    ClampFloat01(floatVal),
+                                    Float(maxVal)))),
+                        UInt(mask)),
+                4 => BitwiseAnd(componentValue, UInt(mask)),
+                _ =>
+                    BitwiseAnd(
+                        _module.AddInstruction(
+                            SpirvOp.UConvert,
+                            _uintType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertFToU,
+                                _uintType,
+                                _module.AddInstruction(
+                                    SpirvOp.FMul,
+                                    _floatType,
+                                    ClampFloat01(floatVal),
+                                    Float(maxVal)))),
+                        UInt(mask)),
+            };
+        }
+
+        private uint Pack5551ComponentForStore(
+            uint componentValue,
+            uint numberFormat)
+        {
+            var floatVal = Bitcast(_floatType, componentValue);
+            return numberFormat switch
+            {
+                0 or 6 =>
+                    BitwiseAnd(
+                        _module.AddInstruction(
+                            SpirvOp.UConvert,
+                            _uintType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertFToU,
+                                _uintType,
+                                _module.AddInstruction(
+                                    SpirvOp.FMul,
+                                    _floatType,
+                                    ClampFloat01(floatVal),
+                                    Float(31.0f)))),
+                        UInt(0x1F)),
+                4 => BitwiseAnd(componentValue, UInt(0x1F)),
+                _ =>
+                    BitwiseAnd(
+                        _module.AddInstruction(
+                            SpirvOp.UConvert,
+                            _uintType,
+                            _module.AddInstruction(
+                                SpirvOp.ConvertFToU,
+                                _uintType,
+                                _module.AddInstruction(
+                                    SpirvOp.FMul,
+                                    _floatType,
+                                    ClampFloat01(floatVal),
+                                    Float(31.0f)))),
+                        UInt(0x1F)),
+            };
+        }
+
+        private uint Pack1BitForStore(uint componentValue)
+        {
+            var floatVal = Bitcast(_floatType, componentValue);
+            return BitwiseAnd(
+                _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _uintType,
+                    _module.AddInstruction(
+                        SpirvOp.ConvertFToU,
+                        _uintType,
+                        ClampFloat01(floatVal))),
+                UInt(1));
+        }
 
         private bool TryEmitVertexInputFetch(
             Gen5BufferMemoryControl control,
@@ -4395,6 +5558,12 @@ public static partial class Gen5SpirvTranslator
         private uint UInt(uint value) => _module.Constant(_uintType, value);
 
         private uint Float(float value) => _module.ConstantFloat(_floatType, value);
+
+        private uint ClampFloat01(uint value) =>
+            Ext(43, _floatType, value, Float(0.0f), Float(1.0f));
+
+        private uint ClampFloatN11(uint value) =>
+            Ext(43, _floatType, value, Float(-1.0f), Float(1.0f));
 
         private uint Bitcast(uint type, uint value) =>
             _module.AddInstruction(SpirvOp.Bitcast, type, value);
