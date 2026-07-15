@@ -249,6 +249,20 @@ const ulong ProgramAddress = 0x100000;
         0xE0701000, 0x8002090A, // buffer_store_dword v9, v10, s[8:11], 0 offen
         0xBF810000,             // s_endpgm
     ]),
+    // A 2x2x2 local size dispatched over two workgroups in Z combines local
+    // invocation X/Y/Z (v0/v1/v2) with workgroup Z (s0) into a 2x2x4 index.
+    ("exec-dispatch-3d", true, [
+        0x7E080200,             // v_mov_b32 v4, s0 (workgroup Z)
+        0x340A0881,             // v_lshlrev_b32 v5, 1, v4
+        0xD77F0005, 0x00020505, // v_add_nc_i32 v5, v5, v2 (global Z)
+        0x340C0A82,             // v_lshlrev_b32 v6, 2, v5
+        0x340E0281,             // v_lshlrev_b32 v7, 1, v1
+        0xD77F0008, 0x00020F06, // v_add_nc_i32 v8, v6, v7
+        0xD77F0008, 0x00020108, // v_add_nc_i32 v8, v8, v0 (linear index)
+        0x34121082,             // v_lshlrev_b32 v9, 2, v8 (byte address)
+        0xE0701000, 0x80020809, // buffer_store_dword v8, v9, s[8:11], 0 offen
+        0xBF810000,             // s_endpgm
+    ]),
     // Sixteen invocations contend on one storage-buffer counter. A plain
     // load/add/store would race; the deterministic final value proves that
     // buffer_atomic_add is emitted and synchronized as an actual atomic.
@@ -779,6 +793,22 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
                 GroupCountY: 2,
                 WorkGroupXRegister: 0,
                 WorkGroupYRegister: 1);
+        case "exec-dispatch-3d":
+            for (uint index = 0; index < 16; index++)
+            {
+                expectedWords[index] = index;
+                labels[index] = $"3D global invocation {index % 2},{index / 2 % 2},{index / 4} writes slot {index}";
+            }
+
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                LocalSizeX: 2,
+                LocalSizeY: 2,
+                LocalSizeZ: 2,
+                GroupCountZ: 2,
+                WorkGroupZRegister: 0);
         case "exec-buffer-atomic":
             initialWords[0] = 0;
             expectedWords[0] = 16;
