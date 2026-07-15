@@ -2597,7 +2597,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 	}
 
-	private unsafe nint GetOrCreateTlsLoadHelper(
+	internal unsafe nint GetOrCreateTlsLoadHelper(
 		int destinationRegister,
 		int displacement,
 		bool is64Bit,
@@ -2711,6 +2711,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		uint oldProtect = 0;
 		if (!_hostMemory.Protect((ulong)(void*)helper, helperSize, HostPageProtection.ReadExecute, out oldProtect))
 		{
+			RollbackTlsPatchStub(helper, helperSize);
 			return 0;
 		}
 
@@ -2895,6 +2896,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		uint oldProtect = 0;
 		if (!_hostMemory.Protect((ulong)(void*)helper, helperSize, HostPageProtection.ReadExecute, out oldProtect))
 		{
+			RollbackTlsPatchStub(helper, helperSize);
 			return 0;
 		}
 
@@ -2945,6 +2947,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		if (relativeHandler < int.MinValue || relativeHandler > int.MaxValue)
 		{
 			Console.Error.WriteLine($"[LOADER][WARNING] TLS store helper out of rel32 range at 0x{helper:X16}");
+			RollbackTlsPatchStub(helper, helperSize);
 			return 0;
 		}
 
@@ -2968,6 +2971,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		if (!_hostMemory.Protect((ulong)(void*)helper, helperSize, HostPageProtection.ReadExecute, out oldProtect))
 		{
 			Console.Error.WriteLine($"[LOADER][ERROR] VirtualProtect failed for TLS store helper at 0x{helper:X16}");
+			RollbackTlsPatchStub(helper, helperSize);
 			return 0;
 		}
 
@@ -2989,13 +2993,34 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			return 0;
 		}
 		nint result = _tlsHandlerAddress + _tlsPatchStubOffset;
-		_tlsPatchStubOffset += num;
 		uint flNewProtect = default(uint);
 		if (!_hostMemory.Protect((ulong)(void*)result, (nuint)num, HostPageProtection.ReadWriteExecute, out flNewProtect))
 		{
 			return 0;
 		}
+		_tlsPatchStubOffset += num;
 		return result;
+	}
+
+	private unsafe void RollbackTlsPatchStub(nint address, int size)
+	{
+		var alignedSize = (size + 15) & -16;
+		if (alignedSize <= 0 ||
+			address + alignedSize != _tlsHandlerAddress + _tlsPatchStubOffset)
+		{
+			Console.Error.WriteLine($"[LOADER][WARNING] Cannot roll back non-tail TLS helper at 0x{address:X16}");
+			return;
+		}
+
+		_tlsPatchStubOffset -= alignedSize;
+		if (!_hostMemory.Protect(
+			(ulong)(void*)address,
+			(nuint)alignedSize,
+			HostPageProtection.ReadExecute,
+			out _))
+		{
+			Console.Error.WriteLine($"[LOADER][WARNING] Failed to restore protection for rolled-back TLS helper at 0x{address:X16}");
+		}
 	}
 
 	private unsafe bool PatchCallSite(nint address, int instructionLength, nint target)
