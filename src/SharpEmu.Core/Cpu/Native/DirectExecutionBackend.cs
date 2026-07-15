@@ -108,7 +108,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		Dictionary<(int DestinationRegister, int Displacement, bool Is64Bit, int MemorySize, bool SignExtend), nint> loadHelpers,
 		Dictionary<(int SourceRegister, int Displacement, bool Is64Bit), nint> storeHelpers,
 		Dictionary<(int Displacement, int ImmediateValue, bool Is64Bit), nint> immediateStoreHelpers,
-		Dictionary<(int DestinationRegister, int Displacement, bool Is64Bit), nint> stackCanaryXorHelpers)
+		Dictionary<(NativeTlsInstructionKind Kind, int DestinationRegister, int Displacement, bool Is64Bit), nint> stackCanaryHelpers)
 	{
 		public nint HandlerAddress { get; } = handlerAddress;
 
@@ -122,7 +122,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 		public Dictionary<(int Displacement, int ImmediateValue, bool Is64Bit), nint> ImmediateStoreHelpers { get; } = immediateStoreHelpers;
 
-		public Dictionary<(int DestinationRegister, int Displacement, bool Is64Bit), nint> StackCanaryXorHelpers { get; } = stackCanaryXorHelpers;
+		public Dictionary<(NativeTlsInstructionKind Kind, int DestinationRegister, int Displacement, bool Is64Bit), nint> StackCanaryHelpers { get; } = stackCanaryHelpers;
 	}
 
 	private readonly record struct RecentImportTraceEntry(
@@ -232,7 +232,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private readonly Dictionary<(int DestinationRegister, int Displacement, bool Is64Bit, int MemorySize, bool SignExtend), nint> _tlsLoadHelpers = new();
 	private readonly Dictionary<(int SourceRegister, int Displacement, bool Is64Bit), nint> _tlsStoreHelpers = new();
 	private readonly Dictionary<(int Displacement, int ImmediateValue, bool Is64Bit), nint> _tlsImmediateStoreHelpers = new();
-	private readonly Dictionary<(int DestinationRegister, int Displacement, bool Is64Bit), nint> _tlsStackCanaryXorHelpers = new();
+	private readonly Dictionary<(NativeTlsInstructionKind Kind, int DestinationRegister, int Displacement, bool Is64Bit), nint> _tlsStackCanaryHelpers = new();
 
 	private nint _unresolvedReturnStub;
 
@@ -1202,7 +1202,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		new Dictionary<(int DestinationRegister, int Displacement, bool Is64Bit, int MemorySize, bool SignExtend), nint>(_tlsLoadHelpers),
 		new Dictionary<(int SourceRegister, int Displacement, bool Is64Bit), nint>(_tlsStoreHelpers),
 		new Dictionary<(int Displacement, int ImmediateValue, bool Is64Bit), nint>(_tlsImmediateStoreHelpers),
-		new Dictionary<(int DestinationRegister, int Displacement, bool Is64Bit), nint>(_tlsStackCanaryXorHelpers));
+		new Dictionary<(NativeTlsInstructionKind Kind, int DestinationRegister, int Displacement, bool Is64Bit), nint>(_tlsStackCanaryHelpers));
 
 	private void RollbackTlsSetup(TlsSetupCheckpoint checkpoint)
 	{
@@ -1242,10 +1242,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		{
 			_tlsImmediateStoreHelpers.Add(helper.Key, helper.Value);
 		}
-		_tlsStackCanaryXorHelpers.Clear();
-		foreach (var helper in checkpoint.StackCanaryXorHelpers)
+		_tlsStackCanaryHelpers.Clear();
+		foreach (var helper in checkpoint.StackCanaryHelpers)
 		{
-			_tlsStackCanaryXorHelpers.Add(helper.Key, helper.Value);
+			_tlsStackCanaryHelpers.Add(helper.Key, helper.Value);
 		}
 	}
 
@@ -2284,7 +2284,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_tlsLoadHelpers.Clear();
 		_tlsStoreHelpers.Clear();
 		_tlsImmediateStoreHelpers.Clear();
-		_tlsStackCanaryXorHelpers.Clear();
+		_tlsStackCanaryHelpers.Clear();
 		_tlsHandlerAddress = (nint)TryAllocateNearEntry(TlsHandlerRegionSize);
 		if (_tlsHandlerAddress == 0)
 		{
@@ -2571,7 +2571,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 							{
 								num3++;
 							}
-							else if (tlsInstructionKind == NativeTlsInstructionKind.StackCanaryXor)
+							else if (tlsInstructionKind is
+								NativeTlsInstructionKind.StackCanaryXor or
+								NativeTlsInstructionKind.StackCanarySub)
 							{
 								num4++;
 							}
@@ -2695,25 +2697,33 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		nint address,
 		in NativeTlsInstruction instruction)
 	{
-		var helper = GetOrCreateTlsStackCanaryXorHelper(
+		var helper = GetOrCreateTlsStackCanaryHelper(
+			instruction.Kind,
 			instruction.Register,
 			instruction.Displacement,
 			instruction.Is64Bit);
 		return helper != 0 && PatchCallSite(address, instruction.Length, helper);
 	}
 
-	private unsafe nint GetOrCreateTlsStackCanaryXorHelper(
+	private unsafe nint GetOrCreateTlsStackCanaryHelper(
+		NativeTlsInstructionKind instructionKind,
 		int destinationRegister,
 		int displacement,
 		bool is64Bit)
 	{
-		if (destinationRegister is < 0 or >= 16 or 4)
+		var arithmeticOpcode = instructionKind switch
+		{
+			NativeTlsInstructionKind.StackCanaryXor => 0x31,
+			NativeTlsInstructionKind.StackCanarySub => 0x29,
+			_ => 0,
+		};
+		if (arithmeticOpcode == 0 || destinationRegister is < 0 or >= 16 or 4)
 		{
 			return 0;
 		}
 
-		var helperKey = (destinationRegister, displacement, is64Bit);
-		if (_tlsStackCanaryXorHelpers.TryGetValue(helperKey, out var existingHelper))
+		var helperKey = (instructionKind, destinationRegister, displacement, is64Bit);
+		if (_tlsStackCanaryHelpers.TryGetValue(helperKey, out var existingHelper))
 		{
 			return existingHelper;
 		}
@@ -2780,7 +2790,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			{
 				EmitByte(code, ref offset, 0x48);
 			}
-			EmitByte(code, ref offset, 0x31); // xor [rsp+savedSlot], edx/rdx
+			EmitByte(code, ref offset, (byte)arithmeticOpcode); // arithmetic [rsp+savedSlot], edx/rdx
 			EmitByte(code, ref offset, 0x54);
 			EmitByte(code, ref offset, 0x24);
 			EmitByte(code, ref offset, (byte)savedSlot);
@@ -2794,7 +2804,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			{
 				EmitByte(code, ref offset, (byte)rex);
 			}
-			EmitByte(code, ref offset, 0x31); // xor destination, edx/rdx
+			EmitByte(code, ref offset, (byte)arithmeticOpcode); // arithmetic destination, edx/rdx
 			EmitByte(code, ref offset, (byte)(0xD0 | (destinationRegister & 7)));
 		}
 
@@ -2831,7 +2841,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 
 		_hostMemory.FlushInstructionCache((ulong)(void*)helper, helperSize);
-		_tlsStackCanaryXorHelpers[helperKey] = helper;
+		_tlsStackCanaryHelpers[helperKey] = helper;
 		return helper;
 	}
 
@@ -2872,6 +2882,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				address,
 				in instruction),
 			NativeTlsInstructionKind.StackCanaryXor => PatchStackCanaryInstruction(
+				address,
+				in instruction),
+			NativeTlsInstructionKind.StackCanarySub => PatchStackCanaryInstruction(
 				address,
 				in instruction),
 			_ => false,
