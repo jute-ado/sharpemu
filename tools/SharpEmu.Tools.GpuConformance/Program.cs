@@ -309,7 +309,11 @@ unsafe
         in descriptorSet,
         0,
         null);
-    vk.CmdDispatch(commandBuffer, 1, 1, 1);
+    vk.CmdDispatch(
+        commandBuffer,
+        manifest.GroupCountX,
+        manifest.GroupCountY,
+        manifest.GroupCountZ);
     var barrier = new MemoryBarrier
     {
         SType = StructureType.MemoryBarrier,
@@ -407,11 +411,17 @@ sealed record ConformanceManifest(
     string Shader,
     uint[] InitialWords,
     uint[] ExpectedWords,
-    string[] Labels)
+    string[] Labels,
+    uint LocalSizeX,
+    uint LocalSizeY,
+    uint LocalSizeZ,
+    uint GroupCountX,
+    uint GroupCountY,
+    uint GroupCountZ)
 {
     public void Validate()
     {
-        if (SchemaVersion != 1)
+        if (SchemaVersion != 2)
         {
             throw new InvalidDataException(
                 $"unsupported conformance manifest schema version {SchemaVersion}");
@@ -447,6 +457,25 @@ sealed record ConformanceManifest(
         {
             throw new InvalidDataException(
                 "conformance manifest requires one non-empty label per buffer word");
+        }
+
+        if (LocalSizeX == 0 || LocalSizeY == 0 || LocalSizeZ == 0)
+        {
+            throw new InvalidDataException(
+                "conformance manifest local sizes must be positive");
+        }
+
+        var localSizeXY = (ulong)LocalSizeX * LocalSizeY;
+        if (localSizeXY > 1024 || localSizeXY * LocalSizeZ > 1024)
+        {
+            throw new InvalidDataException(
+                "conformance manifest local-size product must not exceed 1024");
+        }
+
+        if (GroupCountX == 0 || GroupCountY == 0 || GroupCountZ == 0)
+        {
+            throw new InvalidDataException(
+                "conformance manifest group counts must be positive");
         }
     }
 }

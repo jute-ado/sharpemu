@@ -222,6 +222,18 @@ const ulong ProgramAddress = 0x100000;
         0xE068001B, 0x80020600, // buffer_store_short v6, off, s[8:11], 0 offset:27
         0xBF810000,             // s_endpgm
     ]),
+    // Two workgroups of four invocations synthesize a global X index from the
+    // local invocation ID (v0), workgroup X (s0), and threadgroup size (s1).
+    // An offen store lets every invocation write its own deterministic slot.
+    ("exec-dispatch-topology", true, [
+        0x7E080200,             // v_mov_b32 v4, s0 (workgroup X)
+        0x7E0A0201,             // v_mov_b32 v5, s1 (threadgroup size)
+        0xD5690006, 0x00020B04, // v_mul_lo_u32 v6, v4, v5
+        0xD77F0007, 0x00020D00, // v_add_nc_i32 v7, v0, v6
+        0x34100E82,             // v_lshlrev_b32 v8, 2, v7
+        0xE0701000, 0x80020708, // buffer_store_dword v7, v8, s[8:11], 0 offen
+        0xBF810000,             // s_endpgm
+    ]),
 ];
 
 var assembly = typeof(CxaGuardExports).Assembly;
@@ -241,6 +253,8 @@ var stateType = assembly.GetType("SharpEmu.Libs.Agc.Gen5ShaderState")
     ?? throw new InvalidOperationException("Gen5ShaderState not found");
 var evaluationType = assembly.GetType("SharpEmu.Libs.Agc.Gen5ShaderEvaluation")
     ?? throw new InvalidOperationException("Gen5ShaderEvaluation not found");
+var computeSystemRegistersType = assembly.GetType("SharpEmu.Libs.Agc.Gen5ComputeSystemRegisters")
+    ?? throw new InvalidOperationException("Gen5ComputeSystemRegisters not found");
 var imageBindingType = assembly.GetType("SharpEmu.Libs.Agc.Gen5ImageBinding")
     ?? throw new InvalidOperationException("Gen5ImageBinding not found");
 var globalBindingType = assembly.GetType("SharpEmu.Libs.Agc.Gen5GlobalMemoryBinding")
@@ -336,12 +350,22 @@ foreach (var (name, expectTranslate, words) in testPrograms)
             0);
     }
 
+    var conformanceCase = CreateConformanceCase(name);
+    var computeSystemRegisters = conformanceCase?.WorkGroupXRegister is { } workGroupX
+        ? Activator.CreateInstance(
+            computeSystemRegistersType,
+            workGroupX,
+            null,
+            null,
+            conformanceCase.ThreadGroupSizeRegister)
+        : null;
+
     var state = Activator.CreateInstance(
         stateType,
         programObj,
         new uint[16],
         null,
-        null,
+        computeSystemRegisters,
         0u)!;
     var evaluation = Activator.CreateInstance(
         evaluationType,
@@ -350,7 +374,7 @@ foreach (var (name, expectTranslate, words) in testPrograms)
         new Dictionary<uint, IReadOnlyList<uint>>(),
         Array.CreateInstance(imageBindingType, 0),
         globalBindings,
-        null,
+        computeSystemRegisters,
         null,
         null)!;
 
@@ -369,7 +393,17 @@ foreach (var (name, expectTranslate, words) in testPrograms)
         Console.WriteLine($"[{name}] emit: FAILED ({compileArgs[3]})");
     }
 
-    var computeArgs = PadWithDefaults(tryCompileCompute, [state, evaluation, 1u, 1u, 1u, null, null]);
+    var computeArgs = PadWithDefaults(
+        tryCompileCompute,
+        [
+            state,
+            evaluation,
+            conformanceCase?.LocalSizeX ?? 1u,
+            conformanceCase?.LocalSizeY ?? 1u,
+            conformanceCase?.LocalSizeZ ?? 1u,
+            null,
+            null,
+        ]);
     if ((bool)tryCompileCompute.Invoke(null, BindingFlags.OptionalParamBinding, null, computeArgs, null)!)
     {
         var shader = computeArgs[5]!;
@@ -378,18 +412,23 @@ foreach (var (name, expectTranslate, words) in testPrograms)
         File.WriteAllBytes(path, spirv);
         Console.WriteLine($"[{name}] compute emit: success, {spirv.Length} bytes -> {path}");
 
-        var conformanceCase = CreateConformanceCase(name);
         if (conformanceCase is not null)
         {
             var manifestPath = Path.Combine(outputDirectory, $"{name}-cs.conformance.json");
             var manifest = new
             {
-                SchemaVersion = 1,
+                SchemaVersion = 2,
                 Name = name,
                 Shader = Path.GetFileName(path),
                 conformanceCase.InitialWords,
                 conformanceCase.ExpectedWords,
                 conformanceCase.Labels,
+                conformanceCase.LocalSizeX,
+                conformanceCase.LocalSizeY,
+                conformanceCase.LocalSizeZ,
+                conformanceCase.GroupCountX,
+                conformanceCase.GroupCountY,
+                conformanceCase.GroupCountZ,
             };
             File.WriteAllText(
                 manifestPath,
@@ -626,6 +665,21 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
             labels[6] = "byte store and low byte of crossing short store";
             labels[7] = "high byte of crossing short store";
             break;
+        case "exec-dispatch-topology":
+            for (uint index = 0; index < 8; index++)
+            {
+                expectedWords[index] = index;
+                labels[index] = $"global invocation X {index} writes its indexed slot";
+            }
+
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                LocalSizeX: 4,
+                GroupCountX: 2,
+                WorkGroupXRegister: 0,
+                ThreadGroupSizeRegister: 1);
         default:
             return null;
     }
@@ -636,7 +690,15 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
 internal sealed record SyntheticConformanceCase(
     uint[] InitialWords,
     uint[] ExpectedWords,
-    string[] Labels);
+    string[] Labels,
+    uint LocalSizeX = 1,
+    uint LocalSizeY = 1,
+    uint LocalSizeZ = 1,
+    uint GroupCountX = 1,
+    uint GroupCountY = 1,
+    uint GroupCountZ = 1,
+    uint? WorkGroupXRegister = null,
+    uint? ThreadGroupSizeRegister = null);
 
 internal sealed class FakeMemory : ICpuMemory
 {
