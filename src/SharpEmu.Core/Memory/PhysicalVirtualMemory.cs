@@ -468,12 +468,51 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     public bool TryProtect(ulong address, ulong size, GuestPageProtection protection)
     {
         ThrowIfDisposed();
-        if (size == 0)
+        if (size == 0 || address > ulong.MaxValue - size)
         {
             return false;
         }
 
-        return _hostMemory.Protect(address, size, ResolveProtection(protection), out _);
+        var endAddress = address + size;
+        if (endAddress > ulong.MaxValue - (PageSize - 1))
+        {
+            return false;
+        }
+
+        var pageStart = AlignDown(address, PageSize);
+        var pageEnd = AlignUp(endAddress, PageSize);
+        var pageLength = pageEnd - pageStart;
+        var pageProtection = ResolveProgramHeaderProtection(protection);
+
+        _gate.EnterWriteLock();
+        try
+        {
+            if (!TryResolveRange(pageStart, pageLength, out _))
+            {
+                return false;
+            }
+
+            if (!_hostMemory.Protect(address, size, ResolveProtection(protection), out _))
+            {
+                return false;
+            }
+
+            for (var pageAddress = pageStart; pageAddress < pageEnd; pageAddress += PageSize)
+            {
+                _pageProtections[pageAddress] = pageProtection;
+            }
+
+            if ((protection & GuestPageProtection.Execute) != 0)
+            {
+                _hostMemory.FlushInstructionCache(address, size);
+            }
+
+            return true;
+        }
+        finally
+        {
+            _gate.ExitWriteLock();
+        }
     }
 
     // Reproduces the decomposition KernelMemoryCompatExports.ResolveHostProtection
@@ -499,6 +538,27 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             : read
                 ? HostPageProtection.ReadOnly
                 : HostPageProtection.NoAccess;
+    }
+
+    private static ProgramHeaderFlags ResolveProgramHeaderProtection(GuestPageProtection protection)
+    {
+        var result = ProgramHeaderFlags.None;
+        if ((protection & GuestPageProtection.Read) != 0)
+        {
+            result |= ProgramHeaderFlags.Read;
+        }
+
+        if ((protection & GuestPageProtection.Write) != 0)
+        {
+            result |= ProgramHeaderFlags.Write;
+        }
+
+        if ((protection & GuestPageProtection.Execute) != 0)
+        {
+            result |= ProgramHeaderFlags.Execute;
+        }
+
+        return result;
     }
 
     public void Clear()
