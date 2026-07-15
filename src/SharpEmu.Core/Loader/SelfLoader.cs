@@ -2437,7 +2437,12 @@ public sealed class SelfLoader : ISelfLoader
             return true;
         }
 
-        var elfRelative = checked((ulong)loadContext.ElfOffset + header.Offset);
+        if (header.Offset > ulong.MaxValue - (ulong)loadContext.ElfOffset)
+        {
+            throw new InvalidDataException("SELF segment ELF-relative offset overflows.");
+        }
+
+        var elfRelative = (ulong)loadContext.ElfOffset + header.Offset;
         if (TryIsInRange(imageLength, elfRelative, header.FileSize))
         {
             offset = elfRelative;
