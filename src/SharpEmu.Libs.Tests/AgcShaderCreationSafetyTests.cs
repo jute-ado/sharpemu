@@ -15,6 +15,7 @@ public sealed class AgcShaderCreationSafetyTests
     private const ulong DestinationAddress = 0x3000;
     private const ulong ShaderCodeAddress = 0x0000_1234_5678_9A00;
     private const int ShaderHeaderSize = 0x60;
+    private const int ShaderUserDataOffset = 0x08;
     private const int ShaderCxRegistersOffset = 0x18;
     private const int ShaderShRegistersOffset = 0x20;
     private const int ShaderOutputSemanticsOffset = 0x38;
@@ -82,8 +83,75 @@ public sealed class AgcShaderCreationSafetyTests
         Assert.Equal(wrappedRelativePointer, storedOutputPointer);
     }
 
+    [Fact]
+    public void CreateShaderRejectsHeaderThatWrapsGuestAddressSpace()
+    {
+        const ulong wrappedHeaderAddress = ulong.MaxValue - 0x1F;
+        var header = CreateHeader(wrappedHeaderAddress);
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(wrappedHeaderAddress, header[..0x20]);
+        memory.AddRegion(0, header[0x20..]);
+        memory.AddRegion(ShaderRegistersAddress, CreateRegisters());
+        var context = CreateContext(memory, wrappedHeaderAddress);
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            AgcExports.CreateShader(context));
+    }
+
+    [Fact]
+    public void CreateShaderRejectsUserDataBlockThatWrapsGuestAddressSpace()
+    {
+        const ulong wrappedUserDataAddress = ulong.MaxValue - 0x0F;
+        var (memory, context) = CreateFixture();
+        var userDataFieldAddress = ShaderHeaderAddress + ShaderUserDataOffset;
+        Assert.True(context.TryWriteUInt64(
+            userDataFieldAddress,
+            wrappedUserDataAddress - userDataFieldAddress));
+        memory.AddRegion(wrappedUserDataAddress, new byte[0x10]);
+        memory.AddRegion(0, new byte[0x18]);
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            AgcExports.CreateShader(context));
+    }
+
+    [Fact]
+    public void CreateShaderRejectsProgramRegistersThatWrapGuestAddressSpace()
+    {
+        const ulong wrappedRegistersAddress = ulong.MaxValue - 7;
+        var (memory, context) = CreateFixture();
+        var shFieldAddress = ShaderHeaderAddress + ShaderShRegistersOffset;
+        Assert.True(context.TryWriteUInt64(
+            shFieldAddress,
+            wrappedRegistersAddress - shFieldAddress));
+        var registers = CreateRegisters();
+        memory.AddRegion(wrappedRegistersAddress, registers[..sizeof(ulong)]);
+        memory.AddRegion(0, registers[sizeof(ulong)..]);
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+            AgcExports.CreateShader(context));
+    }
+
     private static (FakeGuestMemory Memory, CpuContext Context) CreateFixture(
         ulong headerAddress = ShaderHeaderAddress,
+        ulong cxRegistersRelativePointer = 0,
+        ulong outputSemanticsRelativePointer = 0)
+    {
+        var header = CreateHeader(
+            headerAddress,
+            cxRegistersRelativePointer,
+            outputSemanticsRelativePointer);
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(headerAddress, header);
+        memory.AddRegion(ShaderRegistersAddress, CreateRegisters());
+        memory.AddRegion(DestinationAddress, new byte[sizeof(ulong)]);
+        return (memory, CreateContext(memory, headerAddress));
+    }
+
+    private static byte[] CreateHeader(
+        ulong headerAddress,
         ulong cxRegistersRelativePointer = 0,
         ulong outputSemanticsRelativePointer = 0)
     {
@@ -95,24 +163,30 @@ public sealed class AgcShaderCreationSafetyTests
             cxRegistersRelativePointer);
         BinaryPrimitives.WriteUInt64LittleEndian(
             header.AsSpan(ShaderShRegistersOffset),
-            unchecked(ShaderRegistersAddress - (headerAddress + ShaderShRegistersOffset)));
+            unchecked(
+                ShaderRegistersAddress -
+                unchecked(headerAddress + ShaderShRegistersOffset)));
         BinaryPrimitives.WriteUInt64LittleEndian(
             header.AsSpan(ShaderOutputSemanticsOffset),
             outputSemanticsRelativePointer);
         header[0x5A] = 0;
         header[0x5C] = 2;
+        return header;
+    }
 
+    private static byte[] CreateRegisters()
+    {
         var registers = new byte[2 * sizeof(ulong)];
         BinaryPrimitives.WriteUInt32LittleEndian(registers, ComputePgmLo);
         BinaryPrimitives.WriteUInt32LittleEndian(registers.AsSpan(sizeof(ulong)), ComputePgmHi);
+        return registers;
+    }
 
-        var memory = new FakeGuestMemory();
-        memory.AddRegion(headerAddress, header);
-        memory.AddRegion(ShaderRegistersAddress, registers);
-        memory.AddRegion(DestinationAddress, new byte[sizeof(ulong)]);
+    private static CpuContext CreateContext(FakeGuestMemory memory, ulong headerAddress)
+    {
         var context = new CpuContext(memory, Generation.Gen5);
         context[CpuRegister.Rsi] = headerAddress;
         context[CpuRegister.Rdx] = ShaderCodeAddress;
-        return (memory, context);
+        return context;
     }
 }

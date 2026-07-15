@@ -136,6 +136,9 @@ public static class AgcExports
     private const ulong ShaderNumOutputSemanticsOffset = 0x56;
     private const ulong ShaderTypeOffset = 0x5A;
     private const ulong ShaderNumShRegistersOffset = 0x5C;
+    private const ulong ShaderHeaderSize = 0x60;
+    private const ulong ShaderUserDataPointersSize = 0x28;
+    private const ulong ShaderProgramRegistersSize = 0x10;
     private const ulong CommandBufferCursorUpOffset = 0x10;
     private const ulong CommandBufferCursorDownOffset = 0x18;
     private const ulong CommandBufferCallbackOffset = 0x20;
@@ -472,6 +475,11 @@ public static class AgcExports
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
+        if (!GuestAddress.IsRangeValid(headerAddress, ShaderHeaderSize))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
         if (!ctx.TryReadUInt32(headerAddress, out var fileHeader) ||
             !ctx.TryReadUInt32(headerAddress + sizeof(uint), out var version))
         {
@@ -520,7 +528,8 @@ public static class AgcExports
         }
 
         if (userDataAddress != 0 &&
-            (!TryPreparePointerRelocation(ctx, userDataAddress, relocations, out _) ||
+            (!GuestAddress.IsRangeValid(userDataAddress, ShaderUserDataPointersSize) ||
+             !TryPreparePointerRelocation(ctx, userDataAddress, relocations, out _) ||
              !TryPreparePointerRelocation(ctx, userDataAddress + 0x08, relocations, out _) ||
              !TryPreparePointerRelocation(ctx, userDataAddress + 0x10, relocations, out _) ||
              !TryPreparePointerRelocation(ctx, userDataAddress + 0x18, relocations, out _) ||
@@ -5792,6 +5801,11 @@ public static class AgcExports
         }
 
         if (shRegistersAddress == 0 || registerCount < 2)
+        {
+            return false;
+        }
+
+        if (!GuestAddress.IsRangeValid(shRegistersAddress, ShaderProgramRegistersSize))
         {
             return false;
         }
