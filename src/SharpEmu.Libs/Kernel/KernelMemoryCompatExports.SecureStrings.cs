@@ -198,7 +198,8 @@ public static partial class KernelMemoryCompatExports
         Span<byte> one = stackalloc byte[1];
         for (var index = 0; index < limit; index++)
         {
-            if (!TryReadCompat(ctx, address + (ulong)index, one))
+            if (!TryAddU64(address, (ulong)index, out var currentAddress) ||
+                !TryReadCompat(ctx, currentAddress, one))
             {
                 return false;
             }
