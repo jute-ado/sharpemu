@@ -238,6 +238,25 @@ const ulong ProgramAddress = 0x100000;
         0xE0701000, 0x80020607, // buffer_store_dword v6, v7, s[8:11], 0 offen
         0xBF810000,             // s_endpgm
     ]),
+    // Seed two aligned scratch dwords, then load and store a dword beginning at
+    // byte offset three. Both operations straddle the scratch-word boundary,
+    // exposing byte-order and adjacent-word preservation errors.
+    ("exec-scratch-unaligned", true, [
+        0xE0300000, 0x80020500, // buffer_load_dword v5, off, s[8:11], 0
+        0xE0300004, 0x80020600, // buffer_load_dword v6, off, s[8:11], 0 offset:4
+        0xE0300008, 0x80020700, // buffer_load_dword v7, off, s[8:11], 0 offset:8
+        0x7E080280,             // v_mov_b32 v4, 0 (scratch byte address)
+        0xDC704000, 0x007F0504, // scratch_store_dword v4, v5
+        0xDC704004, 0x007F0604, // scratch_store_dword v4, v6 offset:4
+        0xDC304003, 0x087F0004, // scratch_load_dword v8, v4 offset:3
+        0xDC704003, 0x007F0704, // scratch_store_dword v4, v7 offset:3
+        0xDC304000, 0x097F0004, // scratch_load_dword v9, v4
+        0xDC304004, 0x0A7F0004, // scratch_load_dword v10, v4 offset:4
+        0xE070000C, 0x80020800, // buffer_store_dword v8, off, s[8:11], 0 offset:12
+        0xE0700010, 0x80020900, // buffer_store_dword v9, off, s[8:11], 0 offset:16
+        0xE0700014, 0x80020A00, // buffer_store_dword v10, off, s[8:11], 0 offset:20
+        0xBF810000,             // s_endpgm
+    ]),
     // A finite backward branch exercises the structured program-counter loop,
     // dynamic SCC updates, and scalar-to-vector transfer. The dispatch runner
     // has a fence deadline, so a broken termination condition fails boundedly.
@@ -873,6 +892,23 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
                 expectedWords,
                 labels,
                 LocalSizeX: 8);
+        case "exec-scratch-unaligned":
+            initialWords[0] = 0xAABBCCDD;
+            initialWords[1] = 0x11223344;
+            initialWords[2] = 0x55667788;
+            expectedWords[0] = initialWords[0];
+            expectedWords[1] = initialWords[1];
+            expectedWords[2] = initialWords[2];
+            expectedWords[3] = 0x223344AA;
+            expectedWords[4] = 0x88BBCCDD;
+            expectedWords[5] = 0x11556677;
+            labels[0] = "first scratch seed remains unchanged";
+            labels[1] = "second scratch seed remains unchanged";
+            labels[2] = "unaligned scratch-store source remains unchanged";
+            labels[3] = "scratch load crosses a dword boundary in little-endian order";
+            labels[4] = "unaligned scratch store preserves the first dword's low bytes";
+            labels[5] = "unaligned scratch store preserves the second dword's high byte";
+            break;
         case "exec-scalar-loop":
             expectedWords[0] = 4;
             labels[0] = "backward scalar loop terminates after four iterations";
