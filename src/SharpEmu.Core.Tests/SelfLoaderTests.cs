@@ -112,6 +112,47 @@ public sealed class SelfLoaderTests
     }
 
     [Fact]
+    public void RejectedOverflowingSectionHeaderTableDoesNotClearExistingGuestMemory()
+    {
+        var memory = CreateSentinelMemory();
+        var malformed = CreateElf();
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            malformed.AsSpan(40),
+            ulong.MaxValue - 63);
+        BinaryPrimitives.WriteUInt16LittleEndian(malformed.AsSpan(58), 64);
+        BinaryPrimitives.WriteUInt16LittleEndian(malformed.AsSpan(60), 2);
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            new SelfLoader().Load(malformed, memory));
+
+        Assert.Contains("section header", exception.Message, StringComparison.OrdinalIgnoreCase);
+        AssertSentinelMemoryPreserved(memory);
+    }
+
+    [Theory]
+    [InlineData(0UL, 64)]
+    [InlineData((ulong)ElfHeaderSize, 63)]
+    [InlineData((ulong)ElfHeaderSize, 64)]
+    public void RejectedInvalidSectionHeaderTablesDoNotClearExistingGuestMemory(
+        ulong tableOffset,
+        int entrySize)
+    {
+        var memory = CreateSentinelMemory();
+        var malformed = CreateElf();
+        BinaryPrimitives.WriteUInt64LittleEndian(malformed.AsSpan(40), tableOffset);
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            malformed.AsSpan(58),
+            checked((ushort)entrySize));
+        BinaryPrimitives.WriteUInt16LittleEndian(malformed.AsSpan(60), 1);
+
+        var exception = Assert.Throws<InvalidDataException>(() =>
+            new SelfLoader().Load(malformed, memory));
+
+        Assert.Contains("section header", exception.Message, StringComparison.OrdinalIgnoreCase);
+        AssertSentinelMemoryPreserved(memory);
+    }
+
+    [Fact]
     public void RejectsSegmentsWhoseFileSizeExceedsMemorySize()
     {
         var elf = CreateElfWithLoadSegment(
