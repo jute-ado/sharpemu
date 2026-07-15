@@ -1,8 +1,6 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using SharpEmu.Core.Cpu;
-using SharpEmu.HLE;
 using System.Text.Json;
 using Xunit;
 
@@ -680,29 +678,32 @@ public sealed class NativeCpuConformanceTests
     }
 
     [WindowsX64Fact]
-    public void RepeatedModuleInitializersShareNativeExecutionSession()
+    public async Task RepeatedModuleInitializersShareNativeExecutionSession()
     {
-        byte[] code =
-        [
-            0x31, 0xC0, // xor eax, eax
-            0xC3,       // ret
-        ];
+        var execution = await SyntheticCliGuest.RunAsync(
+            [0x31, 0xC0, 0xC3], // main: xor eax, eax; ret
+            requestReport: true,
+            executionTimeoutSeconds: 10,
+            adjacentModuleImage: SyntheticElfImage.CreateModuleWithInitializerArray(
+                [0xC3], // DT_INIT: ret
+                [0xC3], // repeated DT_INIT_ARRAY target: ret
+                arrayInitializerCount: 23));
 
-        var executions = SyntheticNativeGuest.ExecuteModuleInitializers(
-            code,
-            Generation.Gen5,
-            moduleName: "repeated-native-initializer",
-            executionCount: 24);
-
-        Assert.Equal(24, executions.Count);
-        Assert.All(
-            executions,
-            execution =>
-            {
-                Assert.True(
-                    execution.Result == OrbisGen2Result.ORBIS_GEN2_OK,
-                    execution.FailureDetail ?? $"Unexpected result: {execution.Result}");
-                Assert.Equal(CpuExitReason.ReturnedToHost, execution.ExitReason);
-            });
+        Assert.True(
+            execution.ExitCode == 0,
+            $"Repeated initializer session exited with {execution.ExitCode}.{Environment.NewLine}" +
+            $"stdout:{Environment.NewLine}{execution.StandardOutput}{Environment.NewLine}" +
+            $"stderr:{Environment.NewLine}{execution.StandardError}");
+        Assert.NotNull(execution.ReportJson);
+        using var report = JsonDocument.Parse(execution.ReportJson);
+        var executions = report.RootElement.GetProperty("moduleInitializers").EnumerateArray().ToArray();
+        Assert.Equal(24, executions.Length);
+        for (var index = 0; index < executions.Length; index++)
+        {
+            Assert.Equal(index, executions[index].GetProperty("index").GetInt32());
+            Assert.Equal(
+                "ORBIS_GEN2_OK",
+                executions[index].GetProperty("result").GetProperty("name").GetString());
+        }
     }
 }
