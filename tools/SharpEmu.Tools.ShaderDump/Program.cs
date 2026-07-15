@@ -144,6 +144,24 @@ const ulong ProgramAddress = 0x100000;
         0xE070001C, 0x80020900, // buffer_store_dword v9, off, s[8:11], 0 offset:28
         0xBF810000,             // s_endpgm
     ]),
+    // A second independently manifested executable program proves that the
+    // corpus runner discovers every case. It also covers the integer shift
+    // direction/sign rules and the non-carrying add/subtract VOP3 encodings.
+    ("exec-shifts", true, [
+        0x7E0202FF, 0x00000004, // v_mov_b32 v1, 4 (shift count/addend)
+        0x7E0402FF, 0x80000010, // v_mov_b32 v2, 0x80000010
+        0x2C0A0501,             // v_lshrrev_b32 v5, v1, v2
+        0x300C0501,             // v_ashrrev_i32 v6, v1, v2
+        0x340E0501,             // v_lshlrev_b32 v7, v1, v2
+        0xD77F0008, 0x00020302, // v_add_nc_i32 v8, v2, v1
+        0xD7760009, 0x00020302, // v_sub_nc_i32 v9, v2, v1
+        0xE0700000, 0x80020500, // buffer_store_dword v5, off, s[8:11], 0
+        0xE0700004, 0x80020600, // buffer_store_dword v6, off, s[8:11], 0 offset:4
+        0xE0700008, 0x80020700, // buffer_store_dword v7, off, s[8:11], 0 offset:8
+        0xE070000C, 0x80020800, // buffer_store_dword v8, off, s[8:11], 0 offset:12
+        0xE0700010, 0x80020900, // buffer_store_dword v9, off, s[8:11], 0 offset:16
+        0xBF810000,             // s_endpgm
+    ]),
 ];
 
 var assembly = typeof(CxaGuardExports).Assembly;
@@ -298,41 +316,18 @@ foreach (var (name, expectTranslate, words) in testPrograms)
         File.WriteAllBytes(path, spirv);
         Console.WriteLine($"[{name}] compute emit: success, {spirv.Length} bytes -> {path}");
 
-        if (name == "exec")
+        var conformanceCase = CreateConformanceCase(name);
+        if (conformanceCase is not null)
         {
-            const uint sentinel = 0xCAFEBABE;
-            var initialWords = Enumerable.Repeat(sentinel, 16).ToArray();
-            var expectedWords = (uint[])initialWords.Clone();
-            expectedWords[0] = 0x41560000; // fma(1.5f, 2.25f, 10.0f)
-            expectedWords[1] = 0x00008001; // high signed product word
-            expectedWords[2] = 0x7FFEFFFD; // low signed product word
-            expectedWords[3] = sentinel;   // EXEC=0 suppresses the store
-            expectedWords[4] = 0x3FC00000; // store after EXEC restoration
-            expectedWords[5] = 0x00010003; // v_and_b32
-            expectedWords[6] = 0x7FFFFFFF; // v_or_b32
-            expectedWords[7] = 0x7FFEFFFC; // v_xor_b32
-
-            var labels = Enumerable.Range(0, initialWords.Length)
-                .Select(index => $"trailing word [{index}] remains sentinel")
-                .ToArray();
-            labels[0] = "v_fmac_f32 fma(1.5, 2.25, 10.0)";
-            labels[1] = "v_mul_hi_i32 hi(0x7FFFFFFF*0x10003)";
-            labels[2] = "v_mul_lo_i32 lo(0x7FFFFFFF*0x10003)";
-            labels[3] = "exec=0 store suppressed (offset 12 sentinel)";
-            labels[4] = "store after exec restore (offset 16)";
-            labels[5] = "v_and_b32 0x7FFFFFFF & 0x00010003";
-            labels[6] = "v_or_b32 0x7FFFFFFF | 0x00010003";
-            labels[7] = "v_xor_b32 0x7FFFFFFF ^ 0x00010003";
-
             var manifestPath = Path.Combine(outputDirectory, $"{name}-cs.conformance.json");
             var manifest = new
             {
                 SchemaVersion = 1,
                 Name = name,
                 Shader = Path.GetFileName(path),
-                InitialWords = initialWords,
-                ExpectedWords = expectedWords,
-                Labels = labels,
+                conformanceCase.InitialWords,
+                conformanceCase.ExpectedWords,
+                conformanceCase.Labels,
             };
             File.WriteAllText(
                 manifestPath,
@@ -472,6 +467,59 @@ static object?[] PadWithDefaults(MethodInfo method, object?[] arguments)
 
     return padded;
 }
+
+static SyntheticConformanceCase? CreateConformanceCase(string name)
+{
+    const uint sentinel = 0xCAFEBABE;
+    var initialWords = Enumerable.Repeat(sentinel, 16).ToArray();
+    var expectedWords = (uint[])initialWords.Clone();
+    var labels = Enumerable.Range(0, initialWords.Length)
+        .Select(index => $"trailing word [{index}] remains sentinel")
+        .ToArray();
+
+    switch (name)
+    {
+        case "exec":
+            expectedWords[0] = 0x41560000; // fma(1.5f, 2.25f, 10.0f)
+            expectedWords[1] = 0x00008001; // high signed product word
+            expectedWords[2] = 0x7FFEFFFD; // low signed product word
+            expectedWords[3] = sentinel;   // EXEC=0 suppresses the store
+            expectedWords[4] = 0x3FC00000; // store after EXEC restoration
+            expectedWords[5] = 0x00010003; // v_and_b32
+            expectedWords[6] = 0x7FFFFFFF; // v_or_b32
+            expectedWords[7] = 0x7FFEFFFC; // v_xor_b32
+            labels[0] = "v_fmac_f32 fma(1.5, 2.25, 10.0)";
+            labels[1] = "v_mul_hi_i32 hi(0x7FFFFFFF*0x10003)";
+            labels[2] = "v_mul_lo_i32 lo(0x7FFFFFFF*0x10003)";
+            labels[3] = "exec=0 store suppressed (offset 12 sentinel)";
+            labels[4] = "store after exec restore (offset 16)";
+            labels[5] = "v_and_b32 0x7FFFFFFF & 0x00010003";
+            labels[6] = "v_or_b32 0x7FFFFFFF | 0x00010003";
+            labels[7] = "v_xor_b32 0x7FFFFFFF ^ 0x00010003";
+            break;
+        case "exec-shifts":
+            expectedWords[0] = 0x08000001; // logical right shift
+            expectedWords[1] = 0xF8000001; // arithmetic right shift
+            expectedWords[2] = 0x00000100; // left shift, truncating to 32 bits
+            expectedWords[3] = 0x80000014; // non-carrying add
+            expectedWords[4] = 0x8000000C; // non-carrying subtract
+            labels[0] = "v_lshrrev_b32 0x80000010 >> 4";
+            labels[1] = "v_ashrrev_i32 (int)0x80000010 >> 4";
+            labels[2] = "v_lshlrev_b32 0x80000010 << 4";
+            labels[3] = "v_add_nc_i32 0x80000010 + 4";
+            labels[4] = "v_sub_nc_i32 0x80000010 - 4";
+            break;
+        default:
+            return null;
+    }
+
+    return new SyntheticConformanceCase(initialWords, expectedWords, labels);
+}
+
+internal sealed record SyntheticConformanceCase(
+    uint[] InitialWords,
+    uint[] ExpectedWords,
+    string[] Labels);
 
 internal sealed class FakeMemory : ICpuMemory
 {
