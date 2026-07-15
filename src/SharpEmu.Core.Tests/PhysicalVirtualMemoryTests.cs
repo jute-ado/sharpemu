@@ -161,6 +161,26 @@ public sealed class PhysicalVirtualMemoryTests
     }
 
     [WindowsX64Fact]
+    public void CompareTemporarilyReadsExecuteOnlyMemoryAndRestoresProtection()
+    {
+        using var memory = new PhysicalVirtualMemory();
+        var address = memory.AllocateAt(0, 0x1000, executable: true);
+        byte[] payload = [1, 2, 3, 4];
+        memory.Map(
+            address,
+            0x1000,
+            fileOffset: 0,
+            fileData: payload,
+            ProgramHeaderFlags.Execute);
+        Assert.Equal(PageExecuteRead, QueryPage(address).Protect);
+
+        Assert.True(memory.TryCompare(address, payload));
+        Assert.Equal(PageExecuteRead, QueryPage(address).Protect);
+        Assert.False(memory.TryCompare(address, [1, 2, 3, 5]));
+        Assert.Equal(PageExecuteRead, QueryPage(address).Protect);
+    }
+
+    [WindowsX64Fact]
     public void MappingCopiesPayloadZeroFillsSegmentAndPreservesAdjacentBytes()
     {
         using var memory = new PhysicalVirtualMemory();
