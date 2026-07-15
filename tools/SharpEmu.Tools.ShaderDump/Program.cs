@@ -262,6 +262,15 @@ const ulong ProgramAddress = 0x100000;
         0xE0701000, 0x80020809, // buffer_store_dword v8, v9, s[8:11], 0 offen
         0xBF810000,             // s_endpgm
     ]),
+    // Sixteen lanes compare their local invocation index against eight. The
+    // cmpx instruction narrows EXEC, so only the lower half may store.
+    ("exec-lane-mask", true, [
+        0x7E020288,             // v_mov_b32 v1, 8
+        0x7DA20300,             // v_cmpx_lt_u32 v0, v1
+        0x34040082,             // v_lshlrev_b32 v2, 2, v0 (byte address)
+        0xE0701000, 0x80020002, // buffer_store_dword v0, v2, s[8:11], 0 offen
+        0xBF810000,             // s_endpgm
+    ]),
     // Sixteen invocations contend on one storage-buffer counter. A plain
     // load/add/store would race; the deterministic final value proves that
     // buffer_atomic_add is emitted and synchronized as an actual atomic.
@@ -683,6 +692,23 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
                 LocalSizeZ: 2,
                 GroupCountZ: 2,
                 WorkGroupZRegister: 0);
+        case "exec-lane-mask":
+            for (uint index = 0; index < 8; index++)
+            {
+                expectedWords[index] = index;
+                labels[index] = $"active lane {index} writes its indexed slot";
+            }
+
+            for (var index = 8; index < 16; index++)
+            {
+                labels[index] = $"inactive lane {index} leaves its slot untouched";
+            }
+
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                LocalSizeX: 16);
         case "exec-buffer-atomic":
             initialWords[0] = 0;
             expectedWords[0] = 16;
