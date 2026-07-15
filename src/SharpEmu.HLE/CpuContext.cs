@@ -265,9 +265,8 @@ public sealed class CpuContext(ICpuMemory memory, Generation generation)
         Span<byte> current = stackalloc byte[1];
         for (var index = 0; index < capacity; index++)
         {
-            var offset = (ulong)index;
-            if (offset > ulong.MaxValue - address ||
-                !Memory.TryRead(address + offset, current))
+            if (!GuestAddress.TryAdd(address, (ulong)index, out var currentAddress) ||
+                !Memory.TryRead(currentAddress, current))
             {
                 return false;
             }

@@ -62,7 +62,7 @@ public static class PlayGoExports
             return OrbisPlayGoErrorBadPointer;
         }
 
-        if (PlayGoInitParamsSize - 1 > ulong.MaxValue - initParamsAddress)
+        if (!GuestAddress.IsRangeValid(initParamsAddress, PlayGoInitParamsSize))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }

@@ -89,9 +89,8 @@ public static class IcedDecoder
         var readCount = 0;
         for (var i = 0; i < clampedLength; i++)
         {
-            var offset = (ulong)i;
-            if (offset > ulong.MaxValue - rip ||
-                !memory.TryRead(rip + offset, oneByte))
+            if (!GuestAddress.TryAdd(rip, (ulong)i, out var currentAddress) ||
+                !memory.TryRead(currentAddress, oneByte))
             {
                 break;
             }
