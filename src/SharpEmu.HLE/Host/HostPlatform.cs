@@ -14,11 +14,32 @@ namespace SharpEmu.HLE.Host;
 /// </summary>
 public static class HostPlatform
 {
-    private static readonly Lazy<IHostPlatform> Instance = new(Create);
+    private static readonly Lazy<IHostPlatform?> Instance = new(Create);
+    private static readonly IHostAudioOutput FallbackAudio = new UnsupportedHostAudioOutput();
+    private static readonly IHostInput FallbackInput = new NeutralHostInput();
 
-    public static IHostPlatform Current => Instance.Value;
+    public static IHostPlatform Current => Instance.Value ?? throw CreateUnsupportedPlatformException();
 
-    private static IHostPlatform Create()
+    /// <summary>
+    /// Host audio available to portable HLE exports. Unsupported hosts return a backend
+    /// that fails stream creation so callers can use their existing silent-output path.
+    /// </summary>
+    public static IHostAudioOutput Audio =>
+        Instance.Value?.Audio ?? FallbackAudio;
+
+    /// <summary>
+    /// Host input available to portable HLE exports. Unsupported hosts expose a neutral,
+    /// disconnected input source instead of making otherwise portable exports throw.
+    /// </summary>
+    public static IHostInput Input =>
+        Instance.Value?.Input ?? FallbackInput;
+
+    public static void RequestTimerResolution()
+    {
+        Instance.Value?.Threading.RequestTimerResolution();
+    }
+
+    private static IHostPlatform? Create()
     {
         // The Windows backend executes guest x86-64 natively and emits x86-64
         // stubs, so a native ARM64 process must be rejected here rather than
@@ -28,7 +49,49 @@ public static class HostPlatform
             return new WindowsHostPlatform();
         }
 
-        throw new PlatformNotSupportedException(
+        return null;
+    }
+
+    private static PlatformNotSupportedException CreateUnsupportedPlatformException() =>
+        new(
             "SharpEmu native guest execution requires a host platform backend and none exists for this OS/architecture yet (currently Windows x64 only).");
+
+    private sealed class UnsupportedHostAudioOutput : IHostAudioOutput
+    {
+        public string BackendName => "silent";
+
+        public IHostAudioStream OpenStereoPcm16Stream(uint sampleRate) =>
+            throw new PlatformNotSupportedException("No host audio output backend is available.");
+    }
+
+    private sealed class NeutralHostInput : IHostInput
+    {
+        public void EnsureStarted()
+        {
+        }
+
+        public int GetGamepadStates(Span<HostGamepadState> destination) => 0;
+
+        public string? DescribeConnectedGamepad() => null;
+
+        public void SetRumble(byte largeMotor, byte smallMotor)
+        {
+        }
+
+        public void SetTriggerRumble(byte? leftTrigger, byte? rightTrigger)
+        {
+        }
+
+        public void SetLightbar(byte red, byte green, byte blue)
+        {
+        }
+
+        public void ResetLightbar()
+        {
+        }
+
+        public bool IsHostWindowFocused() => false;
+
+        public bool IsKeyDown(int virtualKey) => false;
     }
 }

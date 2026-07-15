@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.HLE;
+using SharpEmu.HLE.Host;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -28,7 +29,7 @@ public static class AudioOutExports
             int bytesPerSample,
             bool isFloat,
             int bufferByteLength,
-            WinMmAudioPort? backend)
+            IHostAudioStream? backend)
         {
             UserId = userId;
             Type = type;
@@ -51,7 +52,7 @@ public static class AudioOutExports
         public int BytesPerSample { get; }
         public bool IsFloat { get; }
         public int BufferByteLength { get; }
-        public WinMmAudioPort? Backend { get; }
+        public IHostAudioStream? Backend { get; }
 
         public void PaceSilence()
         {
@@ -110,12 +111,13 @@ public static class AudioOutExports
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        WinMmAudioPort? backend = null;
+        IHostAudioStream? backend = null;
         string backendName;
         try
         {
-            backend = new WinMmAudioPort(frequency);
-            backendName = "winmm";
+            var audio = HostPlatform.Audio;
+            backend = audio.OpenStereoPcm16Stream(frequency);
+            backendName = audio.BackendName;
         }
         catch (Exception exception)
         {
@@ -188,15 +190,31 @@ public static class AudioOutExports
                 return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
 
-            if (port.Backend is null ||
-                !port.Backend.Submit(
-                    source,
-                    port.BufferLength,
-                    port.Channels,
-                    port.BytesPerSample,
-                    port.IsFloat))
+            if (port.Backend is null)
             {
                 port.PaceSilence();
+                return ctx.SetReturn(0);
+            }
+
+            var outputLength = checked((int)port.BufferLength * AudioPcmConversion.OutputFrameSize);
+            var output = ArrayPool<byte>.Shared.Rent(outputLength);
+            try
+            {
+                AudioPcmConversion.ConvertToStereoPcm16(
+                    source,
+                    output.AsSpan(0, outputLength),
+                    checked((int)port.BufferLength),
+                    port.Channels,
+                    port.BytesPerSample,
+                    port.IsFloat);
+                if (!port.Backend.Submit(output.AsSpan(0, outputLength)))
+                {
+                    port.PaceSilence();
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(output);
             }
 
             return ctx.SetReturn(0);

@@ -10,4 +10,8 @@ internal sealed class WindowsHostPlatform : IHostPlatform
     public IHostThreading Threading { get; } = new WindowsHostThreading();
 
     public IHostSymbolResolver Symbols { get; } = new WindowsHostSymbolResolver();
+
+    public IHostAudioOutput Audio { get; } = new WindowsWaveOutAudio();
+
+    public IHostInput Input { get; } = new WindowsHostInput();
 }
