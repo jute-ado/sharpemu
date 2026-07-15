@@ -618,6 +618,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private nint _selfHandlePtr;
 
+	private int _disposeStarted;
+
 	private readonly IHostPlatform _hostPlatform;
 
 	private readonly IHostThreading _hostThreading;
@@ -5146,6 +5148,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	public unsafe void Dispose()
 	{
+		if (Volatile.Read(ref _disposeStarted) != 0)
+		{
+			return;
+		}
+
 		if (!RequestGuestThreadTeardown(2000))
 		{
 			// A guest worker is still executing native code; freeing the trampolines,
@@ -5155,6 +5162,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				"[LOADER][WARN] Skipping executable stub teardown: guest worker threads are still running.");
 			return;
 		}
+		if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
+		{
+			return;
+		}
+
 		// Native guest workers park idle once every guest thread has unwound; stop
 		// them before any executable stub or TLS index they reference is freed.
 		DisposeNativeGuestExecutors();
