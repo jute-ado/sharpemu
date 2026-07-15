@@ -414,24 +414,6 @@ public static class VideoOutExports
     }
 
     [SysAbiExport(
-        Nid = "w0hLuNarQxY",
-        ExportName = "sceVideoOutConfigureOutput",
-        Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libSceVideoOut")]
-    public static int VideoOutConfigureOutput(CpuContext ctx)
-    {
-        // Accept the requested output configuration; the presenter always renders
-        // at the display buffer's native size.
-        var handle = unchecked((int)ctx[CpuRegister.Rdi]);
-        if (!TryGetPort(handle, out _))
-        {
-            return OrbisVideoOutErrorInvalidHandle;
-        }
-
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-    }
-
-    [SysAbiExport(
         Nid = "utPrVdxio-8",
         ExportName = "sceVideoOutGetOutputStatus",
         Target = Generation.Gen4 | Generation.Gen5,
