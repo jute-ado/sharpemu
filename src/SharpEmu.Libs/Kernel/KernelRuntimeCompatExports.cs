@@ -1678,9 +1678,17 @@ public static class KernelRuntimeCompatExports
         }
 
         var writableCount = (int)Math.Min(Math.Min(capacity, (ulong)int.MaxValue), (ulong)handles.Length);
+        var writableBytes = (ulong)writableCount * sizeof(int);
+        if (!GuestAddress.IsRangeValid(handlesAddress, writableBytes))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
         for (var i = 0; i < writableCount; i++)
         {
-            if (!ctx.TryWriteInt32(handlesAddress + (ulong)(i * sizeof(int)), handles[i]))
+            var offset = (ulong)i * sizeof(int);
+            if (!GuestAddress.TryAdd(handlesAddress, offset, out var handleAddress) ||
+                !ctx.TryWriteInt32(handleAddress, handles[i]))
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
             }
