@@ -253,7 +253,12 @@ public static class KernelEventQueueCompatExports
         LibraryName = "libKernel")]
     public static int KernelGetEventUserData(CpuContext ctx)
     {
-        _ = ctx.TryReadUInt64(ctx[CpuRegister.Rdi] + 0x18, out var userData);
+        var userData = 0UL;
+        if (GuestAddress.TryAdd(ctx[CpuRegister.Rdi], 0x18, out var userDataAddress))
+        {
+            _ = ctx.TryReadUInt64(userDataAddress, out userData);
+        }
+
         ctx[CpuRegister.Rax] = userData;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -278,7 +283,8 @@ public static class KernelEventQueueCompatExports
     public static int KernelGetEventFilter(CpuContext ctx)
     {
         Span<byte> filterBytes = stackalloc byte[sizeof(short)];
-        var filter = ctx.Memory.TryRead(ctx[CpuRegister.Rdi] + 0x08, filterBytes)
+        var filter = GuestAddress.TryAdd(ctx[CpuRegister.Rdi], 0x08, out var filterAddress) &&
+                     ctx.Memory.TryRead(filterAddress, filterBytes)
             ? BinaryPrimitives.ReadInt16LittleEndian(filterBytes)
             : (short)0;
         ctx[CpuRegister.Rax] = unchecked((uint)filter);
@@ -292,7 +298,12 @@ public static class KernelEventQueueCompatExports
         LibraryName = "libKernel")]
     public static int KernelGetEventData(CpuContext ctx)
     {
-        _ = ctx.TryReadUInt64(ctx[CpuRegister.Rdi] + 0x10, out var data);
+        var data = 0UL;
+        if (GuestAddress.TryAdd(ctx[CpuRegister.Rdi], 0x10, out var dataAddress))
+        {
+            _ = ctx.TryReadUInt64(dataAddress, out data);
+        }
+
         ctx[CpuRegister.Rax] = data;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
