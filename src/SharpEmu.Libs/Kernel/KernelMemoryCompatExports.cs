@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.HLE;
+using SharpEmu.HLE.Host;
 using SharpEmu.Libs.Ampr;
 using System.Buffers;
 using System.Buffers.Binary;
@@ -52,14 +53,13 @@ public static partial class KernelMemoryCompatExports
     private const ulong FlexibleMemorySizeBytes = 448UL * 1024 * 1024;
     private const int OrbisVirtualQueryInfoSize = 72;
     private const int OrbisKernelMaximumNameLength = 32;
-    private const uint MemCommit = 0x1000;
-    private const uint MemReserve = 0x2000;
-    private const uint MemRelease = 0x8000;
+    // Raw Windows PAGE_* values used only against HostRegionInfo.RawProtection,
+    // which by contract carries the untranslated protection word of the host
+    // platform in use (see IHostMemory).
     private const uint HostPageNoAccess = 0x01;
     private const uint HostPageReadOnly = 0x02;
     private const uint HostPageReadWrite = 0x04;
     private const uint HostPageWriteCopy = 0x08;
-    private const uint HostPageExecute = 0x10;
     private const uint HostPageExecuteRead = 0x20;
     private const uint HostPageExecuteReadWrite = 0x40;
     private const uint HostPageExecuteWriteCopy = 0x80;
@@ -136,31 +136,9 @@ public static partial class KernelMemoryCompatExports
     private static string? _cachedApp0Root;
     private static string? _cachedDownload0Root;
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MemoryBasicInformation
-    {
-        public nint BaseAddress;
-        public nint AllocationBase;
-        public uint AllocationProtect;
-        public nuint RegionSize;
-        public uint State;
-        public uint Protect;
-        public uint Type;
-    }
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern nuint VirtualQuery(nint lpAddress, out MemoryBasicInformation lpBuffer, nuint dwLength);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool VirtualProtect(nint lpAddress, nuint dwSize, uint flNewProtect, out uint lpflOldProtect);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern nint VirtualAlloc(nint lpAddress, nuint dwSize, uint flAllocationType, uint flProtect);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool VirtualFree(nint lpAddress, nuint dwSize, uint dwFreeType);
+    // Property (not a cached field) so merely touching this type never resolves
+    // the platform backend; non-Windows hosts only throw if a call is reached.
+    private static IHostMemory HostMemory => HostPlatform.Current.Memory;
 
     private sealed class OpenDirectory
     {
@@ -3848,7 +3826,7 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        if (!TryProtectHostRange(alignedAddress, alignedLength, protection))
+        if (!TryProtectHostRange(ctx, alignedAddress, alignedLength, protection))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
         }
@@ -3882,7 +3860,7 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        if (!TryProtectHostRange(alignedAddress, alignedLength, protection))
+        if (!TryProtectHostRange(ctx, alignedAddress, alignedLength, protection))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
         }
@@ -6123,42 +6101,40 @@ public static partial class KernelMemoryCompatExports
         return alignedLength != 0;
     }
 
-    private static bool TryProtectHostRange(ulong address, ulong length, int orbisProtection)
+    private static bool TryProtectHostRange(CpuContext ctx, ulong address, ulong length, int orbisProtection)
     {
         if (length == 0 || length > nuint.MaxValue)
         {
             return false;
         }
 
-        var hostProtection = ResolveHostProtection(orbisProtection);
-        if (!VirtualProtect((nint)address, (nuint)length, hostProtection, out _))
+        if (!KernelVirtualRangeAllocator.TryResolveAddressSpace(ctx.Memory, out var addressSpace))
         {
             return false;
         }
 
-        return true;
+        return addressSpace.TryProtect(address, length, ResolveGuestProtection(orbisProtection));
     }
 
-    private static uint ResolveHostProtection(int orbisProtection)
+    private static GuestPageProtection ResolveGuestProtection(int orbisProtection)
     {
-        var read = (orbisProtection & (OrbisProtCpuRead | OrbisProtGpuRead)) != 0;
-        var write = (orbisProtection & (OrbisProtCpuWrite | OrbisProtGpuWrite)) != 0;
-        var execute = (orbisProtection & OrbisProtCpuExec) != 0;
-
-        if (execute)
+        var protection = GuestPageProtection.None;
+        if ((orbisProtection & (OrbisProtCpuRead | OrbisProtGpuRead)) != 0)
         {
-            return write
-                ? HostPageExecuteReadWrite
-                : read
-                    ? HostPageExecuteRead
-                    : HostPageExecute;
+            protection |= GuestPageProtection.Read;
         }
 
-        return write
-            ? HostPageReadWrite
-            : read
-                ? HostPageReadOnly
-                : HostPageNoAccess;
+        if ((orbisProtection & (OrbisProtCpuWrite | OrbisProtGpuWrite)) != 0)
+        {
+            protection |= GuestPageProtection.Write;
+        }
+
+        if ((orbisProtection & OrbisProtCpuExec) != 0)
+        {
+            protection |= GuestPageProtection.Execute;
+        }
+
+        return protection;
     }
 
     private static bool TryFindVirtualQueryRegionLocked(ulong queryAddress, bool findNext, out MappedRegion region)
@@ -6570,7 +6546,7 @@ public static partial class KernelMemoryCompatExports
             var effectiveAlignment = Math.Max(alignment, pageSize);
             var usableSize = checked((nuint)AlignUp((ulong)actualSize, (ulong)pageSize));
             var reservationSize = checked(pageSize + effectiveAlignment - 1 + usableSize + pageSize);
-            var baseAddress = VirtualAlloc(0, reservationSize, MemCommit | MemReserve, HostPageReadWrite);
+            var baseAddress = unchecked((nint)HostMemory.Allocate(0, reservationSize, HostPageProtection.ReadWrite));
             if (baseAddress == 0)
             {
                 return false;
@@ -6578,9 +6554,9 @@ public static partial class KernelMemoryCompatExports
 
             var alignedAddress = AlignUp(unchecked((ulong)baseAddress) + (ulong)pageSize, (ulong)effectiveAlignment);
             var guardAddress = alignedAddress + (ulong)usableSize;
-            if (!VirtualProtect((nint)guardAddress, pageSize, HostPageNoAccess, out _))
+            if (!HostMemory.Protect(guardAddress, pageSize, HostPageProtection.NoAccess, out _))
             {
-                _ = VirtualFree(baseAddress, 0, MemRelease);
+                _ = HostMemory.Free(unchecked((ulong)baseAddress));
                 return false;
             }
 
@@ -6715,7 +6691,7 @@ public static partial class KernelMemoryCompatExports
 
         if (allocation.IsGuarded)
         {
-            _ = VirtualFree(allocation.BaseAddress, 0, MemRelease);
+            _ = HostMemory.Free(unchecked((ulong)allocation.BaseAddress));
         }
         else
         {
@@ -6855,15 +6831,15 @@ public static partial class KernelMemoryCompatExports
         }
 
         // The compatibility fallback historically accepts raw host pointers on Windows.
-        // VirtualQuery is the safety boundary that makes those probes non-faulting. Other
-        // platforms have no equivalent implementation here, so only emulator-owned heap
-        // allocations are safe to dereference there.
+        // Host memory queries are the safety boundary that makes those probes non-faulting.
+        // No non-Windows host backend exists yet, so raw host-pointer probing remains
+        // disabled there.
         if (!OperatingSystem.IsWindows())
         {
             return false;
         }
 
-        if (!TryQueryHostPage(address, out var startInfo) || !HasRequiredProtection(startInfo.Protect, writeAccess))
+        if (!TryQueryHostPage(address, out var startInfo) || !HasRequiredProtection(startInfo.RawProtection, writeAccess))
         {
             return false;
         }
@@ -6874,7 +6850,7 @@ public static partial class KernelMemoryCompatExports
             return true;
         }
 
-        if (!TryQueryHostPage(endAddress, out var endInfo) || !HasRequiredProtection(endInfo.Protect, writeAccess))
+        if (!TryQueryHostPage(endAddress, out var endInfo) || !HasRequiredProtection(endInfo.RawProtection, writeAccess))
         {
             return false;
         }
@@ -6882,16 +6858,14 @@ public static partial class KernelMemoryCompatExports
         return true;
     }
 
-    private static bool TryQueryHostPage(ulong address, out MemoryBasicInformation info)
+    private static bool TryQueryHostPage(ulong address, out HostRegionInfo info)
     {
-        info = default;
-        var size = (nuint)Marshal.SizeOf<MemoryBasicInformation>();
-        if (VirtualQuery((nint)address, out info, size) == 0)
+        if (!HostMemory.Query(address, out info))
         {
             return false;
         }
 
-        return info.State == MemCommit;
+        return info.State == HostRegionState.Committed;
     }
 
     private static bool HasRequiredProtection(uint protect, bool writeAccess)
