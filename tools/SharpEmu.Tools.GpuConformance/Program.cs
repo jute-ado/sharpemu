@@ -63,8 +63,7 @@ unsafe
     vk.EnumeratePhysicalDevices(instance, &deviceCount, null);
     if (deviceCount == 0)
     {
-        Console.WriteLine("no Vulkan devices found");
-        return;
+        throw new InvalidOperationException("no Vulkan devices found");
     }
 
     var physicalDevices = new PhysicalDevice[deviceCount];
