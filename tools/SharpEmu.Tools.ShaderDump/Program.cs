@@ -253,7 +253,28 @@ const ulong ProgramAddress = 0x100000;
         0xE0700008, 0x80020500, // buffer_store_dword v5, off, s[8:11], 0 offset:8
         0xBF810000,             // s_endpgm
     ]),
+    // Four invocations publish their local IDs to distinct LDS slots, meet at
+    // a workgroup barrier, then read the slot owned by the opposite lane.
+    ("exec-lds-barrier", true, [
+        0x34080082,             // v_lshlrev_b32 v4, 2, v0 (own byte address)
+        0xD8340000, 0x00000004, // ds_write_b32 v4, v0
+        0xBF8A0000,             // s_barrier
+        0x7E0A02FF, 0x00000003, // v_mov_b32 v5, 3
+        0xD7760006, 0x00020105, // v_sub_nc_i32 v6, v5, v0 (opposite lane)
+        0x340E0C82,             // v_lshlrev_b32 v7, 2, v6 (read byte address)
+        0xD8D80000, 0x08000007, // ds_read_b32 v8, v7
+        0xE0701000, 0x80020804, // buffer_store_dword v8, v4, s[8:11], 0 offen
+        0xBF810000,             // s_endpgm
+    ]),
 ];
+
+// LDS and workgroup barriers are compute-stage concepts. Keep these programs
+// in the common decode/compute pipeline without asking the vertex emitter to
+// accept operations that are invalid for that execution model.
+HashSet<string> computeOnlyPrograms = new(StringComparer.Ordinal)
+{
+    "exec-lds-barrier",
+};
 
 var assembly = typeof(CxaGuardExports).Assembly;
 var shaderTranslator = assembly.GetType("SharpEmu.Libs.Agc.Gen5ShaderTranslator")
@@ -397,19 +418,26 @@ foreach (var (name, expectTranslate, words) in testPrograms)
         null,
         null)!;
 
-    var compileArgs = PadWithDefaults(tryCompile, [state, evaluation, null, null]);
-    if ((bool)tryCompile.Invoke(null, BindingFlags.OptionalParamBinding, null, compileArgs, null)!)
+    if (!computeOnlyPrograms.Contains(name))
     {
-        var shader = compileArgs[2]!;
-        var spirv = (byte[])shader.GetType().GetProperty("Spirv")!.GetValue(shader)!;
-        var path = Path.Combine(outputDirectory, $"{name}.spv");
-        File.WriteAllBytes(path, spirv);
-        Console.WriteLine($"[{name}] emit: success, {spirv.Length} bytes -> {path}");
+        var compileArgs = PadWithDefaults(tryCompile, [state, evaluation, null, null]);
+        if ((bool)tryCompile.Invoke(null, BindingFlags.OptionalParamBinding, null, compileArgs, null)!)
+        {
+            var shader = compileArgs[2]!;
+            var spirv = (byte[])shader.GetType().GetProperty("Spirv")!.GetValue(shader)!;
+            var path = Path.Combine(outputDirectory, $"{name}.spv");
+            File.WriteAllBytes(path, spirv);
+            Console.WriteLine($"[{name}] emit: success, {spirv.Length} bytes -> {path}");
+        }
+        else
+        {
+            failures++;
+            Console.WriteLine($"[{name}] emit: FAILED ({compileArgs[3]})");
+        }
     }
     else
     {
-        failures++;
-        Console.WriteLine($"[{name}] emit: FAILED ({compileArgs[3]})");
+        Console.WriteLine($"[{name}] vertex emit: skipped (compute-only program)");
     }
 
     var computeArgs = PadWithDefaults(
@@ -718,6 +746,18 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
             labels[1] = "GLC atomic add returns its pre-operation value";
             labels[2] = "GLC atomic sub returns its pre-operation value";
             break;
+        case "exec-lds-barrier":
+            for (uint index = 0; index < 4; index++)
+            {
+                expectedWords[index] = 3 - index;
+                labels[index] = $"lane {index} reads lane {3 - index} through LDS";
+            }
+
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                LocalSizeX: 4);
         default:
             return null;
     }
