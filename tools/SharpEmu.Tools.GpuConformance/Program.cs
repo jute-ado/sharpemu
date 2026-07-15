@@ -335,8 +335,28 @@ unsafe
         CommandBufferCount = 1,
         PCommandBuffers = &commandBuffer,
     };
-    Check(vk.QueueSubmit(queue, 1, in submitInfo, default), "vkQueueSubmit");
-    Check(vk.QueueWaitIdle(queue), "vkQueueWaitIdle");
+    var fenceInfo = new FenceCreateInfo
+    {
+        SType = StructureType.FenceCreateInfo,
+    };
+    Check(vk.CreateFence(device, in fenceInfo, null, out var dispatchFence), "vkCreateFence");
+    Check(vk.QueueSubmit(queue, 1, in submitInfo, dispatchFence), "vkQueueSubmit");
+
+    const ulong dispatchTimeoutNanoseconds = 30UL * 1_000_000_000UL;
+    var waitResult = vk.WaitForFences(
+        device,
+        1,
+        &dispatchFence,
+        true,
+        dispatchTimeoutNanoseconds);
+    if (waitResult == Result.Timeout)
+    {
+        throw new TimeoutException(
+            $"Vulkan conformance dispatch did not finish within " +
+            $"{dispatchTimeoutNanoseconds / 1_000_000_000UL} seconds");
+    }
+
+    Check(waitResult, "vkWaitForFences");
 
     var failures = 0;
     for (var index = 0; index < manifest.ExpectedWords.Length; index++)
@@ -357,6 +377,7 @@ unsafe
         ? "RESULT: all values match"
         : $"RESULT: {failures} mismatch(es)");
 
+    vk.DestroyFence(device, dispatchFence, null);
     vk.DestroyCommandPool(device, commandPool, null);
     vk.DestroyDescriptorPool(device, pool, null);
     vk.DestroyPipeline(device, pipeline, null);
