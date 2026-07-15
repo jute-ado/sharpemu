@@ -157,6 +157,31 @@ public sealed class HostMemoryAbstractionTests
     }
 
     [Fact]
+    public void GuestProtectionAlignsHostChangesAndCacheFlushesToPages()
+    {
+        const ulong address = 0x0000_0008_2800_0000;
+        var hostMemory = new RecordingHostMemory
+        {
+            AllocateResult = address,
+        };
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+        memory.AllocateAt(address, 0x3000, executable: false, allowAlternative: false);
+
+        Assert.True(memory.TryProtect(
+            address + 0x123,
+            0x1000,
+            GuestPageProtection.Read | GuestPageProtection.Execute));
+
+        var request = Assert.Single(hostMemory.ProtectionRequests);
+        Assert.Equal(
+            (address, 0x2000uL, HostPageProtection.ReadExecute),
+            request);
+        Assert.Equal([(address, 0x2000uL)], hostMemory.FlushedRanges);
+        Assert.True(memory.TryQueryMemoryRegion(address + 0x100, findNext: false, out var region));
+        Assert.Equal(new GuestVirtualMemoryRegion(address, 0x2000, 0x05), region);
+    }
+
+    [Fact]
     public void GuestProtectionRejectsUnmappedRangeWithoutCallingHost()
     {
         var hostMemory = new RecordingHostMemory();
