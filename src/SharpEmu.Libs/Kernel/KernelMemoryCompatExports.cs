@@ -125,6 +125,13 @@ public static partial class KernelMemoryCompatExports
 
     private static ulong _nextPhysicalAddress;
     private static ulong _nextVirtualAddress;
+    // First guest virtual address handed out for direct/flexible mappings
+    // when the game does not request one. 4GB is free on Windows, but on
+    // POSIX hosts it belongs to the host image / runtime (the Mach-O image
+    // base is 0x100000000 on macOS), so search from a guest-owned window
+    // well clear of host mappings instead.
+    private static readonly ulong DefaultMapSearchBase =
+        OperatingSystem.IsWindows() ? 0x1_0000_0000UL : 0x20_0000_0000UL;
     private static ulong _mainDirectMemoryPoolBase = UnsetMainDirectMemoryPoolBase;
     private static ulong _allocatedFlexibleBytes;
     private static ulong _threadAtexitCountCallback;
@@ -241,7 +248,7 @@ public static partial class KernelMemoryCompatExports
         lock (_memoryGate)
         {
             var desiredAddress = AlignUp(
-                _nextVirtualAddress == 0 ? 0x1_0000_0000UL : _nextVirtualAddress,
+                _nextVirtualAddress == 0 ? DefaultMapSearchBase : _nextVirtualAddress,
                 effectiveAlignment);
             if (!TryReserveGuestVirtualRange(ctx, desiredAddress, mappedLength, protection, effectiveAlignment, out address) ||
                 address == 0)
@@ -3327,7 +3334,7 @@ public static partial class KernelMemoryCompatExports
                 ? requestedAddress
                 : directMemoryStart != 0
                     ? AlignUp(directMemoryStart, effectiveAlignment)
-                    : AlignUp(_nextVirtualAddress == 0 ? 0x1_0000_0000UL : _nextVirtualAddress, effectiveAlignment);
+                    : AlignUp(_nextVirtualAddress == 0 ? DefaultMapSearchBase : _nextVirtualAddress, effectiveAlignment);
 
             var reserved = false;
             if (fixedMapping && requestedAddress != 0)
@@ -3433,7 +3440,7 @@ public static partial class KernelMemoryCompatExports
             var fixedMapping = (flags & 0x10UL) != 0;
             var desiredAddress = requestedAddress != 0
                 ? requestedAddress
-                : AlignUp(_nextVirtualAddress == 0 ? 0x1_0000_0000UL : _nextVirtualAddress, 0x1000UL);
+                : AlignUp(_nextVirtualAddress == 0 ? DefaultMapSearchBase : _nextVirtualAddress, 0x1000UL);
 
             if (fixedMapping && requestedAddress != 0)
             {
@@ -6540,6 +6547,55 @@ public static partial class KernelMemoryCompatExports
         }
 
         return false;
+    }
+
+    internal static bool TryReadTrackedLibcHeapGpuAlias(
+        ulong packedAddress,
+        Span<byte> destination)
+    {
+        if (destination.IsEmpty)
+        {
+            return true;
+        }
+
+        // Gen5 texture descriptors retain 46 bits of the byte address.  Host
+        // libc allocations can live at 0x7F... on Linux, so recover the full
+        // tracked allocation address when the descriptor contains its packed
+        // low-bit alias.
+        const ulong textureAddressMask = (1UL << 46) - 1;
+        var length = (ulong)destination.Length;
+        ulong resolvedAddress = 0;
+        lock (_libcAllocGate)
+        {
+            foreach (var (allocationAddress, allocation) in _libcAllocations)
+            {
+                var packedBase = allocationAddress & textureAddressMask;
+                if (packedAddress < packedBase)
+                {
+                    continue;
+                }
+
+                var offset = packedAddress - packedBase;
+                var allocationSize = (ulong)allocation.Size;
+                if (offset > allocationSize || length > allocationSize - offset)
+                {
+                    continue;
+                }
+
+                var candidate = allocationAddress + offset;
+                if (resolvedAddress != 0 && resolvedAddress != candidate)
+                {
+                    // Do not guess if two live host allocations collide after
+                    // descriptor address packing.
+                    return false;
+                }
+
+                resolvedAddress = candidate;
+            }
+
+            return resolvedAddress != 0 &&
+                   TryReadHostMemory(resolvedAddress, destination);
+        }
     }
 
     private static bool TryAllocateLibcHeap(ulong requestedSize, nuint alignment, bool zeroFill, out ulong address)

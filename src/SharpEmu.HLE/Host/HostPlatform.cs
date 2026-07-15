@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Runtime.InteropServices;
+using SharpEmu.HLE.Host.Posix;
 using SharpEmu.HLE.Host.Windows;
 
 namespace SharpEmu.HLE.Host;
@@ -41,12 +42,22 @@ public static class HostPlatform
 
     private static IHostPlatform? Create()
     {
-        // The Windows backend executes guest x86-64 natively and emits x86-64
-        // stubs, so a native ARM64 process must be rejected here rather than
-        // crash undefined later (x64 processes under emulation report X64).
-        if (OperatingSystem.IsWindows() && RuntimeInformation.ProcessArchitecture == Architecture.X64)
+        // Guest code and generated host stubs execute as x86-64. Native ARM64
+        // processes must be rejected before reaching the execution backend;
+        // x64 processes under emulation report Architecture.X64.
+        if (RuntimeInformation.ProcessArchitecture != Architecture.X64)
+        {
+            return null;
+        }
+
+        if (OperatingSystem.IsWindows())
         {
             return new WindowsHostPlatform();
+        }
+
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+        {
+            return new PosixHostPlatform();
         }
 
         return null;
@@ -54,7 +65,8 @@ public static class HostPlatform
 
     private static PlatformNotSupportedException CreateUnsupportedPlatformException() =>
         new(
-            "SharpEmu native guest execution requires a host platform backend and none exists for this OS/architecture yet (currently Windows x64 only).");
+            "SharpEmu native guest execution requires an x86-64 process on Windows, Linux, or macOS. " +
+            "On Apple Silicon, use the osx-x64 build under Rosetta 2.");
 
     private sealed class UnsupportedHostAudioOutput : IHostAudioOutput
     {

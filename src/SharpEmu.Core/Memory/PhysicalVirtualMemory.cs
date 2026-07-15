@@ -324,6 +324,71 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         var requestedCursor = AlignUp(desiredAddress, effectiveAlignment);
         var cursor = GetAllocationSearchCursor(desiredAddress, requestedCursor, effectiveAlignment, executable);
 
+        // Under Rosetta 2 the kernel can ignore placement hints for whole
+        // windows, so page-stepped exact probes are pathological on macOS.
+        // Linux must keep using the exact-address search below: PS5 resource
+        // descriptors cannot represent ordinary 0x7F... host mappings. Linux
+        // HostMemory uses MAP_FIXED_NOREPLACE, making those low-address probes
+        // safe without clobbering existing host mappings.
+        if (OperatingSystem.IsMacOS())
+        {
+            // Prefer the requested low address.  Besides matching the guest
+            // address model, this keeps the allocation representable by every
+            // PS5 GPU descriptor (the strictest ones carry 40 address bits).
+            try
+            {
+                var exactAddress = AllocateAt(
+                    cursor,
+                    alignedSize,
+                    executable,
+                    allowAlternative: false);
+                if (exactAddress == cursor)
+                {
+                    actualAddress = exactAddress;
+                    UpdateAllocationSearchCursor(
+                        desiredAddress,
+                        effectiveAlignment,
+                        executable,
+                        exactAddress + alignedSize);
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+
+            // Over-allocate by the alignment so a kernel-chosen placement
+            // always contains an aligned start; the unused head/tail stays
+            // part of the tracked region and is simply never handed out.
+            var reserveSize = effectiveAlignment > PageSize
+                ? alignedSize + effectiveAlignment
+                : alignedSize;
+            try
+            {
+                var posixAddress = AllocateAt(cursor, reserveSize, executable, allowAlternative: true);
+                if (posixAddress != 0)
+                {
+                    var alignedBase = AlignUp(posixAddress, effectiveAlignment);
+                    const ulong gpuAddressLimit = 1UL << 40;
+                    if (alignedBase < gpuAddressLimit &&
+                        alignedSize <= gpuAddressLimit - alignedBase &&
+                        alignedBase + alignedSize <= posixAddress + reserveSize)
+                    {
+                        actualAddress = alignedBase;
+                        UpdateAllocationSearchCursor(desiredAddress, effectiveAlignment, executable, alignedBase + alignedSize);
+                        return true;
+                    }
+
+                    ReleaseUntrackedAllocation(posixAddress);
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
+        }
+
         for (var attempt = 0; attempt < 0x10000; attempt++)
         {
             if (cursor == 0 || ulong.MaxValue - cursor < alignedSize)
@@ -408,6 +473,28 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
             ? ulong.MaxValue
             : AlignUp(regionEnd, alignment);
         return false;
+    }
+
+    private void ReleaseUntrackedAllocation(ulong address)
+    {
+        _gate.EnterWriteLock();
+        try
+        {
+            for (var i = 0; i < _regions.Count; i++)
+            {
+                if (_regions[i].VirtualAddress == address)
+                {
+                    _regions.RemoveAt(i);
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _gate.ExitWriteLock();
+        }
+
+        _hostMemory.Free(address);
     }
 
     public bool TryAllocateGuestMemory(ulong size, ulong alignment, out ulong address)
