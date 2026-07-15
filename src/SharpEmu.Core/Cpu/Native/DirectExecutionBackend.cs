@@ -666,6 +666,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private readonly IHostFaultHandling _faultHandling;
 
 	private const int MinTlsPatchInstructionBytes = 8;
+	private const ulong MaxTlsScanChunkBytes = 0x0100_0000;
 
 	private delegate ulong ImportGatewayDelegate(nint backendHandle, int importIndex, nint argPackPtr);
 	private delegate int RawExceptionHandlerDelegate(void* exceptionInfo);
@@ -2515,13 +2516,16 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				uint num7 = lpBuffer.RawProtection & 0xFF;
 				bool flag = lpBuffer.State == HostRegionState.Committed && (lpBuffer.RawProtection & PAGE_GUARD) == 0 && num7 != PAGE_NOACCESS;
 				bool flag2 = num7 == PAGE_EXECUTE || num7 == 32 || num7 == 64 || num7 == PAGE_EXECUTE_WRITECOPY;
+				var nextScanAddress = flag && flag2
+					? GetTlsScanChunkEnd(num5, num6)
+					: num6;
 				if (flag &&
 					flag2 &&
-					num6 > num5 &&
-					num6 - num5 >= MinTlsPatchInstructionBytes)
+					nextScanAddress > num5 &&
+					nextScanAddress - num5 >= MinTlsPatchInstructionBytes)
 				{
 					byte* ptr = (byte*)num5;
-					int scanBytes = (int)(num6 - num5);
+					int scanBytes = checked((int)(nextScanAddress - num5));
 					for (int i = 0; i <= scanBytes - MinTlsPatchInstructionBytes; i++)
 					{
 						nint address = (nint)(ptr + i);
@@ -2566,7 +2570,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 						i += recognizedInstruction.Length - 1;
 					}
 				}
-				num = num6 > num ? num6 : AdvanceTlsScanAddress(num, num2);
+				num = nextScanAddress > num ? nextScanAddress : AdvanceTlsScanAddress(num, num2);
 			}
 			Console.Error.WriteLine(
 				$"[LOADER][INFO] Patched {num3} TLS loads, {num9} TLS stores, {num4} stack-canary accesses; failures={failedPatchCount}");
@@ -2580,6 +2584,18 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				RollbackTlsInstructionPatches(recognizedPatches);
 			}
 		}
+	}
+
+	internal static ulong GetTlsScanChunkEnd(ulong regionStart, ulong regionEnd)
+	{
+		if (regionEnd <= regionStart)
+		{
+			return regionStart;
+		}
+
+		return regionEnd - regionStart <= MaxTlsScanChunkBytes
+			? regionEnd
+			: regionStart + MaxTlsScanChunkBytes;
 	}
 
 	private static ulong AdvanceTlsScanAddress(ulong address, ulong scanEnd)
