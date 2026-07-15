@@ -225,6 +225,19 @@ const ulong ProgramAddress = 0x100000;
         0xDC708008, 0x00000704, // global_store_dword v4, v7, s[0:1] offset:8
         0xBF810000,             // s_endpgm
     ]),
+    // Every invocation writes its lane ID to scratch address zero, clears the
+    // source VGPR, and loads it back. Identical addresses across eight lanes
+    // prove that scratch storage is private rather than workgroup-shared.
+    ("exec-scratch-memory", true, [
+        0x7E080280,             // v_mov_b32 v4, 0 (scratch byte address)
+        0x7E0A0300,             // v_mov_b32 v5, v0 (lane ID)
+        0xDC704000, 0x007F0504, // scratch_store_dword v4, v5
+        0x7E0A0280,             // v_mov_b32 v5, 0 (discard source value)
+        0xDC304000, 0x067F0004, // scratch_load_dword v6, v4
+        0x340E0082,             // v_lshlrev_b32 v7, 2, v0 (output byte address)
+        0xE0701000, 0x80020607, // buffer_store_dword v6, v7, s[8:11], 0 offen
+        0xBF810000,             // s_endpgm
+    ]),
     // A finite backward branch exercises the structured program-counter loop,
     // dynamic SCC updates, and scalar-to-vector transfer. The dispatch runner
     // has a fence deadline, so a broken termination condition fails boundedly.
@@ -848,6 +861,18 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
                         oracleLabels),
                 ]);
         }
+        case "exec-scratch-memory":
+            for (uint index = 0; index < 8; index++)
+            {
+                expectedWords[index] = index;
+                labels[index] = $"lane {index} reloads its private scratch value";
+            }
+
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                LocalSizeX: 8);
         case "exec-scalar-loop":
             expectedWords[0] = 4;
             labels[0] = "backward scalar loop terminates after four iterations";
