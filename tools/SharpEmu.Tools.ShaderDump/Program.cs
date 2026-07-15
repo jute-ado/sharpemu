@@ -320,6 +320,42 @@ const ulong ProgramAddress = 0x100000;
         0xE070002C, 0x80021000, // buffer_store_dword v16, off, s[8:11], 0 offset:44
         0xBF810000,             // s_endpgm
     ]),
+    // Scratch atomics are private read-modify-write operations. GLC exposes
+    // each original value, including successful and failed compare/swap; two
+    // additional locations exercise the bounded increment/decrement wraps.
+    ("exec-scratch-atomic", true, [
+        0xE0300000, 0x80020500, // buffer_load_dword v5, off, s[8:11], 0
+        0xE0300004, 0x80020600, // buffer_load_dword v6, off, s[8:11], 0 offset:4
+        0xE0300008, 0x80020700, // buffer_load_dword v7, off, s[8:11], 0 offset:8
+        0xE030000C, 0x80020800, // buffer_load_dword v8, off, s[8:11], 0 offset:12
+        0xE0300010, 0x80020900, // buffer_load_dword v9, off, s[8:11], 0 offset:16
+        0xE0300014, 0x80020A00, // buffer_load_dword v10, off, s[8:11], 0 offset:20
+        0xE0300018, 0x80020B00, // buffer_load_dword v11, off, s[8:11], 0 offset:24
+        0xE030001C, 0x80020C00, // buffer_load_dword v12, off, s[8:11], 0 offset:28
+        0xE0300020, 0x80020D00, // buffer_load_dword v13, off, s[8:11], 0 offset:32
+        0xE0300024, 0x80020E00, // buffer_load_dword v14, off, s[8:11], 0 offset:36
+        0x7E080280,             // v_mov_b32 v4, 0 (scratch byte address)
+        0xDC704000, 0x007F0504, // scratch_store_dword v4, v5
+        0xDCC94000, 0x0F7F0604, // scratch_atomic_add v15, v4, v6 glc
+        0xDCC54000, 0x107F0704, // scratch_atomic_cmpswap v16, v4, v[7:8] glc
+        0xDCC54000, 0x117F0904, // scratch_atomic_cmpswap v17, v4, v[9:10] glc
+        0xDC304000, 0x127F0004, // scratch_load_dword v18, v4
+        0xDC704004, 0x007F0B04, // scratch_store_dword v4, v11 offset:4
+        0xDCF14004, 0x137F0C04, // scratch_atomic_inc v19, v4, v12 offset:4 glc
+        0xDC304004, 0x147F0004, // scratch_load_dword v20, v4 offset:4
+        0xDC704008, 0x007F0D04, // scratch_store_dword v4, v13 offset:8
+        0xDCF54008, 0x157F0E04, // scratch_atomic_dec v21, v4, v14 offset:8 glc
+        0xDC304008, 0x167F0004, // scratch_load_dword v22, v4 offset:8
+        0xE0700028, 0x80020F00, // buffer_store_dword v15, off, s[8:11], 0 offset:40
+        0xE070002C, 0x80021000, // buffer_store_dword v16, off, s[8:11], 0 offset:44
+        0xE0700030, 0x80021100, // buffer_store_dword v17, off, s[8:11], 0 offset:48
+        0xE0700034, 0x80021200, // buffer_store_dword v18, off, s[8:11], 0 offset:52
+        0xE0700038, 0x80021300, // buffer_store_dword v19, off, s[8:11], 0 offset:56
+        0xE070003C, 0x80021400, // buffer_store_dword v20, off, s[8:11], 0 offset:60
+        0xE0700040, 0x80021500, // buffer_store_dword v21, off, s[8:11], 0 offset:64
+        0xE0700044, 0x80021600, // buffer_store_dword v22, off, s[8:11], 0 offset:68
+        0xBF810000,             // s_endpgm
+    ]),
     // A finite backward branch exercises the structured program-counter loop,
     // dynamic SCC updates, and scalar-to-vector transfer. The dispatch runner
     // has a fence deadline, so a broken termination condition fails boundedly.
@@ -1025,6 +1061,55 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
             labels[10] = "D16-high stores source upper bits and preserve first-word neighbors";
             labels[11] = "D16-high crossing store preserves second-word neighbors";
             break;
+        case "exec-scratch-atomic":
+        {
+            var atomicInitialWords = Enumerable.Repeat(sentinel, 20).ToArray();
+            var atomicExpectedWords = (uint[])atomicInitialWords.Clone();
+            var atomicLabels = Enumerable.Range(0, atomicInitialWords.Length)
+                .Select(index => $"trailing word [{index}] remains sentinel")
+                .ToArray();
+            uint[] inputs = [10, 5, 99, 15, 77, 15, 2, 2, 0, 2];
+            string[] inputLabels =
+            [
+                "atomic-add initial value",
+                "atomic-add operand",
+                "successful compare/swap replacement",
+                "successful compare/swap comparison",
+                "failed compare/swap replacement",
+                "failed compare/swap comparison",
+                "atomic-inc initial value",
+                "atomic-inc inclusive limit",
+                "atomic-dec initial value",
+                "atomic-dec inclusive limit",
+            ];
+            for (var index = 0; index < inputs.Length; index++)
+            {
+                atomicInitialWords[index] = inputs[index];
+                atomicExpectedWords[index] = inputs[index];
+                atomicLabels[index] = $"{inputLabels[index]} remains unchanged";
+            }
+
+            atomicExpectedWords[10] = 10;
+            atomicExpectedWords[11] = 15;
+            atomicExpectedWords[12] = 99;
+            atomicExpectedWords[13] = 99;
+            atomicExpectedWords[14] = 2;
+            atomicExpectedWords[15] = 0;
+            atomicExpectedWords[16] = 0;
+            atomicExpectedWords[17] = 2;
+            atomicLabels[10] = "GLC add returns the original value";
+            atomicLabels[11] = "successful compare/swap returns its matched original";
+            atomicLabels[12] = "failed compare/swap returns its unmatched original";
+            atomicLabels[13] = "failed compare/swap preserves the scratch value";
+            atomicLabels[14] = "bounded increment returns its original limit value";
+            atomicLabels[15] = "bounded increment wraps to zero at its inclusive limit";
+            atomicLabels[16] = "bounded decrement returns its original zero value";
+            atomicLabels[17] = "bounded decrement wraps zero to its inclusive limit";
+            return new SyntheticConformanceCase(
+                atomicInitialWords,
+                atomicExpectedWords,
+                atomicLabels);
+        }
         case "exec-scalar-loop":
             expectedWords[0] = 4;
             labels[0] = "backward scalar loop terminates after four iterations";
