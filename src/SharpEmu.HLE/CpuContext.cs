@@ -261,28 +261,87 @@ public sealed class CpuContext(ICpuMemory memory, Generation generation)
             return false;
         }
 
-        var bytes = new ArrayBufferWriter<byte>();
-        Span<byte> current = stackalloc byte[1];
-        for (var index = 0; index < capacity; index++)
+        const int StackBufferLength = 512;
+        const int ReadChunkLength = 128;
+        byte[]? rented = null;
+        Span<byte> bytes = stackalloc byte[StackBufferLength];
+        try
         {
-            if (!GuestAddress.TryAdd(address, (ulong)index, out var currentAddress) ||
-                !Memory.TryRead(currentAddress, current))
+            var length = 0;
+            while (length < capacity)
             {
-                return false;
+                if (length == bytes.Length)
+                {
+                    var requestedLength = (int)Math.Min(
+                        capacity,
+                        (long)bytes.Length * 2);
+                    var grown = ArrayPool<byte>.Shared.Rent(requestedLength);
+                    bytes[..length].CopyTo(grown);
+                    if (rented is not null)
+                    {
+                        ArrayPool<byte>.Shared.Return(rented);
+                    }
+
+                    rented = grown;
+                    bytes = rented;
+                }
+
+                // Bulk-read in bounded chunks rather than the full capacity: the string
+                // may end just before unmapped memory, and overreading past the
+                // terminator by more than a chunk could fault where the old
+                // byte-by-byte loop succeeded.
+                var chunk = Math.Min(
+                    ReadChunkLength,
+                    Math.Min(capacity - length, bytes.Length - length));
+                var span = bytes.Slice(length, chunk);
+                if (!GuestAddress.TryAdd(address, (ulong)length, out var chunkAddress))
+                {
+                    return false;
+                }
+
+                if (Memory.TryRead(chunkAddress, span))
+                {
+                    var terminator = span.IndexOf((byte)0);
+                    if (terminator >= 0)
+                    {
+                        value = Encoding.UTF8.GetString(bytes[..(length + terminator)]);
+                        return true;
+                    }
+
+                    length += chunk;
+                    continue;
+                }
+
+                // The chunk touches an unreadable range; fall back to per-byte reads so a
+                // terminator sitting before the bad byte still yields the string.
+                for (var i = 0; i < chunk; i++)
+                {
+                    if (!GuestAddress.TryAdd(address, (ulong)(length + i), out var currentAddress) ||
+                        !Memory.TryRead(currentAddress, bytes.Slice(length + i, 1)))
+                    {
+                        return false;
+                    }
+
+                    if (bytes[length + i] == 0)
+                    {
+                        value = Encoding.UTF8.GetString(bytes[..(length + i)]);
+                        return true;
+                    }
+                }
+
+                length += chunk;
             }
 
-            if (current[0] == 0)
-            {
-                value = Encoding.UTF8.GetString(bytes.WrittenSpan);
-                return true;
-            }
-
-            bytes.GetSpan(1)[0] = current[0];
-            bytes.Advance(1);
+            value = Encoding.UTF8.GetString(bytes[..capacity]);
+            return true;
         }
-
-        value = Encoding.UTF8.GetString(bytes.WrittenSpan);
-        return true;
+        finally
+        {
+            if (rented is not null)
+            {
+                ArrayPool<byte>.Shared.Return(rented);
+            }
+        }
     }
 
     public bool PushUInt64(ulong value)

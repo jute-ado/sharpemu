@@ -18,6 +18,10 @@ public static partial class KernelMemoryCompatExports
     private const int MaxGuestStringLength = 4096;
     private const int WideCharSize = sizeof(ushort);
     private const int MemsetChunkSize = 16 * 1024;
+    private const int MemcpyChunkSize = 256 * 1024;
+
+    // Shared all-zero scratch for chunked zero-fill loops; never written to.
+    private static readonly byte[] _zeroChunk = new byte[MemsetChunkSize];
     private const int TlsModuleBlockSize = 0x10000;
     private const int O_WRONLY = 0x1;
     private const int O_RDWR = 0x2;
@@ -255,11 +259,10 @@ public static partial class KernelMemoryCompatExports
                 DirectStart: 0);
         }
 
-        var zeroes = new byte[(int)Math.Min(mappedLength, (ulong)MemsetChunkSize)];
         for (ulong offset = 0; offset < mappedLength;)
         {
-            var chunkLength = (int)Math.Min((ulong)zeroes.Length, mappedLength - offset);
-            if (!ctx.Memory.TryWrite(address + offset, zeroes.AsSpan(0, chunkLength)))
+            var chunkLength = (int)Math.Min((ulong)_zeroChunk.Length, mappedLength - offset);
+            if (!ctx.Memory.TryWrite(address + offset, _zeroChunk.AsSpan(0, chunkLength)))
             {
                 return false;
             }
@@ -422,33 +425,50 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        var chunk = new byte[MemsetChunkSize];
-        Array.Fill(chunk, value);
-        var remaining = length;
-        var cursor = destination;
-        while (remaining > 0)
+        // Rent may hand back a larger array than requested; only the first chunkLength
+        // bytes are filled, so the loop must cap at chunkLength rather than chunk.Length.
+        var chunkLength = (int)Math.Min(length, (ulong)MemsetChunkSize);
+        var chunk = value == 0 ? _zeroChunk : ArrayPool<byte>.Shared.Rent(chunkLength);
+        if (value != 0)
         {
-            var take = (int)Math.Min((ulong)chunk.Length, remaining);
-            if (!TryWriteCompat(ctx, cursor, chunk.AsSpan(0, take)))
+            chunk.AsSpan(0, chunkLength).Fill(value);
+        }
+
+        try
+        {
+            var remaining = length;
+            var cursor = destination;
+            while (remaining > 0)
             {
-                if (length <= 0x40)
+                var take = (int)Math.Min((ulong)chunkLength, remaining);
+                if (!TryWriteCompat(ctx, cursor, chunk.AsSpan(0, take)))
                 {
-                    var recoveryIndex = Interlocked.Increment(ref _inaccessibleMemsetRecoveryCount);
-                    if (recoveryIndex <= 8)
+                    if (length <= 0x40)
                     {
-                        Console.Error.WriteLine(
-                            $"[LOADER][WARNING] memset inaccessible-dst recovery#{recoveryIndex}: rip=0x{ctx.Rip:X16} dst=0x{destination:X16} len=0x{length:X} val=0x{value:X2}");
+                        var recoveryIndex = Interlocked.Increment(ref _inaccessibleMemsetRecoveryCount);
+                        if (recoveryIndex <= 8)
+                        {
+                            Console.Error.WriteLine(
+                                $"[LOADER][WARNING] memset inaccessible-dst recovery#{recoveryIndex}: rip=0x{ctx.Rip:X16} dst=0x{destination:X16} len=0x{length:X} val=0x{value:X2}");
+                        }
+
+                        ctx[CpuRegister.Rax] = destination;
+                        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
                     }
 
-                    ctx[CpuRegister.Rax] = destination;
-                    return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
                 }
 
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                cursor += (ulong)take;
+                remaining -= (ulong)take;
             }
-
-            cursor += (ulong)take;
-            remaining -= (ulong)take;
+        }
+        finally
+        {
+            if (value != 0)
+            {
+                ArrayPool<byte>.Shared.Return(chunk);
+            }
         }
 
         ctx[CpuRegister.Rax] = destination;
@@ -1244,6 +1264,16 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
+        const ulong MaxSaneCount = 512UL * 1024 * 1024;
+        if (count > MaxSaneCount)
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][WARNING] memory copy oversized count rejected: " +
+                $"dst=0x{destination:X16} src=0x{source:X16} count=0x{count:X}");
+            ctx[CpuRegister.Rax] = destination;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
         if (count - 1 > ulong.MaxValue - source ||
             count - 1 > ulong.MaxValue - destination)
         {
@@ -1251,11 +1281,11 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        var requestedChunkSize = (int)Math.Min((ulong)MemsetChunkSize, count);
+        var requestedChunkSize = (int)Math.Min((ulong)MemcpyChunkSize, count);
         var buffer = ArrayPool<byte>.Shared.Rent(requestedChunkSize);
         try
         {
-            var chunkCapacity = Math.Min(buffer.Length, MemsetChunkSize);
+            var chunkCapacity = Math.Min(buffer.Length, MemcpyChunkSize);
             var copyBackward = preserveOverlap &&
                 destination > source &&
                 destination - source < count;

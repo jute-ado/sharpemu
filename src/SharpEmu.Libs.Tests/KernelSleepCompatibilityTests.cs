@@ -38,7 +38,8 @@ public sealed class KernelSleepCompatibilityTests
             Assert.Equal("sceKernelUsleep", reason);
             Assert.Equal("sceKernelUsleep:0000000000001234", wakeKey);
             Assert.NotNull(resumeHandler);
-            Assert.Null(wakeHandler);
+            Assert.NotNull(wakeHandler);
+            Assert.False(wakeHandler!());
             Assert.True(deadlineTimestamp > startedAt);
             Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, resumeHandler!());
         }
@@ -80,7 +81,8 @@ public sealed class KernelSleepCompatibilityTests
             Assert.Equal("sceKernelNanosleep", reason);
             Assert.Equal("sceKernelNanosleep:0000000000005678", wakeKey);
             Assert.NotNull(resumeHandler);
-            Assert.Null(wakeHandler);
+            Assert.NotNull(wakeHandler);
+            Assert.False(wakeHandler!());
             Assert.True(deadlineTimestamp > startedAt);
             Assert.All(remain, value => Assert.Equal(0xA5, value));
 

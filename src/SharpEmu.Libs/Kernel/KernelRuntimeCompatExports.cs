@@ -15,6 +15,25 @@ namespace SharpEmu.Libs.Kernel;
 
 public static class KernelRuntimeCompatExports
 {
+    private sealed class NanosleepWaiter : IGuestThreadBlockWaiter
+    {
+        public required CpuContext Ctx { get; init; }
+        public required ulong RemainAddress { get; init; }
+
+        public int Resume() => CompleteNanosleep(Ctx, RemainAddress);
+
+        public bool TryWake() => false;
+    }
+
+    private sealed class UsleepWaiter : IGuestThreadBlockWaiter
+    {
+        public required CpuContext Ctx { get; init; }
+
+        public int Resume() => CompleteUsleep(Ctx);
+
+        public bool TryWake() => false;
+    }
+
     internal const int ClockRealtime = 0;
     internal const int ClockVirtual = 1;
     internal const int ClockProf = 2;
@@ -133,7 +152,11 @@ public static class KernelRuntimeCompatExports
                 ctx,
                 reason,
                 $"{reason}:{GuestThreadExecution.CurrentGuestThreadHandle:X16}",
-                () => CompleteNanosleep(ctx, remainAddress),
+                new NanosleepWaiter
+                {
+                    Ctx = ctx,
+                    RemainAddress = remainAddress,
+                },
                 blockDeadlineTimestamp: deadlineTimestamp))
         {
             ctx[CpuRegister.Rax] = 0;
@@ -229,7 +252,7 @@ public static class KernelRuntimeCompatExports
                 ctx,
                 "sceKernelUsleep",
                 $"sceKernelUsleep:{GuestThreadExecution.CurrentGuestThreadHandle:X16}",
-                () => CompleteUsleep(ctx),
+                new UsleepWaiter { Ctx = ctx },
                 blockDeadlineTimestamp: deadlineTimestamp))
         {
             ctx[CpuRegister.Rax] = 0;
