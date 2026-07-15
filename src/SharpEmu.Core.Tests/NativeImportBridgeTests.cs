@@ -22,8 +22,13 @@ public sealed class NativeImportBridgeTests
     private const ulong NonvolatileSentinel = 0x1122_3344_5566_7788;
 
     [WindowsX64Fact]
-    public void GuestCallDispatchesHleExportAndReturnsValue()
+    public async Task GuestCallDispatchesHleExportAndReturnsValue()
     {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
         byte[] code =
         [
             0xBF, 0x14, 0x00, 0x00, 0x00, // mov edi, 20
@@ -41,8 +46,13 @@ public sealed class NativeImportBridgeTests
     }
 
     [WindowsX64Fact]
-    public void GuestCallDispatchesImportFromFallbackStubRegion()
+    public async Task GuestCallDispatchesImportFromFallbackStubRegion()
     {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
         var code = new List<byte>
         {
             0xBF, 0x14, 0x00, 0x00, 0x00, // mov edi, 20
@@ -73,8 +83,13 @@ public sealed class NativeImportBridgeTests
     }
 
     [WindowsX64Fact]
-    public void ImportBridgeCarriesSixArgumentsAndPreservesNonvolatileRegister()
+    public async Task ImportBridgeCarriesSixArgumentsAndPreservesNonvolatileRegister()
     {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
         byte[] code =
         [
             0x48, 0xBB, 0x88, 0x77, 0x66, 0x55,
@@ -105,8 +120,13 @@ public sealed class NativeImportBridgeTests
     }
 
     [WindowsX64Fact]
-    public void ImportBridgeCarriesIntegerArgumentsFromGuestStack()
+    public async Task ImportBridgeCarriesIntegerArgumentsFromGuestStack()
     {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
         byte[] code =
         [
             0x48, 0x83, 0xEC, 0x10,       // sub rsp, 16
@@ -135,8 +155,13 @@ public sealed class NativeImportBridgeTests
     }
 
     [WindowsX64Fact]
-    public void ImportBridgePreservesGuestNonvolatileRegistersAcrossManagedHandler()
+    public async Task ImportBridgePreservesGuestNonvolatileRegistersAcrossManagedHandler()
     {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
         var code = CreateNonvolatileRegisterProbe();
         var execution = ExecuteImport(
             code,
@@ -146,8 +171,13 @@ public sealed class NativeImportBridgeTests
     }
 
     [WindowsX64Fact]
-    public void ImportBridgeReturnsFloatingPointValueInXmm0()
+    public async Task ImportBridgeReturnsFloatingPointValueInXmm0()
     {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
         byte[] code =
         [
             0xE8, 0xFB, 0x00, 0x00, 0x00, // call ImportAddress
@@ -167,8 +197,13 @@ public sealed class NativeImportBridgeTests
     }
 
     [WindowsX64Fact]
-    public void ImportBridgeCarriesFloatingPointArgumentsAndReturnValue()
+    public async Task ImportBridgeCarriesFloatingPointArgumentsAndReturnValue()
     {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
         byte[] code =
         [
             0xB8, 0x00, 0x00, 0xC0, 0x3F, // mov eax, 0x3fc00000 (1.5f)

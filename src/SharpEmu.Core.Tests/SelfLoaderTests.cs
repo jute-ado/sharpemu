@@ -749,8 +749,13 @@ public sealed class SelfLoaderTests
     }
 
     [WindowsX64Fact]
-    public void LoadsAndExecutesMinimalElfImage()
+    public async Task LoadsAndExecutesMinimalElfImage()
     {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(SelfLoaderTests)))
+        {
+            return;
+        }
+
         var elf = CreateElfWithLoadSegment(
             fileOffset: ElfHeaderSize + ProgramHeaderSize,
             virtualAddress: 0,
@@ -779,8 +784,13 @@ public sealed class SelfLoaderTests
     }
 
     [WindowsX64Fact]
-    public void ProcessEntryReceivesExpectedAbiFrame()
+    public async Task ProcessEntryReceivesExpectedAbiFrame()
     {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(SelfLoaderTests)))
+        {
+            return;
+        }
+
         var probe = CreateProcessEntryProbe();
         var elf = CreateElfWithLoadSegment(
             fileOffset: ElfHeaderSize + ProgramHeaderSize,

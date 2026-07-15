@@ -79,38 +79,56 @@ public sealed class SharpEmuRuntimeTests
     }
 
     [WindowsX64Fact]
-    public void DefaultRuntimeBootsContentFreeSyntheticExecutable()
+    public async Task DefaultRuntimeBootsContentFreeSyntheticExecutable()
     {
-        var execution = RunSyntheticExecutable(
+        var execution = await RunSyntheticExecutableInCliAsync(
         [
             0x31, 0xC0, // xor eax, eax
             0xC3,       // ret
-        ]);
+        ],
+        requestReport: true);
 
-        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, execution.Result);
-        Assert.Null(execution.Diagnostics);
-        Assert.Contains(
-            "reason=ReturnedToHost",
-            execution.SessionSummary,
-            StringComparison.Ordinal);
+        Assert.Equal(0, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var report = JsonDocument.Parse(execution.ReportJson);
+        Assert.Equal(
+            "ORBIS_GEN2_OK",
+            report.RootElement.GetProperty("result").GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Null, report.RootElement.GetProperty("diagnostics").ValueKind);
+        Assert.Equal(
+            "ReturnedToHost",
+            report.RootElement.GetProperty("cpuSession").GetProperty("reason").GetString());
     }
 
     [WindowsX64Fact]
-    public void RuntimeStillRejectsNonZeroProcessEntryReturnValue()
+    public async Task RuntimeStillRejectsNonZeroProcessEntryReturnValue()
     {
-        var execution = RunSyntheticExecutable(
+        var execution = await RunSyntheticExecutableInCliAsync(
         [
             0xB8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
             0xC3,                         // ret
-        ]);
+        ],
+        requestReport: true);
 
-        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP, execution.Result);
-        Assert.Contains("reason=CpuTrap", execution.SessionSummary, StringComparison.Ordinal);
+        Assert.Equal(4, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var report = JsonDocument.Parse(execution.ReportJson);
+        Assert.Equal(
+            "ORBIS_GEN2_ERROR_CPU_TRAP",
+            report.RootElement.GetProperty("result").GetProperty("name").GetString());
+        Assert.Equal(
+            "CpuTrap",
+            report.RootElement.GetProperty("cpuSession").GetProperty("reason").GetString());
     }
 
     [WindowsX64Fact]
-    public void RuntimeClearsModuleInitializerTraceBeforeNextPreparation()
+    public async Task RuntimeClearsModuleInitializerTraceBeforeNextPreparation()
     {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(SharpEmuRuntimeTests)))
+        {
+            return;
+        }
+
         var testDirectory = Path.Combine(
             Path.GetTempPath(),
             "sharpemu-runtime-tests",
@@ -700,31 +718,6 @@ public sealed class SharpEmuRuntimeTests
         Assert.DoesNotContain("FAST_FAIL", execution.StandardError, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static SyntheticRuntimeExecution RunSyntheticExecutable(byte[] code)
-    {
-        var testDirectory = Path.Combine(
-            Path.GetTempPath(),
-            "sharpemu-runtime-tests",
-            Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(testDirectory);
-        var executablePath = Path.Combine(testDirectory, "eboot.bin");
-
-        try
-        {
-            File.WriteAllBytes(executablePath, SyntheticElfImage.CreateExecutable(code));
-            using var runtime = SharpEmuRuntime.CreateDefault();
-            var result = runtime.Run(executablePath);
-            return new SyntheticRuntimeExecution(
-                result,
-                runtime.LastExecutionDiagnostics,
-                runtime.LastSessionSummary);
-        }
-        finally
-        {
-            Directory.Delete(testDirectory, recursive: true);
-        }
-    }
-
     private static Task<SyntheticProcessExecution> RunSyntheticExecutableInCliAsync(
         byte[] code,
         bool requestReport = false,
@@ -751,10 +744,5 @@ public sealed class SharpEmuRuntimeTests
             writeSkippedCoreModule,
             expectedBundleSha256,
             adjacentModuleImage);
-
-    private readonly record struct SyntheticRuntimeExecution(
-        OrbisGen2Result Result,
-        string? Diagnostics,
-        string? SessionSummary);
 
 }

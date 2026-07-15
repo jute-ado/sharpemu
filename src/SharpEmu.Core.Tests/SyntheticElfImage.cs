@@ -69,7 +69,8 @@ internal static class SyntheticElfImage
     public static byte[] CreateModuleWithInitializerArray(
         ReadOnlySpan<byte> initializerCode,
         ReadOnlySpan<byte> arrayInitializerCode,
-        byte abiVersion = 2)
+        byte abiVersion = 2,
+        int arrayInitializerCount = 1)
     {
         if (arrayInitializerCode.IsEmpty)
         {
@@ -77,17 +78,23 @@ internal static class SyntheticElfImage
                 "Synthetic array initializer code cannot be empty.",
                 nameof(arrayInitializerCode));
         }
+        if (arrayInitializerCount <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(arrayInitializerCount));
+        }
 
         return CreateModuleWithInitializers(
             initializerCode,
             arrayInitializerCode,
-            abiVersion);
+            abiVersion,
+            arrayInitializerCount);
     }
 
     private static byte[] CreateModuleWithInitializers(
         ReadOnlySpan<byte> initializerCode,
         ReadOnlySpan<byte> arrayInitializerCode,
-        byte abiVersion)
+        byte abiVersion,
+        int arrayInitializerCount = 0)
     {
         if (initializerCode.IsEmpty)
         {
@@ -97,14 +104,19 @@ internal static class SyntheticElfImage
         const int dynamicEntrySize = 16;
         const int dynamicVirtualAddress = 0x20;
         const int initArrayVirtualAddress = 0x80;
-        const int initializerVirtualAddress = 0x100;
-        const int arrayInitializerVirtualAddress = 0x140;
-        const int payloadSize = 0x200;
+        const int initializerVirtualAddress = 0x200;
+        const int arrayInitializerVirtualAddress = 0x240;
+        const int payloadSize = 0x300;
         const long dynamicTagInit = 0x0C;
         const long dynamicTagInitArray = 0x19;
         const long dynamicTagInitArraySize = 0x1B;
         var hasInitArray = !arrayInitializerCode.IsEmpty;
         var dynamicEntryCount = hasInitArray ? 4 : 2;
+        var initArrayByteLength = checked(arrayInitializerCount * sizeof(ulong));
+        if (hasInitArray && initArrayByteLength > initializerVirtualAddress - initArrayVirtualAddress)
+        {
+            throw new ArgumentOutOfRangeException(nameof(arrayInitializerCount));
+        }
         var initializerCapacity = hasInitArray
             ? arrayInitializerVirtualAddress - initializerVirtualAddress
             : payloadSize - initializerVirtualAddress;
@@ -112,9 +124,10 @@ internal static class SyntheticElfImage
         {
             throw new ArgumentOutOfRangeException(nameof(initializerCode));
         }
-        if (arrayInitializerCode.Length > payloadSize - arrayInitializerVirtualAddress)
+        var arrayInitializerCodeByteLength = checked(arrayInitializerCode.Length * arrayInitializerCount);
+        if (arrayInitializerCodeByteLength > payloadSize - arrayInitializerVirtualAddress)
         {
-            throw new ArgumentOutOfRangeException(nameof(arrayInitializerCode));
+            throw new ArgumentOutOfRangeException(nameof(arrayInitializerCount));
         }
 
         var payloadOffset = ElfHeaderSize + (2 * ProgramHeaderSize);
@@ -182,13 +195,17 @@ internal static class SyntheticElfImage
             BinaryPrimitives.WriteInt64LittleEndian(initArraySizeEntry, dynamicTagInitArraySize);
             BinaryPrimitives.WriteUInt64LittleEndian(
                 initArraySizeEntry[sizeof(long)..],
-                sizeof(ulong));
+                (ulong)initArrayByteLength);
 
-            BinaryPrimitives.WriteUInt64LittleEndian(
-                image.AsSpan(payloadOffset + initArrayVirtualAddress),
-                arrayInitializerVirtualAddress);
-            arrayInitializerCode.CopyTo(
-                image.AsSpan(payloadOffset + arrayInitializerVirtualAddress));
+            for (var index = 0; index < arrayInitializerCount; index++)
+            {
+                BinaryPrimitives.WriteUInt64LittleEndian(
+                    image.AsSpan(payloadOffset + initArrayVirtualAddress + (index * sizeof(ulong))),
+                    (ulong)(arrayInitializerVirtualAddress + (index * arrayInitializerCode.Length)));
+                arrayInitializerCode.CopyTo(
+                    image.AsSpan(
+                        payloadOffset + arrayInitializerVirtualAddress + (index * arrayInitializerCode.Length)));
+            }
         }
         initializerCode.CopyTo(image.AsSpan(payloadOffset + initializerVirtualAddress));
         return image;
