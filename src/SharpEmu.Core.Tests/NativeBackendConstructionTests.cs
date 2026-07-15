@@ -259,6 +259,52 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public unsafe void FailedTlsPatchProtectionRestoreRollsBackInstructionBytes()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(
+            failedAllocation: int.MaxValue,
+            failedRawProtection: 1);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        var instructionAddress = memory.Allocate(
+            0,
+            16,
+            HostPageProtection.ReadWriteExecute);
+        byte[] original =
+        [
+            0x64, 0x4C, 0x33, 0x3C, 0x25, 0x28, 0x00, 0x00, 0x00,
+            0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC,
+        ];
+        original.CopyTo(new Span<byte>((void*)instructionAddress, original.Length));
+
+        try
+        {
+            var patched = backend.TryPatchTlsInstruction(
+                (nint)instructionAddress,
+                (byte*)instructionAddress,
+                original.Length,
+                out _);
+
+            Assert.False(patched);
+            Assert.Equal(
+                original,
+                new ReadOnlySpan<byte>((void*)instructionAddress, original.Length).ToArray());
+        }
+        finally
+        {
+            backend.Dispose();
+            memory.Free(instructionAddress);
+        }
+    }
+
+    [Fact]
     public unsafe void FailedImportSetupRestoresPatchedSlotsAndAttemptAllocations()
     {
         var threading = new RecordingHostThreading([17u, 23u]);
