@@ -45,12 +45,8 @@ public static unsafe class JitStubs
         {
             fixed (byte* code = _code)
             {
-                var funcAddr = (long)handler;
-                var ripAddr = (long)(code + 10); // After push + jmp
-                var offset64 = funcAddr - ripAddr;
-                var offset32 = (uint)(ulong)offset64;
-
-                *(uint*)(code + 6) = offset32;
+                var offset = GetRelativeOffset32(handler, code + 10, nameof(handler));
+                *(int*)(code + 6) = offset;
             }
         }
 
@@ -89,12 +85,8 @@ public static unsafe class JitStubs
         {
             fixed (byte* code = _code)
             {
-                var funcAddr = (long)func;
-                var ripAddr = (long)(code + 5); // After call instruction
-                var offset64 = funcAddr - ripAddr;
-                var offset32 = (uint)(ulong)offset64;
-
-                *(uint*)(code + 1) = offset32;
+                var offset = GetRelativeOffset32(func, code + 5, nameof(func));
+                *(int*)(code + 1) = offset;
             }
         }
 
@@ -197,18 +189,18 @@ public static unsafe class JitStubs
 
     public static void CreateJmpWithIndex(byte* location, uint index, void* handler)
     {
-        
+        var relativeHandler = GetRelativeOffset32(
+            handler,
+            location + 10,
+            nameof(handler));
         var code = location;
-        
+
         code[0] = 0x68;
         *(uint*)(code + 1) = index;
-        
+
         code[5] = 0xE9;
-        var handlerAddr = (long)handler;
-        var ripAddr = (long)(code + 10); // After push + jmp
-        var offset64 = handlerAddr - ripAddr;
-        *(uint*)(code + 6) = (uint)(ulong)offset64;
-        
+        *(int*)(code + 6) = relativeHandler;
+
         for (int i = 10; i < 16; i++)
         {
             code[i] = 0x90;
@@ -217,19 +209,19 @@ public static unsafe class JitStubs
 
     public static void CreateCall9(byte* location, void* func)
     {
-        
+        var relativeFunction = GetRelativeOffset32(
+            func,
+            location + 5,
+            nameof(func));
         var code = location;
-        
+
         code[0] = 0xE8;
-        var funcAddr = (long)func;
-        var ripAddr = (long)(code + 5);
-        var offset64 = funcAddr - ripAddr;
-        *(uint*)(code + 1) = (uint)(ulong)offset64;
-        
+        *(int*)(code + 1) = relativeFunction;
+
         code[5] = 0x48;
         code[6] = 0x89;
         code[7] = 0xC0;
-        
+
         code[8] = 0x90;
     }
 
@@ -276,5 +268,23 @@ public static unsafe class JitStubs
                 return false;
         }
         return true;
+    }
+
+    private static int GetRelativeOffset32(
+        void* target,
+        byte* nextInstruction,
+        string parameterName)
+    {
+        var offset =
+            (Int128)(long)(nint)target -
+            (Int128)(long)(nint)nextInstruction;
+        if (offset < int.MinValue || offset > int.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(
+                parameterName,
+                "Target is outside the signed 32-bit relative branch range.");
+        }
+
+        return (int)offset;
     }
 }
