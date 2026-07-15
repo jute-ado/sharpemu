@@ -2471,11 +2471,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 		var registerBits = instruction.Register & 7;
 		var modRm = (byte)(0xC0 | (registerBits << 3) | registerBits);
+		var originalBytes = new ReadOnlySpan<byte>((void*)address, instruction.Length).ToArray();
 		uint flNewProtect = default(uint);
 		if (!_hostMemory.Protect((ulong)(void*)address, (nuint)instruction.Length, HostPageProtection.ReadWriteExecute, out flNewProtect))
 		{
 			return false;
 		}
+		var patchComplete = false;
+		var patchCommitted = false;
 		try
 		{
 			*(byte*)address = (byte)rex;
@@ -2485,16 +2488,20 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			{
 				*(byte*)(address + i) = 0x90;
 			}
+			patchComplete = true;
 		}
 		finally
 		{
-			_hostMemory.ProtectRaw((ulong)(void*)address, (nuint)instruction.Length, flNewProtect, out flNewProtect);
-			_hostMemory.FlushInstructionCache((ulong)(void*)address, (nuint)instruction.Length);
+			patchCommitted = FinalizeInstructionPatch(
+				address,
+				originalBytes,
+				flNewProtect,
+				patchComplete);
 		}
-		return true;
+		return patchCommitted;
 	}
 
-	private unsafe bool TryPatchTlsInstruction(
+	internal unsafe bool TryPatchTlsInstruction(
 		nint address,
 		byte* source,
 		int availableLength,
@@ -2563,38 +2570,41 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		{
 			return false;
 		}
+		long relativeTarget = helper - (address + 5);
+		if (relativeTarget < int.MinValue || relativeTarget > int.MaxValue)
+		{
+			Console.Error.WriteLine($"[LOADER][WARNING] TLS patch out of rel32 range at 0x{address:X16}");
+			return false;
+		}
 
+		var originalBytes = new ReadOnlySpan<byte>((void*)address, instructionLength).ToArray();
 		uint flNewProtect = default(uint);
 		if (!_hostMemory.Protect((ulong)(void*)address, (nuint)instructionLength, HostPageProtection.ReadWriteExecute, out flNewProtect))
 		{
 			return false;
 		}
+		var patchComplete = false;
+		var patchCommitted = false;
 		try
 		{
 			*(sbyte*)address = -24;
-			long num = helper;
-			long num2 = address + 5;
-			long num3 = num - num2;
-			if (num3 < int.MinValue || num3 > int.MaxValue)
-			{
-				Console.Error.WriteLine($"[LOADER][WARNING] TLS patch out of rel32 range at 0x{address:X16}");
-				return false;
-			}
-
-			*(int*)(address + 1) = (int)num3;
+			*(int*)(address + 1) = (int)relativeTarget;
 			var offset = 5;
 			while (offset < instructionLength)
 			{
 				*(byte*)(address + offset++) = 0x90;
 			}
-
-			return true;
+			patchComplete = true;
 		}
 		finally
 		{
-			_hostMemory.ProtectRaw((ulong)(void*)address, (nuint)instructionLength, flNewProtect, out flNewProtect);
-			_hostMemory.FlushInstructionCache((ulong)(void*)address, (nuint)instructionLength);
+			patchCommitted = FinalizeInstructionPatch(
+				address,
+				originalBytes,
+				flNewProtect,
+				patchComplete);
 		}
+		return patchCommitted;
 	}
 
 	internal unsafe nint GetOrCreateTlsLoadHelper(
@@ -3029,32 +3039,78 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		{
 			return false;
 		}
+		long relativeTarget = target - (address + 5);
+		if (relativeTarget < int.MinValue || relativeTarget > int.MaxValue)
+		{
+			Console.Error.WriteLine($"[LOADER][WARNING] TLS patch out of rel32 range at 0x{address:X16}");
+			return false;
+		}
+		var originalBytes = new ReadOnlySpan<byte>((void*)address, instructionLength).ToArray();
 		uint flNewProtect = default(uint);
 		if (!_hostMemory.Protect((ulong)(void*)address, (nuint)instructionLength, HostPageProtection.ReadWriteExecute, out flNewProtect))
 		{
 			return false;
 		}
+		var patchComplete = false;
+		var patchCommitted = false;
 		try
 		{
-			long num = target - (address + 5);
-			if (num < int.MinValue || num > int.MaxValue)
-			{
-				Console.Error.WriteLine($"[LOADER][WARNING] TLS patch out of rel32 range at 0x{address:X16}");
-				return false;
-			}
 			*(byte*)address = 232;
-			*(int*)(address + 1) = (int)num;
+			*(int*)(address + 1) = (int)relativeTarget;
 			for (int i = 5; i < instructionLength; i++)
 			{
 				*(byte*)(address + i) = 144;
 			}
+			patchComplete = true;
 		}
 		finally
 		{
-			_hostMemory.ProtectRaw((ulong)(void*)address, (nuint)instructionLength, flNewProtect, out flNewProtect);
-			_hostMemory.FlushInstructionCache((ulong)(void*)address, (nuint)instructionLength);
+			patchCommitted = FinalizeInstructionPatch(
+				address,
+				originalBytes,
+				flNewProtect,
+				patchComplete);
 		}
-		return true;
+		return patchCommitted;
+	}
+
+	private unsafe bool FinalizeInstructionPatch(
+		nint address,
+		byte[] originalBytes,
+		uint originalProtection,
+		bool patchComplete)
+	{
+		if (patchComplete && _hostMemory.ProtectRaw(
+			(ulong)(void*)address,
+			(nuint)originalBytes.Length,
+			originalProtection,
+			out _))
+		{
+			_hostMemory.FlushInstructionCache((ulong)(void*)address, (nuint)originalBytes.Length);
+			return true;
+		}
+
+		if (patchComplete && !_hostMemory.Protect(
+			(ulong)(void*)address,
+			(nuint)originalBytes.Length,
+			HostPageProtection.ReadWriteExecute,
+			out _))
+		{
+			Console.Error.WriteLine($"[LOADER][ERROR] Failed to reopen TLS patch at 0x{address:X16} for rollback");
+			return false;
+		}
+
+		originalBytes.CopyTo(new Span<byte>((void*)address, originalBytes.Length));
+		if (!_hostMemory.ProtectRaw(
+			(ulong)(void*)address,
+			(nuint)originalBytes.Length,
+			originalProtection,
+			out _))
+		{
+			Console.Error.WriteLine($"[LOADER][ERROR] Failed to restore protection for rolled-back TLS patch at 0x{address:X16}");
+		}
+		_hostMemory.FlushInstructionCache((ulong)(void*)address, (nuint)originalBytes.Length);
+		return false;
 	}
 
 	private unsafe void TryPreReservePrtAperture(ulong baseAddress, ulong size)
