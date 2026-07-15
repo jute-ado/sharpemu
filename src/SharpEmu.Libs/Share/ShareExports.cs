@@ -68,9 +68,8 @@ public static class ShareExports
         Span<byte> one = stackalloc byte[1];
         for (var index = 0; index < maxLength; index++)
         {
-            var offset = (ulong)index;
-            if (offset > ulong.MaxValue - address ||
-                !ctx.Memory.TryRead(address + offset, one))
+            if (!GuestAddress.TryAdd(address, (ulong)index, out var currentAddress) ||
+                !ctx.Memory.TryRead(currentAddress, one))
             {
                 value = string.Empty;
                 return false;
