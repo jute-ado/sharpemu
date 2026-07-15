@@ -25,7 +25,7 @@ internal sealed unsafe partial class WindowsFaultHandling : IHostFaultHandling
     public nint CreateHandlerThunk(nint managedCallback, uint hostRspSwitchTlsSlot, nint tlsGetValueAddress)
     {
         const uint stubSize = 256u;
-        void* ptr = (void*)_memory.Allocate(0, stubSize, HostPageProtection.ReadWriteExecute);
+        void* ptr = (void*)_memory.Allocate(0, stubSize, HostPageProtection.ReadWrite);
         if (ptr == null)
         {
             return 0;

@@ -1650,7 +1650,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 
 		const uint intrinsicAllocationSize = 128u;
-		void* memory = (void*)_hostMemory.Allocate(0, intrinsicAllocationSize, HostPageProtection.ReadWriteExecute);
+		void* memory = (void*)_hostMemory.Allocate(0, intrinsicAllocationSize, HostPageProtection.ReadWrite);
 		if (memory == null)
 		{
 			address = 0;
@@ -2039,7 +2039,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 
 			const uint stubSize = 128;
-			var code = (byte*)_hostMemory.Allocate(0, stubSize, HostPageProtection.ReadWriteExecute);
+			var code = (byte*)_hostMemory.Allocate(0, stubSize, HostPageProtection.ReadWrite);
 			if (code == null)
 			{
 				return 0;
@@ -2088,7 +2088,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private unsafe nint CreateImportHandlerTrampoline(int importIndex)
 	{
-		void* ptr = (void*)_hostMemory.Allocate(0, 256u, HostPageProtection.ReadWriteExecute);
+		void* ptr = (void*)_hostMemory.Allocate(0, 256u, HostPageProtection.ReadWrite);
 		if (ptr == null)
 		{
 			return 0;
@@ -2277,7 +2277,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_tlsHandlerAddress = (nint)TryAllocateNearEntry(TlsHandlerRegionSize);
 		if (_tlsHandlerAddress == 0)
 		{
-			_tlsHandlerAddress = (nint)_hostMemory.Allocate(0, TlsHandlerRegionSize, HostPageProtection.ReadWriteExecute);
+			_tlsHandlerAddress = (nint)_hostMemory.Allocate(0, TlsHandlerRegionSize, HostPageProtection.ReadWrite);
 		}
 		if (_tlsHandlerAddress == 0)
 		{
@@ -2349,7 +2349,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private unsafe nint CreateUnresolvedReturnStub()
 	{
-		void* ptr = (void*)_hostMemory.Allocate(0, 4096u, HostPageProtection.ReadWriteExecute);
+		void* ptr = (void*)_hostMemory.Allocate(0, 4096u, HostPageProtection.ReadWrite);
 		if (ptr == null)
 		{
 			return 0;
@@ -2376,7 +2376,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private unsafe nint CreateGuestReturnStub()
 	{
 		const uint stubSize = 256u;
-		void* ptr = (void*)_hostMemory.Allocate(0, stubSize, HostPageProtection.ReadWriteExecute);
+		void* ptr = (void*)_hostMemory.Allocate(0, stubSize, HostPageProtection.ReadWrite);
 		if (ptr == null)
 		{
 			return 0;
@@ -2479,7 +2479,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 			num = baseAddress - num2;
 		}
-		void* ptr = (void*)_hostMemory.Allocate(num, size, HostPageProtection.ReadWriteExecute);
+		void* ptr = (void*)_hostMemory.Allocate(num, size, HostPageProtection.ReadWrite);
 		if (ptr == null)
 		{
 			return false;
