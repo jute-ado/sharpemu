@@ -205,6 +205,23 @@ const ulong ProgramAddress = 0x100000;
         0xE0700000, 0x80020000, // buffer_store_dword v0, off, s[8:11], 0
         0xBF810000,             // s_endpgm
     ]),
+    // Exercise sub-dword signedness and accesses that straddle two dwords.
+    // Loaded values are widened to dwords and copied to non-overlapping oracle
+    // slots before byte and short stores modify the trailing sentinel words.
+    ("exec-subword-memory", true, [
+        0xE0200000, 0x80020200, // buffer_load_ubyte v2, off, s[8:11], 0 offset:0
+        0xE0240002, 0x80020300, // buffer_load_sbyte v3, off, s[8:11], 0 offset:2
+        0xE0280003, 0x80020400, // buffer_load_ushort v4, off, s[8:11], 0 offset:3
+        0xE02C0003, 0x80020500, // buffer_load_sshort v5, off, s[8:11], 0 offset:3
+        0xE0700008, 0x80020200, // buffer_store_dword v2, off, s[8:11], 0 offset:8
+        0xE070000C, 0x80020300, // buffer_store_dword v3, off, s[8:11], 0 offset:12
+        0xE0700010, 0x80020400, // buffer_store_dword v4, off, s[8:11], 0 offset:16
+        0xE0700014, 0x80020500, // buffer_store_dword v5, off, s[8:11], 0 offset:20
+        0x7E0C02FF, 0xA1B2C3D4, // v_mov_b32 v6, 0xA1B2C3D4
+        0xE0600018, 0x80020600, // buffer_store_byte v6, off, s[8:11], 0 offset:24
+        0xE068001B, 0x80020600, // buffer_store_short v6, off, s[8:11], 0 offset:27
+        0xBF810000,             // s_endpgm
+    ]),
 ];
 
 var assembly = typeof(CxaGuardExports).Assembly;
@@ -588,6 +605,26 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
         case "exec-scalar-loop":
             expectedWords[0] = 4;
             labels[0] = "backward scalar loop terminates after four iterations";
+            break;
+        case "exec-subword-memory":
+            initialWords[0] = 0x34FF7F01;
+            initialWords[1] = 0xCAFEBAF2;
+            expectedWords[0] = initialWords[0];
+            expectedWords[1] = initialWords[1];
+            expectedWords[2] = 0x00000001;
+            expectedWords[3] = 0xFFFFFFFF;
+            expectedWords[4] = 0x0000F234;
+            expectedWords[5] = 0xFFFFF234;
+            expectedWords[6] = 0xD4FEBAD4;
+            expectedWords[7] = 0xCAFEBAC3;
+            labels[0] = "ubyte and sbyte source word remains unchanged";
+            labels[1] = "cross-dword halfword source word remains unchanged";
+            labels[2] = "buffer_load_ubyte zero-extends 0x01";
+            labels[3] = "buffer_load_sbyte sign-extends 0xFF";
+            labels[4] = "buffer_load_ushort crosses a dword boundary";
+            labels[5] = "buffer_load_sshort sign-extends across a dword boundary";
+            labels[6] = "byte store and low byte of crossing short store";
+            labels[7] = "high byte of crossing short store";
             break;
         default:
             return null;
