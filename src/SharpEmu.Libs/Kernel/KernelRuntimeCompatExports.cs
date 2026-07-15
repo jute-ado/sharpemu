@@ -1737,7 +1737,11 @@ public static class KernelRuntimeCompatExports
 
         for (var offset = 0; offset < maxLength && length < buffer.Length;)
         {
-            var current = address + (ulong)offset;
+            if (!GuestAddress.TryAdd(address, (ulong)offset, out var current))
+            {
+                return false;
+            }
+
             var pageRemaining = pageSize - (int)(current & (pageSize - 1));
             var chunkSize = Math.Min(
                 buffer.Length - length,
@@ -1749,7 +1753,8 @@ public static class KernelRuntimeCompatExports
             }
 
             var chunk = buffer.Slice(length, chunkSize);
-            if (!ctx.Memory.TryRead(current, chunk))
+            if (!GuestAddress.IsRangeValid(current, (ulong)chunkSize) ||
+                !ctx.Memory.TryRead(current, chunk))
             {
                 return false;
             }
