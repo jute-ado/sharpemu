@@ -185,6 +185,52 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public unsafe void PatchesDecodedTlsInstructionWithLeadingLegacyPrefix()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(failedAllocation: int.MaxValue);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        byte[] instruction =
+        [
+            0xF3, 0x64, 0x48, 0x8B, 0x04, 0x25, 0x48, 0x00, 0x00, 0x00,
+        ];
+        var instructionAddress = memory.Allocate(
+            0,
+            (ulong)instruction.Length,
+            HostPageProtection.ReadWriteExecute);
+        instruction.CopyTo(new Span<byte>((void*)instructionAddress, instruction.Length));
+
+        try
+        {
+            Assert.True(backend.TryCreateTlsHandler());
+
+            var patched = backend.TryPatchTlsInstruction(
+                (nint)instructionAddress,
+                (byte*)instructionAddress,
+                instruction.Length,
+                out var instructionKind);
+
+            Assert.True(patched);
+            Assert.Equal(NativeTlsInstructionKind.Load, instructionKind);
+            Assert.NotEqual(
+                instruction,
+                new ReadOnlySpan<byte>((void*)instructionAddress, instruction.Length).ToArray());
+        }
+        finally
+        {
+            backend.Dispose();
+            memory.Free(instructionAddress);
+        }
+    }
+
+    [Fact]
     public void SuccessfulTlsHandlersRemainOwnedUntilBackendDisposal()
     {
         var threading = new RecordingHostThreading([17u, 23u]);

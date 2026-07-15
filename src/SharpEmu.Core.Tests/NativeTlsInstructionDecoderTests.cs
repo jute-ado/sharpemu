@@ -23,6 +23,10 @@ public sealed class NativeTlsInstructionDecoderTests
             [(int)NativeTlsInstructionKind.Load, 11, 15, 0x40, 0, 1, 8, 0]
         },
         {
+            [0xF3, 0x64, 0x48, 0x8B, 0x04, 0x25, 0x48, 0x00, 0x00, 0x00],
+            [(int)NativeTlsInstructionKind.Load, 10, 0, 0x48, 0, 1, 8, 0]
+        },
+        {
             [0x64, 0x89, 0x04, 0x25, 0x50, 0x00, 0x00, 0x00],
             [(int)NativeTlsInstructionKind.RegisterStore, 8, 0, 0x50, 0, 0, 4, 0]
         },

@@ -2731,8 +2731,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		out NativeTlsInstructionKind instructionKind)
 	{
 		instructionKind = default;
-		if (availableLength < MinTlsPatchInstructionBytes ||
-			(source[0] != 0x64 && source[0] != 0x66))
+		if (availableLength < MinTlsPatchInstructionBytes)
 		{
 			return false;
 		}
