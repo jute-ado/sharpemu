@@ -694,18 +694,25 @@ public static partial class KernelMemoryCompatExports
     private static bool TryCompareStringsCaseInsensitive(CpuContext ctx, ulong left, ulong right, ulong limit, out int compare)
     {
         compare = 0;
+        var max = limit == ulong.MaxValue ? 1_048_576UL : Math.Min(limit, 1_048_576UL);
+        if (max == 0)
+        {
+            return true;
+        }
+
         if (left == 0 || right == 0)
         {
             return false;
         }
 
-        var max = limit == ulong.MaxValue ? 1_048_576UL : Math.Min(limit, 1_048_576UL);
         Span<byte> leftByte = stackalloc byte[1];
         Span<byte> rightByte = stackalloc byte[1];
         for (ulong i = 0; i < max; i++)
         {
-            if (!TryReadCompat(ctx, left + i, leftByte) ||
-                !TryReadCompat(ctx, right + i, rightByte))
+            if (!TryAddU64(left, i, out var leftAddress) ||
+                !TryAddU64(right, i, out var rightAddress) ||
+                !TryReadCompat(ctx, leftAddress, leftByte) ||
+                !TryReadCompat(ctx, rightAddress, rightByte))
             {
                 return false;
             }
@@ -5522,18 +5529,25 @@ public static partial class KernelMemoryCompatExports
     private static bool TryCompareStrings(CpuContext ctx, ulong left, ulong right, ulong limit, out int compare)
     {
         compare = 0;
+        var max = limit == ulong.MaxValue ? 1_048_576UL : Math.Min(limit, 1_048_576UL);
+        if (max == 0)
+        {
+            return true;
+        }
+
         if (left == 0 || right == 0)
         {
             return false;
         }
 
-        var max = limit == ulong.MaxValue ? 1_048_576UL : Math.Min(limit, 1_048_576UL);
         Span<byte> leftByte = stackalloc byte[1];
         Span<byte> rightByte = stackalloc byte[1];
         for (ulong i = 0; i < max; i++)
         {
-            if (!TryReadCompat(ctx, left + i, leftByte) ||
-                !TryReadCompat(ctx, right + i, rightByte))
+            if (!TryAddU64(left, i, out var leftAddress) ||
+                !TryAddU64(right, i, out var rightAddress) ||
+                !TryReadCompat(ctx, leftAddress, leftByte) ||
+                !TryReadCompat(ctx, rightAddress, rightByte))
             {
                 return false;
             }
@@ -5614,16 +5628,24 @@ public static partial class KernelMemoryCompatExports
     private static bool TryCompareWideStrings(CpuContext ctx, ulong left, ulong right, ulong limit, out int compare)
     {
         compare = 0;
+        var max = limit == ulong.MaxValue ? 1_048_576UL : Math.Min(limit, 1_048_576UL);
+        if (max == 0)
+        {
+            return true;
+        }
+
         if (left == 0 || right == 0)
         {
             return false;
         }
 
-        var max = limit == ulong.MaxValue ? 1_048_576UL : Math.Min(limit, 1_048_576UL);
         for (ulong i = 0; i < max; i++)
         {
-            if (!TryReadUInt16Compat(ctx, left + (i * WideCharSize), out var leftUnit) ||
-                !TryReadUInt16Compat(ctx, right + (i * WideCharSize), out var rightUnit))
+            var offset = i * WideCharSize;
+            if (!TryAddU64(left, offset, out var leftAddress) ||
+                !TryAddU64(right, offset, out var rightAddress) ||
+                !TryReadUInt16Compat(ctx, leftAddress, out var leftUnit) ||
+                !TryReadUInt16Compat(ctx, rightAddress, out var rightUnit))
             {
                 return false;
             }
