@@ -38,6 +38,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
     private readonly CpuExecutionOptions _cpuExecutionOptions;
     private readonly IFileSystem _fileSystem;
     private readonly bool _allowExecution;
+    private readonly List<ModuleInitializerExecution> _moduleInitializerExecutions = [];
     private bool _disposed;
 
     public string? LastExecutionDiagnostics { get; private set; }
@@ -63,6 +64,9 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
     public SelfImage? LastLoadedImage { get; private set; }
 
     public PreparedApplication? LastPreparedApplication { get; private set; }
+
+    public IReadOnlyList<ModuleInitializerExecution> LastModuleInitializerExecutions =>
+        _moduleInitializerExecutions;
 
     public SharpEmuRuntime(
         ISelfLoader selfLoader,
@@ -448,6 +452,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         LastApplicationMetadata = null;
         LastLoadedImage = null;
         LastPreparedApplication = null;
+        _moduleInitializerExecutions.Clear();
     }
 
     private PreparedApplication PrepareApplicationCore(string normalizedEbootPath)
@@ -592,6 +597,11 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                     activeRuntimeSymbols,
                     moduleName,
                     _cpuExecutionOptions);
+                _moduleInitializerExecutions.Add(new ModuleInitializerExecution(
+                    loadedModule.Path,
+                    initializerIndex,
+                    initializerEntryPoint,
+                    result));
                 if (result != OrbisGen2Result.ORBIS_GEN2_OK)
                 {
                     Log.Error(
