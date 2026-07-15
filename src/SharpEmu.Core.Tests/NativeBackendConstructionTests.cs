@@ -1135,6 +1135,49 @@ public sealed class NativeBackendConstructionTests
         public IHostThreading Threading { get; } = threading;
 
         public IHostSymbolResolver Symbols { get; } = symbols ?? new StubHostSymbolResolver();
+
+        public IHostAudioOutput Audio { get; } = new StubHostAudioOutput();
+
+        public IHostInput Input { get; } = new StubHostInput();
+    }
+
+    private sealed class StubHostAudioOutput : IHostAudioOutput
+    {
+        public string BackendName => "test";
+
+        public IHostAudioStream OpenStereoPcm16Stream(uint sampleRate) =>
+            throw new NotSupportedException("Native backend construction tests do not open audio streams.");
+    }
+
+    private sealed class StubHostInput : IHostInput
+    {
+        public void EnsureStarted()
+        {
+        }
+
+        public int GetGamepadStates(Span<HostGamepadState> destination) => 0;
+
+        public string? DescribeConnectedGamepad() => null;
+
+        public void SetRumble(byte largeMotor, byte smallMotor)
+        {
+        }
+
+        public void SetTriggerRumble(byte? leftTrigger, byte? rightTrigger)
+        {
+        }
+
+        public void SetLightbar(byte red, byte green, byte blue)
+        {
+        }
+
+        public void ResetLightbar()
+        {
+        }
+
+        public bool IsHostWindowFocused() => false;
+
+        public bool IsKeyDown(int virtualKey) => false;
     }
 
     private sealed class RecordingHostThreading(IEnumerable<uint> slots) : IHostThreading
@@ -1160,6 +1203,10 @@ public sealed class NativeBackendConstructionTests
         public uint CurrentThreadId => 1;
 
         public bool TrySetCurrentThreadAffinity(nuint affinityMask) => true;
+
+        public void RequestTimerResolution()
+        {
+        }
 
         public nint CreateNativeThread(
             nint entry,
