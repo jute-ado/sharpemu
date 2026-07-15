@@ -430,6 +430,66 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public unsafe void MinimumLengthExecutableRegionIsScannedForTlsInstructions()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(
+            failedAllocation: int.MaxValue,
+            failedProtection: 4);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        byte[] instruction =
+        [
+            0x64, 0x89, 0x04, 0x25, 0x50, 0x00, 0x00, 0x00,
+        ];
+        var instructionAddress = memory.Allocate(
+            0,
+            (ulong)instruction.Length,
+            HostPageProtection.ReadWriteExecute);
+        instruction.CopyTo(new Span<byte>((void*)instructionAddress, instruction.Length));
+        memory.ExecutableRegionAddress = instructionAddress;
+        memory.ExecutableRegionSize = (ulong)instruction.Length;
+        const ulong stackAddress = 0x1000;
+        var context = new CpuContext(
+            new StackSlotMemory(stackAddress, 0x1122_3344_5566_7788),
+            Generation.Gen5)
+        {
+            [CpuRegister.Rsp] = stackAddress,
+        };
+
+        try
+        {
+            var executed = backend.TryExecute(
+                context,
+                instructionAddress,
+                Generation.Gen5,
+                new Dictionary<ulong, string>(),
+                new Dictionary<string, ulong>(),
+                default,
+                NativeEntryReturnContract.RequireZero,
+                out var result);
+
+            Assert.False(executed);
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+            Assert.Contains("TLS patch", backend.LastError, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(
+                instruction,
+                new ReadOnlySpan<byte>((void*)instructionAddress, instruction.Length).ToArray());
+        }
+        finally
+        {
+            backend.Dispose();
+            memory.Free(instructionAddress);
+        }
+    }
+
+    [Fact]
     public unsafe void LaterRecognizedTlsPatchFailureRollsBackEarlierPatches()
     {
         var threading = new RecordingHostThreading([17u, 23u]);

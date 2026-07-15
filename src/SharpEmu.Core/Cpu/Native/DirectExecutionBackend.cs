@@ -2513,7 +2513,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				uint num7 = lpBuffer.RawProtection & 0xFF;
 				bool flag = lpBuffer.State == HostRegionState.Committed && (lpBuffer.RawProtection & PAGE_GUARD) == 0 && num7 != PAGE_NOACCESS;
 				bool flag2 = num7 == PAGE_EXECUTE || num7 == 32 || num7 == 64 || num7 == PAGE_EXECUTE_WRITECOPY;
-				if (flag && flag2 && num6 > num5 + MinTlsPatchInstructionBytes)
+				if (flag &&
+					flag2 &&
+					num6 > num5 &&
+					num6 - num5 >= MinTlsPatchInstructionBytes)
 				{
 					byte* ptr = (byte*)num5;
 					int scanBytes = (int)(num6 - num5);
