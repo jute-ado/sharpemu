@@ -502,7 +502,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 return false;
             }
 
-            if (!_hostMemory.Protect(address, size, ResolveProtection(protection), out _))
+            if (!_hostMemory.Protect(pageStart, pageLength, ResolveProtection(protection), out _))
             {
                 return false;
             }
@@ -514,7 +514,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
 
             if ((protection & GuestPageProtection.Execute) != 0)
             {
-                _hostMemory.FlushInstructionCache(address, size);
+                _hostMemory.FlushInstructionCache(pageStart, pageLength);
             }
 
             return true;
