@@ -1,7 +1,9 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
+using SharpEmu.Core.Cpu;
 using SharpEmu.Core.Cpu.Native;
 using SharpEmu.HLE;
 using SharpEmu.HLE.Host;
@@ -301,6 +303,51 @@ public sealed class NativeBackendConstructionTests
         }
     }
 
+    [Fact]
+    public void FailedEntryStubProtectionRestoresGuestStackSlot()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(
+            failedAllocation: int.MaxValue,
+            failedProtection: 4);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        const ulong stackAddress = 0x1000;
+        const ulong originalStackValue = 0x1122_3344_5566_7788;
+        var guestMemory = new StackSlotMemory(stackAddress, originalStackValue);
+        var context = new CpuContext(guestMemory, Generation.Gen5)
+        {
+            [CpuRegister.Rsp] = stackAddress,
+        };
+
+        try
+        {
+            var executed = backend.TryExecute(
+                context,
+                entryPoint: 0x2000,
+                Generation.Gen5,
+                new Dictionary<ulong, string>(),
+                new Dictionary<string, ulong>(),
+                default,
+                NativeEntryReturnContract.RequireZero,
+                out var result);
+
+            Assert.False(executed);
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+            Assert.Equal(originalStackValue, guestMemory.Value);
+        }
+        finally
+        {
+            backend.Dispose();
+        }
+    }
+
     private sealed class StubHostPlatform(
         IHostThreading threading,
         IHostMemory? memory = null,
@@ -398,6 +445,35 @@ public sealed class NativeBackendConstructionTests
 
         public void FlushInstructionCache(ulong address, ulong size)
         {
+        }
+    }
+
+    private sealed class StackSlotMemory(ulong address, ulong initialValue) : ICpuMemory
+    {
+        private readonly byte[] _bytes = BitConverter.GetBytes(initialValue);
+
+        public ulong Value => BinaryPrimitives.ReadUInt64LittleEndian(_bytes);
+
+        public bool TryRead(ulong virtualAddress, Span<byte> destination)
+        {
+            if (virtualAddress != address || destination.Length != _bytes.Length)
+            {
+                return false;
+            }
+
+            _bytes.CopyTo(destination);
+            return true;
+        }
+
+        public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source)
+        {
+            if (virtualAddress != address || source.Length != _bytes.Length)
+            {
+                return false;
+            }
+
+            source.CopyTo(_bytes);
+            return true;
         }
     }
 

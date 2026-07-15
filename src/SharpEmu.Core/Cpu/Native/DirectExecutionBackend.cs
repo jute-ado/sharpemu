@@ -4268,6 +4268,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		var previousHardwareExceptionCode = _activeGuestHardwareExceptionCode;
 		var previousHardwareExceptionAccessType = _activeGuestHardwareExceptionAccessType;
 		var previousHardwareExceptionAccessAddress = _activeGuestHardwareExceptionAccessAddress;
+		var guestStackSlotAddress = context[CpuRegister.Rsp];
+		var originalGuestStackValue = 0UL;
+		var guestStackSlotPatched = false;
+		var guestEntryStarted = false;
 		nint previousHostRspSlotValue = _hostThreading.GetTlsValue(_hostRspSlotTlsIndex);
 		if (LogThreadMode)
 		{
@@ -4399,11 +4403,13 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
         ulong sentinel = (ulong)ptr + (ulong)sentinelOffset;
         ActiveEntryReturnSentinelRip = (ulong)_guestReturnStub;
         _activeGuestReturnSlotAddress = context[CpuRegister.Rsp] - 16uL;
-        if (!context.TryWriteUInt64(context[CpuRegister.Rsp], sentinel))
-        {
-            reason = $"failed to patch guest thread return sentinel at 0x{context[CpuRegister.Rsp]:X16}";
-            return GuestNativeCallExitReason.Exception;
-        }
+		if (!context.TryReadUInt64(guestStackSlotAddress, out originalGuestStackValue) ||
+			!context.TryWriteUInt64(guestStackSlotAddress, sentinel))
+		{
+			reason = $"failed to patch guest thread return sentinel at 0x{guestStackSlotAddress:X16}";
+			return GuestNativeCallExitReason.Exception;
+		}
+		guestStackSlotPatched = true;
         uint oldProtect = default(uint);
         if (!_hostMemory.Protect((ulong)ptr, stubSize, HostPageProtection.ReadWriteExecute, out oldProtect))
         {
@@ -4411,9 +4417,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
             return GuestNativeCallExitReason.Exception;
         }
         _hostMemory.FlushInstructionCache((ulong)ptr, stubSize);
-        ActiveGuestThreadYieldRequested = false;
-        ActiveGuestThreadYieldReason = null;
-        var nativeReturn = RunGuestEntryStub(ptr, hostRspSlot);
+		ActiveGuestThreadYieldRequested = false;
+		ActiveGuestThreadYieldReason = null;
+		guestEntryStarted = true;
+		var nativeReturn = RunGuestEntryStub(ptr, hostRspSlot);
 		if (ApplyActiveGuestHardwareException(context, out var hardwareExceptionDetail))
 		{
 			LastError = hardwareExceptionDetail;
@@ -4443,6 +4450,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
     }
     finally
     {
+		if (guestStackSlotPatched && !guestEntryStarted)
+		{
+			context.TryWriteUInt64(guestStackSlotAddress, originalGuestStackValue);
+		}
         _hostThreading.SetTlsValue(_hostRspSlotTlsIndex, previousHostRspSlotValue);
         RestoreActiveExecutionThread(
             previousActiveBackend,
@@ -4495,6 +4506,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		var previousHardwareExceptionCode = _activeGuestHardwareExceptionCode;
 		var previousHardwareExceptionAccessType = _activeGuestHardwareExceptionAccessType;
 		var previousHardwareExceptionAccessAddress = _activeGuestHardwareExceptionAccessAddress;
+		var originalReturnSlotValue = 0UL;
+		var returnSlotPatched = false;
+		var guestEntryStarted = false;
 		nint previousHostRspSlotValue = _hostThreading.GetTlsValue(_hostRspSlotTlsIndex);
 		if (LogThreadMode)
 		{
@@ -4563,11 +4577,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			EmitMovR64Imm(0x49, 0xBB, entryPoint); // mov r11, entryPoint
 			Emit(0x41); Emit(0xFF); Emit(0xE3); // jmp r11
 			ActiveEntryReturnSentinelRip = (ulong)_guestReturnStub;
-			if (returnSlotAddress == 0 || !context.TryWriteUInt64(returnSlotAddress, (ulong)_guestReturnStub))
+			if (returnSlotAddress == 0 ||
+				!context.TryReadUInt64(returnSlotAddress, out originalReturnSlotValue) ||
+				!context.TryWriteUInt64(returnSlotAddress, (ulong)_guestReturnStub))
 			{
 				reason = $"failed to patch guest continuation return slot at 0x{returnSlotAddress:X16}";
 				return GuestNativeCallExitReason.Exception;
 			}
+			returnSlotPatched = true;
 			uint oldProtect = default(uint);
 			if (!_hostMemory.Protect((ulong)ptr, stubSize, HostPageProtection.ReadWriteExecute, out oldProtect))
 			{
@@ -4580,6 +4597,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 			try
 			{
+				guestEntryStarted = true;
 				var nativeReturn = RunGuestEntryStub(ptr, hostRspSlot);
 				if (ApplyActiveGuestHardwareException(context, out var hardwareExceptionDetail))
 				{
@@ -4611,6 +4629,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 		finally
 		{
+			if (returnSlotPatched && !guestEntryStarted)
+			{
+				context.TryWriteUInt64(returnSlotAddress, originalReturnSlotValue);
+			}
 			_hostThreading.SetTlsValue(_hostRspSlotTlsIndex, previousHostRspSlotValue);
 			RestoreActiveExecutionThread(
 				previousActiveBackend,
@@ -4730,6 +4752,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		var previousHardwareExceptionCode = _activeGuestHardwareExceptionCode;
 		var previousHardwareExceptionAccessType = _activeGuestHardwareExceptionAccessType;
 		var previousHardwareExceptionAccessAddress = _activeGuestHardwareExceptionAccessAddress;
+		var guestStackSlotAddress = context[CpuRegister.Rsp];
+		var originalGuestStackValue = 0UL;
+		var guestStackSlotPatched = false;
+		var guestEntryStarted = false;
 		nint previousHostRspSlotValue = _hostThreading.GetTlsValue(_hostRspSlotTlsIndex);
 		try
 		{
@@ -4855,12 +4881,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			ulong value = (ulong)ptr + (ulong)num4;
 			ActiveEntryReturnSentinelRip = (ulong)_guestReturnStub;
 			_activeGuestReturnSlotAddress = context[CpuRegister.Rsp] - 16uL;
-			if (!context.TryWriteUInt64(context[CpuRegister.Rsp], value))
+			if (!context.TryReadUInt64(guestStackSlotAddress, out originalGuestStackValue) ||
+				!context.TryWriteUInt64(guestStackSlotAddress, value))
 			{
-				LastError = $"Failed to patch native return sentinel at 0x{context[CpuRegister.Rsp]:X16}";
+				LastError = $"Failed to patch native return sentinel at 0x{guestStackSlotAddress:X16}";
 				result = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
 				return false;
 			}
+			guestStackSlotPatched = true;
 			uint num5 = default(uint);
 			if (!_hostMemory.Protect((ulong)ptr, stubSize, HostPageProtection.ReadWriteExecute, out num5))
 			{
@@ -4885,6 +4913,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			int num6 = -1;
 			try
 			{
+				guestEntryStarted = true;
 				num6 = RunGuestEntryStub(ptr, num2);
 				if (ApplyActiveGuestHardwareException(context, out var hardwareExceptionDetail))
 				{
@@ -4938,6 +4967,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 		finally
 		{
+			if (guestStackSlotPatched && !guestEntryStarted)
+			{
+				context.TryWriteUInt64(guestStackSlotAddress, originalGuestStackValue);
+			}
 			StopStallWatchdog();
 			ActiveEntryReturnSentinelRip = 0uL;
 			_hostThreading.SetTlsValue(_hostRspSlotTlsIndex, previousHostRspSlotValue);
