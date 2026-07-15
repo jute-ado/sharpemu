@@ -1032,6 +1032,50 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public void NativeWorkerCreationFailureStopsBeforeInlineGuestExecution()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(failedAllocation: int.MaxValue);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        const ulong stackAddress = 0x1000;
+        var context = new CpuContext(
+            new StackSlotMemory(stackAddress, 0x1122_3344_5566_7788),
+            Generation.Gen5)
+        {
+            [CpuRegister.Rsp] = stackAddress,
+        };
+
+        try
+        {
+            var executed = backend.TryExecute(
+                context,
+                entryPoint: 0x2000,
+                Generation.Gen5,
+                new Dictionary<ulong, string>(),
+                new Dictionary<string, ulong>(),
+                default,
+                NativeEntryReturnContract.RequireZero,
+                out var result);
+
+            Assert.False(executed);
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP, result);
+            Assert.Contains("native guest worker", backend.LastError, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(1, threading.NativeThreadCreationAttempts);
+        }
+        finally
+        {
+            backend.Dispose();
+        }
+    }
+
+    [Fact]
     public void FailedEntryStubHostRspSlotAllocationReleasesCodeStub()
     {
         var threading = new RecordingHostThreading([17u, 23u]);
@@ -1099,6 +1143,8 @@ public sealed class NativeBackendConstructionTests
 
         public List<uint> FreedSlots { get; } = [];
 
+        public int NativeThreadCreationAttempts { get; private set; }
+
         public uint AllocateTlsSlot() => _slots.Dequeue();
 
         public bool FreeTlsSlot(uint slot)
@@ -1121,6 +1167,7 @@ public sealed class NativeBackendConstructionTests
             nuint stackReserveBytes,
             out uint threadId)
         {
+            NativeThreadCreationAttempts++;
             threadId = 0;
             return 0;
         }

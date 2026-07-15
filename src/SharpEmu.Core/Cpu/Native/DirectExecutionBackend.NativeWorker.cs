@@ -36,17 +36,16 @@ public sealed partial class DirectExecutionBackend
 	private bool _nativeWorkersDisposed;
 	private int _nativeWorkerCreationFailedLogged;
 
-	// Runs an emitted guest entry stub. Preferred path is a pooled native worker
-	// thread; falls back to the historical inline calli (guest frames above this
-	// thread's managed frames) when workers are disabled or unavailable.
+	// Runs an emitted guest entry stub on a pooled native worker. The historical
+	// inline calli remains available only through the explicit diagnostic override;
+	// silently using it after worker creation fails can fail-fast the CLR process.
 	//
 	// Callers set the Active* thread-statics before emitting the stub and read the
 	// yield/forced-exit flags right after this returns, so the worker outcome is
 	// copied back into this thread's statics before returning.
 	private unsafe int RunGuestEntryStub(void* entryStub, ulong hostRspSlot)
 	{
-		var worker = RentNativeGuestExecutor();
-		if (worker is null)
+		if (NativeGuestWorkersDisabled)
 		{
 			_activeGuestHardwareExceptionRip = 0;
 			_activeGuestHardwareExceptionCode = 0;
@@ -54,6 +53,13 @@ public sealed partial class DirectExecutionBackend
 			_activeGuestHardwareExceptionAccessAddress = 0;
 			_hostThreading.SetTlsValue(_hostRspSlotTlsIndex, (nint)hostRspSlot);
 			return CallNativeEntry(entryStub);
+		}
+
+		var worker = RentNativeGuestExecutor();
+		if (worker is null)
+		{
+			throw new InvalidOperationException(
+				"Failed to create a native guest worker thread; unsafe inline execution was refused.");
 		}
 		try
 		{
@@ -91,10 +97,6 @@ public sealed partial class DirectExecutionBackend
 
 	private NativeGuestExecutor? RentNativeGuestExecutor()
 	{
-		if (NativeGuestWorkersDisabled)
-		{
-			return null;
-		}
 		lock (_nativeWorkerGate)
 		{
 			if (_nativeWorkersDisposed)
@@ -112,7 +114,7 @@ public sealed partial class DirectExecutionBackend
 			if (Interlocked.Exchange(ref _nativeWorkerCreationFailedLogged, 1) == 0)
 			{
 				Console.Error.WriteLine(
-					"[LOADER][WARN] Failed to create a native guest worker thread; falling back to inline guest execution.");
+					"[LOADER][ERROR] Failed to create a native guest worker thread; refusing unsafe inline guest execution.");
 			}
 			return null;
 		}
