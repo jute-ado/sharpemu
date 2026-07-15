@@ -242,6 +242,17 @@ const ulong ProgramAddress = 0x100000;
         0xE0C80000, 0x80020400, // buffer_atomic_add v4, off, s[8:11], 0
         0xBF810000,             // s_endpgm
     ]),
+    // GLC requests the pre-operation value in VDATA. Sequential add/sub
+    // operations exercise both the returned values and the final counter.
+    ("exec-buffer-atomic-return", true, [
+        0x7E0802FF, 0x00000005, // v_mov_b32 v4, 5
+        0xE0C84000, 0x80020400, // buffer_atomic_add v4, off, s[8:11], 0 glc
+        0xE0700004, 0x80020400, // buffer_store_dword v4, off, s[8:11], 0 offset:4
+        0x7E0A02FF, 0x00000003, // v_mov_b32 v5, 3
+        0xE0CC4000, 0x80020500, // buffer_atomic_sub v5, off, s[8:11], 0 glc
+        0xE0700008, 0x80020500, // buffer_store_dword v5, off, s[8:11], 0 offset:8
+        0xBF810000,             // s_endpgm
+    ]),
 ];
 
 var assembly = typeof(CxaGuardExports).Assembly;
@@ -698,6 +709,15 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
                 labels,
                 LocalSizeX: 8,
                 GroupCountX: 2);
+        case "exec-buffer-atomic-return":
+            initialWords[0] = 10;
+            expectedWords[0] = 12;
+            expectedWords[1] = 10;
+            expectedWords[2] = 15;
+            labels[0] = "atomic add followed by atomic sub updates the counter";
+            labels[1] = "GLC atomic add returns its pre-operation value";
+            labels[2] = "GLC atomic sub returns its pre-operation value";
+            break;
         default:
             return null;
     }
