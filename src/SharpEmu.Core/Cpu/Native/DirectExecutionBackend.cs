@@ -101,6 +101,27 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		public int AttemptAllocationStart { get; } = attemptAllocationStart;
 	}
 
+	private sealed class TlsSetupCheckpoint(
+		nint handlerAddress,
+		int patchStubOffset,
+		int allocationStart,
+		Dictionary<(int DestinationRegister, int Displacement, bool Is64Bit, int MemorySize, bool SignExtend), nint> loadHelpers,
+		Dictionary<(int SourceRegister, int Displacement, bool Is64Bit), nint> storeHelpers,
+		Dictionary<(int Displacement, int ImmediateValue, bool Is64Bit), nint> immediateStoreHelpers)
+	{
+		public nint HandlerAddress { get; } = handlerAddress;
+
+		public int PatchStubOffset { get; } = patchStubOffset;
+
+		public int AllocationStart { get; } = allocationStart;
+
+		public Dictionary<(int DestinationRegister, int Displacement, bool Is64Bit, int MemorySize, bool SignExtend), nint> LoadHelpers { get; } = loadHelpers;
+
+		public Dictionary<(int SourceRegister, int Displacement, bool Is64Bit), nint> StoreHelpers { get; } = storeHelpers;
+
+		public Dictionary<(int Displacement, int ImmediateValue, bool Is64Bit), nint> ImmediateStoreHelpers { get; } = immediateStoreHelpers;
+	}
+
 	private readonly record struct RecentImportTraceEntry(
 		long DispatchIndex,
 		string Nid,
@@ -1096,6 +1117,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		var previousGuestThreadScheduler = GuestThreadExecution.Scheduler;
 		GuestThreadExecution.Scheduler = this;
 		ImportSetupCheckpoint? importSetupCheckpoint = null;
+		TlsSetupCheckpoint? tlsSetupCheckpoint = null;
 		try
 		{
 			if (!SetupImportStubs(importStubs, out var completedImportSetup))
@@ -1108,8 +1130,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				return false;
 			}
 			importSetupCheckpoint = completedImportSetup;
+			tlsSetupCheckpoint = CaptureTlsSetupCheckpoint();
 			if (!TryCreateTlsHandler())
 			{
+				RollbackTlsSetup(tlsSetupCheckpoint);
+				tlsSetupCheckpoint = null;
 				RollbackImportSetup(importSetupCheckpoint);
 				importSetupCheckpoint = null;
 				if (string.IsNullOrEmpty(LastError))
@@ -1121,17 +1146,24 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 			if (!PatchTlsPatterns())
 			{
+				RollbackTlsSetup(tlsSetupCheckpoint);
+				tlsSetupCheckpoint = null;
 				RollbackImportSetup(importSetupCheckpoint);
 				importSetupCheckpoint = null;
 				LastError = "TLS patch preparation failed for one or more recognized guest instructions";
 				result = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
 				return false;
 			}
+			tlsSetupCheckpoint = null;
 			importSetupCheckpoint = null;
 			return ExecuteEntry(context, entryPoint, returnContract, out result);
 		}
 		catch (Exception ex)
 		{
+			if (tlsSetupCheckpoint is not null)
+			{
+				RollbackTlsSetup(tlsSetupCheckpoint);
+			}
 			if (importSetupCheckpoint is not null)
 			{
 				RollbackImportSetup(importSetupCheckpoint);
@@ -1152,6 +1184,54 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			DrainDeferredBootstrapTraces();
 			GuestThreadExecution.Scheduler = previousGuestThreadScheduler;
 			Console.Error.WriteLine("[LOADER][INFO] === Execute END (LastError: " + (LastError ?? "null") + ") ===");
+		}
+	}
+
+	private TlsSetupCheckpoint CaptureTlsSetupCheckpoint() => new(
+		_tlsHandlerAddress,
+		_tlsPatchStubOffset,
+		_tlsHandlerAllocations.Count,
+		new Dictionary<(int DestinationRegister, int Displacement, bool Is64Bit, int MemorySize, bool SignExtend), nint>(_tlsLoadHelpers),
+		new Dictionary<(int SourceRegister, int Displacement, bool Is64Bit), nint>(_tlsStoreHelpers),
+		new Dictionary<(int Displacement, int ImmediateValue, bool Is64Bit), nint>(_tlsImmediateStoreHelpers));
+
+	private void RollbackTlsSetup(TlsSetupCheckpoint checkpoint)
+	{
+		var currentHandlerAddress = _tlsHandlerAddress;
+		var currentHandlerTracked = false;
+		for (var index = _tlsHandlerAllocations.Count - 1; index >= checkpoint.AllocationStart; index--)
+		{
+			var allocation = _tlsHandlerAllocations[index];
+			currentHandlerTracked |= allocation == currentHandlerAddress;
+			if (allocation != 0)
+			{
+				_hostMemory.Free((ulong)allocation);
+			}
+			_tlsHandlerAllocations.RemoveAt(index);
+		}
+		if (currentHandlerAddress != 0 &&
+			currentHandlerAddress != checkpoint.HandlerAddress &&
+			!currentHandlerTracked)
+		{
+			_hostMemory.Free((ulong)currentHandlerAddress);
+		}
+
+		_tlsHandlerAddress = checkpoint.HandlerAddress;
+		_tlsPatchStubOffset = checkpoint.PatchStubOffset;
+		_tlsLoadHelpers.Clear();
+		foreach (var helper in checkpoint.LoadHelpers)
+		{
+			_tlsLoadHelpers.Add(helper.Key, helper.Value);
+		}
+		_tlsStoreHelpers.Clear();
+		foreach (var helper in checkpoint.StoreHelpers)
+		{
+			_tlsStoreHelpers.Add(helper.Key, helper.Value);
+		}
+		_tlsImmediateStoreHelpers.Clear();
+		foreach (var helper in checkpoint.ImmediateStoreHelpers)
+		{
+			_tlsImmediateStoreHelpers.Add(helper.Key, helper.Value);
 		}
 	}
 

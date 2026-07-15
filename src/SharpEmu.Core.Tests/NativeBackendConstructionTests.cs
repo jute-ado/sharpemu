@@ -209,6 +209,69 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public void FailedTlsHandlerReplacementRestoresPreviousHandlerState()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(
+            failedAllocation: int.MaxValue,
+            failedProtection: 6);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        const ulong stackAddress = 0x1000;
+        var context = new CpuContext(
+            new StackSlotMemory(stackAddress, 0x1122_3344_5566_7788),
+            Generation.Gen5)
+        {
+            [CpuRegister.Rsp] = stackAddress,
+        };
+
+        try
+        {
+            Assert.True(backend.TryCreateTlsHandler());
+            var previousHelper = backend.GetOrCreateTlsLoadHelper(
+                destinationRegister: 0,
+                displacement: 0,
+                is64Bit: true,
+                memorySize: 8,
+                signExtend: false);
+            Assert.NotEqual(0, previousHelper);
+            var activeAllocationsBefore = memory.ActiveAllocations.Count;
+
+            var executed = backend.TryExecute(
+                context,
+                entryPoint: 0,
+                Generation.Gen5,
+                new Dictionary<ulong, string>(),
+                new Dictionary<string, ulong>(),
+                default,
+                NativeEntryReturnContract.RequireZero,
+                out var result);
+
+            Assert.False(executed);
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+            Assert.Equal(activeAllocationsBefore, memory.ActiveAllocations.Count);
+            Assert.Equal(
+                previousHelper,
+                backend.GetOrCreateTlsLoadHelper(
+                    destinationRegister: 0,
+                    displacement: 0,
+                    is64Bit: true,
+                    memorySize: 8,
+                    signExtend: false));
+        }
+        finally
+        {
+            backend.Dispose();
+        }
+    }
+
+    [Fact]
     public void FailedTlsLoadHelperFinalizationReusesArenaReservationOnRetry()
     {
         var threading = new RecordingHostThreading([17u, 23u]);
@@ -393,6 +456,7 @@ public sealed class NativeBackendConstructionTests
         instructions.CopyTo(new Span<byte>((void*)instructionAddress, instructions.Length));
         memory.ExecutableRegionAddress = instructionAddress;
         memory.ExecutableRegionSize = (ulong)instructions.Length;
+        var activeAllocationsBefore = memory.ActiveAllocations.Count;
         const ulong stackAddress = 0x1000;
         var context = new CpuContext(
             new StackSlotMemory(stackAddress, 0x1122_3344_5566_7788),
@@ -419,6 +483,7 @@ public sealed class NativeBackendConstructionTests
             Assert.Equal(
                 instructions,
                 new ReadOnlySpan<byte>((void*)instructionAddress, instructions.Length).ToArray());
+            Assert.Equal(activeAllocationsBefore, memory.ActiveAllocations.Count);
         }
         finally
         {
