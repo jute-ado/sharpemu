@@ -201,6 +201,51 @@ public sealed class SecureStringCopyTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SecureCopyRejectsSourceAddressWrapAndClearsDestination(bool bounded)
+    {
+        var destination = Enumerable.Repeat((byte)0xCC, 4).ToArray();
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(DestinationAddress, destination);
+        memory.AddRegion(ulong.MaxValue, [(byte)'A']);
+        memory.AddRegion(0, [0]);
+        var context = new CpuContext(memory, Generation.Gen5);
+
+        if (bounded)
+        {
+            SetStrncpyArguments(context, destinationSize: 4, ulong.MaxValue, count: 2);
+        }
+        else
+        {
+            SetStrcpyArguments(context, destinationSize: 4, ulong.MaxValue);
+        }
+
+        var result = bounded
+            ? KernelMemoryCompatExports.StrncpyS(context)
+            : KernelMemoryCompatExports.StrcpyS(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+        Assert.Equal(0, destination[0]);
+        Assert.All(destination[1..], value => Assert.Equal(0xCC, value));
+    }
+
+    [Fact]
+    public void StrncpySCanCopyFinalAddressSpaceByteWhenCountIsOne()
+    {
+        var destination = Enumerable.Repeat((byte)0xCC, 2).ToArray();
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(DestinationAddress, destination);
+        memory.AddRegion(ulong.MaxValue, [(byte)'A']);
+        var context = new CpuContext(memory, Generation.Gen5);
+        SetStrncpyArguments(context, destinationSize: 2, ulong.MaxValue, count: 1);
+
+        Assert.Equal(0, KernelMemoryCompatExports.StrncpyS(context));
+        Assert.Equal(0uL, context[CpuRegister.Rax]);
+        Assert.Equal([(byte)'A', 0], destination);
+    }
+
+    [Theory]
     [InlineData(nameof(KernelMemoryCompatExports.StrcpyS), "5Xa2ACNECdo", "strcpy_s")]
     [InlineData(nameof(KernelMemoryCompatExports.StrncpyS), "YNzNkJzYqEg", "strncpy_s")]
     public void SecureCopyExportMetadataIsExact(string methodName, string nid, string exportName)
