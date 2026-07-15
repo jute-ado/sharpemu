@@ -2413,72 +2413,117 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		int num4 = 0;
 		int num9 = 0;
 		int failedPatchCount = 0;
-		while (num < num2)
+		var recognizedPatches = new List<(nint Address, byte[] OriginalBytes)>();
+		var scanSucceeded = false;
+		try
 		{
-			if (!_hostMemory.Query(num, out var lpBuffer) || lpBuffer.RegionSize == 0)
+			while (num < num2)
 			{
-				num += 4096uL;
-				continue;
-			}
-			ulong num5 = Math.Max(num, lpBuffer.BaseAddress);
-			ulong num6 = lpBuffer.BaseAddress + lpBuffer.RegionSize;
-			if (num6 > num2)
-			{
-				num6 = num2;
-			}
-			uint num7 = lpBuffer.RawProtection & 0xFF;
-			bool flag = lpBuffer.State == HostRegionState.Committed && (lpBuffer.RawProtection & PAGE_GUARD) == 0 && num7 != PAGE_NOACCESS;
-			bool flag2 = num7 == PAGE_EXECUTE || num7 == 32 || num7 == 64 || num7 == PAGE_EXECUTE_WRITECOPY;
-			if (flag && flag2 && num6 > num5 + MinTlsPatchInstructionBytes)
-			{
-				byte* ptr = (byte*)num5;
-				int scanBytes = (int)(num6 - num5);
-				for (int i = 0; i <= scanBytes - MinTlsPatchInstructionBytes; i++)
+				if (!_hostMemory.Query(num, out var lpBuffer) || lpBuffer.RegionSize == 0)
 				{
-					nint address = (nint)(ptr + i);
-					int remainingBytes = scanBytes - i;
-					var candidateLength = Math.Min(15, remainingBytes);
-					if (!NativeTlsInstructionDecoder.TryDecode(
-						new ReadOnlySpan<byte>(ptr + i, candidateLength),
-						out var recognizedInstruction))
+					num += 4096uL;
+					continue;
+				}
+				ulong num5 = Math.Max(num, lpBuffer.BaseAddress);
+				ulong num6 = lpBuffer.BaseAddress + lpBuffer.RegionSize;
+				if (num6 > num2)
+				{
+					num6 = num2;
+				}
+				uint num7 = lpBuffer.RawProtection & 0xFF;
+				bool flag = lpBuffer.State == HostRegionState.Committed && (lpBuffer.RawProtection & PAGE_GUARD) == 0 && num7 != PAGE_NOACCESS;
+				bool flag2 = num7 == PAGE_EXECUTE || num7 == 32 || num7 == 64 || num7 == PAGE_EXECUTE_WRITECOPY;
+				if (flag && flag2 && num6 > num5 + MinTlsPatchInstructionBytes)
+				{
+					byte* ptr = (byte*)num5;
+					int scanBytes = (int)(num6 - num5);
+					for (int i = 0; i <= scanBytes - MinTlsPatchInstructionBytes; i++)
 					{
-						continue;
-					}
-
-					if (TryPatchTlsInstruction(
-						address,
-						ptr + i,
-						remainingBytes,
-						out var tlsInstructionKind))
-					{
-						if (tlsInstructionKind == NativeTlsInstructionKind.Load)
+						nint address = (nint)(ptr + i);
+						int remainingBytes = scanBytes - i;
+						var candidateLength = Math.Min(15, remainingBytes);
+						if (!NativeTlsInstructionDecoder.TryDecode(
+							new ReadOnlySpan<byte>(ptr + i, candidateLength),
+							out var recognizedInstruction))
 						{
-							num3++;
+							continue;
 						}
-						else if (tlsInstructionKind == NativeTlsInstructionKind.StackCanaryXor)
+
+						recognizedPatches.Add((
+							address,
+							new ReadOnlySpan<byte>(ptr + i, recognizedInstruction.Length).ToArray()));
+						if (TryPatchTlsInstruction(
+							address,
+							ptr + i,
+							remainingBytes,
+							out var tlsInstructionKind))
 						{
-							num4++;
+							if (tlsInstructionKind == NativeTlsInstructionKind.Load)
+							{
+								num3++;
+							}
+							else if (tlsInstructionKind == NativeTlsInstructionKind.StackCanaryXor)
+							{
+								num4++;
+							}
+							else
+							{
+								num9++;
+							}
 						}
 						else
 						{
-							num9++;
+							failedPatchCount++;
+							Console.Error.WriteLine(
+								$"[LOADER][ERROR] Failed to patch recognized {recognizedInstruction.Kind} TLS instruction at 0x{address:X16}");
 						}
-					}
-					else
-					{
-						failedPatchCount++;
-						Console.Error.WriteLine(
-							$"[LOADER][ERROR] Failed to patch recognized {recognizedInstruction.Kind} TLS instruction at 0x{address:X16}");
-					}
 
-					i += recognizedInstruction.Length - 1;
+						i += recognizedInstruction.Length - 1;
+					}
 				}
+				num = num6 > num ? num6 : num + 4096uL;
 			}
-			num = num6 > num ? num6 : num + 4096uL;
+			Console.Error.WriteLine(
+				$"[LOADER][INFO] Patched {num3} TLS loads, {num9} TLS stores, {num4} stack-canary accesses; failures={failedPatchCount}");
+			scanSucceeded = failedPatchCount == 0;
+			return scanSucceeded;
 		}
-		Console.Error.WriteLine(
-			$"[LOADER][INFO] Patched {num3} TLS loads, {num9} TLS stores, {num4} stack-canary accesses; failures={failedPatchCount}");
-		return failedPatchCount == 0;
+		finally
+		{
+			if (!scanSucceeded)
+			{
+				RollbackTlsInstructionPatches(recognizedPatches);
+			}
+		}
+	}
+
+	private unsafe void RollbackTlsInstructionPatches(
+		List<(nint Address, byte[] OriginalBytes)> recognizedPatches)
+	{
+		for (var index = recognizedPatches.Count - 1; index >= 0; index--)
+		{
+			var (address, originalBytes) = recognizedPatches[index];
+			if (!_hostMemory.Protect(
+				(ulong)(void*)address,
+				(nuint)originalBytes.Length,
+				HostPageProtection.ReadWriteExecute,
+				out var oldProtection))
+			{
+				Console.Error.WriteLine($"[LOADER][ERROR] Failed to reopen TLS instruction at 0x{address:X16} during scan rollback");
+				continue;
+			}
+
+			originalBytes.CopyTo(new Span<byte>((void*)address, originalBytes.Length));
+			if (!_hostMemory.ProtectRaw(
+				(ulong)(void*)address,
+				(nuint)originalBytes.Length,
+				oldProtection,
+				out _))
+			{
+				Console.Error.WriteLine($"[LOADER][ERROR] Failed to restore protection for TLS instruction at 0x{address:X16} during scan rollback");
+			}
+			_hostMemory.FlushInstructionCache((ulong)(void*)address, (nuint)originalBytes.Length);
+		}
 	}
 
 	internal static (ulong Start, ulong End) GetTlsPatchScanRange(ulong entryPoint)
