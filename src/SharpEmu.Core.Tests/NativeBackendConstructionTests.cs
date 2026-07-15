@@ -87,6 +87,41 @@ public sealed class NativeBackendConstructionTests
         Assert.Empty(memory.ActiveAllocations);
     }
 
+    [Theory]
+    [InlineData(1, "Failed to install raw exception handler", 1, 0)]
+    [InlineData(2, "Failed to install exception handler", 2, 1)]
+    public void ConstructorRejectsFailedExceptionHandlerInstallationAndCleansUp(
+        int failedInstallation,
+        string expectedMessage,
+        int expectedFreedThunks,
+        int expectedRemovedHandlers)
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(failedAllocation: int.MaxValue);
+        var faultHandling = new StubFaultHandling(
+            succeed: true,
+            failedHandlerInstallation: failedInstallation);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        DirectExecutionBackend? backend = null;
+
+        var constructionException = Record.Exception(() =>
+            backend = new DirectExecutionBackend(
+                new ModuleManager(),
+                platform,
+                faultHandling));
+        backend?.Dispose();
+
+        var invalidOperation = Assert.IsType<InvalidOperationException>(constructionException);
+        Assert.Equal(expectedMessage, invalidOperation.Message);
+        Assert.Equal([17u, 23u], threading.FreedSlots);
+        Assert.Empty(memory.ActiveAllocations);
+        Assert.Equal(expectedFreedThunks, faultHandling.FreedThunks.Count);
+        Assert.Equal(expectedRemovedHandlers, faultHandling.RemovedHandlers.Count);
+    }
+
     private sealed class StubHostPlatform(
         IHostThreading threading,
         IHostMemory? memory = null,
@@ -259,9 +294,16 @@ public sealed class NativeBackendConstructionTests
         public nint GetAddress(HostRuntimeFunction function) => address;
     }
 
-    private sealed class StubFaultHandling(bool succeed = false) : IHostFaultHandling
+    private sealed class StubFaultHandling(
+        bool succeed = false,
+        int failedHandlerInstallation = 0) : IHostFaultHandling
     {
         private nint _nextThunk = 100;
+        private int _handlerInstallationCount;
+
+        public List<nint> FreedThunks { get; } = [];
+
+        public List<nint> RemovedHandlers { get; } = [];
 
         public nint CreateHandlerThunk(
             nint managedCallback,
@@ -270,12 +312,22 @@ public sealed class NativeBackendConstructionTests
 
         public void FreeThunk(nint thunk)
         {
+            FreedThunks.Add(thunk);
         }
 
-        public nint AddFirstChanceHandler(nint thunk) => succeed ? thunk + 1000 : 0;
+        public nint AddFirstChanceHandler(nint thunk)
+        {
+            if (!succeed || ++_handlerInstallationCount == failedHandlerInstallation)
+            {
+                return 0;
+            }
+
+            return thunk + 1000;
+        }
 
         public void RemoveHandler(nint handle)
         {
+            RemovedHandlers.Add(handle);
         }
 
         public void SetUnhandledFilter(nint thunk)
