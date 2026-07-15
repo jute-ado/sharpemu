@@ -162,6 +162,25 @@ const ulong ProgramAddress = 0x100000;
         0xE0700010, 0x80020900, // buffer_store_dword v9, off, s[8:11], 0 offset:16
         0xBF810000,             // s_endpgm
     ]),
+    // Uniform scalar control flow is lowered into the translator's structured
+    // program-counter loop. Exercise both outcomes of s_cbranch_scc1 plus an
+    // unconditional branch and observe exactly which stores reach the buffer.
+    ("exec-control-flow", true, [
+        0x7E0002FF, 0x11111111, // v_mov_b32 v0, 0x11111111
+        0x7E0202FF, 0x22222222, // v_mov_b32 v1, 0x22222222
+        0xBF068000,             // s_cmp_eq_u32 s0, 0 -> SCC=1 (s0 starts at zero)
+        0xBF850002,             // s_cbranch_scc1 +2 -> skip next two-dword store
+        0xE0700000, 0x80020000, // buffer_store_dword v0, off, s[8:11], 0 (skipped)
+        0xE0700004, 0x80020100, // buffer_store_dword v1, off, s[8:11], 0 offset:4
+        0xBF078000,             // s_cmp_lg_u32 s0, 0 -> SCC=0
+        0xBF850002,             // s_cbranch_scc1 +2 -> not taken
+        0xE0700008, 0x80020000, // buffer_store_dword v0, off, s[8:11], 0 offset:8
+        0xE070000C, 0x80020100, // buffer_store_dword v1, off, s[8:11], 0 offset:12
+        0xBF820002,             // s_branch +2 -> skip next two-dword store
+        0xE0700010, 0x80020000, // buffer_store_dword v0, off, s[8:11], 0 offset:16 (skipped)
+        0xE0700014, 0x80020100, // buffer_store_dword v1, off, s[8:11], 0 offset:20
+        0xBF810000,             // s_endpgm
+    ]),
 ];
 
 var assembly = typeof(CxaGuardExports).Assembly;
@@ -508,6 +527,20 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
             labels[2] = "v_lshlrev_b32 0x80000010 << 4";
             labels[3] = "v_add_nc_i32 0x80000010 + 4";
             labels[4] = "v_sub_nc_i32 0x80000010 - 4";
+            break;
+        case "exec-control-flow":
+            expectedWords[0] = sentinel;
+            expectedWords[1] = 0x22222222;
+            expectedWords[2] = 0x11111111;
+            expectedWords[3] = 0x22222222;
+            expectedWords[4] = sentinel;
+            expectedWords[5] = 0x22222222;
+            labels[0] = "taken s_cbranch_scc1 suppresses skipped store";
+            labels[1] = "execution resumes at taken conditional target";
+            labels[2] = "not-taken s_cbranch_scc1 executes fallthrough store";
+            labels[3] = "execution continues after conditional fallthrough";
+            labels[4] = "s_branch suppresses skipped store";
+            labels[5] = "execution resumes at unconditional target";
             break;
         default:
             return null;
