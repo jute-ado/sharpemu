@@ -5922,7 +5922,8 @@ public static class AgcExports
             return true;
         }
 
-        return ctx.TryWriteUInt64(fieldAddress, fieldAddress + relativeAddress);
+        return GuestAddress.TryAdd(fieldAddress, relativeAddress, out var relocatedAddress) &&
+               ctx.TryWriteUInt64(fieldAddress, relocatedAddress);
     }
 
     private static int ReturnRegisterDefaults(CpuContext ctx, bool internalDefaults)
