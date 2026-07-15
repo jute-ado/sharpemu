@@ -30,6 +30,10 @@ public sealed partial class DirectExecutionBackend
 				throw new InvalidOperationException("Failed to create raw exception handler trampoline");
 			}
 			_rawExceptionHandler = _faultHandling.AddFirstChanceHandler(_rawExceptionHandlerStub);
+			if (_rawExceptionHandler == 0)
+			{
+				throw new InvalidOperationException("Failed to install raw exception handler");
+			}
 			Console.Error.WriteLine($"[LOADER][INFO] Raw exception handler installed: 0x{_rawExceptionHandler:X16}");
 		}
 		else
@@ -45,6 +49,10 @@ public sealed partial class DirectExecutionBackend
 			throw new InvalidOperationException("Failed to create exception handler trampoline");
 		}
 		_exceptionHandler = _faultHandling.AddFirstChanceHandler(_exceptionHandlerStub);
+		if (_exceptionHandler == 0)
+		{
+			throw new InvalidOperationException("Failed to install exception handler");
+		}
 		Console.Error.WriteLine($"[LOADER][INFO] Exception handler installed: 0x{_exceptionHandler:X16}");
 
 		_unhandledFilterDelegate = UnhandledExceptionFilter;
