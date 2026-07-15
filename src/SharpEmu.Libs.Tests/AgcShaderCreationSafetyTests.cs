@@ -17,6 +17,7 @@ public sealed class AgcShaderCreationSafetyTests
     private const int ShaderHeaderSize = 0x60;
     private const int ShaderCxRegistersOffset = 0x18;
     private const int ShaderShRegistersOffset = 0x20;
+    private const int ShaderOutputSemanticsOffset = 0x38;
     private const int ShaderCodeOffset = 0x10;
     private const uint ShaderFileHeader = 0x34333231;
     private const uint ShaderVersion = 0x18;
@@ -60,9 +61,31 @@ public sealed class AgcShaderCreationSafetyTests
         Assert.Equal(wrappedRelativePointer, storedPointer);
     }
 
+    [Fact]
+    public void CreateShaderDoesNotCommitEarlierRelocationsWhenLaterPointerWraps()
+    {
+        var outputFieldAddress = ShaderHeaderAddress + ShaderOutputSemanticsOffset;
+        var wrappedRelativePointer = ulong.MaxValue - outputFieldAddress + 2;
+        var shFieldAddress = ShaderHeaderAddress + ShaderShRegistersOffset;
+        var originalShRelativePointer = unchecked(ShaderRegistersAddress - shFieldAddress);
+        var (_, context) = CreateFixture(
+            outputSemanticsRelativePointer: wrappedRelativePointer);
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            AgcExports.CreateShader(context));
+        Assert.True(context.TryReadUInt64(shFieldAddress, out var storedShPointer));
+        Assert.Equal(originalShRelativePointer, storedShPointer);
+        Assert.True(context.TryReadUInt64(
+            outputFieldAddress,
+            out var storedOutputPointer));
+        Assert.Equal(wrappedRelativePointer, storedOutputPointer);
+    }
+
     private static (FakeGuestMemory Memory, CpuContext Context) CreateFixture(
         ulong headerAddress = ShaderHeaderAddress,
-        ulong cxRegistersRelativePointer = 0)
+        ulong cxRegistersRelativePointer = 0,
+        ulong outputSemanticsRelativePointer = 0)
     {
         var header = new byte[ShaderHeaderSize];
         BinaryPrimitives.WriteUInt32LittleEndian(header, ShaderFileHeader);
@@ -73,6 +96,9 @@ public sealed class AgcShaderCreationSafetyTests
         BinaryPrimitives.WriteUInt64LittleEndian(
             header.AsSpan(ShaderShRegistersOffset),
             unchecked(ShaderRegistersAddress - (headerAddress + ShaderShRegistersOffset)));
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            header.AsSpan(ShaderOutputSemanticsOffset),
+            outputSemanticsRelativePointer);
         header[0x5A] = 0;
         header[0x5C] = 2;
 
