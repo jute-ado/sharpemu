@@ -20,6 +20,7 @@ public static class PlayGoExports
     private const int OrbisPlayGoErrorBadLocus = unchecked((int)0x80B20010);
     private const ulong PlayGoInitBufAddrOffset = 0;
     private const ulong PlayGoInitBufSizeOffset = 8;
+    private const ulong PlayGoInitParamsSize = PlayGoInitBufSizeOffset + sizeof(uint);
     private const uint PlayGoMinimumInitBufferSize = 0x200000;
     private const uint PlayGoHandle = 1;
     private const int PlayGoLocusNotDownloaded = 0;
@@ -59,6 +60,11 @@ public static class PlayGoExports
         if (initParamsAddress == 0)
         {
             return OrbisPlayGoErrorBadPointer;
+        }
+
+        if (PlayGoInitParamsSize - 1 > ulong.MaxValue - initParamsAddress)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
         if (!ctx.TryReadUInt64(initParamsAddress + PlayGoInitBufAddrOffset, out var bufferAddress))
