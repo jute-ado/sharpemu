@@ -89,6 +89,37 @@ public sealed class NativeBackendConstructionTests
         Assert.Empty(memory.ActiveAllocations);
     }
 
+    [Fact]
+    public void ConstructorCreatesReturnStubsWritableThenFinalizesExecutable()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(failedAllocation: int.MaxValue);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        using var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+
+        Assert.Collection(
+            memory.AllocationCalls.Skip(2),
+            allocation =>
+            {
+                Assert.Equal(4096UL, allocation.Size);
+                Assert.Equal(HostPageProtection.ReadWrite, allocation.Protection);
+            },
+            allocation =>
+            {
+                Assert.Equal(256UL, allocation.Size);
+                Assert.Equal(HostPageProtection.ReadWrite, allocation.Protection);
+            });
+        Assert.All(
+            memory.ProtectionCalls,
+            protection => Assert.Equal(HostPageProtection.ReadExecute, protection.Protection));
+    }
+
     [Theory]
     [InlineData(1, "Failed to install raw exception handler", 1, 0)]
     [InlineData(2, "Failed to install exception handler", 2, 1)]

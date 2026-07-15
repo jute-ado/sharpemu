@@ -271,7 +271,7 @@ public sealed partial class DirectExecutionBackend
 			{
 				return false;
 			}
-			_loopStub = (void*)_backend._hostMemory.Allocate(0, LoopStubSize, HostPageProtection.ReadWriteExecute);
+			_loopStub = (void*)_backend._hostMemory.Allocate(0, LoopStubSize, HostPageProtection.ReadWrite);
 			if (_loopStub == null)
 			{
 				return false;
