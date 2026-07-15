@@ -167,6 +167,7 @@ public sealed class SelfLoader : ISelfLoader
         var isNextGen = elfHeader.AbiVersion == 2;
         var imageBase = DetermineRequestedImageBase(virtualMemory, totalImageSize, isNextGen, clearVirtualMemory);
         ValidateLoadSegments(imageData, loadContext, programHeaders, imageBase);
+        ValidateRebasedAddresses(elfHeader, programHeaders, imageBase);
 
         if (clearVirtualMemory)
         {
@@ -524,6 +525,31 @@ public sealed class SelfLoader : ISelfLoader
         }
 
         return false;
+    }
+
+    private static void ValidateRebasedAddresses(
+        ElfHeader elfHeader,
+        IReadOnlyList<ProgramHeader> programHeaders,
+        ulong imageBase)
+    {
+        if (elfHeader.EntryPoint > ulong.MaxValue - imageBase)
+        {
+            throw new InvalidDataException("ELF entry point address overflows when rebased.");
+        }
+
+        for (var index = 0; index < programHeaders.Count; index++)
+        {
+            var header = programHeaders[index];
+            if (header.HeaderType == ProgramHeaderType.SceProcParam)
+            {
+                if (header.VirtualAddress > ulong.MaxValue - imageBase)
+                {
+                    throw new InvalidDataException("ELF proc param address overflows when rebased.");
+                }
+
+                return;
+            }
+        }
     }
 
     private static void MapLoadSegments(
