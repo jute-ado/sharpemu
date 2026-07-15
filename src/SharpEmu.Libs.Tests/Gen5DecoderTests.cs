@@ -56,6 +56,50 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void RejectsProgramThatWrapsGuestAddressSpace()
+    {
+        const ulong wrappedCodeAddress = ulong.MaxValue - 3;
+        const uint ExportInstruction = 0xF8000000;
+        var highBytes = new byte[sizeof(uint)];
+        var lowBytes = new byte[2 * sizeof(uint)];
+        BitConverter.TryWriteBytes(highBytes, ExportInstruction);
+        BitConverter.TryWriteBytes(lowBytes, 0u);
+        BitConverter.TryWriteBytes(lowBytes.AsSpan(sizeof(uint)), SEndpgm);
+
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(wrappedCodeAddress, highBytes);
+        memory.AddRegion(0, lowBytes);
+        var context = new CpuContext(memory, Generation.Gen5);
+
+        Assert.False(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                context,
+                wrappedCodeAddress,
+                out _,
+                out _));
+    }
+
+    [Fact]
+    public void DecodesSingleWordProgramAtEndOfGuestAddressSpace()
+    {
+        const ulong finalWordAddress = ulong.MaxValue - 3;
+        var bytes = new byte[sizeof(uint)];
+        BitConverter.TryWriteBytes(bytes, SEndpgm);
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(finalWordAddress, bytes);
+        var context = new CpuContext(memory, Generation.Gen5);
+
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                context,
+                finalWordAddress,
+                out var program,
+                out var error),
+            error);
+        Assert.Equal("SEndpgm", Assert.Single(program.Instructions).Opcode);
+    }
+
+    [Fact]
     public void InvalidatesCachedProgramWhenShaderMemoryChanges()
     {
         var ctx = CreateContext([VAddF32_V0_V1_V2, SEndpgm]);
