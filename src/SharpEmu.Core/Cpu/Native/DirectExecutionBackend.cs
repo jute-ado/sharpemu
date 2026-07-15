@@ -937,50 +937,67 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_hostSymbols = _hostPlatform.Symbols;
 		_hostMemory = _hostPlatform.Memory;
 		_faultHandling = faultHandling ?? new WindowsFaultHandling(_hostMemory);
-		_selfHandle = GCHandle.Alloc(this);
-		_selfHandlePtr = GCHandle.ToIntPtr(_selfHandle);
-		_guestTlsBaseTlsIndex = _hostThreading.AllocateTlsSlot();
-		_hostRspSlotTlsIndex = _hostThreading.AllocateTlsSlot();
-		if (_guestTlsBaseTlsIndex == uint.MaxValue || _hostRspSlotTlsIndex == uint.MaxValue)
+		try
 		{
-			throw new OutOfMemoryException("Failed to allocate native TLS slots");
+			_selfHandle = GCHandle.Alloc(this);
+			_selfHandlePtr = GCHandle.ToIntPtr(_selfHandle);
+			_guestTlsBaseTlsIndex = _hostThreading.AllocateTlsSlot();
+			_hostRspSlotTlsIndex = _hostThreading.AllocateTlsSlot();
+			if (_guestTlsBaseTlsIndex == uint.MaxValue || _hostRspSlotTlsIndex == uint.MaxValue)
+			{
+				throw new OutOfMemoryException("Failed to allocate native TLS slots");
+			}
+			_tlsGetValueAddress = _hostSymbols.GetAddress(HostRuntimeFunction.TlsGetValue);
+			if (_tlsGetValueAddress == 0)
+			{
+				throw new InvalidOperationException("Failed to resolve kernel32!TlsGetValue");
+			}
+			_queryPerformanceCounterAddress = _hostSymbols.GetAddress(HostRuntimeFunction.QueryPerformanceCounter);
+			if (_queryPerformanceCounterAddress == 0)
+			{
+				throw new InvalidOperationException("Failed to resolve kernel32!QueryPerformanceCounter");
+			}
+			_switchToThreadAddress = _hostSymbols.GetAddress(HostRuntimeFunction.SwitchToThread);
+			_sleepAddress = _hostSymbols.GetAddress(HostRuntimeFunction.Sleep);
+			if (_switchToThreadAddress == 0 || _sleepAddress == 0)
+			{
+				throw new InvalidOperationException("Failed to resolve kernel32 thread timing functions");
+			}
+			_tlsBaseAddress = (nint)_hostMemory.Allocate(0, 4096u, HostPageProtection.ReadWrite);
+			if (_tlsBaseAddress == 0)
+			{
+				throw new OutOfMemoryException("Failed to allocate TLS base");
+			}
+			_ownedTlsBaseAddress = _tlsBaseAddress;
+			_ownsTlsBaseAddress = true;
+			SeedTlsLayout(_tlsBaseAddress);
+			_hostRspSlotStorage = (nint)_hostMemory.Allocate(0, 4096u, HostPageProtection.ReadWrite);
+			if (_hostRspSlotStorage == 0)
+			{
+				throw new OutOfMemoryException("Failed to allocate host stack slot storage");
+			}
+			_unresolvedReturnStub = CreateUnresolvedReturnStub();
+			_guestReturnStub = CreateGuestReturnStub();
+			if (_guestReturnStub == 0)
+			{
+				throw new OutOfMemoryException("Failed to allocate guest return stub");
+			}
+			SetupExceptionHandler();
 		}
-		_tlsGetValueAddress = _hostSymbols.GetAddress(HostRuntimeFunction.TlsGetValue);
-		if (_tlsGetValueAddress == 0)
+		catch
 		{
-			throw new InvalidOperationException("Failed to resolve kernel32!TlsGetValue");
+			try
+			{
+				Dispose();
+			}
+			catch
+			{
+				// Preserve the construction failure; cleanup is best-effort when a
+				// host primitive has already failed partway through initialization.
+			}
+
+			throw;
 		}
-		_queryPerformanceCounterAddress = _hostSymbols.GetAddress(HostRuntimeFunction.QueryPerformanceCounter);
-		if (_queryPerformanceCounterAddress == 0)
-		{
-			throw new InvalidOperationException("Failed to resolve kernel32!QueryPerformanceCounter");
-		}
-		_switchToThreadAddress = _hostSymbols.GetAddress(HostRuntimeFunction.SwitchToThread);
-		_sleepAddress = _hostSymbols.GetAddress(HostRuntimeFunction.Sleep);
-		if (_switchToThreadAddress == 0 || _sleepAddress == 0)
-		{
-			throw new InvalidOperationException("Failed to resolve kernel32 thread timing functions");
-		}
-		_tlsBaseAddress = (nint)_hostMemory.Allocate(0, 4096u, HostPageProtection.ReadWrite);
-		if (_tlsBaseAddress == 0)
-		{
-			throw new OutOfMemoryException("Failed to allocate TLS base");
-		}
-		_ownedTlsBaseAddress = _tlsBaseAddress;
-		_ownsTlsBaseAddress = true;
-		SeedTlsLayout(_tlsBaseAddress);
-		_hostRspSlotStorage = (nint)_hostMemory.Allocate(0, 4096u, HostPageProtection.ReadWrite);
-		if (_hostRspSlotStorage == 0)
-		{
-			throw new OutOfMemoryException("Failed to allocate host stack slot storage");
-		}
-		_unresolvedReturnStub = CreateUnresolvedReturnStub();
-		_guestReturnStub = CreateGuestReturnStub();
-		if (_guestReturnStub == 0)
-		{
-			throw new OutOfMemoryException("Failed to allocate guest return stub");
-		}
-		SetupExceptionHandler();
 	}
 
 	public bool TryExecute(CpuContext context, ulong entryPoint, Generation generation, IReadOnlyDictionary<ulong, string> importStubs, IReadOnlyDictionary<string, ulong> runtimeSymbols, CpuExecutionOptions executionOptions, NativeEntryReturnContract returnContract, out OrbisGen2Result result)
