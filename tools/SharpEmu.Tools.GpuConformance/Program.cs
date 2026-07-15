@@ -1,54 +1,42 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-// Executes the SharpEmu-emitted "exec" conformance shader on a real Vulkan
-// device and compares the buffer results against CPU-computed expected values.
-//
-// The shader (exec-cs.spv, produced by SharpEmu.Tools.ShaderDump) was
-// translated by SharpEmu from hand-assembled Gen5 instruction words and stores
-// results to guestBuffers[0]:
-//   [0] v_fmac_f32   -> fma(1.5f, 2.25f, 10.0f)
-//   [1] v_mul_hi_i32 -> high 32 bits of (int)0x7FFFFFFF * (int)0x00010003
-//   [2] v_mul_lo_i32 -> low  32 bits of the same product
-//   [3] store attempted with EXEC=0 -> must NOT land (sentinel remains)
-//   [4] store after EXEC restored   -> 1.5f (0x3FC00000)
-//   [5] v_and_b32                   -> 0x00010003
-//   [6] v_or_b32                    -> 0x7FFFFFFF
-//   [7] v_xor_b32                   -> 0x7FFEFFFC
-// Every other word of the buffer must still hold the sentinel afterwards.
+// Executes a SharpEmu-emitted compute shader on a real Vulkan device and
+// compares its readback buffer with a versioned conformance manifest produced
+// by SharpEmu.Tools.ShaderDump.
 //
 // Creating the compute pipeline doubles as a driver-acceptance check for the
 // emitted SPIR-V; the dispatch then verifies the arithmetic numerically.
 //
-// Usage: SharpEmu.Tools.GpuConformance <path-to-exec-cs.spv>
+// Usage: SharpEmu.Tools.GpuConformance <path-to-conformance-manifest.json>
 
+using System.Text.Json;
 using Silk.NET.Core.Native;
 using Silk.NET.Vulkan;
 
-const uint Sentinel = 0xCAFEBABE;
+var manifestPath = args.Length > 0
+    ? Path.GetFullPath(args[0])
+    : throw new InvalidOperationException(
+        "usage: SharpEmu.Tools.GpuConformance <path-to-conformance-manifest.json>");
+var manifest = JsonSerializer.Deserialize<ConformanceManifest>(
+        File.ReadAllText(manifestPath))
+    ?? throw new InvalidDataException("conformance manifest is empty");
+manifest.Validate();
 
-// Must match the 64-byte global-memory binding ShaderDump constructs for the
-// exec program.
-const ulong BufferSize = 64;
+var manifestDirectory = Path.GetDirectoryName(manifestPath)
+    ?? throw new InvalidDataException("conformance manifest has no parent directory");
+var spvPath = Path.GetFullPath(Path.Combine(manifestDirectory, manifest.Shader));
+var code = File.ReadAllBytes(spvPath);
+if (code.Length == 0 || code.Length % sizeof(uint) != 0)
+{
+    throw new InvalidDataException("SPIR-V module must contain a non-empty sequence of 32-bit words");
+}
 
-var expectedFma = BitConverter.SingleToUInt32Bits(
-    MathF.FusedMultiplyAdd(1.5f, 2.25f, 10.0f));
-var product = (long)0x7FFFFFFF * 0x00010003;
-var expectedHi = (uint)(product >> 32);
-var expectedLo = (uint)product;
-var expectedRestored = BitConverter.SingleToUInt32Bits(1.5f);
-var expectedAnd = 0x7FFFFFFFu & 0x00010003u;
-var expectedOr = 0x7FFFFFFFu | 0x00010003u;
-var expectedXor = 0x7FFFFFFFu ^ 0x00010003u;
+var bufferSize = checked((ulong)manifest.InitialWords.Length * sizeof(uint));
+Console.WriteLine($"case: {manifest.Name}");
 
 unsafe
 {
-    var spvPath = args.Length > 0
-        ? args[0]
-        : throw new InvalidOperationException(
-            "usage: SharpEmu.Tools.GpuConformance <path-to-exec-cs.spv>");
-    var code = File.ReadAllBytes(spvPath);
-
     var vk = Vk.GetApi();
 
     var appName = (byte*)SilkMarshal.StringToPtr("SharpEmuGpuConformance");
@@ -146,7 +134,7 @@ unsafe
     var bufferInfo = new BufferCreateInfo
     {
         SType = StructureType.BufferCreateInfo,
-        Size = BufferSize,
+        Size = bufferSize,
         Usage = BufferUsageFlags.StorageBufferBit,
         SharingMode = SharingMode.Exclusive,
     };
@@ -183,11 +171,11 @@ unsafe
     Check(vk.BindBufferMemory(device, buffer, memory, 0), "vkBindBufferMemory");
 
     void* mapped;
-    Check(vk.MapMemory(device, memory, 0, BufferSize, 0, &mapped), "vkMapMemory");
+    Check(vk.MapMemory(device, memory, 0, bufferSize, 0, &mapped), "vkMapMemory");
     var words = (uint*)mapped;
-    for (var index = 0; index < (int)(BufferSize / sizeof(uint)); index++)
+    for (var index = 0; index < manifest.InitialWords.Length; index++)
     {
-        words[index] = Sentinel;
+        words[index] = manifest.InitialWords[index];
     }
 
     // SharpEmu emits all guest buffers as one descriptor array at set 0,
@@ -276,7 +264,7 @@ unsafe
     {
         Buffer = buffer,
         Offset = 0,
-        Range = BufferSize,
+        Range = bufferSize,
     };
     var write = new WriteDescriptorSet
     {
@@ -350,20 +338,12 @@ unsafe
     Check(vk.QueueSubmit(queue, 1, in submitInfo, default), "vkQueueSubmit");
     Check(vk.QueueWaitIdle(queue), "vkQueueWaitIdle");
 
-    var results = new (string Name, uint Actual, uint Expected)[]
-    {
-        ("v_fmac_f32  fma(1.5, 2.25, 10.0)", words[0], expectedFma),
-        ("v_mul_hi_i32 hi(0x7FFFFFFF*0x10003)", words[1], expectedHi),
-        ("v_mul_lo_i32 lo(0x7FFFFFFF*0x10003)", words[2], expectedLo),
-        ("exec=0 store suppressed (offset 12 sentinel)", words[3], Sentinel),
-        ("store after exec restore (offset 16)", words[4], expectedRestored),
-        ("v_and_b32 0x7FFFFFFF & 0x00010003", words[5], expectedAnd),
-        ("v_or_b32 0x7FFFFFFF | 0x00010003", words[6], expectedOr),
-        ("v_xor_b32 0x7FFFFFFF ^ 0x00010003", words[7], expectedXor),
-    };
     var failures = 0;
-    foreach (var (name, actual, expected) in results)
+    for (var index = 0; index < manifest.ExpectedWords.Length; index++)
     {
+        var name = manifest.Labels[index];
+        var actual = words[index];
+        var expected = manifest.ExpectedWords[index];
         var status = actual == expected ? "PASS" : "FAIL";
         if (actual != expected)
         {
@@ -371,25 +351,6 @@ unsafe
         }
 
         Console.WriteLine($"{status}  {name}: gpu=0x{actual:X8} expected=0x{expected:X8}");
-    }
-
-    var totalWords = (int)(BufferSize / sizeof(uint));
-    var trailingClobbered = 0;
-    for (var index = results.Length; index < totalWords; index++)
-    {
-        if (words[index] != Sentinel)
-        {
-            trailingClobbered++;
-            Console.WriteLine(
-                $"FAIL  trailing word [{index}] clobbered: gpu=0x{words[index]:X8} expected=0x{Sentinel:X8}");
-        }
-    }
-
-    failures += trailingClobbered;
-    if (trailingClobbered == 0)
-    {
-        Console.WriteLine(
-            $"PASS  trailing words [{results.Length}..{totalWords - 1}] intact (sentinel)");
     }
 
     Console.WriteLine(failures == 0
@@ -415,6 +376,56 @@ unsafe
         if (result != Result.Success)
         {
             throw new InvalidOperationException($"{what} failed: {result}");
+        }
+    }
+}
+
+sealed record ConformanceManifest(
+    int SchemaVersion,
+    string Name,
+    string Shader,
+    uint[] InitialWords,
+    uint[] ExpectedWords,
+    string[] Labels)
+{
+    public void Validate()
+    {
+        if (SchemaVersion != 1)
+        {
+            throw new InvalidDataException(
+                $"unsupported conformance manifest schema version {SchemaVersion}");
+        }
+
+        if (string.IsNullOrWhiteSpace(Name))
+        {
+            throw new InvalidDataException("conformance manifest name is required");
+        }
+
+        if (string.IsNullOrWhiteSpace(Shader) ||
+            Path.IsPathRooted(Shader) ||
+            Shader.Contains('/') ||
+            Shader.Contains('\\'))
+        {
+            throw new InvalidDataException(
+                "conformance manifest shader must name a file beside the manifest");
+        }
+
+        if (InitialWords is null || InitialWords.Length == 0)
+        {
+            throw new InvalidDataException("conformance manifest requires an initial buffer");
+        }
+
+        if (ExpectedWords is null || ExpectedWords.Length != InitialWords.Length)
+        {
+            throw new InvalidDataException(
+                "conformance manifest initial and expected buffers must have equal lengths");
+        }
+
+        if (Labels is null || Labels.Length != InitialWords.Length ||
+            Labels.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new InvalidDataException(
+                "conformance manifest requires one non-empty label per buffer word");
         }
     }
 }

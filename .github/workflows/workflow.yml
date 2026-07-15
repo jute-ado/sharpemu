@@ -210,12 +210,7 @@ jobs:
         if: matrix.rid == 'linux-x64'
         env:
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
-        run: |
-          dotnet run \
-            --project tools/SharpEmu.Tools.GpuConformance/SharpEmu.Tools.GpuConformance.csproj \
-            --configuration Release \
-            -- \
-            artifacts/shader-dump/exec-cs.spv
+        run: scripts/execute-synthetic-shaders.sh artifacts/shader-dump
 
       - name: Publish ${{ matrix.rid }} CLI
         run: dotnet publish src/SharpEmu.CLI/SharpEmu.CLI.csproj -c Release -r ${{ matrix.rid }} --self-contained true --no-restore -p:PublishDir="$PUBLISH_DIR"
