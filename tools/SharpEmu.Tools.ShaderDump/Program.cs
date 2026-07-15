@@ -356,6 +356,45 @@ const ulong ProgramAddress = 0x100000;
         0xE0700044, 0x80021600, // buffer_store_dword v22, off, s[8:11], 0 offset:68
         0xBF810000,             // s_endpgm
     ]),
+    // Reset one scratch location before each operation so every final value is
+    // independent. Negative-versus-positive operands distinguish signed from
+    // unsigned min/max, and complementary masks expose bitwise mix-ups.
+    ("exec-scratch-atomic-alu", true, [
+        0xE0300000, 0x80020500, // buffer_load_dword v5, off, s[8:11], 0
+        0xE0300004, 0x80020600, // buffer_load_dword v6, off, s[8:11], 0 offset:4
+        0xE0300008, 0x80020700, // buffer_load_dword v7, off, s[8:11], 0 offset:8
+        0xE030000C, 0x80020800, // buffer_load_dword v8, off, s[8:11], 0 offset:12
+        0x7E080280,             // v_mov_b32 v4, 0 (scratch byte address)
+        0xDC704000, 0x007F0504, // scratch_store_dword v4, v5
+        0xDCD54000, 0x147F0604, // scratch_atomic_smin v20, v4, v6 glc
+        0xDC304000, 0x097F0004, // scratch_load_dword v9, v4
+        0xDC704000, 0x007F0504, // scratch_store_dword v4, v5
+        0xDCD94000, 0x147F0604, // scratch_atomic_umin v20, v4, v6 glc
+        0xDC304000, 0x0A7F0004, // scratch_load_dword v10, v4
+        0xDC704000, 0x007F0504, // scratch_store_dword v4, v5
+        0xDCDD4000, 0x147F0604, // scratch_atomic_smax v20, v4, v6 glc
+        0xDC304000, 0x0B7F0004, // scratch_load_dword v11, v4
+        0xDC704000, 0x007F0504, // scratch_store_dword v4, v5
+        0xDCE14000, 0x147F0604, // scratch_atomic_umax v20, v4, v6 glc
+        0xDC304000, 0x0C7F0004, // scratch_load_dword v12, v4
+        0xDC704000, 0x007F0704, // scratch_store_dword v4, v7
+        0xDCE54000, 0x147F0804, // scratch_atomic_and v20, v4, v8 glc
+        0xDC304000, 0x0D7F0004, // scratch_load_dword v13, v4
+        0xDC704000, 0x007F0704, // scratch_store_dword v4, v7
+        0xDCE94000, 0x147F0804, // scratch_atomic_or v20, v4, v8 glc
+        0xDC304000, 0x0E7F0004, // scratch_load_dword v14, v4
+        0xDC704000, 0x007F0704, // scratch_store_dword v4, v7
+        0xDCED4000, 0x147F0804, // scratch_atomic_xor v20, v4, v8 glc
+        0xDC304000, 0x0F7F0004, // scratch_load_dword v15, v4
+        0xE0700010, 0x80020900, // buffer_store_dword v9, off, s[8:11], 0 offset:16
+        0xE0700014, 0x80020A00, // buffer_store_dword v10, off, s[8:11], 0 offset:20
+        0xE0700018, 0x80020B00, // buffer_store_dword v11, off, s[8:11], 0 offset:24
+        0xE070001C, 0x80020C00, // buffer_store_dword v12, off, s[8:11], 0 offset:28
+        0xE0700020, 0x80020D00, // buffer_store_dword v13, off, s[8:11], 0 offset:32
+        0xE0700024, 0x80020E00, // buffer_store_dword v14, off, s[8:11], 0 offset:36
+        0xE0700028, 0x80020F00, // buffer_store_dword v15, off, s[8:11], 0 offset:40
+        0xBF810000,             // s_endpgm
+    ]),
     // A finite backward branch exercises the structured program-counter loop,
     // dynamic SCC updates, and scalar-to-vector transfer. The dispatch runner
     // has a fence deadline, so a broken termination condition fails boundedly.
@@ -1110,6 +1149,34 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
                 atomicExpectedWords,
                 atomicLabels);
         }
+        case "exec-scratch-atomic-alu":
+            initialWords[0] = 0xFFFFFFF0;
+            initialWords[1] = 0x00000001;
+            initialWords[2] = 0xF0F00FF0;
+            initialWords[3] = 0x0FF0F00F;
+            expectedWords[0] = initialWords[0];
+            expectedWords[1] = initialWords[1];
+            expectedWords[2] = initialWords[2];
+            expectedWords[3] = initialWords[3];
+            expectedWords[4] = 0xFFFFFFF0;
+            expectedWords[5] = 0x00000001;
+            expectedWords[6] = 0x00000001;
+            expectedWords[7] = 0xFFFFFFF0;
+            expectedWords[8] = 0x00F00000;
+            expectedWords[9] = 0xFFF0FFFF;
+            expectedWords[10] = 0xFF00FFFF;
+            labels[0] = "negative min/max operand remains unchanged";
+            labels[1] = "positive min/max operand remains unchanged";
+            labels[2] = "bitwise seed remains unchanged";
+            labels[3] = "bitwise mask remains unchanged";
+            labels[4] = "signed min selects -16 over 1";
+            labels[5] = "unsigned min selects 1 over 0xFFFFFFF0";
+            labels[6] = "signed max selects 1 over -16";
+            labels[7] = "unsigned max selects 0xFFFFFFF0 over 1";
+            labels[8] = "atomic AND combines complementary bit fields";
+            labels[9] = "atomic OR combines complementary bit fields";
+            labels[10] = "atomic XOR combines complementary bit fields";
+            break;
         case "exec-scalar-loop":
             expectedWords[0] = 4;
             labels[0] = "backward scalar loop terminates after four iterations";
