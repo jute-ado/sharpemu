@@ -230,7 +230,7 @@ public sealed class NativeBackendConstructionTests
             new StubFaultHandling(succeed: true));
         byte[] instruction =
         [
-            0xF3, 0x64, 0x48, 0x8B, 0x04, 0x25, 0x48, 0x00, 0x00, 0x00,
+            0xF3, 0x64, 0x4C, 0x33, 0x3C, 0x25, 0x28, 0x00, 0x00, 0x00,
         ];
         var instructionAddress = memory.Allocate(
             0,
@@ -240,8 +240,6 @@ public sealed class NativeBackendConstructionTests
 
         try
         {
-            Assert.True(backend.TryCreateTlsHandler());
-
             var patched = backend.TryPatchTlsInstruction(
                 (nint)instructionAddress,
                 (byte*)instructionAddress,
@@ -249,10 +247,13 @@ public sealed class NativeBackendConstructionTests
                 out var instructionKind);
 
             Assert.True(patched);
-            Assert.Equal(NativeTlsInstructionKind.Load, instructionKind);
+            Assert.Equal(NativeTlsInstructionKind.StackCanaryXor, instructionKind);
             Assert.NotEqual(
                 instruction,
                 new ReadOnlySpan<byte>((void*)instructionAddress, instruction.Length).ToArray());
+            Assert.Equal(
+                HostPageProtection.ReadWrite,
+                memory.ProtectionCalls.Last(call => call.Address == instructionAddress).Protection);
         }
         finally
         {
@@ -386,7 +387,7 @@ public sealed class NativeBackendConstructionTests
             Assert.NotEqual(0, retriedHelper);
             var writableReservations = memory.ProtectionCalls
                 .Skip(protectionCallStart)
-                .Where(call => call.Protection == HostPageProtection.ReadWriteExecute)
+                .Where(call => call.Protection == HostPageProtection.ReadWrite)
                 .Select(call => call.Address)
                 .ToArray();
             Assert.Equal(2, writableReservations.Length);
@@ -779,6 +780,41 @@ public sealed class NativeBackendConstructionTests
             backend.Dispose();
             memory.Free(firstStub);
             memory.Free(secondStub);
+        }
+    }
+
+    [Fact]
+    public unsafe void ImportSetupMutatesGuestStubWithoutWriteExecuteProtection()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(failedAllocation: int.MaxValue);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        var stub = memory.Allocate(0, 16, HostPageProtection.ReadWriteExecute);
+        var original = Enumerable.Repeat((byte)0xA5, 16).ToArray();
+        original.CopyTo(new Span<byte>((void*)stub, original.Length));
+
+        try
+        {
+            Assert.True(backend.SetupImportStubs(new Dictionary<ulong, string>
+            {
+                [stub] = "unknown-import",
+            }));
+
+            Assert.Equal(
+                HostPageProtection.ReadWrite,
+                memory.ProtectionCalls.Last(call => call.Address == stub).Protection);
+        }
+        finally
+        {
+            backend.Dispose();
+            memory.Free(stub);
         }
     }
 
