@@ -193,6 +193,18 @@ const ulong ProgramAddress = 0x100000;
         0xE0700014, 0x80020500, // buffer_store_dword v5, off, s[8:11], 0 offset:20
         0xBF810000,             // s_endpgm
     ]),
+    // A finite backward branch exercises the structured program-counter loop,
+    // dynamic SCC updates, and scalar-to-vector transfer. The dispatch runner
+    // has a fence deadline, so a broken termination condition fails boundedly.
+    ("exec-scalar-loop", true, [
+        0xBE800380,             // s_mov_b32 s0, 0
+        0x80008100,             // s_add_u32 s0, s0, 1
+        0xBF0A8400,             // s_cmp_lt_u32 s0, 4
+        0xBF85FFFD,             // s_cbranch_scc1 -3 -> s_add_u32
+        0x7E000200,             // v_mov_b32 v0, s0
+        0xE0700000, 0x80020000, // buffer_store_dword v0, off, s[8:11], 0
+        0xBF810000,             // s_endpgm
+    ]),
 ];
 
 var assembly = typeof(CxaGuardExports).Assembly;
@@ -572,6 +584,10 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
             labels[3] = "buffer_load_dwordx2 high source remains unchanged";
             labels[4] = "buffer_load_dwordx2 low result copied to offset 16";
             labels[5] = "buffer_load_dwordx2 high result copied to offset 20";
+            break;
+        case "exec-scalar-loop":
+            expectedWords[0] = 4;
+            labels[0] = "backward scalar loop terminates after four iterations";
             break;
         default:
             return null;
