@@ -214,6 +214,16 @@ const ulong ProgramAddress = 0x100000;
         0xE0700004, 0x80030700, // buffer_store_dword v7, off, s[12:15], 0 offset:4
         0xBF810000,             // s_endpgm
     ]),
+    // Copy two four-component ranges through the raw MUBUF and typed MTBUF
+    // format paths. Separate source/output descriptors expose both component
+    // sequencing and instruction-PC-to-binding routing errors.
+    ("exec-format-buffer", true, [
+        0xE00C0000, 0x80020400, // buffer_load_format_xyzw v[4:7], off, s[8:11], 0
+        0xE01C0000, 0x80030400, // buffer_store_format_xyzw v[4:7], off, s[12:15], 0
+        0xE8030010, 0x80020800, // tbuffer_load_format_xyzw v[8:11], off, s[8:11], 0 offset:16
+        0xE8070010, 0x80030800, // tbuffer_store_format_xyzw v[8:11], off, s[12:15], 0 offset:16
+        0xBF810000,             // s_endpgm
+    ]),
     // Exercise the GLOBAL memory path in both directions. A vector base plus
     // immediate offset selects the source and destination words, while a
     // second MUBUF descriptor provides an independent observable oracle.
@@ -622,6 +632,7 @@ const ulong ProgramAddress = 0x100000;
 // accept operations that are invalid for that execution model.
 HashSet<string> computeOnlyPrograms = new(StringComparer.Ordinal)
 {
+    "exec-format-buffer",
     "exec-lds-atomic",
     "exec-lds-barrier",
 };
@@ -1017,6 +1028,52 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
                 {
                     [9] = 16u << 16,
                 });
+        }
+        case "exec-format-buffer":
+        {
+            uint[] formatValues =
+            [
+                0x10203040,
+                0x50607080,
+                0x90A0B0C0,
+                0xD0E0F000,
+                0x13579BDF,
+                0x2468ACE0,
+                0x0BADF00D,
+                0xDEADBEEF,
+            ];
+            for (var index = 0; index < formatValues.Length; index++)
+            {
+                initialWords[index] = formatValues[index];
+                expectedWords[index] = formatValues[index];
+                labels[index] = $"format source component {index} remains unchanged";
+            }
+
+            var outputInitialWords = Enumerable.Repeat(sentinel, 16).ToArray();
+            var outputExpectedWords = (uint[])outputInitialWords.Clone();
+            var outputLabels = Enumerable.Range(0, outputInitialWords.Length)
+                .Select(index => $"format output trailing word [{index}] remains sentinel")
+                .ToArray();
+            for (var index = 0; index < formatValues.Length; index++)
+            {
+                outputExpectedWords[index] = formatValues[index];
+                outputLabels[index] = index < 4
+                    ? $"MUBUF format component {index} copies through descriptor 1"
+                    : $"MTBUF format component {index - 4} copies through descriptor 1";
+            }
+
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                AdditionalBuffers:
+                [
+                    new SyntheticConformanceBuffer(
+                        "guest buffer 1",
+                        outputInitialWords,
+                        outputExpectedWords,
+                        outputLabels),
+                ]);
         }
         case "exec-global-memory":
         {
