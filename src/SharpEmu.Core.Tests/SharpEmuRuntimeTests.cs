@@ -109,6 +109,42 @@ public sealed class SharpEmuRuntimeTests
     }
 
     [WindowsX64Fact]
+    public void RuntimeClearsModuleInitializerTraceBeforeNextPreparation()
+    {
+        var testDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "sharpemu-runtime-tests",
+            Guid.NewGuid().ToString("N"));
+        var moduleDirectory = Path.Combine(testDirectory, "sce_module");
+        Directory.CreateDirectory(moduleDirectory);
+        var executablePath = Path.Combine(testDirectory, "eboot.bin");
+        File.WriteAllBytes(
+            executablePath,
+            SyntheticElfImage.CreateExecutable([0x31, 0xC0, 0xC3]));
+        File.WriteAllBytes(
+            Path.Combine(moduleDirectory, "synthetic.prx"),
+            SyntheticElfImage.CreateModuleWithInitializer([0xC3]));
+
+        try
+        {
+            using var runtime = SharpEmuRuntime.CreateDefault();
+
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, runtime.Run(executablePath));
+            var execution = Assert.Single(runtime.LastModuleInitializerExecutions);
+            Assert.Equal(0, execution.InitializerIndex);
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, execution.Result);
+
+            runtime.PrepareApplication(executablePath);
+
+            Assert.Empty(runtime.LastModuleInitializerExecutions);
+        }
+        finally
+        {
+            Directory.Delete(testDirectory, recursive: true);
+        }
+    }
+
+    [WindowsX64Fact]
     public async Task RuntimeExecutesAdjacentModuleInitializerBeforeMainEntry()
     {
         var execution = await RunSyntheticExecutableInCliAsync(
@@ -187,6 +223,20 @@ public sealed class SharpEmuRuntimeTests
             root.GetProperty("result").GetProperty("name").GetString());
         Assert.Equal("CpuTrap", root.GetProperty("cpuSession").GetProperty("reason").GetString());
         Assert.Equal("0x0F", root.GetProperty("cpuTrap").GetProperty("opcode").GetString());
+        var initializerExecutions = root.GetProperty("moduleInitializers").EnumerateArray().ToArray();
+        Assert.Equal(2, initializerExecutions.Length);
+        Assert.Equal("sce_module/synthetic.prx", initializerExecutions[0].GetProperty("path").GetString());
+        Assert.Equal(0, initializerExecutions[0].GetProperty("index").GetInt32());
+        Assert.Equal(
+            "ORBIS_GEN2_OK",
+            initializerExecutions[0].GetProperty("result").GetProperty("name").GetString());
+        Assert.Equal(1, initializerExecutions[1].GetProperty("index").GetInt32());
+        Assert.NotEqual(
+            initializerExecutions[0].GetProperty("entryPoint").GetString(),
+            initializerExecutions[1].GetProperty("entryPoint").GetString());
+        Assert.Equal(
+            "ORBIS_GEN2_ERROR_CPU_TRAP",
+            initializerExecutions[1].GetProperty("result").GetProperty("name").GetString());
         Assert.Contains(
             "Initializer dispatch failed",
             execution.StandardOutput + execution.StandardError,
@@ -290,7 +340,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.NotNull(execution.ReportJson);
         using var document = JsonDocument.Parse(execution.ReportJson);
         var root = document.RootElement;
-        Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(3, root.GetProperty("schemaVersion").GetInt32());
         Assert.Equal("execution", root.GetProperty("mode").GetString());
         Assert.Equal("ORBIS_GEN2_OK", root.GetProperty("result").GetProperty("name").GetString());
         Assert.Equal(0, root.GetProperty("result").GetProperty("code").GetInt32());
@@ -334,6 +384,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(1, image.GetProperty("programHeaderCount").GetInt32());
         Assert.Equal(1, image.GetProperty("mappedRegionCount").GetInt32());
         Assert.Empty(root.GetProperty("modules").EnumerateArray());
+        Assert.Empty(root.GetProperty("moduleInitializers").EnumerateArray());
         Assert.Empty(root.GetProperty("skippedModules").EnumerateArray());
         Assert.Empty(root.GetProperty("moduleLoadFailures").EnumerateArray());
     }
@@ -352,7 +403,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.NotNull(execution.ReportJson);
         using var document = JsonDocument.Parse(execution.ReportJson);
         var root = document.RootElement;
-        Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(3, root.GetProperty("schemaVersion").GetInt32());
         Assert.Equal("load-only", root.GetProperty("mode").GetString());
         Assert.Equal("IMAGE_LOADED", root.GetProperty("result").GetProperty("name").GetString());
         Assert.Equal(0, root.GetProperty("result").GetProperty("code").GetInt32());
@@ -375,6 +426,7 @@ public sealed class SharpEmuRuntimeTests
         var module = Assert.Single(root.GetProperty("modules").EnumerateArray());
         Assert.Equal("sce_module/synthetic.prx", module.GetProperty("path").GetString());
         Assert.Equal("ELF", module.GetProperty("image").GetProperty("format").GetString());
+        Assert.Empty(root.GetProperty("moduleInitializers").EnumerateArray());
         var skippedModule = Assert.Single(root.GetProperty("skippedModules").EnumerateArray());
         Assert.Equal("sce_module/libkernel.prx", skippedModule.GetProperty("path").GetString());
         Assert.Contains("HLE", skippedModule.GetProperty("reason").GetString(), StringComparison.Ordinal);

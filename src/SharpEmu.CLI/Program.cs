@@ -1008,7 +1008,7 @@ internal static partial class Program
                 executablePath,
                 runtime?.LastPreparedApplication);
             var report = new CliExecutionReport(
-                SchemaVersion: 2,
+                SchemaVersion: 3,
                 Mode: mode,
                 GeneratedAtUtc: DateTimeOffset.UtcNow,
                 ExecutablePath: executablePath,
@@ -1022,6 +1022,7 @@ internal static partial class Program
                     runtime?.LastApplicationMetadata ?? TryReadApplicationMetadataForReport(executablePath)),
                 Image: BuildImageReport(runtime?.LastLoadedImage),
                 Modules: BuildModuleReports(runtime?.LastPreparedApplication, executablePath),
+                ModuleInitializers: BuildModuleInitializerReports(runtime, executablePath),
                 SkippedModules: BuildSkippedModuleReports(runtime?.LastPreparedApplication, executablePath),
                 ModuleLoadFailures: BuildModuleFailureReports(runtime?.LastPreparedApplication, executablePath),
                 Result: executionResult,
@@ -1173,6 +1174,19 @@ internal static partial class Program
             .Select(module => new CliModuleReport(
                 BuildBundleRelativePath(executablePath, module.Path),
                 BuildImageReport(module.Image)!))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<CliModuleInitializerReport>? BuildModuleInitializerReports(
+        ISharpEmuRuntime? runtime,
+        string executablePath)
+    {
+        return runtime?.LastModuleInitializerExecutions
+            .Select(execution => new CliModuleInitializerReport(
+                BuildBundleRelativePath(executablePath, execution.ModulePath),
+                execution.InitializerIndex,
+                FormatAddress(execution.EntryPoint),
+                BuildExecutionResult(execution.Result)))
             .ToArray();
     }
 
@@ -1790,6 +1804,7 @@ internal static partial class Program
         CliApplicationReport? Application,
         CliImageReport? Image,
         IReadOnlyList<CliModuleReport>? Modules,
+        IReadOnlyList<CliModuleInitializerReport>? ModuleInitializers,
         IReadOnlyList<CliSkippedModuleReport>? SkippedModules,
         IReadOnlyList<CliModuleLoadFailureReport>? ModuleLoadFailures,
         CliExecutionResult Result,
@@ -1860,6 +1875,12 @@ internal static partial class Program
         string? InitFunctionEntryPoint);
 
     private sealed record CliModuleReport(string Path, CliImageReport Image);
+
+    private sealed record CliModuleInitializerReport(
+        string Path,
+        int Index,
+        string EntryPoint,
+        CliExecutionResult Result);
 
     private sealed record CliSkippedModuleReport(string Path, string Reason);
 

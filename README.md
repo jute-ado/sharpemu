@@ -68,8 +68,8 @@ Currently the project primarily targets Windows. Cross-platform support (Linux a
   * Run Emulator GUI.
   * Or command: `.\SharpEmu "eboot.bin" 2>&1 | Tee-Object -FilePath "log.txt"`
   * For automation, add `--report-json execution.json` to atomically write a
-    versioned machine-readable result. Schema version 2 includes the execution
-    mode, loaded-image summary, result
+    versioned machine-readable result. Schema version 3 includes the execution
+    mode, loaded-image summary, ordered module-initializer outcomes, result
     code, typed CPU session/fault objects with hex-safe addresses, diagnostics,
     traces, application identity, an executable SHA-256 fingerprint, elapsed
     time, build/host provenance, and any host-side error.

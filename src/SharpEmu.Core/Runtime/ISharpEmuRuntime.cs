@@ -33,6 +33,8 @@ public interface ISharpEmuRuntime : IDisposable
 
     PreparedApplication? LastPreparedApplication { get; }
 
+    IReadOnlyList<ModuleInitializerExecution> LastModuleInitializerExecutions { get; }
+
     SelfImage LoadImage(string ebootPath);
 
     PreparedApplication PrepareApplication(string ebootPath);
