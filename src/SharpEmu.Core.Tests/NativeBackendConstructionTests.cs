@@ -65,6 +65,28 @@ public sealed class NativeBackendConstructionTests
         Assert.Empty(memory.ActiveAllocations);
     }
 
+    [Fact]
+    public void DisposeCanBeCalledTwiceAfterSuccessfulConstruction()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(failedAllocation: int.MaxValue);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+
+        backend.Dispose();
+        var secondDisposeException = Record.Exception(backend.Dispose);
+
+        Assert.Null(secondDisposeException);
+        Assert.Equal([17u, 23u], threading.FreedSlots);
+        Assert.Empty(memory.ActiveAllocations);
+    }
+
     private sealed class StubHostPlatform(
         IHostThreading threading,
         IHostMemory? memory = null,
@@ -237,18 +259,20 @@ public sealed class NativeBackendConstructionTests
         public nint GetAddress(HostRuntimeFunction function) => address;
     }
 
-    private sealed class StubFaultHandling : IHostFaultHandling
+    private sealed class StubFaultHandling(bool succeed = false) : IHostFaultHandling
     {
+        private nint _nextThunk = 100;
+
         public nint CreateHandlerThunk(
             nint managedCallback,
             uint hostRspSwitchTlsSlot,
-            nint tlsGetValueAddress) => 0;
+            nint tlsGetValueAddress) => succeed ? _nextThunk++ : 0;
 
         public void FreeThunk(nint thunk)
         {
         }
 
-        public nint AddFirstChanceHandler(nint thunk) => 0;
+        public nint AddFirstChanceHandler(nint thunk) => succeed ? thunk + 1000 : 0;
 
         public void RemoveHandler(nint handle)
         {
