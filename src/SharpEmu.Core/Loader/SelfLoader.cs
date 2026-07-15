@@ -437,6 +437,12 @@ public sealed class SelfLoader : ISelfLoader
                 continue;
             }
 
+            if (header.MemorySize > int.MaxValue)
+            {
+                throw new NotSupportedException(
+                    "ELF load segments larger than 2 GB are not currently supported.");
+            }
+
             if (header.FileSize > header.MemorySize)
             {
                 throw new InvalidDataException("ELF segment file size cannot exceed memory size.");
