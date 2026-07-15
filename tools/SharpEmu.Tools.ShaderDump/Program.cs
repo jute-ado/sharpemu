@@ -266,6 +266,21 @@ const ulong ProgramAddress = 0x100000;
         0xE0701000, 0x80020804, // buffer_store_dword v8, v4, s[8:11], 0 offen
         0xBF810000,             // s_endpgm
     ]),
+    // Eight invocations atomically initialize and increment one LDS counter.
+    // A second barrier makes the final total visible before every lane reads it.
+    ("exec-lds-atomic", true, [
+        0x7E0802FF, 0x00000000, // v_mov_b32 v4, 0 (LDS byte address)
+        0x7E0A02FF, 0x00000000, // v_mov_b32 v5, 0
+        0xD8B40000, 0x06000504, // ds_wrxchg_rtn_b32 v6, v4, v5
+        0xBF8A0000,             // s_barrier
+        0x7E0A02FF, 0x00000001, // v_mov_b32 v5, 1
+        0xD8000000, 0x00000504, // ds_add_u32 v4, v5
+        0xBF8A0000,             // s_barrier
+        0xD8D80000, 0x06000004, // ds_read_b32 v6, v4
+        0x340E0082,             // v_lshlrev_b32 v7, 2, v0 (own output address)
+        0xE0701000, 0x80020607, // buffer_store_dword v6, v7, s[8:11], 0 offen
+        0xBF810000,             // s_endpgm
+    ]),
 ];
 
 // LDS and workgroup barriers are compute-stage concepts. Keep these programs
@@ -273,6 +288,7 @@ const ulong ProgramAddress = 0x100000;
 // accept operations that are invalid for that execution model.
 HashSet<string> computeOnlyPrograms = new(StringComparer.Ordinal)
 {
+    "exec-lds-atomic",
     "exec-lds-barrier",
 };
 
@@ -758,6 +774,18 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
                 expectedWords,
                 labels,
                 LocalSizeX: 4);
+        case "exec-lds-atomic":
+            for (var index = 0; index < 8; index++)
+            {
+                expectedWords[index] = 8;
+                labels[index] = $"lane {index} observes eight atomic LDS increments";
+            }
+
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                LocalSizeX: 8);
         default:
             return null;
     }
