@@ -309,16 +309,19 @@ public sealed partial class DirectExecutionBackend
 			}
 			else
 			{
-				lock (PosixThunkGate)
+				if (RuntimeInformation.ProcessArchitecture == Architecture.X64)
 				{
-					if (_posixPrologueThunk == 0)
+					lock (PosixThunkGate)
 					{
-						_posixPrologueThunk = PosixHostStubs.CreateWin64ToSysVThunk(prologuePtr);
-						_posixEpilogueThunk = PosixHostStubs.CreateWin64ToSysVThunk(epiloguePtr);
+						if (_posixPrologueThunk == 0)
+						{
+							_posixPrologueThunk = PosixHostStubs.CreateWin64ToSysVThunk(prologuePtr);
+							_posixEpilogueThunk = PosixHostStubs.CreateWin64ToSysVThunk(epiloguePtr);
+						}
 					}
+					prologuePtr = _posixPrologueThunk;
+					epiloguePtr = _posixEpilogueThunk;
 				}
-				prologuePtr = _posixPrologueThunk;
-				epiloguePtr = _posixEpilogueThunk;
 				_workSemaphore = PosixHostStubs.CreateWorkerEvent();
 				_doneSemaphore = PosixHostStubs.CreateWorkerEvent();
 				if (_workSemaphore == 0 || _doneSemaphore == 0)
