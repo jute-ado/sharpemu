@@ -30,6 +30,7 @@ public static class SaveDataExports
     private const uint SortOrderDescent = 1;
     private const uint MountModeCreate = 1u << 2;
     private const uint MountModeCreate2 = 1u << 5;
+    private const int MountParamSize = 0x2C;
     private const int MountResultSize = 0x40;
     private static readonly object _stateGate = new();
     private static readonly HashSet<int> _transactionResources = [];
@@ -177,7 +178,8 @@ public static class SaveDataExports
             return ctx.SetReturn(OrbisSaveDataErrorParameter);
         }
 
-        if (!ctx.TryReadInt32(mountAddress, out var userId) ||
+        if (!GuestAddress.IsRangeValid(mountAddress, MountParamSize) ||
+            !ctx.TryReadInt32(mountAddress, out var userId) ||
             !ctx.TryReadUInt64(mountAddress + 0x08, out var dirNameAddress) ||
             !ctx.TryReadUInt64(mountAddress + 0x10, out var blocks) ||
             !ctx.TryReadUInt64(mountAddress + 0x18, out var systemBlocks) ||
