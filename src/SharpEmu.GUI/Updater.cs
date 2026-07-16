@@ -48,13 +48,17 @@ public static class Updater
         IProgress<int>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var root = Path.Combine(Path.GetTempPath(), "SharpEmu.Update");
-        var payload = Path.Combine(root, "payload");
-        if (Directory.Exists(root))
+        ArgumentNullException.ThrowIfNull(update);
+        if (!IsSafeArchiveName(update.Name))
         {
-            Directory.Delete(root, recursive: true);
+            throw new InvalidDataException($"The update archive name '{update.Name}' is not safe.");
         }
 
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "SharpEmu.Update",
+            $"{Environment.ProcessId}-{Guid.NewGuid():N}");
+        var payload = Path.Combine(root, "payload");
         Directory.CreateDirectory(root);
         var archive = Path.Combine(root, update.Name);
         using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -132,32 +136,18 @@ public static class Updater
 
             var source = AppContext.BaseDirectory;
             var target = Path.GetFullPath(args[2]);
-            foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-            {
-                var relative = Path.GetRelativePath(source, file);
-                if (relative.Equals("gui-settings.json", StringComparison.OrdinalIgnoreCase) ||
-                    relative.StartsWith("user" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
-                    relative.StartsWith("logs" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
-                    relative.StartsWith("Languages" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            ApplyPayloadAtomically(
+                source,
+                target,
+                CurrentPlatform().ExecutableName,
+                executable =>
                 {
-                    continue;
-                }
-
-                var destination = Path.Combine(target, relative);
-                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                File.Copy(file, destination, overwrite: true);
-                if (!OperatingSystem.IsWindows())
-                {
-                    File.SetUnixFileMode(destination, File.GetUnixFileMode(file));
-                }
-            }
-
-            using var restarted = Process.Start(new ProcessStartInfo(
-                Path.Combine(target, CurrentPlatform().ExecutableName))
-            {
-                UseShellExecute = false,
-                WorkingDirectory = target,
-            }) ?? throw new InvalidOperationException("The updated SharpEmu could not be started.");
+                    using var restarted = Process.Start(new ProcessStartInfo(executable)
+                    {
+                        UseShellExecute = false,
+                        WorkingDirectory = target,
+                    }) ?? throw new InvalidOperationException("The updated SharpEmu could not be started.");
+                });
         }
         catch (Exception ex)
         {
@@ -193,7 +183,8 @@ public static class Updater
         {
             var name = asset.GetProperty("name").GetString() ?? "";
             var suffix = $"-{rid}{extension}";
-            if (!name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            if (!IsSafeArchiveName(name) ||
+                !name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
@@ -257,6 +248,150 @@ public static class Updater
         currentSha is not null &&
         (releaseSha.StartsWith(currentSha, StringComparison.OrdinalIgnoreCase) ||
          currentSha.StartsWith(releaseSha, StringComparison.OrdinalIgnoreCase));
+
+    internal static bool IsSafeArchiveName(string name) =>
+        !string.IsNullOrWhiteSpace(name) &&
+        string.Equals(name, Path.GetFileName(name), StringComparison.Ordinal) &&
+        name.All(character =>
+            char.IsAsciiLetterOrDigit(character) ||
+            character is '.' or '-' or '_');
+
+    internal static void ApplyPayloadAtomically(
+        string source,
+        string target,
+        string executableName,
+        Action<string> startUpdatedProcess)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(source);
+        ArgumentException.ThrowIfNullOrWhiteSpace(target);
+        ArgumentException.ThrowIfNullOrWhiteSpace(executableName);
+        ArgumentNullException.ThrowIfNull(startUpdatedProcess);
+
+        source = NormalizeDirectory(source);
+        target = NormalizeDirectory(target);
+        if (PathsEqual(source, target))
+        {
+            throw new InvalidOperationException("The update source and target must be different directories.");
+        }
+
+        if (PathsEqual(target, Path.GetPathRoot(target)!))
+        {
+            throw new InvalidOperationException("The update target cannot be a filesystem root.");
+        }
+
+        if (!Directory.Exists(source))
+        {
+            throw new DirectoryNotFoundException($"The update payload directory '{source}' does not exist.");
+        }
+
+        var targetParent = Path.GetDirectoryName(target)
+            ?? throw new InvalidOperationException("The update target must have a parent directory.");
+        Directory.CreateDirectory(targetParent);
+
+        var targetName = Path.GetFileName(target);
+        var nonce = Guid.NewGuid().ToString("N");
+        var staging = Path.Combine(targetParent, $".{targetName}.update-{nonce}");
+        var backup = Path.Combine(targetParent, $".{targetName}.backup-{nonce}");
+        var targetMoved = false;
+        var stagingActivated = false;
+        var started = false;
+
+        try
+        {
+            if (Directory.Exists(target))
+            {
+                CopyDirectory(target, staging, overwrite: false);
+            }
+            else
+            {
+                Directory.CreateDirectory(staging);
+            }
+
+            CopyDirectory(source, staging, overwrite: true);
+            var stagedExecutable = Path.Combine(staging, executableName);
+            if (!File.Exists(stagedExecutable))
+            {
+                throw new InvalidDataException(
+                    $"The staged update does not contain {executableName}.");
+            }
+
+            if (Directory.Exists(target))
+            {
+                Directory.Move(target, backup);
+                targetMoved = true;
+            }
+
+            Directory.Move(staging, target);
+            stagingActivated = true;
+
+            startUpdatedProcess(Path.Combine(target, executableName));
+            started = true;
+        }
+        catch
+        {
+            if (stagingActivated && Directory.Exists(target))
+            {
+                Directory.Delete(target, recursive: true);
+            }
+
+            if (targetMoved && Directory.Exists(backup))
+            {
+                Directory.Move(backup, target);
+            }
+
+            throw;
+        }
+        finally
+        {
+            if (Directory.Exists(staging))
+            {
+                Directory.Delete(staging, recursive: true);
+            }
+
+            if (started && Directory.Exists(backup))
+            {
+                try
+                {
+                    Directory.Delete(backup, recursive: true);
+                }
+                catch
+                {
+                    // The update is active; a stale backup is safer than rollback here.
+                }
+            }
+        }
+    }
+
+    private static void CopyDirectory(string source, string destination, bool overwrite)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(source, directory);
+            Directory.CreateDirectory(Path.Combine(destination, relative));
+        }
+
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(source, file);
+            var destinationFile = Path.Combine(destination, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationFile)!);
+            File.Copy(file, destinationFile, overwrite);
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(destinationFile, File.GetUnixFileMode(file));
+            }
+        }
+    }
+
+    private static string NormalizeDirectory(string path) =>
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+
+    private static bool PathsEqual(string left, string right) =>
+        string.Equals(
+            NormalizeDirectory(left),
+            NormalizeDirectory(right),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
 
     private static string ExtractArchive(
         string archive,

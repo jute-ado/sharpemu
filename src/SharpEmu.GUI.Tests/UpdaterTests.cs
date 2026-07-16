@@ -83,11 +83,110 @@ public sealed class UpdaterTests
         Assert.Null(update);
     }
 
-    private static string CreateReleaseJson(bool includeDigest = true)
+    [Theory]
+    [InlineData("sharpemu-0.0.1-win-x64.zip", true)]
+    [InlineData("sharpemu-0.0.1-linux-x64.tar.gz", true)]
+    [InlineData("../sharpemu-0.0.1-win-x64.zip", false)]
+    [InlineData("folder/sharpemu-0.0.1-win-x64.zip", false)]
+    [InlineData("folder\\sharpemu-0.0.1-win-x64.zip", false)]
+    [InlineData("", false)]
+    public void ArchiveNamesMustRemainWithinTheUpdateDirectory(string name, bool expected)
+    {
+        Assert.Equal(expected, Updater.IsSafeArchiveName(name));
+    }
+
+    [Fact]
+    public void ParseRelease_RejectsArchiveNameWithDirectoryTraversal()
+    {
+        var update = Updater.ParseRelease(
+            CreateReleaseJson(assetName: "../sharpemu-0.0.1-win-x64.zip"),
+            currentSha: null,
+            rid: "win-x64",
+            extension: ".zip");
+
+        Assert.Null(update);
+    }
+
+    [Fact]
+    public void ApplyPayloadAtomicallyPreservesExistingStateAndOverlaysRelease()
+    {
+        using var directories = new TemporaryDirectories();
+        Directory.CreateDirectory(directories.Target);
+        File.WriteAllText(Path.Combine(directories.Target, "SharpEmu.exe"), "old");
+        File.WriteAllText(Path.Combine(directories.Target, "gui-settings.json"), "settings");
+        File.WriteAllText(Path.Combine(directories.Target, "obsolete-but-preserved.txt"), "old");
+        Directory.CreateDirectory(Path.Combine(directories.Source, "Languages"));
+        File.WriteAllText(Path.Combine(directories.Source, "SharpEmu.exe"), "new");
+        File.WriteAllText(Path.Combine(directories.Source, "Languages", "en.json"), "new-language");
+
+        string? startedExecutable = null;
+        Updater.ApplyPayloadAtomically(
+            directories.Source,
+            directories.Target,
+            "SharpEmu.exe",
+            executable => startedExecutable = executable);
+
+        Assert.Equal(Path.Combine(directories.Target, "SharpEmu.exe"), startedExecutable);
+        Assert.Equal("new", File.ReadAllText(Path.Combine(directories.Target, "SharpEmu.exe")));
+        Assert.Equal("settings", File.ReadAllText(Path.Combine(directories.Target, "gui-settings.json")));
+        Assert.Equal("old", File.ReadAllText(Path.Combine(directories.Target, "obsolete-but-preserved.txt")));
+        Assert.Equal(
+            "new-language",
+            File.ReadAllText(Path.Combine(directories.Target, "Languages", "en.json")));
+        Assert.Empty(Directory.EnumerateDirectories(
+            directories.Root,
+            ".install.*",
+            SearchOption.TopDirectoryOnly));
+    }
+
+    [Fact]
+    public void ApplyPayloadAtomicallyRollsBackWhenRestartFails()
+    {
+        using var directories = new TemporaryDirectories();
+        Directory.CreateDirectory(directories.Target);
+        File.WriteAllText(Path.Combine(directories.Target, "SharpEmu.exe"), "old");
+        File.WriteAllText(Path.Combine(directories.Source, "SharpEmu.exe"), "new");
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            Updater.ApplyPayloadAtomically(
+                directories.Source,
+                directories.Target,
+                "SharpEmu.exe",
+                _ => throw new InvalidOperationException("restart failed")));
+
+        Assert.Equal("restart failed", exception.Message);
+        Assert.Equal("old", File.ReadAllText(Path.Combine(directories.Target, "SharpEmu.exe")));
+        Assert.Empty(Directory.EnumerateDirectories(
+            directories.Root,
+            ".install.*",
+            SearchOption.TopDirectoryOnly));
+    }
+
+    [Fact]
+    public void ApplyPayloadAtomicallyRejectsMissingExecutableWithoutTouchingTarget()
+    {
+        using var directories = new TemporaryDirectories();
+        Directory.CreateDirectory(directories.Target);
+        File.WriteAllText(Path.Combine(directories.Target, "SharpEmu.exe"), "old");
+        File.WriteAllText(Path.Combine(directories.Source, "readme.txt"), "payload");
+
+        Assert.Throws<InvalidDataException>(() =>
+            Updater.ApplyPayloadAtomically(
+                directories.Source,
+                directories.Target,
+                "Missing.exe",
+                _ => throw new Xunit.Sdk.XunitException("must not restart")));
+
+        Assert.Equal("old", File.ReadAllText(Path.Combine(directories.Target, "SharpEmu.exe")));
+    }
+
+    private static string CreateReleaseJson(
+        bool includeDigest = true,
+        string? assetName = null)
     {
         var assets = new[]
         {
-            Asset("sharpemu-0.0.1-win-x64.zip", ".zip", includeDigest),
+            Asset(assetName ?? "sharpemu-0.0.1-win-x64.zip", ".zip", includeDigest),
             Asset("sharpemu-0.0.1-linux-x64.tar.gz", ".tar.gz", includeDigest),
             Asset("sharpemu-0.0.1-osx-x64.tar.gz", ".tar.gz", includeDigest),
         };
@@ -108,4 +207,27 @@ public sealed class UpdaterTests
             ["size"] = extension == ".zip" ? 42 : 84,
             ["digest"] = includeDigest ? $"sha256:{Digest}" : null,
         };
+
+    private sealed class TemporaryDirectories : IDisposable
+    {
+        public TemporaryDirectories()
+        {
+            Root = Path.Combine(Path.GetTempPath(), "SharpEmu.Updater.Tests", Guid.NewGuid().ToString("N"));
+            Source = Path.Combine(Root, "payload");
+            Target = Path.Combine(Root, "install");
+            Directory.CreateDirectory(Source);
+        }
+
+        public string Root { get; }
+        public string Source { get; }
+        public string Target { get; }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Root))
+            {
+                Directory.Delete(Root, recursive: true);
+            }
+        }
+    }
 }
