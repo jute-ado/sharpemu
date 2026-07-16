@@ -239,12 +239,40 @@ internal static class GnmTiling
             return false;
         }
 
-        var blocksPerRow = (elementsWide + blockWidth - 1) / blockWidth;
-        var requiredLinear = (long)elementsWide * elementsHigh * bytesPerElement;
+        ulong requiredTiled;
+        try
+        {
+            requiredTiled = checked(
+                ((ulong)elementsWide + (ulong)blockWidth - 1) / (ulong)blockWidth *
+                (((ulong)elementsHigh + (ulong)blockHeight - 1) / (ulong)blockHeight) *
+                (ulong)blockBytes);
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+
+        if (requiredTiled > (ulong)tiled.Length)
+        {
+            return false;
+        }
+
+        long requiredLinear;
+        try
+        {
+            requiredLinear = checked((long)elementsWide * elementsHigh * bytesPerElement);
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+
         if (linear.Length < requiredLinear)
         {
             return false;
         }
+
+        var blocksPerRow = ((long)elementsWide + blockWidth - 1) / blockWidth;
 
         // Precompute the within-block element offset for each (x, y) inside a
         // single block. The swizzle equation only depends on the in-block
