@@ -877,7 +877,7 @@ public sealed class SelfLoaderTests
         AssertSentinelMemoryPreserved(memory);
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public void ReservesThroughNonzeroFirstLoadSegment()
     {
         const ulong segmentVirtualAddress = 0x2000;
@@ -897,7 +897,7 @@ public sealed class SelfLoaderTests
         Assert.Equal(payload, loaded.ToArray());
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task LoadsAndExecutesMinimalElfImage()
     {
         if (await NativeTestProcess.RunIfNeededAsync(typeof(SelfLoaderTests)))
@@ -932,7 +932,7 @@ public sealed class SelfLoaderTests
         Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task ProcessEntryReceivesExpectedAbiFrame()
     {
         if (await NativeTestProcess.RunIfNeededAsync(typeof(SelfLoaderTests)))
