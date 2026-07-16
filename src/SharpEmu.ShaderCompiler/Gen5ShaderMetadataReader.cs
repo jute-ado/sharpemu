@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.HLE;
-using System.Buffers.Binary;
 
 namespace SharpEmu.ShaderCompiler;
 
@@ -20,9 +19,11 @@ public static class Gen5ShaderMetadataReader
         out Gen5ShaderMetadata metadata)
     {
         metadata = default!;
-        if (!TryReadUInt64(ctx, shaderHeaderAddress + ShaderUserDataOffset, out var userDataAddress) ||
+        if (!GuestAddress.IsRangeValid(shaderHeaderAddress, ShaderHeaderSize) ||
+            !ctx.TryReadUInt64(shaderHeaderAddress + ShaderUserDataOffset, out var userDataAddress) ||
             userDataAddress == 0 ||
-            !TryReadUInt64(ctx, userDataAddress, out var directResourceOffsetsAddress))
+            !GuestAddress.IsRangeValid(userDataAddress, UserDataSize) ||
+            !ctx.TryReadUInt64(userDataAddress, out var directResourceOffsetsAddress))
         {
             return false;
         }
@@ -30,8 +31,7 @@ public static class Gen5ShaderMetadataReader
         var resourceOffsets = new ulong[ResourceClassCount];
         for (var resourceClass = 0; resourceClass < ResourceClassCount; resourceClass++)
         {
-            if (!TryReadUInt64(
-                    ctx,
+            if (!ctx.TryReadUInt64(
                     userDataAddress + 0x08 + (ulong)(resourceClass * sizeof(ulong)),
                     out resourceOffsets[resourceClass]))
             {
@@ -39,9 +39,9 @@ public static class Gen5ShaderMetadataReader
             }
         }
 
-        if (!TryReadUInt16(ctx, userDataAddress + 0x28, out var extendedUserDataSize) ||
-            !TryReadUInt16(ctx, userDataAddress + 0x2A, out var shaderResourceTableSize) ||
-            !TryReadUInt16(ctx, userDataAddress + 0x2C, out var directResourceCount) ||
+        if (!ctx.TryReadUInt16(userDataAddress + 0x28, out var extendedUserDataSize) ||
+            !ctx.TryReadUInt16(userDataAddress + 0x2A, out var shaderResourceTableSize) ||
+            !ctx.TryReadUInt16(userDataAddress + 0x2C, out var directResourceCount) ||
             directResourceCount > MaxMetadataEntries)
         {
             return false;
@@ -50,8 +50,7 @@ public static class Gen5ShaderMetadataReader
         var resourceCounts = new ushort[ResourceClassCount];
         for (var resourceClass = 0; resourceClass < ResourceClassCount; resourceClass++)
         {
-            if (!TryReadUInt16(
-                    ctx,
+            if (!ctx.TryReadUInt16(
                     userDataAddress + 0x2E + (ulong)(resourceClass * sizeof(ushort)),
                     out resourceCounts[resourceClass]) ||
                 resourceCounts[resourceClass] > MaxMetadataEntries)
@@ -73,7 +72,7 @@ public static class Gen5ShaderMetadataReader
 
             for (uint type = 0; type < directResourceCount; type++)
             {
-                if (!TryReadUInt16(ctx, directResourceOffsetsAddress + type * sizeof(ushort), out var offset))
+                if (!ctx.TryReadUInt16(directResourceOffsetsAddress + type * sizeof(ushort), out var offset))
                 {
                     return false;
                 }
@@ -104,8 +103,7 @@ public static class Gen5ShaderMetadataReader
 
             for (uint slot = 0; slot < count; slot++)
             {
-                if (!TryReadUInt16(
-                        ctx,
+                if (!ctx.TryReadUInt16(
                         resourceOffsets[resourceClass] + slot * sizeof(ushort),
                         out var sharp))
                 {
@@ -131,32 +129,6 @@ public static class Gen5ShaderMetadataReader
             shaderResourceTableSize,
             directResources,
             resources);
-        return true;
-    }
-
-    private static bool TryReadUInt16(CpuContext ctx, ulong address, out ushort value)
-    {
-        Span<byte> bytes = stackalloc byte[sizeof(ushort)];
-        if (!ctx.Memory.TryRead(address, bytes))
-        {
-            value = 0;
-            return false;
-        }
-
-        value = BinaryPrimitives.ReadUInt16LittleEndian(bytes);
-        return true;
-    }
-
-    private static bool TryReadUInt64(CpuContext ctx, ulong address, out ulong value)
-    {
-        Span<byte> bytes = stackalloc byte[sizeof(ulong)];
-        if (!ctx.Memory.TryRead(address, bytes))
-        {
-            value = 0;
-            return false;
-        }
-
-        value = BinaryPrimitives.ReadUInt64LittleEndian(bytes);
         return true;
     }
 }

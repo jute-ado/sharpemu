@@ -33,7 +33,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
        scripts/generate_aerolib_binary.py. -->
   <PropertyGroup>
     <SharpEmuAerolibNamesFile>$(MSBuildThisFileDirectory)..\..\scripts\ps5_names.txt</SharpEmuAerolibNamesFile>
-    <SharpEmuAerolibTaskAssembly>$(MSBuildThisFileDirectory)..\..\artifacts\bin\$(Configuration)\netstandard2.0\SharpEmu.SourceGenerators.dll</SharpEmuAerolibTaskAssembly>
+    <SharpEmuAerolibTaskAssembly>$(RepoRoot)artifacts\bin\$(SharpEmuHostPlatform)\SharpEmu.SourceGenerators\$(Configuration)\netstandard2.0\SharpEmu.SourceGenerators.dll</SharpEmuAerolibTaskAssembly>
   </PropertyGroup>
 
   <UsingTask TaskName="SharpEmu.SourceGenerators.GenerateAerolibBinaryTask"

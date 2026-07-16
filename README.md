@@ -92,9 +92,9 @@ release includes the MoltenVK Vulkan implementation.
   ![Splash texture](./.github/images/dreaming-sarah.jpg)
 
 
-> [!IMPORTANT]  
-> This project does **not** support or condone piracy.  
-> All games used during development and testing are dumped from consoles that we personally own.  
+> [!IMPORTANT]
+> This project does **not** support or condone piracy.
+> All games used during development and testing are dumped from consoles that we personally own.
 > Users are expected to use legally obtained copies of their games.
 
 ## Build
@@ -115,13 +115,13 @@ This project does not contain any copyrighted system firmware, game data, or pro
 
 The following projects were extremely helpful during development:
 
-* **[ShadPS4](https://github.com/shadps4-emu/shadPS4)**  
+* **[ShadPS4](https://github.com/shadps4-emu/shadPS4)**
 Helped with understanding the basic architecture of the PlayStation 4.
 
-* **[Kyty](https://github.com/InoriRus/Kyty)**  
+* **[Kyty](https://github.com/InoriRus/Kyty)**
 One of the few PS5 emulator projects available and very useful for studying native code execution.
 
-* **Ryujinx**  
+* **Ryujinx**
 Provided valuable references for filesystem handling and low-level C# implementation patterns.
 
 # License

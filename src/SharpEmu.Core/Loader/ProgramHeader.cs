@@ -48,8 +48,6 @@ public enum ProgramHeaderType : uint
 
     Tls = 7,
 
-    GnuEhFrame = 0x6474E550,
-
     SceRela = 0x60000000,
 
     SceProcParam = 0x61000001,

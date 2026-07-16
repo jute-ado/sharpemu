@@ -66,6 +66,25 @@ public static class KernelModuleRegistry
         ulong baseAddress,
         ulong size,
         ulong entryPoint,
+        bool isMain,
+        bool isSystemModule = false) =>
+        RegisterModule(
+            modulePath,
+            baseAddress,
+            size,
+            entryPoint,
+            initEntryPoint: 0,
+            ehFrameHeaderAddress: 0,
+            ehFrameAddress: 0,
+            ehFrameSize: 0,
+            isMain,
+            isSystemModule);
+
+    public static int RegisterModule(
+        string? modulePath,
+        ulong baseAddress,
+        ulong size,
+        ulong entryPoint,
         ulong initEntryPoint,
         ulong ehFrameHeaderAddress,
         ulong ehFrameAddress,

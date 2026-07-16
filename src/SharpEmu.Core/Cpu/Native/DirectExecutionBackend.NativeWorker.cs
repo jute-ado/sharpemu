@@ -6,6 +6,8 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading;
 using SharpEmu.HLE;
+using SharpEmu.HLE.Host;
+using SharpEmu.HLE.Host.Posix;
 
 namespace SharpEmu.Core.Cpu.Native;
 
@@ -35,23 +37,9 @@ public sealed partial class DirectExecutionBackend
 	private bool _nativeWorkersDisposed;
 	private int _nativeWorkerCreationFailedLogged;
 
-	private const uint StackSizeParamIsAReservation = 0x00010000u;
-
-	[DllImport("kernel32.dll", SetLastError = true)]
-	private static extern nint CreateThread(
-		nint lpThreadAttributes,
-		nuint dwStackSize,
-		nint lpStartAddress,
-		nint lpParameter,
-		uint dwCreationFlags,
-		out uint lpThreadId);
-
-	[DllImport("kernel32.dll", SetLastError = true)]
-	private static extern uint WaitForSingleObject(nint hHandle, uint dwMilliseconds);
-
-	// Runs an emitted guest entry stub. Preferred path is a pooled native worker
-	// thread; falls back to the historical inline calli (guest frames above this
-	// thread's managed frames) when workers are disabled or unavailable.
+	// Runs an emitted guest entry stub on a pooled native worker. The historical
+	// inline calli remains available only through the explicit diagnostic override;
+	// silently using it after worker creation fails can fail-fast the CLR process.
 	//
 	// Callers set the Active* thread-statics before emitting the stub and read the
 	// yield/forced-exit flags right after this returns, so the worker outcome is
@@ -71,8 +59,8 @@ public sealed partial class DirectExecutionBackend
 		var worker = RentNativeGuestExecutor();
 		if (worker is null)
 		{
-			TlsSetValue(_hostRspSlotTlsIndex, (nint)hostRspSlot);
-			return CallNativeEntry(entryStub);
+			throw new InvalidOperationException(
+				"Failed to create a native guest worker thread; unsafe inline execution was refused.");
 		}
 		try
 		{
@@ -110,13 +98,6 @@ public sealed partial class DirectExecutionBackend
 
 	private NativeGuestExecutor? RentNativeGuestExecutor()
 	{
-		// NativeGuestExecutor emits a Win32 wait loop and creates it with
-		// kernel32!CreateThread. POSIX hosts use the established inline entry
-		// path until the worker loop has a pthread/eventfd implementation.
-		if (!OperatingSystem.IsWindows() || NativeGuestWorkersDisabled)
-		{
-			return null;
-		}
 		lock (_nativeWorkerGate)
 		{
 			if (_nativeWorkersDisposed)
@@ -277,7 +258,7 @@ public sealed partial class DirectExecutionBackend
 
 		public static NativeGuestExecutor? TryCreate(DirectExecutionBackend backend)
 		{
-			if (!EnsureKernel32Exports())
+			if (!EnsureHostRuntimeExports(backend._hostSymbols))
 			{
 				return null;
 			}
@@ -290,32 +271,27 @@ public sealed partial class DirectExecutionBackend
 			return executor;
 		}
 
-		private static bool EnsureKernel32Exports()
+		private static bool EnsureHostRuntimeExports(IHostSymbolResolver symbols)
 		{
 			if (_exitThreadAddress != 0)
 			{
 				return _waitForSingleObjectAddress != 0 && _setEventAddress != 0;
 			}
-			nint kernel32 = GetModuleHandle("kernel32.dll");
-			if (kernel32 == 0)
-			{
-				return false;
-			}
-			_waitForSingleObjectAddress = GetProcAddress(kernel32, "WaitForSingleObject");
-			_setEventAddress = GetProcAddress(kernel32, "SetEvent");
-			_exitThreadAddress = GetProcAddress(kernel32, "ExitThread");
+			_waitForSingleObjectAddress = symbols.GetAddress(HostRuntimeFunction.WaitForSingleObject);
+			_setEventAddress = symbols.GetAddress(HostRuntimeFunction.SetEvent);
+			_exitThreadAddress = symbols.GetAddress(HostRuntimeFunction.ExitThread);
 			return _waitForSingleObjectAddress != 0 && _setEventAddress != 0 && _exitThreadAddress != 0;
 		}
 
 		private bool Initialize()
 		{
 			_selfHandle = GCHandle.Alloc(this);
-			_controlBlock = VirtualAlloc(null, 4096u, 12288u, 4u);
+			_controlBlock = (void*)_backend._hostMemory.Allocate(0, 4096u, HostPageProtection.ReadWrite);
 			if (_controlBlock == null)
 			{
 				return false;
 			}
-			_loopStub = VirtualAlloc(null, LoopStubSize, 12288u, 64u);
+			_loopStub = (void*)_backend._hostMemory.Allocate(0, LoopStubSize, HostPageProtection.ReadWrite);
 			if (_loopStub == null)
 			{
 				return false;
@@ -426,17 +402,15 @@ public sealed partial class DirectExecutionBackend
 			*(int*)(code + skipJump) = skipEntryOffset - (skipJump + sizeof(int));
 
 			uint oldProtect = 0;
-			if (!VirtualProtect(_loopStub, LoopStubSize, 32u, &oldProtect))
+			if (!_backend._hostMemory.Protect((ulong)_loopStub, LoopStubSize, HostPageProtection.ReadExecute, out oldProtect))
 			{
 				return false;
 			}
-			FlushInstructionCache(GetCurrentProcess(), _loopStub, LoopStubSize);
-			_threadHandle = CreateThread(
-				0,
-				WorkerStackReservation,
+			_backend._hostMemory.FlushInstructionCache((ulong)_loopStub, LoopStubSize);
+			_threadHandle = _backend._hostThreading.CreateNativeThread(
 				(nint)_loopStub,
 				0,
-				StackSizeParamIsAReservation,
+				WorkerStackReservation,
 				out _nativeThreadId);
 			if (_threadHandle == 0)
 			{
@@ -582,7 +556,7 @@ public sealed partial class DirectExecutionBackend
 			_prevHardwareExceptionAccessType = _activeGuestHardwareExceptionAccessType;
 			_prevHardwareExceptionAccessAddress = _activeGuestHardwareExceptionAccessAddress;
 			_prevState = _activeGuestThreadState;
-			_prevHostRspSlot = TlsGetValue(backend._hostRspSlotTlsIndex);
+			_prevHostRspSlot = backend._hostThreading.GetTlsValue(backend._hostRspSlotTlsIndex);
 			_prevGuestThreadHandle = GuestThreadExecution.EnterGuestThread(_runGuestThreadHandle);
 			_entered = true;
 			_activeExecutionBackend = backend;
@@ -599,11 +573,11 @@ public sealed partial class DirectExecutionBackend
 			_activeGuestHardwareExceptionAccessAddress = 0;
 			BindActiveGuestStackRange(_runContext!);
 			backend.BindTlsBase(_runContext!);
-			TlsSetValue(backend._hostRspSlotTlsIndex, _runHostRspSlot);
+			backend._hostThreading.SetTlsValue(backend._hostRspSlotTlsIndex, _runHostRspSlot);
 			if (_runState is { } state)
 			{
 				_prevHostThreadId = Volatile.Read(ref state.HostThreadId);
-				Volatile.Write(ref state.HostThreadId, unchecked((int)GetCurrentThreadId()));
+				Volatile.Write(ref state.HostThreadId, unchecked((int)backend._hostThreading.CurrentThreadId));
 			}
 			if (_runAffinityMask != 0)
 			{
@@ -637,7 +611,7 @@ public sealed partial class DirectExecutionBackend
 			{
 				Volatile.Write(ref state.HostThreadId, _prevHostThreadId);
 			}
-			TlsSetValue(_backend._hostRspSlotTlsIndex, _prevHostRspSlot);
+			_backend._hostThreading.SetTlsValue(_backend._hostRspSlotTlsIndex, _prevHostRspSlot);
 			GuestThreadExecution.RestoreGuestThread(_prevGuestThreadHandle);
 			_activeExecutionBackend = _prevBackend;
 			_activeCpuContext = _prevContext;
@@ -680,8 +654,8 @@ public sealed partial class DirectExecutionBackend
 			var exited = _threadHandle == 0;
 			if (_threadHandle != 0)
 			{
-				exited = WaitForSingleObject(_threadHandle, 1000u) == 0u;
-				CloseHandle(_threadHandle);
+				exited = _backend._hostThreading.WaitForThreadExit(_threadHandle, 1000u);
+				_backend._hostThreading.CloseThreadHandle(_threadHandle);
 				_threadHandle = 0;
 			}
 			if (!exited)
@@ -695,12 +669,12 @@ public sealed partial class DirectExecutionBackend
 			}
 			if (_loopStub != null)
 			{
-				VirtualFree(_loopStub, 0u, 32768u);
+				_backend._hostMemory.Free((ulong)_loopStub);
 				_loopStub = null;
 			}
 			if (_controlBlock != null)
 			{
-				VirtualFree(_controlBlock, 0u, 32768u);
+				_backend._hostMemory.Free((ulong)_controlBlock);
 				_controlBlock = null;
 			}
 			if (_selfHandle.IsAllocated)

@@ -47,7 +47,7 @@ public interface IGuestThreadScheduler
     /// TryStartThread, but kernel exception delivery must still be able to
     /// target it.
     /// </summary>
-    void RegisterGuestThreadContext(ulong threadHandle, CpuContext context);
+    void RegisterGuestThreadContext(ulong threadHandle, CpuContext context) { }
 
     bool TryStartThread(CpuContext creatorContext, GuestThreadStartRequest request, out string? error);
 
@@ -66,13 +66,13 @@ public interface IGuestThreadScheduler
     /// onto the host thread if one is running. Returns false when the thread
     /// handle is unknown.
     /// </summary>
-    bool TrySetGuestThreadPriority(ulong guestThreadHandle, int guestPriority);
+    bool TrySetGuestThreadPriority(ulong guestThreadHandle, int guestPriority) => false;
 
     /// <summary>
     /// Records a new affinity mask for a guest thread and re-applies it to
     /// the host thread where the platform supports it.
     /// </summary>
-    bool TrySetGuestThreadAffinity(ulong guestThreadHandle, ulong affinityMask);
+    bool TrySetGuestThreadAffinity(ulong guestThreadHandle, ulong affinityMask) => false;
 
     IReadOnlyList<GuestThreadSnapshot> SnapshotThreads();
 
@@ -96,7 +96,26 @@ public interface IGuestThreadScheduler
         ulong stackSize,
         string reason,
         out ulong returnValue,
-        out string? error);
+        out string? error)
+    {
+        error = null;
+        if (arg2 != 0 || !TryCallGuestFunction(
+                callerContext,
+                entryPoint,
+                arg0,
+                arg1,
+                stackAddress,
+                stackSize,
+                reason,
+                out error))
+        {
+            returnValue = 0;
+            return false;
+        }
+
+        returnValue = callerContext[CpuRegister.Rax];
+        return true;
+    }
 
     bool TryCallGuestContinuation(
         CpuContext callerContext,
@@ -115,7 +134,11 @@ public interface IGuestThreadScheduler
         ulong threadHandle,
         ulong handler,
         int exceptionType,
-        out string? error);
+        out string? error)
+    {
+        error = "guest exception delivery is not supported by this scheduler";
+        return false;
+    }
 }
 
 public readonly record struct GuestImportCallFrame(
@@ -438,27 +461,6 @@ public static class GuestThreadExecution
         _pendingBlockWaiter = null;
         _pendingBlockDeadlineTimestamp = 0;
         return true;
-    }
-
-    public static bool TryConsumeCurrentThreadBlock(
-        out string reason,
-        out GuestCpuContinuation continuation,
-        out bool hasContinuation,
-        out string wakeKey,
-        out Func<int>? resumeHandler,
-        out Func<bool>? wakeHandler,
-        out long blockDeadlineTimestamp)
-    {
-        var consumed = TryConsumeCurrentThreadBlock(
-            out reason,
-            out continuation,
-            out hasContinuation,
-            out wakeKey,
-            out var waiter,
-            out blockDeadlineTimestamp);
-        resumeHandler = waiter is null ? null : waiter.Resume;
-        wakeHandler = waiter is null ? null : waiter.TryWake;
-        return consumed;
     }
 
     public static long ComputeDeadlineTimestamp(TimeSpan timeout)

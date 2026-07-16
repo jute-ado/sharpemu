@@ -54,8 +54,6 @@ public static class AudioOutExports
         public int BufferByteLength { get; }
         public IHostAudioStream? Backend { get; }
         public volatile float Volume = 1.0f;
-        public int BufferByteLength =>
-            checked((int)BufferLength * Channels * BytesPerSample);
 
         public void PaceSilence()
         {

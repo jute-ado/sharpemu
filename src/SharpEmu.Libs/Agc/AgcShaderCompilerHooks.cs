@@ -27,7 +27,5 @@ internal static class AgcShaderCompilerHooks
     {
         Gen5ShaderScalarEvaluator.FallbackMemoryReader =
             KernelMemoryCompatExports.TryReadTrackedLibcHeap;
-        Gen5ShaderScalarEvaluator.GlobalMemoryPool =
-            VulkanVideoPresenter.GuestDataPool;
     }
 }
