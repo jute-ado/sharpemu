@@ -9,8 +9,10 @@ This opt-in test project runs SharpEmu against locally owned game dumps without
 placing game content or machine-specific paths in the repository.
 
 1. Copy `games.example.json` to `games.local.json`.
-2. Point each case at a local `eboot.bin` and define the compatibility result
-   that should remain stable.
+2. Point each case at a local `eboot.bin`, replace `expectedBundleSha256` with
+   the bundle fingerprint from a load-only report, and define the compatibility
+   result that should remain stable. The fingerprint is checked after loading
+   but before module initializers or guest code execute.
 3. Build and run:
 
    ```text

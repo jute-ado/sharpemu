@@ -7,7 +7,7 @@
       "executablePath": "X:/Legally Owned Games/Example/app0/eboot.bin",
       "mode": "load-only",
       "timeoutSeconds": 20,
-      "expectedBundleSha256": "optional-local-bundle-fingerprint",
+      "expectedBundleSha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "expectations": {
         "allowedResults": [
           "IMAGE_LOADED"
@@ -26,6 +26,7 @@
       "executablePath": "X:/Legally Owned Games/Example/app0/eboot.bin",
       "mode": "execution",
       "timeoutSeconds": 20,
+      "expectedBundleSha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "expectations": {
         "allowedResults": [
           "EXECUTION_TIMED_OUT",

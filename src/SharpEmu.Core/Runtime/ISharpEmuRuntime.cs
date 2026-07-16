@@ -41,7 +41,8 @@ public interface ISharpEmuRuntime : IDisposable
 
     OrbisGen2Result Run(
         string ebootPath,
-        Action? onExecutionStarting = null);
+        Action? onExecutionStarting = null,
+        Action<PreparedApplication>? onApplicationPrepared = null);
 
     OrbisGen2Result DispatchHleCall(string nid, CpuContext context);
 }

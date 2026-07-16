@@ -192,7 +192,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
     public OrbisGen2Result Run(
         string ebootPath,
-        Action? onExecutionStarting = null)
+        Action? onExecutionStarting = null,
+        Action<PreparedApplication>? onApplicationPrepared = null)
     {
         if (!_allowExecution)
         {
@@ -204,6 +205,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         using var app0Binding = BindApp0Root(normalizedEbootPath);
         ResetRunState();
         var preparedApplication = PrepareApplicationCore(normalizedEbootPath);
+        onApplicationPrepared?.Invoke(preparedApplication);
         var image = preparedApplication.MainImage;
         var loadedModuleImages = preparedApplication.Modules;
         var generation = preparedApplication.Generation;

@@ -376,6 +376,8 @@ public sealed class GameRegressionHarnessTests
         {
             Name = "missing expectation",
             ExecutablePath = "eboot.bin",
+            ExpectedBundleSha256 =
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         };
 
         var error = Assert.Throws<InvalidDataException>(
@@ -387,16 +389,38 @@ public sealed class GameRegressionHarnessTests
             StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not-a-sha256")]
+    [InlineData("000000000000000000000000000000000000000000000000000000000000000")]
+    public void GameCaseRequiresExactBundleFingerprint(string? fingerprint)
+    {
+        var testCase = CreateExecutionCase(
+            expectedBundleSha256: fingerprint);
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => GameRegressionRunner.ValidateCase(testCase));
+
+        Assert.Contains(
+            "expectedBundleSha256",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
     private static GameRegressionCase CreateExecutionCase(
         long? minimumObservedImportDispatches = null,
         string[]? requiredOutputSubstrings = null,
         string[]? forbiddenOutputSubstrings = null,
-        string[]? requiredVideoOutFrameFingerprints = null) => new()
+        string[]? requiredVideoOutFrameFingerprints = null,
+        string? expectedBundleSha256 =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") => new()
     {
         Name = "execution survival",
         ExecutablePath = "eboot.bin",
         Mode = "execution",
         TimeoutSeconds = 20,
+        ExpectedBundleSha256 = expectedBundleSha256,
         Expectations = new GameRegressionExpectations
         {
             AllowedResults =

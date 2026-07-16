@@ -369,8 +369,49 @@ internal static partial class Program
                     runtime,
                     hostError: null,
                     invocationStartedTimestamp: invocationStartedTimestamp,
-                    incompleteResultName: "EXECUTION_RUNNING"));
+                    incompleteResultName: "EXECUTION_RUNNING"),
+                preparedApplication =>
+                {
+                    if (expectedBundleSha256 is null)
+                    {
+                        return;
+                    }
+
+                    var fingerprint = BuildReportFingerprint(
+                        ebootPath,
+                        preparedApplication);
+                    if (!string.Equals(
+                            expectedBundleSha256,
+                            fingerprint.Bundle.Sha256,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new BundleFingerprintMismatchException(
+                            expectedBundleSha256,
+                            fingerprint);
+                    }
+                });
             Console.Error.WriteLine($"[DEBUG] Result: {result}");
+        }
+        catch (BundleFingerprintMismatchException ex)
+        {
+            Log.Error(ex.Message);
+            if (!TryWriteExecutionReport(
+                    reportJsonPath,
+                    ebootPath,
+                    result: null,
+                    runtime,
+                    hostError: ex.Message,
+                    invocationStartedTimestamp: invocationStartedTimestamp,
+                    resultOverride: new CliExecutionResult(
+                        "BUNDLE_FINGERPRINT_MISMATCH",
+                        null,
+                        false),
+                    fingerprintOverride: ex.Fingerprint))
+            {
+                return 3;
+            }
+
+            return BundleFingerprintMismatchExitCode;
         }
         catch (Exception ex)
         {
@@ -2088,15 +2129,6 @@ internal static partial class Program
             return false;
         }
 
-        if (expectedBundleSha256 is not null && !loadOnly)
-        {
-            ebootPath = string.Empty;
-            runtimeOptions = default;
-            logLevel = SharpEmuLog.MinimumLevel;
-            logFilePath = null;
-            return false;
-        }
-
         ebootPath = string.Join(' ', pathTokens);
         runtimeOptions = new SharpEmuRuntimeOptions
         {
@@ -2168,6 +2200,16 @@ internal static partial class Program
         string? HostError);
 
     private sealed record CliExecutionResult(string Name, int? Code, bool Succeeded);
+
+    private sealed class BundleFingerprintMismatchException(
+        string expectedSha256,
+        CliReportFingerprint fingerprint)
+        : Exception(
+            $"Bundle fingerprint mismatch: expected {expectedSha256}, " +
+            $"actual {fingerprint.Bundle.Sha256 ?? "unavailable"}.")
+    {
+        public CliReportFingerprint Fingerprint { get; } = fingerprint;
+    }
 
     private sealed record CliReportFingerprint(
         long? ExecutableSizeBytes,
