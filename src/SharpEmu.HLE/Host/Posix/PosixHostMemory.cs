@@ -8,10 +8,9 @@ namespace SharpEmu.HLE.Host.Posix;
 /// <summary>
 /// POSIX virtual memory backend implemented over mmap/mprotect/munmap with a
 /// shadow region table that answers VirtualQuery-style questions and tracks
-/// page protections.
-/// POSIX anonymous mappings are demand-paged by the kernel, so Win32
-/// "reserve-only" regions are mapped as committed memory directly and
-/// commit requests become protection changes.
+/// page commitment and protections. POSIX anonymous mappings are demand-paged
+/// by the kernel; reserve-only regions therefore use PROT_NONE plus shadow
+/// reservation state, and Commit changes both the protection and that state.
 /// </summary>
 internal sealed unsafe class PosixHostMemory : IHostMemory
 {
@@ -179,7 +178,10 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
         {
             public ulong Base;
             public ulong Size;
+            public uint AllocationProtect;
+            public uint DefaultState;
             public uint DefaultProtect;
+            public Dictionary<ulong, uint>? PageStates;
             public Dictionary<ulong, uint>? PageProtects;
 
             public ulong End => Base + Size;
@@ -192,6 +194,16 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
                 }
 
                 return DefaultProtect;
+            }
+
+            public uint StateAt(ulong pageAddress)
+            {
+                if (PageStates is not null && PageStates.TryGetValue(pageAddress, out var overriden))
+                {
+                    return overriden;
+                }
+
+                return DefaultState;
             }
         }
 
@@ -216,7 +228,8 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
                     // region must fail like Win32 does; only a pure commit
                     // may target pages inside a tracked mapping.
                     // Commit inside an existing mapping: the pages are already
-                    // backed (demand paged), so only apply the protection.
+                    // demand-paged by the kernel, so apply protection and update
+                    // the VirtualQuery-compatible shadow commitment state.
                     var start = AlignDown((ulong)address, PageSize);
                     if ((ulong)address > ulong.MaxValue - alignedSize ||
                         !TryAlignUp((ulong)address + alignedSize, PageSize, out var end))
@@ -237,6 +250,7 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
                         return null;
                     }
 
+                    SetStateRangeLocked(existing, start, end - start, MEM_COMMIT);
                     SetProtectRangeLocked(existing, start, end - start, protect);
                     return address;
                 }
@@ -247,13 +261,15 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
                     return null;
                 }
 
-                var posixProtect = ToPosixProtect(protect);
+                var committed = (allocationType & MEM_COMMIT) != 0;
+                var posixProtect = committed
+                    ? ToPosixProtect(protect)
+                    : PROT_NONE;
                 var flags = MAP_PRIVATE | MAP_ANON;
-                if ((allocationType & MEM_COMMIT) == 0)
+                if (!committed)
                 {
-                    // Reserve-only: keep the requested protection so the region
-                    // is usable without a separate commit step, but tell the
-                    // kernel not to account swap for it where supported.
+                    // Keep reserve-only pages inaccessible until Commit and
+                    // avoid swap accounting where the host supports it.
                     flags |= MAP_NORESERVE;
                 }
 
@@ -328,7 +344,9 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
                 {
                     Base = (ulong)result,
                     Size = alignedSize,
-                    DefaultProtect = protect
+                    AllocationProtect = protect,
+                    DefaultState = committed ? MEM_COMMIT : MEM_RESERVE,
+                    DefaultProtect = committed ? protect : PAGE_NOACCESS,
                 };
 
                 return (void*)result;
@@ -394,47 +412,29 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
             {
                 if (TryFindRegionLocked(pageAddress, out var region))
                 {
-                    // Win32 VirtualQuery reports a run of pages sharing the
-                    // same protection, so stop the run where it changes. Guest
-                    // GPU apertures can span hundreds of GiB, while protection
-                    // overrides are sparse; walking every 4 KiB page here makes
-                    // even a tiny query scale with the entire aperture.
-                    var pageProtects = region.PageProtects;
-                    uint protect;
-                    ulong runEnd;
-                    if (pageProtects is null || pageProtects.Count == 0)
-                    {
-                        protect = region.DefaultProtect;
-                        runEnd = region.End;
-                    }
-                    else if (pageProtects.TryGetValue(pageAddress, out protect))
-                    {
-                        runEnd = pageAddress + PageSize;
-                        while (runEnd < region.End &&
-                            pageProtects.TryGetValue(runEnd, out var nextProtect) &&
-                            nextProtect == protect)
-                        {
-                            runEnd += PageSize;
-                        }
-                    }
-                    else
-                    {
-                        protect = region.DefaultProtect;
-                        runEnd = region.End;
-                        foreach (var overrideAddress in pageProtects.Keys)
-                        {
-                            if (overrideAddress > pageAddress && overrideAddress < runEnd)
-                            {
-                                runEnd = overrideAddress;
-                            }
-                        }
-                    }
+                    // Win32 VirtualQuery reports one run sharing both state and
+                    // protection. Overrides are sparse because guest apertures
+                    // can span hundreds of GiB, so find the next transition
+                    // without walking every 4 KiB page in the allocation.
+                    var state = GetValueAndRunEnd(
+                        region.PageStates,
+                        region.DefaultState,
+                        pageAddress,
+                        region.End,
+                        out var stateRunEnd);
+                    var protect = GetValueAndRunEnd(
+                        region.PageProtects,
+                        region.DefaultProtect,
+                        pageAddress,
+                        region.End,
+                        out var protectRunEnd);
+                    var runEnd = Math.Min(stateRunEnd, protectRunEnd);
 
                     info.BaseAddress = pageAddress;
                     info.AllocationBase = region.Base;
-                    info.AllocationProtect = region.DefaultProtect;
+                    info.AllocationProtect = region.AllocationProtect;
                     info.RegionSize = runEnd - pageAddress;
-                    info.State = MEM_COMMIT;
+                    info.State = state;
                     info.Protect = protect;
                     info.Type = MEM_PRIVATE;
                     return (nuint)sizeof(BasicInfo);
@@ -462,6 +462,44 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
                 info.Type = 0;
                 return (nuint)sizeof(BasicInfo);
             }
+        }
+
+        private static uint GetValueAndRunEnd(
+            Dictionary<ulong, uint>? overrides,
+            uint defaultValue,
+            ulong pageAddress,
+            ulong regionEnd,
+            out ulong runEnd)
+        {
+            if (overrides is null || overrides.Count == 0)
+            {
+                runEnd = regionEnd;
+                return defaultValue;
+            }
+
+            if (overrides.TryGetValue(pageAddress, out var value))
+            {
+                runEnd = pageAddress + PageSize;
+                while (runEnd < regionEnd &&
+                    overrides.TryGetValue(runEnd, out var nextValue) &&
+                    nextValue == value)
+                {
+                    runEnd += PageSize;
+                }
+
+                return value;
+            }
+
+            runEnd = regionEnd;
+            foreach (var overrideAddress in overrides.Keys)
+            {
+                if (overrideAddress > pageAddress && overrideAddress < runEnd)
+                {
+                    runEnd = overrideAddress;
+                }
+            }
+
+            return defaultValue;
         }
 
         private static bool OverlapsTrackedRegionLocked(ulong start, ulong size)
@@ -529,6 +567,30 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
                 else
                 {
                     region.PageProtects[pageAddress] = protect;
+                }
+            }
+        }
+
+        private static void SetStateRangeLocked(Region region, ulong start, ulong size, uint state)
+        {
+            if (start == region.Base && size >= region.Size)
+            {
+                region.DefaultState = state;
+                region.PageStates = null;
+                return;
+            }
+
+            region.PageStates ??= new Dictionary<ulong, uint>();
+            var end = start + size;
+            for (var pageAddress = start; pageAddress < end; pageAddress += PageSize)
+            {
+                if (state == region.DefaultState)
+                {
+                    region.PageStates.Remove(pageAddress);
+                }
+                else
+                {
+                    region.PageStates[pageAddress] = state;
                 }
             }
         }

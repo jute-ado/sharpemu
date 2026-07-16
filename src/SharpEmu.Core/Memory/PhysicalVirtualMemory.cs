@@ -462,7 +462,17 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         if (memoryInfo.State == HostRegionState.Free)
         {
             var freeCandidate = AlignUp(Math.Max(cursor, memoryInfo.BaseAddress), alignment);
-            if (freeCandidate <= regionEnd && size <= regionEnd - freeCandidate)
+            // The POSIX shadow table cannot describe unrelated Linux mappings
+            // after its final tracked region, so it conservatively reports one
+            // free page there. MAP_FIXED_NOREPLACE still makes a larger exact
+            // probe safe: it fails without replacing any host mapping. Accept
+            // the candidate and let AllocateAt perform that authoritative probe.
+            var canProbeBeyondReportedFreeRun =
+                OperatingSystem.IsLinux() &&
+                freeCandidate < regionEnd;
+            if (freeCandidate <= regionEnd &&
+                (size <= regionEnd - freeCandidate ||
+                 canProbeBeyondReportedFreeRun))
             {
                 candidate = freeCandidate;
                 return true;

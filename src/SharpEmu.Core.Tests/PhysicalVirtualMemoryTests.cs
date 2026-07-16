@@ -1,7 +1,6 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using System.Runtime.InteropServices;
 using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
 using SharpEmu.HLE.Host;
@@ -15,13 +14,6 @@ public sealed class PhysicalVirtualMemoryTests
     private const ulong HostBlockerSize = 0x2000_0000UL;
     private const ulong HostAllocationGranularity = 0x1_0000UL;
     private const ulong GuestAllocationArenaSize = 0x0100_0000UL;
-    private const uint MemCommit = 0x1000;
-    private const uint MemReserve = 0x2000;
-    private const uint MemDecommit = 0x4000;
-    private const uint MemRelease = 0x8000;
-    private const uint PageNoAccess = 0x01;
-    private const uint PageReadWrite = 0x04;
-    private const uint PageExecuteRead = 0x20;
 
     private static IHostMemory CreateHostMemory() => TestHostMemory.Create();
 
@@ -50,10 +42,10 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.False(memory.IsAccessible(address + 0x2000, 1));
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void AdjacentAllocationsSupportCrossBoundaryAccess()
     {
-        using var hostMemory = new ContiguousWindowsHostMemory(
+        using var hostMemory = new ContiguousHostMemory(
             2 * HostAllocationGranularity);
         using var memory = new PhysicalVirtualMemory(hostMemory);
         var firstAddress = hostMemory.BaseAddress;
@@ -90,28 +82,31 @@ public sealed class PhysicalVirtualMemoryTests
             fileOffset: 0,
             fileData: [],
             ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
-        Assert.Equal(PageExecuteRead, QueryPage(secondAddress - 1).Protect);
-        Assert.Equal(PageReadWrite, QueryPage(secondAddress).Protect);
+        var firstProtection = QueryHostPage(
+            hostMemory,
+            secondAddress - 1).Protection;
+        var secondProtection = QueryHostPage(
+            hostMemory,
+            secondAddress).Protection;
+        Assert.NotEqual(firstProtection, secondProtection);
         Assert.True(memory.TryWrite(secondAddress - 1, [0xCC, 0xDD]));
-        Assert.Equal(PageExecuteRead, QueryPage(secondAddress - 1).Protect);
-        Assert.Equal(PageReadWrite, QueryPage(secondAddress).Protect);
+        Assert.Equal(
+            firstProtection,
+            QueryHostPage(hostMemory, secondAddress - 1).Protection);
+        Assert.Equal(
+            secondProtection,
+            QueryHostPage(hostMemory, secondAddress).Protection);
         Assert.True(memory.TryRead(secondAddress - 1, crossing));
         Assert.Equal(new byte[] { 0xCC, 0xDD }, crossing.ToArray());
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void AllocationGapRejectsCrossingWriteWithoutPartialMutation()
     {
-        var probe = VirtualAlloc(
-            0,
-            (nuint)(3 * HostAllocationGranularity),
-            MemReserve,
-            PageNoAccess);
-        Assert.NotEqual(0, probe);
-        Assert.True(VirtualFree(probe, 0, MemRelease));
-
-        using var memory = new PhysicalVirtualMemory();
-        var firstAddress = unchecked((ulong)probe);
+        using var hostMemory = new ContiguousHostMemory(
+            3 * HostAllocationGranularity);
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+        var firstAddress = hostMemory.BaseAddress;
         var thirdAddress = firstAddress + (2 * HostAllocationGranularity);
         Assert.Equal(
             firstAddress,
@@ -409,20 +404,8 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Equal(0, one[0]);
     }
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern nint VirtualAlloc(nint address, nuint size, uint allocationType, uint protection);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool VirtualFree(nint address, nuint size, uint freeType);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern nuint VirtualQuery(
-        nint address,
-        out MemoryBasicInformation64 information,
-        nuint length);
-
     private static bool TryFindReservedPage(
+        IHostMemory hostMemory,
         ulong address,
         ulong size,
         out ulong reservedAddress)
@@ -431,11 +414,15 @@ public sealed class PhysicalVirtualMemoryTests
         var cursor = address;
         while (cursor < end)
         {
-            var information = QueryPage(cursor);
+            if (!hostMemory.Query(cursor, out var information) ||
+                information.RegionSize == 0)
+            {
+                break;
+            }
             var regionEnd = information.RegionSize > ulong.MaxValue - information.BaseAddress
                 ? ulong.MaxValue
                 : information.BaseAddress + information.RegionSize;
-            if (information.State == MemReserve)
+            if (information.State == HostRegionState.Reserved)
             {
                 reservedAddress = Math.Max(cursor, information.BaseAddress);
                 return reservedAddress < end;
@@ -453,62 +440,50 @@ public sealed class PhysicalVirtualMemoryTests
         return false;
     }
 
-    private static MemoryBasicInformation64 QueryPage(ulong address)
-    {
-        Assert.NotEqual(
-            0u,
-            VirtualQuery(
-                unchecked((nint)address),
-                out var information,
-                (nuint)Marshal.SizeOf<MemoryBasicInformation64>()));
-        return information;
-    }
-
     private static HostRegionInfo QueryHostPage(IHostMemory hostMemory, ulong address)
     {
         Assert.True(hostMemory.Query(address, out var information));
         return information;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MemoryBasicInformation64
+    private sealed class ContiguousHostMemory : IHostMemory, IDisposable
     {
-        public ulong BaseAddress;
-        public ulong AllocationBase;
-        public uint AllocationProtect;
-        public uint Alignment1;
-        public ulong RegionSize;
-        public uint State;
-        public uint Protect;
-        public uint Type;
-        public uint Alignment2;
-    }
-
-    private sealed class ContiguousWindowsHostMemory : IHostMemory, IDisposable
-    {
-        private readonly IHostMemory _inner = HostPlatform.Current.Memory;
+        private readonly IHostMemory _inner = TestHostMemory.Create();
         private readonly Dictionary<ulong, ulong> _allocationSizes = [];
+        private readonly ulong _reservationBase;
+        private readonly ulong _reservedPrefixSize;
         private readonly ulong _size;
         private bool _disposed;
 
-        public ContiguousWindowsHostMemory(ulong size)
+        public ContiguousHostMemory(
+            ulong size,
+            ulong reservedPrefixSize = 0)
         {
+            if (reservedPrefixSize > size)
+            {
+                throw new ArgumentOutOfRangeException(nameof(reservedPrefixSize));
+            }
+
             _size = size;
-            // Keep the complete address window reserved for the test's lifetime.
-            // The old probe/free/reallocate pattern let concurrent runtime and test
-            // allocations steal this range before PhysicalVirtualMemory claimed it.
-            var reservation = VirtualAlloc(
+            _reservedPrefixSize = reservedPrefixSize;
+            // Keep one complete address window reserved for the test's lifetime,
+            // then commit individual child allocations inside it. This exercises
+            // the same IHostMemory contract on Windows, Linux, and macOS without
+            // letting unrelated allocations steal gaps between test mappings.
+            var reservationSize = checked(size + HostAllocationGranularity);
+            var reservation = _inner.Reserve(
                 0,
-                checked((nuint)size),
-                MemReserve,
-                PageNoAccess);
+                reservationSize,
+                HostPageProtection.NoAccess);
             if (reservation == 0)
             {
                 throw new OutOfMemoryException(
                     $"Could not reserve {size} bytes for the contiguous-memory test.");
             }
 
-            BaseAddress = unchecked((ulong)reservation);
+            _reservationBase = reservation;
+            BaseAddress = (reservation + HostAllocationGranularity - 1) &
+                ~(HostAllocationGranularity - 1);
         }
 
         public ulong BaseAddress { get; }
@@ -519,27 +494,26 @@ public sealed class PhysicalVirtualMemoryTests
             HostPageProtection protection)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            var allocationBase = desiredAddress & ~(HostAllocationGranularity - 1);
+            var allocationSize = checked(desiredAddress - allocationBase + size);
             if (desiredAddress < BaseAddress ||
                 size == 0 ||
                 size > _size ||
                 desiredAddress > BaseAddress + _size - size ||
-                _allocationSizes.ContainsKey(desiredAddress))
+                allocationBase < BaseAddress ||
+                allocationSize > BaseAddress + _size - allocationBase ||
+                _allocationSizes.ContainsKey(allocationBase))
             {
                 return 0;
             }
 
-            var result = VirtualAlloc(
-                unchecked((nint)desiredAddress),
-                checked((nuint)size),
-                MemCommit,
-                ToNativeProtection(protection));
-            if (result == 0)
+            if (!_inner.Commit(allocationBase, allocationSize, protection))
             {
                 return 0;
             }
 
-            _allocationSizes.Add(desiredAddress, size);
-            return unchecked((ulong)result);
+            _allocationSizes.Add(allocationBase, allocationSize);
+            return allocationBase;
         }
 
         public ulong Reserve(
@@ -561,15 +535,10 @@ public sealed class PhysicalVirtualMemoryTests
 
         public bool Free(ulong address)
         {
-            if (!_allocationSizes.Remove(address, out var size))
-            {
-                return false;
-            }
-
-            return VirtualFree(
-                unchecked((nint)address),
-                checked((nuint)size),
-                MemDecommit);
+            // Child regions stay committed until the owning reservation is
+            // released. PhysicalVirtualMemory still observes successful frees,
+            // while this fixture retains a stable contiguous window.
+            return _allocationSizes.Remove(address);
         }
 
         public bool Protect(
@@ -586,8 +555,40 @@ public sealed class PhysicalVirtualMemoryTests
             out uint rawOldProtection) =>
             _inner.ProtectRaw(address, size, rawProtection, out rawOldProtection);
 
-        public bool Query(ulong address, out HostRegionInfo info) =>
-            _inner.Query(address, out info);
+        public bool Query(ulong address, out HostRegionInfo info)
+        {
+            if (!_inner.Query(address, out info))
+            {
+                return false;
+            }
+
+            // The fixture owns this reservation, so uncommitted portions are
+            // available to its child allocator even though the OS correctly
+            // reports them as reserved to unrelated processes.
+            if (address >= BaseAddress &&
+                address < BaseAddress + _size &&
+                info.State == HostRegionState.Reserved)
+            {
+                var reservedEnd = BaseAddress + _reservedPrefixSize;
+                var logicalEnd = BaseAddress + _size;
+                var state = address < reservedEnd
+                    ? HostRegionState.Reserved
+                    : HostRegionState.Free;
+                var runEnd = state == HostRegionState.Reserved
+                    ? reservedEnd
+                    : logicalEnd;
+                info = info with
+                {
+                    BaseAddress = address,
+                    AllocationBase = BaseAddress,
+                    RegionSize = runEnd - address,
+                    State = state,
+                    Protection = HostPageProtection.NoAccess,
+                };
+            }
+
+            return true;
+        }
 
         public void FlushInstructionCache(ulong address, ulong size) =>
             _inner.FlushInstructionCache(address, size);
@@ -600,23 +601,8 @@ public sealed class PhysicalVirtualMemoryTests
             }
 
             _disposed = true;
-            Assert.True(VirtualFree(
-                unchecked((nint)BaseAddress),
-                0,
-                MemRelease));
+            Assert.True(_inner.Free(_reservationBase));
         }
-
-        private static uint ToNativeProtection(HostPageProtection protection) => protection switch
-        {
-            HostPageProtection.NoAccess => PageNoAccess,
-            HostPageProtection.ReadOnly => 0x02,
-            HostPageProtection.ReadWrite => PageReadWrite,
-            HostPageProtection.Execute => 0x10,
-            HostPageProtection.ReadExecute => PageExecuteRead,
-            HostPageProtection.ReadWriteExecute => 0x40,
-            HostPageProtection.ExecuteWriteCopy => 0x80,
-            _ => throw new ArgumentOutOfRangeException(nameof(protection), protection, null),
-        };
     }
 
     private sealed class FailingRawProtectionHostMemory(IHostMemory inner) : IHostMemory
@@ -684,51 +670,49 @@ public sealed class PhysicalVirtualMemoryTests
             PhysicalVirtualMemory.ShouldReserveWithoutCommit(alignedSize, executable));
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public unsafe void GetPointerCommitsLazyReservedPageBeforeReturning()
     {
-        using var memory = new PhysicalVirtualMemory();
+        var hostMemory = CreateHostMemory();
+        using var memory = new PhysicalVirtualMemory(hostMemory);
         var address = memory.AllocateAt(0, OneGibibyte, executable: false);
-        Assert.True(TryFindReservedPage(address, OneGibibyte, out var reservedAddress));
-        Assert.Equal(MemReserve, QueryPage(reservedAddress).State);
+        Assert.True(TryFindReservedPage(
+            hostMemory,
+            address,
+            OneGibibyte,
+            out var reservedAddress));
+        Assert.Equal(
+            HostRegionState.Reserved,
+            QueryHostPage(hostMemory, reservedAddress).State);
 
         var pointer = memory.GetPointer(reservedAddress);
 
         Assert.NotEqual(0, (nint)pointer);
-        Assert.Equal(MemCommit, QueryPage(reservedAddress).State);
+        Assert.Equal(
+            HostRegionState.Committed,
+            QueryHostPage(hostMemory, reservedAddress).State);
         *(byte*)pointer = 0xA5;
         Span<byte> actual = stackalloc byte[1];
         Assert.True(memory.TryRead(reservedAddress, actual));
         Assert.Equal(0xA5, actual[0]);
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void AllocationSearchSkipsLargeHostReservation()
     {
-        var blocker = VirtualAlloc(
-            0,
-            (nuint)HostBlockerSize,
-            MemReserve,
-            PageNoAccess);
-        Assert.NotEqual(0, blocker);
+        using var hostMemory = new ContiguousHostMemory(
+            HostBlockerSize + HostAllocationGranularity,
+            reservedPrefixSize: HostBlockerSize);
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+        var desiredAddress = hostMemory.BaseAddress;
 
-        try
-        {
-            using var memory = new PhysicalVirtualMemory();
-            var desiredAddress = unchecked((ulong)blocker);
-
-            Assert.True(memory.TryAllocateAtOrAbove(
-                desiredAddress,
-                size: 0x1_0000,
-                executable: false,
-                alignment: 0x1000,
-                out var actualAddress));
-            Assert.True(actualAddress >= desiredAddress + HostBlockerSize);
-        }
-        finally
-        {
-            Assert.True(VirtualFree(blocker, 0, MemRelease));
-        }
+        Assert.True(memory.TryAllocateAtOrAbove(
+            desiredAddress,
+            size: HostAllocationGranularity,
+            executable: false,
+            alignment: 0x1000,
+            out var actualAddress));
+        Assert.Equal(desiredAddress + HostBlockerSize, actualAddress);
     }
 
     [Fact]
@@ -776,19 +760,12 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Empty(memory.SnapshotRegions());
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void UnalignedRequestedAllocationPreservesGuestAddressAndTail()
     {
-        var probe = VirtualAlloc(
-            0,
-            0x1_0000,
-            MemReserve,
-            PageNoAccess);
-        Assert.NotEqual(0, probe);
-        Assert.True(VirtualFree(probe, 0, MemRelease));
-
-        using var memory = new PhysicalVirtualMemory();
-        var desiredAddress = unchecked((ulong)probe) + 0x1000;
+        using var hostMemory = new ContiguousHostMemory(HostAllocationGranularity);
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+        var desiredAddress = hostMemory.BaseAddress + 0x1000;
         var actualAddress = memory.AllocateAt(
             desiredAddress,
             0x2000,
@@ -803,19 +780,12 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Equal(0xA5, tail[0]);
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void AllocationSearchReturnsUnalignedGuestCandidateInsteadOfRoundedHostBase()
     {
-        var probe = VirtualAlloc(
-            0,
-            0x1_0000,
-            MemReserve,
-            PageNoAccess);
-        Assert.NotEqual(0, probe);
-        Assert.True(VirtualFree(probe, 0, MemRelease));
-
-        using var memory = new PhysicalVirtualMemory();
-        var desiredAddress = unchecked((ulong)probe) + 0x1000;
+        using var hostMemory = new ContiguousHostMemory(HostAllocationGranularity);
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+        var desiredAddress = hostMemory.BaseAddress + 0x1000;
 
         Assert.True(memory.TryAllocateAtOrAbove(
             desiredAddress,

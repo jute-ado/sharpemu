@@ -54,6 +54,66 @@ public sealed class PosixHostMemoryQueryTests
                 address + pageSize,
                 address + pageSize,
                 pageSize,
+                HostRegionState.Reserved,
+                HostPageProtection.NoAccess);
+        }
+        finally
+        {
+            Assert.True(memory.Free(address));
+        }
+    }
+
+    [Fact]
+    public void CommitSplitsReservationIntoCommitmentRuns()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var pageSize = checked((ulong)Environment.SystemPageSize);
+        var memory = new PosixHostMemory();
+        var address = memory.Reserve(
+            0,
+            3 * pageSize,
+            HostPageProtection.ReadWrite);
+        Assert.NotEqual(0UL, address);
+
+        try
+        {
+            AssertRegion(
+                memory,
+                address,
+                address,
+                3 * pageSize,
+                HostRegionState.Reserved,
+                HostPageProtection.NoAccess);
+
+            Assert.True(memory.Commit(
+                address + pageSize,
+                pageSize,
+                HostPageProtection.ReadWrite));
+
+            AssertRegion(
+                memory,
+                address,
+                address,
+                pageSize,
+                HostRegionState.Reserved,
+                HostPageProtection.NoAccess);
+            AssertRegion(
+                memory,
+                address + pageSize,
+                address + pageSize,
+                pageSize,
+                HostRegionState.Committed,
+                HostPageProtection.ReadWrite);
+            AssertRegion(
+                memory,
+                address + 2 * pageSize,
+                address + 2 * pageSize,
+                pageSize,
+                HostRegionState.Reserved,
                 HostPageProtection.NoAccess);
         }
         finally
@@ -84,9 +144,9 @@ public sealed class PosixHostMemoryQueryTests
                 out var oldProtection), "Failed to protect the middle page read-only.");
             Assert.Equal(0x04U, oldProtection);
 
-            AssertRegion(memory, address, address, pageSize, HostPageProtection.ReadWrite);
-            AssertRegion(memory, address + pageSize, address + pageSize, pageSize, HostPageProtection.ReadOnly);
-            AssertRegion(memory, address + 2 * pageSize, address + 2 * pageSize, pageSize, HostPageProtection.ReadWrite);
+            AssertRegion(memory, address, address, pageSize, HostRegionState.Committed, HostPageProtection.ReadWrite);
+            AssertRegion(memory, address + pageSize, address + pageSize, pageSize, HostRegionState.Committed, HostPageProtection.ReadOnly);
+            AssertRegion(memory, address + 2 * pageSize, address + 2 * pageSize, pageSize, HostRegionState.Committed, HostPageProtection.ReadWrite);
 
             Assert.True(memory.Protect(
                 address,
@@ -94,7 +154,7 @@ public sealed class PosixHostMemoryQueryTests
                 HostPageProtection.ReadOnly,
                 out oldProtection), "Failed to protect the first page read-only.");
             Assert.Equal(0x04U, oldProtection);
-            AssertRegion(memory, address, address, 2 * pageSize, HostPageProtection.ReadOnly);
+            AssertRegion(memory, address, address, 2 * pageSize, HostRegionState.Committed, HostPageProtection.ReadOnly);
 
             Assert.True(memory.Protect(
                 address,
@@ -102,7 +162,7 @@ public sealed class PosixHostMemoryQueryTests
                 HostPageProtection.ReadWrite,
                 out oldProtection), "Failed to restore the complete allocation to read-write.");
             Assert.Equal(0x02U, oldProtection);
-            AssertRegion(memory, address, address, 3 * pageSize, HostPageProtection.ReadWrite);
+            AssertRegion(memory, address, address, 3 * pageSize, HostRegionState.Committed, HostPageProtection.ReadWrite);
         }
         finally
         {
@@ -131,6 +191,7 @@ public sealed class PosixHostMemoryQueryTests
 
             Assert.Equal(address, region.BaseAddress);
             Assert.Equal(reservationSize, region.RegionSize);
+            Assert.Equal(HostRegionState.Reserved, region.State);
             Assert.Equal(HostPageProtection.NoAccess, region.Protection);
             Assert.True(
                 stopwatch.Elapsed < TimeSpan.FromMilliseconds(100),
@@ -147,11 +208,13 @@ public sealed class PosixHostMemoryQueryTests
         ulong queryAddress,
         ulong expectedBase,
         ulong expectedSize,
+        HostRegionState expectedState,
         HostPageProtection expectedProtection)
     {
         Assert.True(memory.Query(queryAddress, out var region), $"Failed to query address 0x{queryAddress:X}.");
         Assert.Equal(expectedBase, region.BaseAddress);
         Assert.Equal(expectedSize, region.RegionSize);
+        Assert.Equal(expectedState, region.State);
         Assert.Equal(expectedProtection, region.Protection);
     }
 }
