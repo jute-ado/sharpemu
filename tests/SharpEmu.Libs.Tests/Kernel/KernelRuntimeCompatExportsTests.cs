@@ -127,4 +127,71 @@ public sealed class KernelRuntimeCompatExportsTests
         Assert.Equal(10_000_000UL, frequencyHz); // DefaultKernelTscFrequency
         Assert.Equal("qpc", source);
     }
+
+    [Theory]
+    [InlineData(1_000, 1_000, 10_000_000, 0, 0)]
+    [InlineData(999, 1_000, 10_000_000, 0, 0)]
+    [InlineData(11_234_567, 1_234_567, 10_000_000, 1, 0)]
+    [InlineData(16_234_567, 1_234_567, 10_000_000, 1, 500_000_000)]
+    [InlineData(4, 0, 3, 1, 333_333_333)]
+    public void MonotonicCounterConversion_ProducesNormalizedElapsedTimespec(
+        long timestamp,
+        long origin,
+        long frequency,
+        long expectedSeconds,
+        long expectedNanoseconds)
+    {
+        var (seconds, nanoseconds) =
+            KernelRuntimeCompatExports.ConvertMonotonicCounterToTimespec(
+                timestamp,
+                origin,
+                frequency);
+
+        Assert.Equal(expectedSeconds, seconds);
+        Assert.Equal(expectedNanoseconds, nanoseconds);
+        Assert.InRange(nanoseconds, 0, 999_999_999);
+    }
+
+    [Fact]
+    public void MonotonicCounterConversion_RemainsOrderedAcrossSecondBoundary()
+    {
+        var before = KernelRuntimeCompatExports.ConvertMonotonicCounterToTimespec(
+            timestamp: 10_999_999,
+            origin: 1_000_000,
+            frequency: 10_000_000);
+        var after = KernelRuntimeCompatExports.ConvertMonotonicCounterToTimespec(
+            timestamp: 11_000_001,
+            origin: 1_000_000,
+            frequency: 10_000_000);
+
+        Assert.Equal((0L, 999_999_900L), before);
+        Assert.Equal((1L, 100L), after);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void MonotonicCounterConversion_RejectsInvalidFrequency(long frequency)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => KernelRuntimeCompatExports.ConvertMonotonicCounterToTimespec(
+                timestamp: 1,
+                origin: 0,
+                frequency));
+    }
+
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(8, true)]
+    [InlineData(9, false)]
+    [InlineData(119, false)]
+    [InlineData(120, true)]
+    [InlineData(121, false)]
+    [InlineData(240, true)]
+    public void ClockTraceSampling_IsBounded(long callNumber, bool expected)
+    {
+        Assert.Equal(
+            expected,
+            KernelRuntimeCompatExports.ShouldTraceClockSample(callNumber));
+    }
 }
