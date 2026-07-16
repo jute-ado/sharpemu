@@ -202,7 +202,10 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
                 return null;
             }
 
-            var alignedSize = AlignUp((ulong)size, PageSize);
+            if (!TryAlignUp((ulong)size, PageSize, out var alignedSize))
+            {
+                return null;
+            }
 
             lock (Gate)
             {
@@ -215,7 +218,11 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
                     // Commit inside an existing mapping: the pages are already
                     // backed (demand paged), so only apply the protection.
                     var start = AlignDown((ulong)address, PageSize);
-                    var end = AlignUp((ulong)address + alignedSize, PageSize);
+                    if ((ulong)address > ulong.MaxValue - alignedSize ||
+                        !TryAlignUp((ulong)address + alignedSize, PageSize, out var end))
+                    {
+                        return null;
+                    }
                     if (end <= start || end > existing.End)
                     {
                         // Win32 fails a commit that runs past its reservation
@@ -253,6 +260,11 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
                 nint result;
                 if (address != null)
                 {
+                    if ((ulong)address > ulong.MaxValue - alignedSize)
+                    {
+                        return null;
+                    }
+
                     // Win32 maps at exactly the requested address or fails
                     // without touching existing mappings. Fail up front on
                     // any overlap we track, then place the mapping: Linux
@@ -349,7 +361,11 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
             }
 
             var start = AlignDown((ulong)address, PageSize);
-            var end = AlignUp((ulong)address + size, PageSize);
+            if ((ulong)address > ulong.MaxValue - (ulong)size ||
+                !TryAlignUp((ulong)address + (ulong)size, PageSize, out var end))
+            {
+                return false;
+            }
 
             lock (Gate)
             {
@@ -541,7 +557,18 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
 
         private static ulong AlignDown(ulong value, ulong alignment) => value & ~(alignment - 1);
 
-        private static ulong AlignUp(ulong value, ulong alignment) => checked((value + alignment - 1) & ~(alignment - 1));
+        private static bool TryAlignUp(ulong value, ulong alignment, out ulong result)
+        {
+            var mask = alignment - 1;
+            if (value > ulong.MaxValue - mask)
+            {
+                result = 0;
+                return false;
+            }
+
+            result = (value + mask) & ~mask;
+            return true;
+        }
 
         [DllImport("libc", SetLastError = true)]
         private static extern nint mmap(nint addr, nuint length, int prot, int flags, int fd, long offset);

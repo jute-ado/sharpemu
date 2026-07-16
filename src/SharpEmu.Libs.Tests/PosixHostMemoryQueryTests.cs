@@ -2,14 +2,112 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Diagnostics;
+using SharpEmu.HLE;
 using SharpEmu.HLE.Host;
 using SharpEmu.HLE.Host.Posix;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests;
 
-public sealed class PosixHostMemoryQueryTests
+public sealed unsafe class PosixHostMemoryQueryTests
 {
+    [Fact]
+    public void OversizedAllocationReturnsFailureWithoutThrowing()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var memory = new PosixHostMemory();
+
+        Assert.Equal(0UL, memory.Allocate(0, ulong.MaxValue, HostPageProtection.NoAccess));
+        Assert.Equal(0UL, memory.Reserve(0, ulong.MaxValue, HostPageProtection.NoAccess));
+        Assert.False(memory.Commit(1, ulong.MaxValue, HostPageProtection.ReadWrite));
+        Assert.False(memory.Protect(
+            0,
+            ulong.MaxValue,
+            HostPageProtection.ReadWrite,
+            out _));
+        Assert.True(HostMemory.Alloc(
+            null,
+            nuint.MaxValue,
+            HostMemory.MEM_RESERVE,
+            HostMemory.PAGE_NOACCESS) is null);
+        Assert.True(HostMemory.Alloc(
+            (void*)1,
+            nuint.MaxValue,
+            HostMemory.MEM_COMMIT,
+            HostMemory.PAGE_READWRITE) is null);
+        Assert.False(HostMemory.Protect(
+            null,
+            nuint.MaxValue,
+            HostMemory.PAGE_READWRITE,
+            out _));
+    }
+
+    [Fact]
+    public void CommitPastReservationFailsWithoutChangingPrefixProtection()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var pageSize = checked((ulong)Environment.SystemPageSize);
+        var memory = new PosixHostMemory();
+        var address = memory.Reserve(0, 2 * pageSize, HostPageProtection.NoAccess);
+        Assert.NotEqual(0UL, address);
+
+        try
+        {
+            Assert.False(memory.Commit(
+                address + pageSize,
+                2 * pageSize,
+                HostPageProtection.ReadWrite));
+            AssertRegion(
+                memory,
+                address + pageSize,
+                address + pageSize,
+                pageSize,
+                HostPageProtection.NoAccess);
+        }
+        finally
+        {
+            Assert.True(memory.Free(address));
+        }
+
+        var compatibilityAddress = HostMemory.Alloc(
+            null,
+            checked((nuint)(2 * pageSize)),
+            HostMemory.MEM_RESERVE,
+            HostMemory.PAGE_NOACCESS);
+        Assert.True(compatibilityAddress is not null);
+        try
+        {
+            var partialCommit = HostMemory.Alloc(
+                (byte*)compatibilityAddress + pageSize,
+                checked((nuint)(2 * pageSize)),
+                HostMemory.MEM_COMMIT,
+                HostMemory.PAGE_READWRITE);
+
+            Assert.True(partialCommit is null);
+            Assert.NotEqual(
+                0U,
+                HostMemory.Query(
+                    (byte*)compatibilityAddress + pageSize,
+                    out var compatibilityRegion));
+            Assert.Equal(HostMemory.PAGE_NOACCESS, compatibilityRegion.Protect);
+        }
+        finally
+        {
+            Assert.True(HostMemory.Free(
+                compatibilityAddress,
+                0,
+                HostMemory.MEM_RELEASE));
+        }
+    }
+
     [Fact]
     public void QueryReturnsContiguousProtectionRuns()
     {
