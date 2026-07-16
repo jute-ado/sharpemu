@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "artifactDirectory": "../../artifacts/game-tests",
+  "cases": [
+    {
+      "name": "Example game load",
+      "executablePath": "X:/Legally Owned Games/Example/app0/eboot.bin",
+      "mode": "load-only",
+      "timeoutSeconds": 20,
+      "expectedBundleSha256": "optional-local-bundle-fingerprint",
+      "expectations": {
+        "allowedResults": [
+          "IMAGE_LOADED"
+        ],
+        "forbiddenResults": [
+          "HOST_ERROR"
+        ],
+        "applicationTitleId": "EXAMPLE000",
+        "minimumModules": 0,
+        "requireNoModuleLoadFailures": true,
+        "requireSuccessfulModuleInitializers": true
+      }
+    },
+    {
+      "name": "Example game execution smoke test",
+      "executablePath": "X:/Legally Owned Games/Example/app0/eboot.bin",
+      "mode": "execution",
+      "timeoutSeconds": 20,
+      "expectations": {
+        "allowedResults": [
+          "EXECUTION_TIMED_OUT",
+          "ORBIS_GEN2_OK"
+        ],
+        "forbiddenResults": [
+          "ORBIS_GEN2_ERROR_CPU_TRAP",
+          "HOST_ERROR"
+        ],
+        "requireNoModuleLoadFailures": true,
+        "requireSuccessfulModuleInitializers": true
+      }
+    }
+  ]
+}

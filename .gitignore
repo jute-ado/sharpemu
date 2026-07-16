@@ -33,6 +33,10 @@ packages/
 .dotnet-home/
 .cache/
 
+# Local compatibility manifests point at legally owned game dumps and must
+# never be committed. The reusable harness and redacted example stay tracked.
+tests/SharpEmu.GameTests/games.local.json
+
 .DS_Store
 Thumbs.db
 Desktop.ini
