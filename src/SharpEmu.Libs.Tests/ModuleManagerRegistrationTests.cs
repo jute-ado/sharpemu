@@ -4,6 +4,7 @@
 using System.Reflection;
 using System.Reflection.Emit;
 using SharpEmu.HLE;
+using SharpEmu.Testing;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests;
@@ -20,7 +21,7 @@ public sealed class ModuleManagerRegistrationTests
         var manager = new ModuleManager();
 
         var exception = Assert.Throws<InvalidOperationException>(
-            () => manager.RegisterFromAssembly(assembly, Generation.Gen5));
+            () => ReflectionExportDiscovery.Discover(assembly, Generation.Gen5));
 
         Assert.Contains("duplicate-nid", exception.Message, StringComparison.Ordinal);
         Assert.Contains("FirstDuplicate", exception.Message, StringComparison.Ordinal);
@@ -38,9 +39,9 @@ public sealed class ModuleManagerRegistrationTests
         var manager = new ModuleManager();
 
         var first = Assert.Throws<InvalidOperationException>(
-            () => manager.RegisterFromAssembly(assembly, Generation.Gen5));
+            () => ReflectionExportDiscovery.Discover(assembly, Generation.Gen5));
         var second = Assert.Throws<InvalidOperationException>(
-            () => manager.RegisterFromAssembly(assembly, Generation.Gen5));
+            () => ReflectionExportDiscovery.Discover(assembly, Generation.Gen5));
 
         Assert.Contains("Invalid", first.Message, StringComparison.Ordinal);
         Assert.Equal(first.Message, second.Message);
@@ -56,10 +57,14 @@ public sealed class ModuleManagerRegistrationTests
             new ExportSpec("Unrelated", "unrelated-nid"),
             new ExportSpec("Conflict", "shared-nid"));
         var manager = new ModuleManager();
-        Assert.Equal(1, manager.RegisterFromAssembly(originalAssembly, Generation.Gen5));
+        Assert.Equal(
+            1,
+            manager.RegisterExports(
+                ReflectionExportDiscovery.Discover(originalAssembly, Generation.Gen5)));
 
         var exception = Assert.Throws<InvalidOperationException>(
-            () => manager.RegisterFromAssembly(conflictingAssembly, Generation.Gen5));
+            () => manager.RegisterExports(
+                ReflectionExportDiscovery.Discover(conflictingAssembly, Generation.Gen5)));
 
         Assert.Contains("shared-nid", exception.Message, StringComparison.Ordinal);
         Assert.True(manager.TryGetExport("shared-nid", out var original));
@@ -68,13 +73,16 @@ public sealed class ModuleManagerRegistrationTests
     }
 
     [Fact]
-    public void SuccessfulAssemblyIsRegisteredOnlyOnce()
+    public void RepeatedRegistrationIsRejectedWithoutMutation()
     {
         var assembly = CreateExportAssembly(new ExportSpec("Export", "export-nid"));
         var manager = new ModuleManager();
+        var exports = ReflectionExportDiscovery.Discover(assembly, Generation.Gen5);
 
-        Assert.Equal(1, manager.RegisterFromAssembly(assembly, Generation.Gen5));
-        Assert.Equal(0, manager.RegisterFromAssembly(assembly, Generation.Gen5));
+        Assert.Equal(1, manager.RegisterExports(exports));
+        Assert.Throws<InvalidOperationException>(() => manager.RegisterExports(exports));
+        Assert.True(manager.TryGetExport("export-nid", out var registered));
+        Assert.Equal("Export", registered.Name);
     }
 
     private static Assembly CreateExportAssembly(params ExportSpec[] exports)

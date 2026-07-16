@@ -122,7 +122,9 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             ImportTraceLimit = Math.Max(0, options.ImportTraceLimit),
         };
         var moduleManager = new ModuleManager();
-        moduleManager.RegisterFromAssembly(typeof(KernelExports).Assembly, Generation.Gen4 | Generation.Gen5, Aerolib.Instance);
+        moduleManager.RegisterExports(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(
+                Generation.Gen4 | Generation.Gen5));
         moduleManager.Freeze();
 
         var fileSystem = new PhysicalFileSystem();

@@ -215,6 +215,12 @@
           "SharpEmu.ShaderCompiler": "[0.0.1, )"
         }
       },
+      "sharpemu.testsupport": {
+        "type": "Project",
+        "dependencies": {
+          "SharpEmu.HLE": "[0.0.1, )"
+        }
+      },
       "Iced": {
         "type": "CentralTransitive",
         "requested": "[1.21.0, )",
