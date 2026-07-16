@@ -133,6 +133,35 @@ public sealed class AgcIndirectCommandBufferTests
     }
 
     [Fact]
+    public void DriverSubmitDcb_DoesNotResumeWaitersFromAnotherGuestMemory()
+    {
+        var firstMemory = CreateWaitingGuestMemory(0x4444_4444);
+        var firstContext = new CpuContext(firstMemory, Generation.Gen5);
+        firstContext[CpuRegister.Rdi] = SubmitPacketAddress;
+
+        Assert.Equal(0, AgcExports.DriverSubmitDcb(firstContext));
+        Assert.True(firstContext.TryReadUInt32(DestinationAddress, out var firstValueBeforeResume));
+        Assert.Equal(0u, firstValueBeforeResume);
+
+        var secondMemory = CreateWaitingGuestMemory(0x5555_5555);
+        var secondContext = new CpuContext(secondMemory, Generation.Gen5);
+        Assert.True(secondContext.TryWriteUInt32(WaitAddress, 1));
+        secondContext[CpuRegister.Rdi] = ResumeSubmitPacketAddress;
+
+        Assert.Equal(0, AgcExports.DriverSubmitDcb(secondContext));
+        Assert.True(secondContext.TryReadUInt32(DestinationAddress, out var secondValue));
+        Assert.Equal(0u, secondValue);
+        Assert.True(firstContext.TryReadUInt32(DestinationAddress, out var firstValueAfterOtherSubmit));
+        Assert.Equal(0u, firstValueAfterOtherSubmit);
+
+        Assert.True(firstContext.TryWriteUInt32(WaitAddress, 1));
+        firstContext[CpuRegister.Rdi] = ResumeSubmitPacketAddress;
+        Assert.Equal(0, AgcExports.DriverSubmitDcb(firstContext));
+        Assert.True(firstContext.TryReadUInt32(DestinationAddress, out var firstValueAfterResume));
+        Assert.Equal(0x4444_4444u, firstValueAfterResume);
+    }
+
+    [Fact]
     public void DcbSetIndexCount_EmitsIndexBufferSizePacket()
     {
         const ulong commandBufferAddress = 0x5000;
@@ -199,6 +228,24 @@ public sealed class AgcIndirectCommandBufferTests
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(16), reference);
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(20), uint.MaxValue);
         return packet;
+    }
+
+    private static FakeGuestMemory CreateWaitingGuestMemory(uint resumedValue)
+    {
+        var parent = new byte[9 * sizeof(uint)];
+        CreateIndirectBufferPacket(ChildDcbAddress, 7).CopyTo(parent, 0);
+        CreateWriteDataPacket(DestinationAddress, resumedValue).CopyTo(parent, 16);
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(SubmitPacketAddress, CreateSubmitPacket(ParentDcbAddress, 9));
+        memory.AddRegion(ParentDcbAddress, parent);
+        memory.AddRegion(ChildDcbAddress, CreateWaitRegMemPacket(WaitAddress, 1));
+        memory.AddRegion(DestinationAddress, new byte[sizeof(uint)]);
+        memory.AddRegion(WaitAddress, new byte[sizeof(uint)]);
+        memory.AddRegion(
+            ResumeSubmitPacketAddress,
+            CreateSubmitPacket(ResumeDcbAddress, 1));
+        memory.AddRegion(ResumeDcbAddress, BitConverter.GetBytes(0x8000_0000u));
+        return memory;
     }
 
     private static uint Pm4(uint dwordCount, uint opcode) =>

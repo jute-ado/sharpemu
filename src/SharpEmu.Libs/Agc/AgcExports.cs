@@ -412,6 +412,7 @@ public static partial class AgcExports
     private sealed class SubmittedGpuState
     {
         public object Gate { get; } = new();
+        public GpuWaitRegistry WaitRegistry { get; } = new();
         public SubmittedDcbState Graphics { get; } = new();
         public Dictionary<uint, SubmittedDcbState> ComputeQueues { get; } = new();
         public Dictionary<ulong, ComputeImageWriter> ComputeImageWriters { get; } = new();
@@ -2682,7 +2683,7 @@ public static partial class AgcExports
     {
         for (var pass = 0; pass < 256; pass++)
         {
-            var woken = GpuWaitRegistry.CollectSatisfied((address, is64Bit) =>
+            var woken = gpuState.WaitRegistry.CollectSatisfied((address, is64Bit) =>
             {
                 if (is64Bit)
                 {
@@ -3005,7 +3006,7 @@ public static partial class AgcExports
                     };
                     if (hasCurVal && !GpuWaitRegistry.Compare(waiter, curVal))
                     {
-                        GpuWaitRegistry.Register(waitAddr, waiter);
+                        gpuState.WaitRegistry.Register(waitAddr, waiter);
 
                         if (tracePackets)
                         {
@@ -3042,7 +3043,7 @@ public static partial class AgcExports
                     };
                     if (!GpuWaitRegistry.Compare(waiter, curVal))
                     {
-                        GpuWaitRegistry.Register(waitAddr, waiter);
+                        gpuState.WaitRegistry.Register(waitAddr, waiter);
 
                         if (tracePackets)
                         {
