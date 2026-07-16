@@ -64,4 +64,32 @@ public sealed class VideoOutCompatibilityTests
         Assert.Equal("libSceVideoOut", attribute.LibraryName);
         Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
     }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(1, 0)]
+    public void OutputSupportIsLimitedToMainBus(int busType, int expected)
+    {
+        var context = new CpuContext(new FakeGuestMemory(), Generation.Gen5);
+        context[CpuRegister.Rdi] = unchecked((ulong)busType);
+        context[CpuRegister.Rsi] = uint.MaxValue;
+        context[CpuRegister.Rdx] = uint.MaxValue;
+
+        Assert.Equal(expected, VideoOutExports.VideoOutIsOutputSupported(context));
+    }
+
+    [Fact]
+    public void OutputSupportExportMetadataIsExact()
+    {
+        var method = typeof(VideoOutExports).GetMethod(
+            nameof(VideoOutExports.VideoOutIsOutputSupported),
+            BindingFlags.Public | BindingFlags.Static);
+        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
+
+        Assert.NotNull(attribute);
+        Assert.Equal("Nv8c-Kb+DUM", attribute.Nid);
+        Assert.Equal("sceVideoOutIsOutputSupported", attribute.ExportName);
+        Assert.Equal("libSceVideoOut", attribute.LibraryName);
+        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+    }
 }
