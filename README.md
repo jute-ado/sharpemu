@@ -3,7 +3,7 @@ Copyright (C) 2026 SharpEmu Emulator Project
 SPDX-License-Identifier: GPL-2.0-or-later
 -->
 
-# SharpEmu
+# SharpEmu — Jute research fork
 
 <p align="center">
   <img src="./assets/images/logo.png" width=30% height=30% />
@@ -13,9 +13,47 @@ SPDX-License-Identifier: GPL-2.0-or-later
   An experimental PlayStation 5 emulator for Windows, Linux and macOS.
 </p>
 
+> [!IMPORTANT]
+> This repository is an independent research fork of the
+> [original SharpEmu project](https://github.com/par274/sharpemu). SharpEmu and
+> its contributors created the foundation this work builds on; their ambitious
+> work is deeply appreciated. This fork is not an official upstream release.
+
+## About This Fork
+
+This fork exists purely for emulator research and education. It is mostly
+developed through AI-assisted, exploratory “vibe coding” under human direction,
+followed by code review, focused regression tests, full-suite validation, and
+cross-platform CI. AI assistance is a development tool here, not evidence that
+a change is correct.
+
+The fork is kept synchronized with upstream while experimenting with a more
+test-driven workflow. Its current emphasis includes:
+
+- regression tests for CPU execution, memory, loading, HLE, shaders, and Vulkan
+- synthetic guest programs and shader workloads that require no copyrighted
+  games, firmware, or proprietary assets
+- generated HLE export registration instead of runtime reflection discovery
+- one canonical implementation path for each subsystem rather than parallel
+  compatibility implementations
+- stronger Windows, Linux, and macOS x64 build and runtime validation
+- small, focused branches whose changes are merged only after relevant tests
+  and hosted CI pass
+
+The goal is to learn, improve emulator foundations, and—where a change is
+general, understandable, independently tested, and useful upstream—eventually
+contribute suitable work back to the original project. Not every experiment in
+this fork will be appropriate for upstream, and any proposed contribution must
+follow the original project’s review and contribution requirements.
+
+The list above describes the fork’s maintained direction rather than every
+individual commit. See the
+[current upstream comparison](https://github.com/par274/sharpemu/compare/main...jute-ado:sharpemu:main)
+for the exact code difference.
+
 <p align="center">
   <a href="https://discord.gg/6GejPEDqpc">
-    <img src="https://img.shields.io/badge/Discord-Join%20our%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord">
+    <img src="https://img.shields.io/badge/Discord-Upstream%20Community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join the upstream SharpEmu Discord">
   </a>
 </p>
 
@@ -24,8 +62,8 @@ SPDX-License-Identifier: GPL-2.0-or-later
 > can run the macOS x64 build through Rosetta 2.
 
 > [!WARNING]
-> SharpEmu is an experimental PS5 emulator developed from scratch in C#. The
-> current focus is accuracy and infrastructure rather than game-specific hacks.
+> SharpEmu is an experimental PS5 emulator written in C#. This fork’s current
+> focus is accuracy, tests, and infrastructure rather than game-specific hacks.
 
 ## Info
 
@@ -94,13 +132,14 @@ release includes the MoltenVK Vulkan implementation.
 
 > [!IMPORTANT]
 > This project does **not** support or condone piracy.
-> All games used during development and testing are dumped from consoles that we personally own.
-> Users are expected to use legally obtained copies of their games.
+> Games used for private development and testing must be legally obtained and
+> dumped from hardware owned by the tester. Game images are never committed to
+> this repository.
 
 ## Build
 
 1. Install the .NET SDK version specified in [`global.json`](./global.json).
-2. Clone the repository: `git clone https://github.com/sharpemu/sharpemu.git`
+2. Clone this fork: `git clone https://github.com/jute-ado/sharpemu.git`
 3. Open the solution file (`SharpEmu.slnx`) in **VSCode**.
 4. Build the project: `dotnet build` or `dotnet publish`
 5. Build artifacts will be located in the `artifacts` directory.
@@ -126,7 +165,7 @@ Provided valuable references for filesystem handling and low-level C# implementa
 
 # License
 
-- [**GPL-2.0 license**](https://github.com/sharpemu/sharpemu/blob/main/LICENSE)
+- [**GPL-2.0 license**](./LICENSE)
 
 ## Contributing
 
