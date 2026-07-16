@@ -182,6 +182,7 @@ public static partial class Gen5SpirvTranslator
         private uint _programCounter;
         private uint _programActive;
         private uint _globalBuffers;
+        private uint _storageBlockPointer;
         private uint _storageUintPointer;
         private uint _scratch;
         private uint _lds;
@@ -562,6 +563,8 @@ public static partial class Gen5SpirvTranslator
                 (uint)_totalGlobalBufferCount);
             var descriptorsPointer =
                 _module.TypePointer(SpirvStorageClass.StorageBuffer, descriptors);
+            _storageBlockPointer =
+                _module.TypePointer(SpirvStorageClass.StorageBuffer, block);
             _storageUintPointer =
                 _module.TypePointer(SpirvStorageClass.StorageBuffer, _uintType);
             _globalBuffers = _module.AddGlobalVariable(
@@ -2842,14 +2845,17 @@ public static partial class Gen5SpirvTranslator
             {
                 EmitExecConditional(() =>
                 {
-                    var original = EmitStorageBufferAtomic32(
-                        instruction.Opcode,
-                        BufferWordPointer(bindingIndex, dwordAddress),
-                        control.VectorData);
-                    if (control.Glc)
+                    EmitConditional(IsBufferWordInRange(bindingIndex, dwordAddress), () =>
                     {
-                        StoreV(control.VectorData, original);
-                    }
+                        var original = EmitStorageBufferAtomic32(
+                            instruction.Opcode,
+                            BufferWordPointer(bindingIndex, dwordAddress),
+                            control.VectorData);
+                        if (control.Glc)
+                        {
+                            StoreV(control.VectorData, original);
+                        }
+                    });
                 });
 
                 return true;
@@ -4566,7 +4572,14 @@ public static partial class Gen5SpirvTranslator
                     return false;
                 }
 
-                var coordinates = BuildIntegerCoordinates(image, 0);
+                var atomicImageSize = _module.AddInstruction(
+                    SpirvOp.ImageQuerySize,
+                    _module.TypeVector(_intType, 2),
+                    imageObject);
+                var coordinates = BuildClampedIntegerCoordinates(
+                    image,
+                    0,
+                    atomicImageSize);
                 var pointerType = _module.TypePointer(
                     SpirvStorageClass.Image,
                     resource.ComponentType);
@@ -5503,6 +5516,25 @@ public static partial class Gen5SpirvTranslator
                 UInt(0),
                 dwordAddress);
 
+        private uint IsBufferWordInRange(int binding, uint dwordAddress)
+        {
+            var buffer = _module.AddInstruction(
+                SpirvOp.AccessChain,
+                _storageBlockPointer,
+                _globalBuffers,
+                UInt((uint)binding));
+            var length = _module.AddInstruction(
+                SpirvOp.ArrayLength,
+                _uintType,
+                buffer,
+                0);
+            return _module.AddInstruction(
+                SpirvOp.ULessThan,
+                _boolType,
+                dwordAddress,
+                length);
+        }
+
         private uint ScalarPointer(uint register) => ScalarPointerAt(UInt(register));
 
         private uint ScalarPointerAt(uint index) =>
@@ -5726,6 +5758,22 @@ public static partial class Gen5SpirvTranslator
             _module.AddStatement(
                 SpirvOp.BranchConditional,
                 active,
+                activeLabel,
+                mergeLabel);
+            _module.AddLabel(activeLabel);
+            emit();
+            _module.AddStatement(SpirvOp.Branch, mergeLabel);
+            _module.AddLabel(mergeLabel);
+        }
+
+        private void EmitConditional(uint condition, Action emit)
+        {
+            var activeLabel = _module.AllocateId();
+            var mergeLabel = _module.AllocateId();
+            _module.AddStatement(SpirvOp.SelectionMerge, mergeLabel, 0);
+            _module.AddStatement(
+                SpirvOp.BranchConditional,
+                condition,
                 activeLabel,
                 mergeLabel);
             _module.AddLabel(activeLabel);
