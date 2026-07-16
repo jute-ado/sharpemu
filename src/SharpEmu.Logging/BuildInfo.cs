@@ -12,8 +12,8 @@ namespace SharpEmu.Logging;
 /// </summary>
 public static class BuildInfo
 {
-    private const string ProjectUrl = "https://github.com/sharpemu/sharpemu";
-    private const string CanonicalRepository = "sharpemu/sharpemu";
+    public const string ProjectUrl = "https://github.com/jute-ado/sharpemu";
+    public const string CanonicalRepository = "jute-ado/sharpemu";
 
     /// <summary>Short commit hash the build was produced from, or <c>null</c>.</summary>
     public static string? CommitSha { get; }
@@ -63,14 +63,12 @@ public static class BuildInfo
         var eventName = Normalize(metadata.GetValueOrDefault("SharpEmu.BuildEventName"));
         var gitRef = Normalize(metadata.GetValueOrDefault("SharpEmu.BuildRef"));
 
-        var isReleaseConfig = string.Equals(Configuration, "Release", StringComparison.OrdinalIgnoreCase);
-        var isCanonicalRepo = string.Equals(Repository, CanonicalRepository, StringComparison.OrdinalIgnoreCase);
-        var isReleaseTrigger =
-            string.Equals(eventName, "workflow_dispatch", StringComparison.OrdinalIgnoreCase) ||
-            (string.Equals(eventName, "push", StringComparison.OrdinalIgnoreCase) &&
-             string.Equals(gitRef, "refs/heads/main", StringComparison.OrdinalIgnoreCase));
-
-        IsOfficialRelease = isReleaseConfig && isCanonicalRepo && isReleaseTrigger && CommitSha is not null;
+        IsOfficialRelease = IsOfficialReleaseBuild(
+            Repository,
+            Configuration,
+            eventName,
+            gitRef,
+            CommitSha);
     }
 
     /// <summary>
@@ -137,6 +135,29 @@ public static class BuildInfo
         }
 
         return result;
+    }
+
+    internal static bool IsOfficialReleaseBuild(
+        string? repository,
+        string? configuration,
+        string? eventName,
+        string? gitRef,
+        string? commitSha)
+    {
+        var isReleaseConfig = string.Equals(
+            configuration,
+            "Release",
+            StringComparison.OrdinalIgnoreCase);
+        var isCanonicalRepo = string.Equals(
+            repository,
+            CanonicalRepository,
+            StringComparison.OrdinalIgnoreCase);
+        var isReleaseTrigger =
+            string.Equals(eventName, "workflow_dispatch", StringComparison.OrdinalIgnoreCase) ||
+            (string.Equals(eventName, "push", StringComparison.OrdinalIgnoreCase) &&
+             string.Equals(gitRef, "refs/heads/main", StringComparison.OrdinalIgnoreCase));
+        return isReleaseConfig && isCanonicalRepo && isReleaseTrigger &&
+            !string.IsNullOrWhiteSpace(commitSha);
     }
 
     private static string? Normalize(string? value) =>

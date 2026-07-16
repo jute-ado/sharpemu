@@ -8,6 +8,7 @@ using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
+using SharpEmu.Logging;
 
 namespace SharpEmu.GUI;
 
@@ -15,7 +16,8 @@ namespace SharpEmu.GUI;
 public static class Updater
 {
     private const string ApplyArgument = "--sharpemu-apply-update";
-    private const string LatestReleaseUrl = "https://api.github.com/repos/jute-ado/sharpemu/releases/latest";
+    private const string LatestReleaseUrl =
+        "https://api.github.com/repos/" + BuildInfo.CanonicalRepository + "/releases/latest";
     private static readonly TimeSpan CheckTimeout = TimeSpan.FromSeconds(10);
     private static readonly HttpClient Http = CreateHttpClient();
 

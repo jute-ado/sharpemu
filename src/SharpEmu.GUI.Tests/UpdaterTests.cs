@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Text.Json;
+using SharpEmu.Logging;
 using Xunit;
 
 namespace SharpEmu.GUI.Tests;
@@ -10,6 +11,38 @@ public sealed class UpdaterTests
 {
     private const string ReleaseSha = "0123456789abcdef0123456789abcdef01234567";
     private const string Digest = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+
+    [Fact]
+    public void ForkIdentityIsTheSingleReleaseSource()
+    {
+        Assert.Equal("jute-ado/sharpemu", BuildInfo.CanonicalRepository);
+        Assert.Equal("https://github.com/jute-ado/sharpemu", BuildInfo.ProjectUrl);
+    }
+
+    [Theory]
+    [InlineData("jute-ado/sharpemu", "Release", "push", "refs/heads/main", "0123456", true)]
+    [InlineData("JUTE-ADO/SHARPEMU", "release", "workflow_dispatch", "refs/heads/topic", "0123456", true)]
+    [InlineData("sharpemu/sharpemu", "Release", "push", "refs/heads/main", "0123456", false)]
+    [InlineData("jute-ado/sharpemu", "Release", "push", "refs/heads/topic", "0123456", false)]
+    [InlineData("jute-ado/sharpemu", "Debug", "push", "refs/heads/main", "0123456", false)]
+    [InlineData("jute-ado/sharpemu", "Release", "push", "refs/heads/main", null, false)]
+    public void OfficialReleaseClassificationIsForkBound(
+        string repository,
+        string configuration,
+        string eventName,
+        string gitRef,
+        string? commitSha,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            BuildInfo.IsOfficialReleaseBuild(
+                repository,
+                configuration,
+                eventName,
+                gitRef,
+                commitSha));
+    }
 
     [Fact]
     public void ParseRelease_SelectsForkArchiveAndUsesReleaseCommit()
