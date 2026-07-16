@@ -20,7 +20,10 @@ internal static class GpuWaitRegistry
         public ulong Mask;
         public uint CompareFunction;
         public bool Is64Bit;
+        public uint RemainingDwordBudget;
+        public int Depth;
         public object? State;
+        public object? Continuation;
     }
 
     private static readonly object _gate = new();
