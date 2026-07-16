@@ -76,7 +76,8 @@ internal interface IGuestGpuBackend
         uint primitiveType = 4,
         GuestIndexBuffer? indexBuffer = null,
         IReadOnlyList<GuestVertexBuffer>? vertexBuffers = null,
-        GuestRenderState? renderState = null);
+        GuestRenderState? renderState = null,
+        GuestShaderIdentity shaderIdentity = default);
 
     void SubmitOffscreenTranslatedDraw(
         IGuestCompiledShader pixelShader,
@@ -90,7 +91,8 @@ internal interface IGuestGpuBackend
         uint primitiveType = 4,
         GuestIndexBuffer? indexBuffer = null,
         IReadOnlyList<GuestVertexBuffer>? vertexBuffers = null,
-        GuestRenderState? renderState = null);
+        GuestRenderState? renderState = null,
+        GuestShaderIdentity shaderIdentity = default);
 
     void SubmitStorageTranslatedDraw(
         IGuestCompiledShader pixelShader,

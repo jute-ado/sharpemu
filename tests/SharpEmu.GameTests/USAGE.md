@@ -62,3 +62,18 @@ and a viewable BMP to the dump directory.
 Capture directories and machine-specific environment values are local
 diagnostics. Do not add game binaries, captures, local paths, or local
 fingerprints to the repository.
+
+## Selected draw vertex traces
+
+When an intermediate image identifies a suspicious shader pass, trace a bounded
+number of matching draws by either export- or pixel-shader address:
+
+```text
+SHARPEMU_TRACE_DRAW_SHADER=0x5662100@4
+```
+
+Each trace records render targets, primitive and index state, vertex-buffer
+metadata, the first referenced vertex records as raw bytes, and decoded values
+for known 32-bit float formats. This is one canonical replacement for
+shape- or texture-specific vertex probes; the limit after `@` prevents an
+accidental unbounded game log.
