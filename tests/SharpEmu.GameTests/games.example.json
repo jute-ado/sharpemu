@@ -36,7 +36,8 @@
           "HOST_ERROR"
         ],
         "requireNoModuleLoadFailures": true,
-        "requireSuccessfulModuleInitializers": true
+        "requireSuccessfulModuleInitializers": true,
+        "minimumObservedImportDispatches": 1000
       }
     }
   ]

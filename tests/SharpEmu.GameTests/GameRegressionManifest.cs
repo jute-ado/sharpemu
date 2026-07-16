@@ -69,4 +69,6 @@ internal sealed class GameRegressionExpectations
     public bool RequireNoModuleLoadFailures { get; init; }
 
     public bool RequireSuccessfulModuleInitializers { get; init; }
+
+    public long? MinimumObservedImportDispatches { get; init; }
 }

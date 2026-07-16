@@ -89,6 +89,67 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
+    public void ExecutionProgressUsesLargestObservedImportDispatch()
+    {
+        var testCase = CreateExecutionCase(
+            minimumObservedImportDispatches: 100_000);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        GameRegressionRunner.ValidateReport(
+            testCase,
+            report.RootElement,
+            "synthetic-report.json",
+            """
+            [LOADER][TRACE] Import#1000: libKernel:first (first)
+            [LOADER][TRACE] Import#120000: libSceAgc:later (later)
+            [LOADER][WARN] Import#119999 result: -1 (later)
+            """);
+
+        Assert.Equal(
+            120_000,
+            GameRegressionRunner.GetMaximumObservedImportDispatch(
+                "Import#7 Import#120000 Import#42"));
+    }
+
+    [Fact]
+    public void ExecutionFailsWhenImportProgressRegresses()
+    {
+        var testCase = CreateExecutionCase(
+            minimumObservedImportDispatches: 100_000);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                "[LOADER][TRACE] Import#99999: libKernel:test (test)"));
+
+        Assert.Contains(
+            "99999 was below 100000",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EarlyCpuTrapFailsExecutionSurvivalContract()
     {
         var testCase = CreateExecutionCase();
@@ -139,7 +200,8 @@ public sealed class GameRegressionHarnessTests
             StringComparison.Ordinal);
     }
 
-    private static GameRegressionCase CreateExecutionCase() => new()
+    private static GameRegressionCase CreateExecutionCase(
+        long? minimumObservedImportDispatches = null) => new()
     {
         Name = "execution survival",
         ExecutablePath = "eboot.bin",
@@ -159,6 +221,8 @@ public sealed class GameRegressionHarnessTests
             ],
             RequireNoModuleLoadFailures = true,
             RequireSuccessfulModuleInitializers = true,
+            MinimumObservedImportDispatches =
+                minimumObservedImportDispatches,
         },
     };
 
