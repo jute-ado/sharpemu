@@ -52,7 +52,29 @@ jobs:
       - name: Restore solution
         run: dotnet restore SharpEmu.slnx --locked-mode
 
+      - name: Test with coverage
+        if: ${{ runner.os == 'Linux' }}
+        run: >-
+          dotnet test SharpEmu.slnx
+          -c Release
+          --no-restore
+          -warnaserror
+          -p:DebugType=portable
+          -p:DebugSymbols=true
+          --logger trx
+          --results-directory artifacts/test-results/${{ runner.os }}
+          --collect:"XPlat Code Coverage"
+          --blame-crash
+          --blame-hang
+          --blame-hang-timeout 2m
+
+      - name: Summarize coverage
+        if: ${{ runner.os == 'Linux' && !cancelled() }}
+        shell: pwsh
+        run: ./.github/scripts/Summarize-Coverage.ps1 artifacts/test-results/Linux
+
       - name: Test
+        if: ${{ runner.os != 'Linux' }}
         run: >-
           dotnet test SharpEmu.slnx
           -c Release
