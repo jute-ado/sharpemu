@@ -22,7 +22,7 @@ public sealed class NativeImportBridgeTests
     private const ulong FallbackImportAddress = 0x0000_6FFF_FF00_0000;
     private const ulong NonvolatileSentinel = 0x1122_3344_5566_7788;
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task GuestCallDispatchesHleExportAndReturnsValue()
     {
         if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
@@ -46,7 +46,7 @@ public sealed class NativeImportBridgeTests
         AssertSuccessful(execution);
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task GuestCallDispatchesImportFromFallbackStubRegion()
     {
         if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
@@ -83,7 +83,7 @@ public sealed class NativeImportBridgeTests
         AssertSuccessful(execution);
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task ImportBridgeCarriesSixArgumentsAndPreservesNonvolatileRegister()
     {
         if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
@@ -120,7 +120,7 @@ public sealed class NativeImportBridgeTests
         AssertSuccessful(execution);
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task ImportBridgeCarriesIntegerArgumentsFromGuestStack()
     {
         if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
@@ -155,7 +155,7 @@ public sealed class NativeImportBridgeTests
         AssertSuccessful(execution);
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task ImportBridgePreservesGuestNonvolatileRegistersAcrossManagedHandler()
     {
         if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
@@ -171,7 +171,7 @@ public sealed class NativeImportBridgeTests
         AssertSuccessful(execution);
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task ImportBridgeReturnsFloatingPointValueInXmm0()
     {
         if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
@@ -197,7 +197,7 @@ public sealed class NativeImportBridgeTests
         AssertSuccessful(execution);
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task ImportBridgeCarriesFloatingPointArgumentsAndReturnValue()
     {
         if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
