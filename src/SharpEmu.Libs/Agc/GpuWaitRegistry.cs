@@ -7,7 +7,7 @@ namespace SharpEmu.Libs.Agc;
 // AgcExports re-checks every waiter against guest memory on each submit and resumes
 // the ones whose condition became true (labels are advanced by ReleaseMem/WriteData/
 // DmaData packets or by direct CPU writes).
-internal static class GpuWaitRegistry
+internal sealed class GpuWaitRegistry
 {
     public struct WaitingDcb
     {
@@ -26,10 +26,10 @@ internal static class GpuWaitRegistry
         public object? Continuation;
     }
 
-    private static readonly object _gate = new();
-    private static readonly Dictionary<ulong, List<WaitingDcb>> _waiters = new();
+    private readonly object _gate = new();
+    private readonly Dictionary<ulong, List<WaitingDcb>> _waiters = new();
 
-    public static void Register(ulong address, WaitingDcb waiter)
+    public void Register(ulong address, WaitingDcb waiter)
     {
         waiter.WaitAddress = address;
         lock (_gate)
@@ -46,7 +46,7 @@ internal static class GpuWaitRegistry
 
     // Re-evaluates every registered waiter. readValue receives (address, is64Bit) and
     // returns null when the memory is unreadable; such waiters are kept registered.
-    public static List<WaitingDcb>? CollectSatisfied(Func<ulong, bool, ulong?> readValue)
+    public List<WaitingDcb>? CollectSatisfied(Func<ulong, bool, ulong?> readValue)
     {
         List<WaitingDcb>? woken = null;
         lock (_gate)
