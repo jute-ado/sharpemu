@@ -17,6 +17,14 @@ namespace SharpEmu.Core.Cpu.Native;
 
 public sealed partial class DirectExecutionBackend
 {
+	private const int ImportSavedRaxOffset = -176;
+	private const int ImportSavedR10Offset = -168;
+	private const int ImportSavedR11Offset = -160;
+	private const int ImportSavedMxcsrOffset = -152;
+	private const int ImportSavedFpuControlOffset = -148;
+	private const int ImportSavedXmmOffset = -128;
+	private const int ImportVectorRegisterCount = 8;
+
 	private readonly object _importResultLogSampleGate = new();
 	private readonly Dictionary<string, int> _importResultLogSamples = new(StringComparer.Ordinal);
 
@@ -139,6 +147,7 @@ public sealed partial class DirectExecutionBackend
 		}
 
 		cpuContext.Rip = importStubEntry.Address;
+		LoadImportVolatileArguments(cpuContext, argPackPtr);
 		cpuContext[CpuRegister.Rdi] = *(ulong*)argPackPtr;
 		cpuContext[CpuRegister.Rsi] = *(ulong*)(argPackPtr + 8);
 		cpuContext[CpuRegister.Rdx] = *(ulong*)(argPackPtr + 16);
@@ -151,17 +160,6 @@ public sealed partial class DirectExecutionBackend
 		cpuContext[CpuRegister.R13] = *(ulong*)(argPackPtr + 72);
 		cpuContext[CpuRegister.R14] = *(ulong*)(argPackPtr + 80);
 		cpuContext[CpuRegister.R15] = *(ulong*)(argPackPtr + 88);
-		// The trampoline spills the SysV variadic XMM save area (xmm0..xmm7) into the
-		// 0x80 bytes immediately below the GP argpack, so variadic float args (printf
-		// %f, and powf/logf inputs) reach the handler. xmm{i} is at argPackPtr-0x80+i*16.
-		for (var xmmIndex = 0; xmmIndex < 8; xmmIndex++)
-		{
-			var xmmSlot = argPackPtr - 0x80 + (xmmIndex * 16);
-			cpuContext.SetXmmRegister(
-				xmmIndex,
-				*(ulong*)xmmSlot,
-				*(ulong*)(xmmSlot + 8));
-		}
 		cpuContext[CpuRegister.Rsp] = (ulong)argPackPtr + 96uL;
 		if (importStubEntry.Kind == ImportStubKind.BootstrapBridge)
 		{
@@ -559,13 +557,7 @@ public sealed partial class DirectExecutionBackend
 					Console.Error.Flush();
 				}
 			}
-			// Publish the handler's XMM0 back into the argpack's xmm0 save slot; the
-			// trampoline epilogue reloads it into the guest's XMM0, delivering float/double
-			// return values (powf/logf/wcstod). Harmless for int/pointer returns (XMM is
-			// volatile across a SysV call, so the guest never relies on a preserved XMM0).
-			cpuContext.GetXmmRegister(0, out var returnXmm0Low, out var returnXmm0High);
-			*(ulong*)(argPackPtr - 0x80) = returnXmm0Low;
-			*(ulong*)(argPackPtr - 0x80 + 8) = returnXmm0High;
+			StoreImportVectorReturn(cpuContext, argPackPtr);
 			DrainDeferredBootstrapTraces();
 			return cpuContext[CpuRegister.Rax];
 		}
@@ -597,6 +589,7 @@ public sealed partial class DirectExecutionBackend
 		var arg0 = *(ulong*)argPackPtr;
 		var returnRip = *(ulong*)(argPackPtr + 96);
 		cpuContext.Rip = importStubEntry.Address;
+		LoadImportVolatileArguments(cpuContext, argPackPtr);
 		cpuContext[CpuRegister.Rdi] = arg0;
 		cpuContext[CpuRegister.Rsi] = *(ulong*)(argPackPtr + 8);
 		cpuContext[CpuRegister.Rdx] = *(ulong*)(argPackPtr + 16);
@@ -695,6 +688,34 @@ public sealed partial class DirectExecutionBackend
 
 		result = cpuContext[CpuRegister.Rax];
 		return true;
+	}
+
+	private unsafe static void LoadImportVolatileArguments(CpuContext cpuContext, nint argPackPtr)
+	{
+		cpuContext[CpuRegister.Rax] = *(ulong*)(argPackPtr + ImportSavedRaxOffset);
+		cpuContext[CpuRegister.R10] = *(ulong*)(argPackPtr + ImportSavedR10Offset);
+		cpuContext[CpuRegister.R11] = *(ulong*)(argPackPtr + ImportSavedR11Offset);
+		cpuContext.Mxcsr = *(uint*)(argPackPtr + ImportSavedMxcsrOffset);
+		cpuContext.FpuControlWord = *(ushort*)(argPackPtr + ImportSavedFpuControlOffset);
+		for (var registerIndex = 0; registerIndex < ImportVectorRegisterCount; registerIndex++)
+		{
+			var registerAddress = argPackPtr + ImportSavedXmmOffset + (registerIndex * 16);
+			cpuContext.SetXmmRegister(
+				registerIndex,
+				*(ulong*)registerAddress,
+				*(ulong*)(registerAddress + 8));
+		}
+	}
+
+	private unsafe static void StoreImportVectorReturn(CpuContext cpuContext, nint argPackPtr)
+	{
+		for (var registerIndex = 0; registerIndex < 2; registerIndex++)
+		{
+			cpuContext.GetXmmRegister(registerIndex, out var low, out var high);
+			var registerAddress = argPackPtr + ImportSavedXmmOffset + (registerIndex * 16);
+			*(ulong*)registerAddress = low;
+			*(ulong*)(registerAddress + 8) = high;
+		}
 	}
 
 	// Subset of the leaf set that additionally skips the import-call-frame

@@ -2252,6 +2252,115 @@ public static partial class KernelMemoryCompatExports
     }
 
     [SysAbiExport(
+        Nid = "WT-5NKy42fw",
+        ExportName = "sceKernelAprResolveFilepathsToIds",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int KernelAprResolveFilepathsToIds(CpuContext ctx)
+    {
+        var pathListAddress = ctx[CpuRegister.Rdi];
+        var count = ctx[CpuRegister.Rsi];
+        var idsAddress = ctx[CpuRegister.Rdx];
+        if (pathListAddress == 0 || count == 0 || idsAddress == 0 || count > 1024)
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Einval);
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        var entryCount = (int)count;
+        Span<uint> localIds = count <= 256 ? stackalloc uint[entryCount] : new uint[entryCount];
+        var resolvedGuestPaths = new string[entryCount];
+        var resolvedHostPaths = new string[entryCount];
+
+        for (ulong i = 0; i < count; i++)
+        {
+            var index = (int)i;
+            if (!TryResolveAprFilepath(ctx, pathListAddress, i, out var guestPath))
+            {
+                KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+
+            if (!TryResolveGuestPath(guestPath, out var hostPath))
+            {
+                KernelRuntimeCompatExports.TrySetErrno(ctx, Einval);
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            }
+
+            if (!TryGetAprFileSize(hostPath, out _))
+            {
+                LogIoTrace("apr_resolve_ids", guestPath, $"host='{hostPath}' index={i} count={count} result=not_found");
+                KernelRuntimeCompatExports.TrySetErrno(ctx, 2);
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+            }
+
+            var fileId = AmprFileRegistry.ComputeFileId(guestPath);
+            LogIoTrace("apr_resolve_ids", guestPath, $"host='{hostPath}' index={i} count={count} id=0x{fileId:X8}");
+            localIds[index] = fileId;
+            resolvedGuestPaths[index] = guestPath;
+            resolvedHostPaths[index] = hostPath;
+        }
+
+        Span<byte> idPayload = count <= 128
+            ? stackalloc byte[entryCount * sizeof(uint)]
+            : new byte[entryCount * sizeof(uint)];
+        for (var i = 0; i < entryCount; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(
+                idPayload[(i * sizeof(uint))..],
+                localIds[i]);
+        }
+
+        if (!TryWriteCompat(ctx, idsAddress, idPayload))
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Efault);
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        for (var i = 0; i < entryCount; i++)
+        {
+            AmprFileRegistry.Register(resolvedGuestPaths[i], resolvedHostPaths[i]);
+        }
+
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "ApkYaHb8Sek",
+        ExportName = "sceKernelAprGetFileStat",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int KernelAprGetFileStat(CpuContext ctx)
+    {
+        var fileId = unchecked((uint)ctx[CpuRegister.Rdi]);
+        var statAddress = ctx[CpuRegister.Rsi];
+        if (statAddress == 0)
+        {
+            KernelRuntimeCompatExports.TrySetErrno(ctx, Einval);
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (!AmprFileRegistry.TryGetHostPath(fileId, out var hostPath))
+        {
+            LogIoTrace("apr_get_file_stat", $"id=0x{fileId:X8}", "result=id_not_registered");
+            KernelRuntimeCompatExports.TrySetErrno(ctx, 2);
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+        }
+
+        if (!TryWriteHostPathStat(ctx, statAddress, hostPath))
+        {
+            LogIoTrace("apr_get_file_stat", hostPath, $"id=0x{fileId:X8} result=not_found");
+            KernelRuntimeCompatExports.TrySetErrno(ctx, 2);
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+        }
+
+        LogIoTrace("apr_get_file_stat", hostPath, $"id=0x{fileId:X8}");
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
         Nid = "kBwCPsYX-m4",
         ExportName = "sceKernelFstat",
         Target = Generation.Gen4 | Generation.Gen5,

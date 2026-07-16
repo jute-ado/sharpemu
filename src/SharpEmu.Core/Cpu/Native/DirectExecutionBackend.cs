@@ -2055,9 +2055,18 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		frameAddress = 0;
 		transferStub = 0;
 		error = null;
-		if (target.Rip < 65536 || target.Rsp == 0)
+		if (ActiveCpuContext is not { } activeContext)
 		{
-			error = $"invalid guest context transfer target rip=0x{target.Rip:X16} rsp=0x{target.Rsp:X16}";
+			error = "guest context transfer without an active CPU context";
+			return false;
+		}
+		if (!TryValidateGuestContextTransferTarget(activeContext.Memory, target, out error))
+		{
+			return false;
+		}
+		if (!activeContext.TryWriteUInt64(target.Rsp - sizeof(ulong), target.Rip))
+		{
+			error = $"guest context transfer slot is not writable at 0x{target.Rsp - sizeof(ulong):X16}";
 			return false;
 		}
 
@@ -2091,6 +2100,30 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		frame[12] = target.R13;
 		frame[13] = target.R14;
 		frame[14] = target.R15;
+		return true;
+	}
+
+	internal static bool TryValidateGuestContextTransferTarget(
+		ICpuMemory memory,
+		in GuestCpuContinuation target,
+		out string? error)
+	{
+		if (target.Rip < 65536 || target.Rsp < sizeof(ulong))
+		{
+			error = $"invalid guest context transfer target rip=0x{target.Rip:X16} rsp=0x{target.Rsp:X16}";
+			return false;
+		}
+
+		Span<byte> ripProbe = stackalloc byte[1];
+		if (!memory.TryRead(target.Rip, ripProbe))
+		{
+			error =
+				$"guest context transfer target rip=0x{target.Rip:X16} is not mapped guest memory " +
+				$"(rsp=0x{target.Rsp:X16})";
+			return false;
+		}
+
+		error = null;
 		return true;
 	}
 
@@ -2158,7 +2191,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private unsafe nint CreateImportHandlerTrampoline(int importIndex)
 	{
-		void* ptr = (void*)_hostMemory.Allocate(0, 256u, HostPageProtection.ReadWrite);
+		const uint trampolineSize = 512;
+		void* ptr = (void*)_hostMemory.Allocate(0, trampolineSize, HostPageProtection.ReadWrite);
 		if (ptr == null)
 		{
 			return 0;
@@ -2186,21 +2220,27 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			ptr2[num++] = 82;
 			ptr2[num++] = 86;
 			ptr2[num++] = 87;
-			// sub rsp, 0x80  — reserve 8*16 bytes for the SysV variadic XMM save area
 			ptr2[num++] = 0x48; ptr2[num++] = 0x81; ptr2[num++] = 0xEC;
-			ptr2[num++] = 0x80; ptr2[num++] = 0x00; ptr2[num++] = 0x00; ptr2[num++] = 0x00;
-			// movdqu [rsp + i*0x10], xmm{i}  for i = 0..7  (F3 0F 7F /r, SIB=0x24 base=rsp, disp8)
-			ptr2[num++] = 0xF3; ptr2[num++] = 0x0F; ptr2[num++] = 0x7F; ptr2[num++] = 0x44; ptr2[num++] = 0x24; ptr2[num++] = 0x00; // xmm0
-			ptr2[num++] = 0xF3; ptr2[num++] = 0x0F; ptr2[num++] = 0x7F; ptr2[num++] = 0x4C; ptr2[num++] = 0x24; ptr2[num++] = 0x10; // xmm1
-			ptr2[num++] = 0xF3; ptr2[num++] = 0x0F; ptr2[num++] = 0x7F; ptr2[num++] = 0x54; ptr2[num++] = 0x24; ptr2[num++] = 0x20; // xmm2
-			ptr2[num++] = 0xF3; ptr2[num++] = 0x0F; ptr2[num++] = 0x7F; ptr2[num++] = 0x5C; ptr2[num++] = 0x24; ptr2[num++] = 0x30; // xmm3
-			ptr2[num++] = 0xF3; ptr2[num++] = 0x0F; ptr2[num++] = 0x7F; ptr2[num++] = 0x64; ptr2[num++] = 0x24; ptr2[num++] = 0x40; // xmm4
-			ptr2[num++] = 0xF3; ptr2[num++] = 0x0F; ptr2[num++] = 0x7F; ptr2[num++] = 0x6C; ptr2[num++] = 0x24; ptr2[num++] = 0x50; // xmm5
-			ptr2[num++] = 0xF3; ptr2[num++] = 0x0F; ptr2[num++] = 0x7F; ptr2[num++] = 0x74; ptr2[num++] = 0x24; ptr2[num++] = 0x60; // xmm6
-			ptr2[num++] = 0xF3; ptr2[num++] = 0x0F; ptr2[num++] = 0x7F; ptr2[num++] = 0x7C; ptr2[num++] = 0x24; ptr2[num++] = 0x70; // xmm7
-			// lea r12, [rsp + 0x80]  — r12 = argpack base (the 12 pushed GP regs), past the XMM area
+			*(uint*)(ptr2 + num) = 0xB0;
+			num += 4;
+			ptr2[num++] = 0x48; ptr2[num++] = 0x89; ptr2[num++] = 0x04; ptr2[num++] = 0x24;
+			ptr2[num++] = 0x4C; ptr2[num++] = 0x89; ptr2[num++] = 0x54; ptr2[num++] = 0x24; ptr2[num++] = 0x08;
+			ptr2[num++] = 0x4C; ptr2[num++] = 0x89; ptr2[num++] = 0x5C; ptr2[num++] = 0x24; ptr2[num++] = 0x10;
+			ptr2[num++] = 0x0F; ptr2[num++] = 0xAE; ptr2[num++] = 0x5C; ptr2[num++] = 0x24; ptr2[num++] = 0x18;
+			ptr2[num++] = 0xD9; ptr2[num++] = 0x7C; ptr2[num++] = 0x24; ptr2[num++] = 0x1C;
+			for (var xmm = 0; xmm < 8; xmm++)
+			{
+				ptr2[num++] = 0xF3;
+				ptr2[num++] = 0x0F;
+				ptr2[num++] = 0x7F;
+				ptr2[num++] = (byte)(0x84 | (xmm << 3));
+				ptr2[num++] = 0x24;
+				*(uint*)(ptr2 + num) = (uint)(0x30 + (xmm * 0x10));
+				num += 4;
+			}
 			ptr2[num++] = 0x4C; ptr2[num++] = 0x8D; ptr2[num++] = 0xA4; ptr2[num++] = 0x24;
-			ptr2[num++] = 0x80; ptr2[num++] = 0x00; ptr2[num++] = 0x00; ptr2[num++] = 0x00;
+			*(uint*)(ptr2 + num) = 0xB0;
+			num += 4;
 			ptr2[num++] = 72;
 			ptr2[num++] = 131;
 			ptr2[num++] = 236;
@@ -2218,6 +2258,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			ptr2[num++] = 131;
 			ptr2[num++] = 196;
 			ptr2[num++] = 40;
+			ptr2[num++] = 0x4C; ptr2[num++] = 0x8D; ptr2[num++] = 0xA4; ptr2[num++] = 0x24;
+			*(uint*)(ptr2 + num) = 0xB0;
+			num += 4;
 			ptr2[num++] = 73;
 			ptr2[num++] = 137;
 			ptr2[num++] = 195;
@@ -2227,7 +2270,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			ptr2[num++] = 72;
 			ptr2[num++] = 131;
 			ptr2[num++] = 236;
-			ptr2[num++] = 40;
+			ptr2[num++] = 56;
+			ptr2[num++] = 0x4C; ptr2[num++] = 0x89; ptr2[num++] = 0x64; ptr2[num++] = 0x24; ptr2[num++] = 0x28;
 			ptr2[num++] = 72;
 			ptr2[num++] = 185;
 			*(long*)(ptr2 + num) = _selfHandlePtr;
@@ -2244,15 +2288,22 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			num += 8;
 			ptr2[num++] = byte.MaxValue;
 			ptr2[num++] = 208;
+			ptr2[num++] = 0x4C; ptr2[num++] = 0x8B; ptr2[num++] = 0x64; ptr2[num++] = 0x24; ptr2[num++] = 0x28;
 			ptr2[num++] = 72;
 			ptr2[num++] = 131;
 			ptr2[num++] = 196;
-			ptr2[num++] = 40;
-			// movdqu xmm0, [r12 - 0x80]  — reload the return XMM0 the gateway wrote into the
-			// argpack's xmm0 save slot (float/double returns: powf/logf/wcstod). SysV/Win64
-			// XMM regs are volatile across calls, so an unconditional reload is ABI-safe.
-			ptr2[num++] = 0xF3; ptr2[num++] = 0x41; ptr2[num++] = 0x0F; ptr2[num++] = 0x6F;
-			ptr2[num++] = 0x84; ptr2[num++] = 0x24; ptr2[num++] = 0x80; ptr2[num++] = 0xFF; ptr2[num++] = 0xFF; ptr2[num++] = 0xFF;
+			ptr2[num++] = 56;
+			for (var xmm = 0; xmm < 2; xmm++)
+			{
+				ptr2[num++] = 0xF3;
+				ptr2[num++] = 0x41;
+				ptr2[num++] = 0x0F;
+				ptr2[num++] = 0x6F;
+				ptr2[num++] = (byte)(0x84 | (xmm << 3));
+				ptr2[num++] = 0x24;
+				*(int*)(ptr2 + num) = -0x80 + (xmm * 0x10);
+				num += 4;
+			}
 			ptr2[num++] = 76;
 			ptr2[num++] = 137;
 			ptr2[num++] = 228;
@@ -2275,13 +2326,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			ptr2[num++] = 65;
 			ptr2[num++] = 95;
 			ptr2[num++] = 195;
+			Debug.Assert(num <= trampolineSize, "Import handler trampoline exceeded its allocation.");
 		uint num2 = default(uint);
-		if (!_hostMemory.Protect((ulong)ptr, 256u, HostPageProtection.ReadExecute, out num2))
+		if (!_hostMemory.Protect((ulong)ptr, trampolineSize, HostPageProtection.ReadExecute, out num2))
 		{
 			Console.Error.WriteLine($"[LOADER][ERROR] VirtualProtect failed for import dispatch stub at 0x{(nint)ptr:X16}");
 			return 0;
 		}
-		_hostMemory.FlushInstructionCache((ulong)ptr, 256u);
+		_hostMemory.FlushInstructionCache((ulong)ptr, trampolineSize);
 		return (nint)ptr;
 		}
 		catch
