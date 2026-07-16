@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.HLE;
+using SharpEmu.Libs.Kernel;
 using System.Buffers.Binary;
 
 namespace SharpEmu.Libs.Np;
@@ -163,6 +164,36 @@ public static class NpUniversalDataSystemExports
         if (valueAddress != 0 && !ctx.Memory.TryRead(valueAddress, probe))
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, typeof(long));
+        }
+
+        return ctx.SetReturn(0, typeof(long));
+    }
+
+    [SysAbiExport(
+        Nid = "4llLk7YJRTE",
+        ExportName = "sceNpUniversalDataSystemEventPropertyArraySetString",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNpUniversalDataSystem")]
+    public static int NpUniversalDataSystemEventPropertyArraySetString(CpuContext ctx)
+    {
+        var arrayAddress = ctx[CpuRegister.Rdi];
+        var valueAddress = ctx[CpuRegister.Rsi];
+        if (arrayAddress == 0 || valueAddress == 0)
+        {
+            return ctx.SetReturn(NpUniversalDataSystemErrorInvalidArgument, typeof(long));
+        }
+
+        Span<byte> arrayProbe = stackalloc byte[1];
+        if (!ctx.Memory.TryRead(arrayAddress, arrayProbe) ||
+            !KernelMemoryCompatExports.TryReadCString(
+                ctx,
+                valueAddress,
+                4096,
+                out _))
+        {
+            return ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                typeof(long));
         }
 
         return ctx.SetReturn(0, typeof(long));
