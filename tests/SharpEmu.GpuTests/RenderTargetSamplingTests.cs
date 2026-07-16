@@ -15,20 +15,22 @@ namespace SharpEmu.GpuTests;
 /// </summary>
 public sealed class RenderTargetSamplingTests
 {
-    private const uint Width = 32;
-    private const uint Height = 32;
+    private const uint SourceWidth = 32;
+    private const uint SourceHeight = 18;
+    private const uint DestinationWidth = 96;
+    private const uint DestinationHeight = 54;
     private const uint Rgba8DataFormat = 10;
     private const uint UnormNumberType = 0;
     private const ulong SourceAddress = 0x0010_0000;
-    private const ulong FirstCopyAddress = 0x0020_0000;
-    private const ulong CapturedCopyAddress = 0x0030_0000;
+    private const ulong FirstDisplayAddress = 0x0020_0000;
+    private const ulong SecondDisplayAddress = 0x0030_0000;
 
     /// <summary>
     /// Verifies that a render target rewritten after an earlier sample exposes
-    /// the new pixels to the next sampling draw.
+    /// the new pixels when composing into a reused presentation target.
     /// </summary>
     [GpuConformanceFact]
-    public void RewrittenRenderTarget_IsSampledByFollowingDraw()
+    public void RewrittenRenderTarget_IsSampledIntoReusedPresentationTarget()
     {
         var captureDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -36,27 +38,35 @@ public sealed class RenderTargetSamplingTests
         Directory.CreateDirectory(captureDirectory);
         Environment.SetEnvironmentVariable(
             "SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE",
-            $"0x{CapturedCopyAddress:X}@1");
+            $"0x{FirstDisplayAddress:X}@2");
         Environment.SetEnvironmentVariable(
             "SHARPEMU_GUEST_IMAGE_DUMP_DIR",
             captureDirectory);
 
         try
         {
-            VulkanVideoPresenter.EnsureStarted(Width, Height);
+            VulkanVideoPresenter.EnsureStarted(
+                DestinationWidth,
+                DestinationHeight);
             VulkanVideoPresenter.HideSplashScreen();
 
             SubmitSolid(SourceAddress, red: 1f, green: 0f, blue: 0f);
-            Assert.True(CopySourceTo(FirstCopyAddress));
+            Assert.True(CopySourceTo(FirstDisplayAddress));
 
-            // Reuse the same guest render target, then sample it again. This
-            // catches stale contents and missing render-to-sample ordering.
+            SubmitSolid(SourceAddress, red: 0f, green: 1f, blue: 0f);
+            Assert.True(CopySourceTo(SecondDisplayAddress));
+
+            // Reuse both the smaller source and an alternating presentation
+            // target. This catches stale contents, missing render-to-sample
+            // ordering, and failures when composition changes dimensions.
             SubmitSolid(SourceAddress, red: 0.125f, green: 0.5f, blue: 0.875f);
-            Assert.True(CopySourceTo(CapturedCopyAddress));
+            Assert.True(CopySourceTo(FirstDisplayAddress));
 
             var capturePath = WaitForCapture(captureDirectory);
             var pixels = File.ReadAllBytes(capturePath);
-            Assert.Equal(checked((int)(Width * Height * 4)), pixels.Length);
+            Assert.Equal(
+                checked((int)(DestinationWidth * DestinationHeight * 4)),
+                pixels.Length);
             AssertRgbaPixels(
                 pixels,
                 expectedRed: 32,
@@ -90,8 +100,8 @@ public sealed class RenderTargetSamplingTests
             attributeCount: 0,
             new GuestRenderTarget(
                 address,
-                Width,
-                Height,
+                SourceWidth,
+                SourceHeight,
                 Rgba8DataFormat,
                 UnormNumberType));
     }
@@ -99,12 +109,12 @@ public sealed class RenderTargetSamplingTests
     private static bool CopySourceTo(ulong destinationAddress) =>
         VulkanVideoPresenter.TrySubmitGuestImageBlit(
             SourceAddress,
-            Width,
-            Height,
+            SourceWidth,
+            SourceHeight,
             Rgba8DataFormat,
             destinationAddress,
-            Width,
-            Height,
+            DestinationWidth,
+            DestinationHeight,
             Rgba8DataFormat);
 
     private static string WaitForCapture(string captureDirectory)
