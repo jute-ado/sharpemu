@@ -635,7 +635,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(JsonValueKind.Null, root.GetProperty("moduleLoadFailures").ValueKind);
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task CliWritesJsonReportWhenStallWatchdogTerminatesGuest()
     {
         var execution = await RunSyntheticExecutableInCliAsync(
@@ -657,7 +657,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Contains("Execution stalled", execution.StandardError, StringComparison.Ordinal);
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task CliEnforcesExecutionTimeoutAndWritesJsonReport()
     {
         var execution = await RunSyntheticExecutableInCliAsync(

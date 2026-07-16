@@ -220,7 +220,7 @@ internal static partial class Program
 
         if (!loadOnly &&
             !isMitigatedChild &&
-            TryRunMitigatedChild(
+            TryRunSupervisedChild(
                 args,
                 ebootPath,
                 reportJsonPath,
@@ -542,7 +542,7 @@ internal static partial class Program
         return list.ToArray();
     }
 
-    private static bool TryRunMitigatedChild(
+    private static bool TryRunSupervisedChild(
         string[] args,
         string ebootPath,
         string? reportJsonPath,
@@ -551,12 +551,8 @@ internal static partial class Program
         out int childExitCode)
     {
         childExitCode = 0;
-        if (!OperatingSystem.IsWindows())
-        {
-            return false;
-        }
-
-        if (string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_DISABLE_MITIGATION_RELAUNCH"), "1", StringComparison.Ordinal))
+        if (OperatingSystem.IsWindows() &&
+            string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_DISABLE_MITIGATION_RELAUNCH"), "1", StringComparison.Ordinal))
         {
             return false;
         }
@@ -591,6 +587,18 @@ internal static partial class Program
         for (var i = 0; i < args.Length; i++)
         {
             childArgs[i + hostArgumentCount + 1] = args[i];
+        }
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return RunPortableSupervisedChild(
+                processPath,
+                childArgs,
+                ebootPath,
+                reportJsonPath,
+                executionTimeoutSeconds,
+                invocationStartedTimestamp,
+                out childExitCode);
         }
 
         var commandLine = BuildCommandLine(processPath, childArgs);
@@ -694,20 +702,13 @@ internal static partial class Program
 
                 if (waitResult == WAIT_TIMEOUT)
                 {
-                    var unit = executionTimeoutSeconds == 1 ? "second" : "seconds";
-                    var timeoutMessage = $"Execution timed out after {executionTimeoutSeconds} {unit}.";
-                    Console.Error.WriteLine($"[ERROR] {timeoutMessage}");
                     _ = TerminateProcess(processInfo.hProcess, ExecutionTimeoutExitCode);
                     _ = WaitForSingleObject(processInfo.hProcess, INFINITE);
-                    TryWriteExecutionReport(
+                    childExitCode = ReportExecutionTimeout(
                         reportJsonPath,
-                        Path.GetFullPath(ebootPath),
-                        result: null,
-                        runtime: null,
-                        hostError: timeoutMessage,
-                        invocationStartedTimestamp: invocationStartedTimestamp,
-                        incompleteResultName: "EXECUTION_TIMED_OUT");
-                    childExitCode = ExecutionTimeoutExitCode;
+                        ebootPath,
+                        executionTimeoutSeconds!.Value,
+                        invocationStartedTimestamp);
                     return true;
                 }
 
@@ -717,17 +718,11 @@ internal static partial class Program
                 }
 
                 childExitCode = unchecked((int)exitCode);
-                if (childExitCode == DirectExecutionBackend.StallWatchdogExitCode)
-                {
-                    TryWriteExecutionReport(
-                        reportJsonPath,
-                        Path.GetFullPath(ebootPath),
-                        result: null,
-                        runtime: null,
-                        hostError: "Execution stalled and was terminated by the native watchdog.",
-                        invocationStartedTimestamp: invocationStartedTimestamp,
-                        incompleteResultName: "EXECUTION_STALLED");
-                }
+                ReportStallIfNeeded(
+                    childExitCode,
+                    reportJsonPath,
+                    ebootPath,
+                    invocationStartedTimestamp);
 
                 Console.Error.WriteLine("[DEBUG] Running in mitigated child process (CET/CFG disabled).");
                 return true;
@@ -757,6 +752,135 @@ internal static partial class Program
             {
                 Marshal.FreeHGlobal(mitigationPolicies);
             }
+        }
+    }
+
+    private static bool RunPortableSupervisedChild(
+        string processPath,
+        IReadOnlyList<string> childArgs,
+        string ebootPath,
+        string? reportJsonPath,
+        int? executionTimeoutSeconds,
+        long invocationStartedTimestamp,
+        out int childExitCode)
+    {
+        childExitCode = 0;
+        var startInfo = new ProcessStartInfo(processPath)
+        {
+            UseShellExecute = false,
+        };
+        foreach (var argument in childArgs)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+        startInfo.Environment[MitigatedChildEnvironment] = "1";
+
+        using var process = Process.Start(startInfo);
+        if (process is null)
+        {
+            return false;
+        }
+
+        ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+        {
+            TryKillPortableChild(process);
+            eventArgs.Cancel = true;
+        };
+        EventHandler processExitHandler = (_, _) => TryKillPortableChild(process);
+        Console.CancelKeyPress += cancelHandler;
+        AppDomain.CurrentDomain.ProcessExit += processExitHandler;
+        try
+        {
+            bool exited;
+            if (executionTimeoutSeconds is { } timeoutSeconds)
+            {
+                exited = process.WaitForExit(checked(timeoutSeconds * 1000));
+            }
+            else
+            {
+                process.WaitForExit();
+                exited = true;
+            }
+            if (!exited)
+            {
+                TryKillPortableChild(process);
+                process.WaitForExit();
+                childExitCode = ReportExecutionTimeout(
+                    reportJsonPath,
+                    ebootPath,
+                    executionTimeoutSeconds!.Value,
+                    invocationStartedTimestamp);
+                return true;
+            }
+
+            childExitCode = process.ExitCode;
+            ReportStallIfNeeded(
+                childExitCode,
+                reportJsonPath,
+                ebootPath,
+                invocationStartedTimestamp);
+
+            return true;
+        }
+        finally
+        {
+            Console.CancelKeyPress -= cancelHandler;
+            AppDomain.CurrentDomain.ProcessExit -= processExitHandler;
+        }
+    }
+
+    private static int ReportExecutionTimeout(
+        string? reportJsonPath,
+        string ebootPath,
+        int executionTimeoutSeconds,
+        long invocationStartedTimestamp)
+    {
+        var unit = executionTimeoutSeconds == 1 ? "second" : "seconds";
+        var timeoutMessage = $"Execution timed out after {executionTimeoutSeconds} {unit}.";
+        Console.Error.WriteLine($"[ERROR] {timeoutMessage}");
+        TryWriteExecutionReport(
+            reportJsonPath,
+            Path.GetFullPath(ebootPath),
+            result: null,
+            runtime: null,
+            hostError: timeoutMessage,
+            invocationStartedTimestamp: invocationStartedTimestamp,
+            incompleteResultName: "EXECUTION_TIMED_OUT");
+        return ExecutionTimeoutExitCode;
+    }
+
+    private static void ReportStallIfNeeded(
+        int childExitCode,
+        string? reportJsonPath,
+        string ebootPath,
+        long invocationStartedTimestamp)
+    {
+        if (childExitCode != DirectExecutionBackend.StallWatchdogExitCode)
+        {
+            return;
+        }
+
+        TryWriteExecutionReport(
+            reportJsonPath,
+            Path.GetFullPath(ebootPath),
+            result: null,
+            runtime: null,
+            hostError: "Execution stalled and was terminated by the native watchdog.",
+            invocationStartedTimestamp: invocationStartedTimestamp,
+            incompleteResultName: "EXECUTION_STALLED");
+    }
+
+    private static void TryKillPortableChild(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch
+        {
         }
     }
 
