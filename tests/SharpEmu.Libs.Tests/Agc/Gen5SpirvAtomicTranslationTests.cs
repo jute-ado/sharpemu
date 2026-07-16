@@ -46,6 +46,19 @@ public sealed class Gen5SpirvAtomicTranslationTests
     }
 
     [Fact]
+    public void BufferAtomicAdd_EmitsRuntimeBoundsGuard()
+    {
+        var opcodes = CompileCompute(
+            [0xE0C80000, 0x80000100],
+            BufferDescriptorRegisters());
+
+        Assert.Contains((ushort)SpirvOp.ArrayLength, opcodes);
+        Assert.Contains((ushort)SpirvOp.ULessThan, opcodes);
+        Assert.Contains((ushort)SpirvOp.BranchConditional, opcodes);
+        Assert.Contains((ushort)SpirvOp.AtomicIAdd, opcodes);
+    }
+
+    [Fact]
     public void DataShareAtomics_EmitAtomicOpcodes()
     {
         // DS_ADD_RTN_U32 v3, v0, v1; DS_CMPST_RTN_B32 v3, v0, v1, v2; DS_MAX_U32 v0, v1.
@@ -76,6 +89,23 @@ public sealed class Gen5SpirvAtomicTranslationTests
 
         Assert.Contains((ushort)SpirvOp.ImageTexelPointer, opcodes);
         Assert.Contains((ushort)SpirvOp.AtomicIAdd, opcodes);
+    }
+
+    [Fact]
+    public void ImageAtomicAdd_ClampsCoordinatesToQueriedExtent()
+    {
+        var opcodes = CompileCompute(
+            [0xF0442100, 0x00010200],
+            new Dictionary<uint, uint>
+            {
+                [5] = 20u << 20,
+            });
+
+        Assert.Contains((ushort)SpirvOp.ImageQuerySize, opcodes);
+        Assert.Contains((ushort)SpirvOp.SLessThan, opcodes);
+        Assert.Contains((ushort)SpirvOp.SGreaterThan, opcodes);
+        Assert.Contains((ushort)SpirvOp.Select, opcodes);
+        Assert.Contains((ushort)SpirvOp.ImageTexelPointer, opcodes);
     }
 
     private static Dictionary<uint, uint> BufferDescriptorRegisters() => new()
