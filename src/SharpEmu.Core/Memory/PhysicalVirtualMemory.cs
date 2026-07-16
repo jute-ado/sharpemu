@@ -328,8 +328,8 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         // windows, so page-stepped exact probes are pathological on macOS.
         // Linux must keep using the exact-address search below: PS5 resource
         // descriptors cannot represent ordinary 0x7F... host mappings. Linux
-        // HostMemory uses MAP_FIXED_NOREPLACE, making those low-address probes
-        // safe without clobbering existing host mappings.
+        // The POSIX host-memory backend uses MAP_FIXED_NOREPLACE, making those
+        // low-address probes safe without clobbering existing host mappings.
         if (OperatingSystem.IsMacOS())
         {
             // Prefer the requested low address.  Besides matching the guest

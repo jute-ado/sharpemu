@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Runtime.InteropServices;
-using SharpEmu.HLE;
+using SharpEmu.HLE.Host;
 
 namespace SharpEmu.Core.Cpu.Native;
 
@@ -15,6 +15,7 @@ namespace SharpEmu.Core.Cpu.Native;
 /// </summary>
 internal static unsafe class PosixHostStubs
 {
+    private const ulong StubPageSize = 4096;
     private static readonly object Gate = new();
     private static bool _initialized;
     private static nint _tlsGetValueStub;
@@ -179,38 +180,44 @@ internal static unsafe class PosixHostStubs
     /// </summary>
     public static nint CreateWin64ToSysVThunk(nint sysvTarget)
     {
-        var page = (byte*)HostMemory.Alloc(
-            null,
-            4096,
-            HostMemory.MEM_COMMIT | HostMemory.MEM_RESERVE,
-            HostMemory.PAGE_EXECUTE_READWRITE);
-        if (page == null)
+        var memory = HostPlatform.Current.Memory;
+        var pageAddress = memory.Allocate(0, StubPageSize, HostPageProtection.ReadWrite);
+        if (pageAddress == 0)
         {
             throw new OutOfMemoryException("Failed to allocate Win64->SysV thunk page");
         }
 
-        var offset = 0;
-        Emit(page, ref offset, 0x57);                   // push rdi
-        Emit(page, ref offset, 0x56);                   // push rsi
-        Emit(page, ref offset, 0x48, 0x89, 0xCF);       // mov rdi, rcx
-        Emit(page, ref offset, 0x48, 0x89, 0xD6);       // mov rsi, rdx
-        Emit(page, ref offset, 0x4C, 0x89, 0xC2);       // mov rdx, r8
-        Emit(page, ref offset, 0x4C, 0x89, 0xC9);       // mov rcx, r9
-        Emit(page, ref offset, 0x48, 0x83, 0xEC, 0x08); // sub rsp, 8 (realign to 16)
-        EmitMovRaxImm64(page, ref offset, sysvTarget);  // mov rax, target
-        Emit(page, ref offset, 0xFF, 0xD0);             // call rax
-        Emit(page, ref offset, 0x48, 0x83, 0xC4, 0x08); // add rsp, 8
-        Emit(page, ref offset, 0x5E);                   // pop rsi
-        Emit(page, ref offset, 0x5F);                   // pop rdi
-        Emit(page, ref offset, 0xC3);                   // ret
-
-        if (!HostMemory.Protect(page, 4096, HostMemory.PAGE_EXECUTE_READ, out _))
+        try
         {
-            throw new InvalidOperationException("Failed to protect Win64->SysV thunk page");
-        }
+            var page = (byte*)pageAddress;
+            var offset = 0;
+            Emit(page, ref offset, 0x57);                   // push rdi
+            Emit(page, ref offset, 0x56);                   // push rsi
+            Emit(page, ref offset, 0x48, 0x89, 0xCF);       // mov rdi, rcx
+            Emit(page, ref offset, 0x48, 0x89, 0xD6);       // mov rsi, rdx
+            Emit(page, ref offset, 0x4C, 0x89, 0xC2);       // mov rdx, r8
+            Emit(page, ref offset, 0x4C, 0x89, 0xC9);       // mov rcx, r9
+            Emit(page, ref offset, 0x48, 0x83, 0xEC, 0x08); // sub rsp, 8 (realign to 16)
+            EmitMovRaxImm64(page, ref offset, sysvTarget);  // mov rax, target
+            Emit(page, ref offset, 0xFF, 0xD0);             // call rax
+            Emit(page, ref offset, 0x48, 0x83, 0xC4, 0x08); // add rsp, 8
+            Emit(page, ref offset, 0x5E);                   // pop rsi
+            Emit(page, ref offset, 0x5F);                   // pop rdi
+            Emit(page, ref offset, 0xC3);                   // ret
 
-        HostMemory.FlushInstructionCache(page, (nuint)offset);
-        return (nint)page;
+            if (!memory.Protect(pageAddress, StubPageSize, HostPageProtection.ReadExecute, out _))
+            {
+                throw new InvalidOperationException("Failed to protect Win64->SysV thunk page");
+            }
+
+            memory.FlushInstructionCache(pageAddress, checked((ulong)offset));
+            return (nint)pageAddress;
+        }
+        catch
+        {
+            _ = memory.Free(pageAddress);
+            throw;
+        }
     }
 
     private static void EnsureInitialized()
@@ -234,28 +241,38 @@ internal static unsafe class PosixHostStubs
 
     private static void BuildStubs()
     {
-        var page = (byte*)HostMemory.Alloc(
-            null,
-            4096,
-            HostMemory.MEM_COMMIT | HostMemory.MEM_RESERVE,
-            HostMemory.PAGE_EXECUTE_READWRITE);
-        if (page == null)
+        var memory = HostPlatform.Current.Memory;
+        var pageAddress = memory.Allocate(0, StubPageSize, HostPageProtection.ReadWrite);
+        if (pageAddress == 0)
         {
             throw new OutOfMemoryException("Failed to allocate POSIX host helper stub page");
         }
 
-        var offset = 0;
-        _tlsGetValueStub = EmitTlsGetValue(page, ref offset);
-        _queryPerformanceCounterStub = EmitQueryPerformanceCounter(page, ref offset);
-        _switchToThreadStub = EmitSwitchToThread(page, ref offset);
-        _sleepStub = EmitSleep(page, ref offset);
-
-        if (!HostMemory.Protect(page, 4096, HostMemory.PAGE_EXECUTE_READ, out _))
+        try
         {
-            throw new InvalidOperationException("Failed to protect POSIX host helper stub page");
-        }
+            var page = (byte*)pageAddress;
+            var offset = 0;
+            _tlsGetValueStub = EmitTlsGetValue(page, ref offset);
+            _queryPerformanceCounterStub = EmitQueryPerformanceCounter(page, ref offset);
+            _switchToThreadStub = EmitSwitchToThread(page, ref offset);
+            _sleepStub = EmitSleep(page, ref offset);
 
-        HostMemory.FlushInstructionCache(page, (nuint)offset);
+            if (!memory.Protect(pageAddress, StubPageSize, HostPageProtection.ReadExecute, out _))
+            {
+                throw new InvalidOperationException("Failed to protect POSIX host helper stub page");
+            }
+
+            memory.FlushInstructionCache(pageAddress, checked((ulong)offset));
+        }
+        catch
+        {
+            _tlsGetValueStub = 0;
+            _queryPerformanceCounterStub = 0;
+            _switchToThreadStub = 0;
+            _sleepStub = 0;
+            _ = memory.Free(pageAddress);
+            throw;
+        }
     }
 
     private static nint EmitTlsGetValue(byte* page, ref int offset)

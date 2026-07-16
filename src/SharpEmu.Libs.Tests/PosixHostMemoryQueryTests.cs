@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Diagnostics;
-using SharpEmu.HLE;
 using SharpEmu.HLE.Host;
 using SharpEmu.HLE.Host.Posix;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests;
 
-public sealed unsafe class PosixHostMemoryQueryTests
+public sealed class PosixHostMemoryQueryTests
 {
     [Fact]
     public void OversizedAllocationReturnsFailureWithoutThrowing()
@@ -28,21 +27,6 @@ public sealed unsafe class PosixHostMemoryQueryTests
             0,
             ulong.MaxValue,
             HostPageProtection.ReadWrite,
-            out _));
-        Assert.True(HostMemory.Alloc(
-            null,
-            nuint.MaxValue,
-            HostMemory.MEM_RESERVE,
-            HostMemory.PAGE_NOACCESS) is null);
-        Assert.True(HostMemory.Alloc(
-            (void*)1,
-            nuint.MaxValue,
-            HostMemory.MEM_COMMIT,
-            HostMemory.PAGE_READWRITE) is null);
-        Assert.False(HostMemory.Protect(
-            null,
-            nuint.MaxValue,
-            HostMemory.PAGE_READWRITE,
             out _));
     }
 
@@ -75,36 +59,6 @@ public sealed unsafe class PosixHostMemoryQueryTests
         finally
         {
             Assert.True(memory.Free(address));
-        }
-
-        var compatibilityAddress = HostMemory.Alloc(
-            null,
-            checked((nuint)(2 * pageSize)),
-            HostMemory.MEM_RESERVE,
-            HostMemory.PAGE_NOACCESS);
-        Assert.True(compatibilityAddress is not null);
-        try
-        {
-            var partialCommit = HostMemory.Alloc(
-                (byte*)compatibilityAddress + pageSize,
-                checked((nuint)(2 * pageSize)),
-                HostMemory.MEM_COMMIT,
-                HostMemory.PAGE_READWRITE);
-
-            Assert.True(partialCommit is null);
-            Assert.NotEqual(
-                0U,
-                HostMemory.Query(
-                    (byte*)compatibilityAddress + pageSize,
-                    out var compatibilityRegion));
-            Assert.Equal(HostMemory.PAGE_NOACCESS, compatibilityRegion.Protect);
-        }
-        finally
-        {
-            Assert.True(HostMemory.Free(
-                compatibilityAddress,
-                0,
-                HostMemory.MEM_RELEASE));
         }
     }
 
