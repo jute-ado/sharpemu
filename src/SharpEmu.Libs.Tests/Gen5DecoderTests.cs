@@ -4802,6 +4802,58 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesPs5VectorMadF32ToNonFusedSpirv()
+    {
+        // Opcode 0x141 is V_MAD_F32 in the AMD GFX9/RDNA1 ISA used by
+        // PS5 shaders. RDNA2 reserves the encoding after replacing MAD with
+        // FMA, but treating it as fused changes the instruction's rounding.
+        var ctx = CreateContext(
+        [
+            0xD5410000u, 0x040E0501u, // v_mad_f32 v0, v1, v2, v3
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            ["VMadF32", "SEndpgm"],
+            program.Instructions.Select(instruction => instruction.Opcode));
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FMul));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FAdd));
+        Assert.False(ContainsGlslExtInst(shader.Spirv, 50));
+        Assert.Equal(
+            2,
+            CountSpirvInstructionsWithOperand(
+                shader.Spirv,
+                SpirvOp.Decorate,
+                operandIndex: 2,
+                operand: (uint)SpirvDecoration.NoContraction));
+    }
+
+    [Fact]
     public void CompilesVectorFloatUtilityOperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
@@ -6743,9 +6795,10 @@ public sealed class Gen5DecoderTests
     [Fact]
     public void UsesRdna2Vop3OpcodesAndCanonicalBitwiseNames()
     {
-        // LLVM 18 gfx1030 rejects the reserved encodings below. The signed
-        // multiply uses its RDNA2 VOP3 opcode; the canonical bitwise encodings
-        // were assembled and verified with LLVM.
+        // LLVM 18 gfx1030 rejects the reserved encodings below. PS5 retains
+        // opcode 0x141 as V_MAD_F32; the remaining reserved encodings stay raw.
+        // The signed multiply and canonical bitwise encodings were assembled
+        // and verified with LLVM.
         var ctx = CreateContext(
         [
             0xD5020000u, 0x040A0301u, // reserved (compact v_dot2c_f32_f16 encoding)
@@ -6758,7 +6811,7 @@ public sealed class Gen5DecoderTests
             0xD4FF007Eu, 0x00020500u, // reserved (v_cmpx_t_f16 encoding)
             0xD4AF0004u, 0x00020500u, // reserved (v_cmp_t_u16 encoding)
             0xD4BF007Eu, 0x00020500u, // reserved (v_cmpx_t_u16 encoding)
-            0xD5410000u, 0x040A0301u, // reserved (legacy v_mad_f32 encoding)
+            0xD5410000u, 0x040A0301u, // PS5 v_mad_f32 v0, v1, v1, v1
             0xD56B0000u, 0x040A0301u, // v_mul_lo_i32 v0, v1, v1
             0xD76F0007u, 0x042A1308u, // v_lshl_or_b32 v7, v8, v9, v10
             0xD772000Bu, 0x043A1B0Cu, // v_or3_b32 v11, v12, v13, v14
@@ -6775,16 +6828,16 @@ public sealed class Gen5DecoderTests
             [
                 "Vop3Raw102", "Vop3Raw11F", "Vop3Raw122", "Vop3Raw130",
                 "Vop3Raw131", "Vop3Raw03F", "Vop3Raw0EF", "Vop3Raw0FF",
-                "Vop3Raw0AF", "Vop3Raw0BF", "Vop3Raw141", "VMulLoI32",
+                "Vop3Raw0AF", "Vop3Raw0BF", "VMadF32", "VMulLoI32",
                 "VLshlOrB32", "VOr3B32", "SEndpgm",
             ],
             program.Instructions.Select(instruction => instruction.Opcode));
 
         // Reserved instructions remain decodable for diagnostics, but only
-        // the supported RDNA2 instructions are submitted to the translator.
+        // the supported PS5/RDNA2 instructions are submitted to the translator.
         var supportedProgram = program with
         {
-            Instructions = program.Instructions.Skip(11).ToArray(),
+            Instructions = program.Instructions.Skip(10).ToArray(),
         };
         var state = new Gen5ShaderState(supportedProgram, [], Metadata: null);
         Assert.True(
@@ -6807,6 +6860,8 @@ public sealed class Gen5DecoderTests
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftLeftLogical));
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseOr));
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IMul));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FMul));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FAdd));
     }
 
     [Fact]

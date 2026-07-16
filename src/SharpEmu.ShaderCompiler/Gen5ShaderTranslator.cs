@@ -1240,6 +1240,7 @@ public static class Gen5ShaderTranslator
             : opcode switch
         {
             0x140 => "VFmaLegacyF32",
+            0x141 => "VMadF32",
             0x142 => "VMadI32I24",
             0x143 => "VMadU32U24",
             0x144 => "VCubeidF32",
