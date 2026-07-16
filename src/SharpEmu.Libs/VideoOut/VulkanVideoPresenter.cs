@@ -43,7 +43,8 @@ internal sealed record VulkanTranslatedGuestDraw(
     uint InstanceCount,
     uint PrimitiveType,
     GuestIndexBuffer? IndexBuffer,
-    GuestRenderState RenderState);
+    GuestRenderState RenderState,
+    GuestShaderIdentity ShaderIdentity);
 
 internal sealed record VulkanOffscreenGuestDraw(
     VulkanTranslatedGuestDraw Draw,
@@ -374,7 +375,8 @@ internal static unsafe class VulkanVideoPresenter
         uint primitiveType = 4,
         GuestIndexBuffer? indexBuffer = null,
         IReadOnlyList<GuestVertexBuffer>? vertexBuffers = null,
-        GuestRenderState? renderState = null)
+        GuestRenderState? renderState = null,
+        GuestShaderIdentity shaderIdentity = default)
     {
         if (pixelSpirv.Length == 0 || width == 0 || height == 0)
         {
@@ -412,7 +414,8 @@ internal static unsafe class VulkanVideoPresenter
                     instanceCount,
                     primitiveType,
                     indexBuffer,
-                    renderState ?? GuestRenderState.Default),
+                    renderState ?? GuestRenderState.Default,
+                    shaderIdentity),
                 RequiredGuestWorkSequence: _guestWork.EnqueuedSequence,
                 IsSplash: false);
             System.Threading.Monitor.PulseAll(_gate);
@@ -439,7 +442,8 @@ internal static unsafe class VulkanVideoPresenter
         uint primitiveType = 4,
         GuestIndexBuffer? indexBuffer = null,
         IReadOnlyList<GuestVertexBuffer>? vertexBuffers = null,
-        GuestRenderState? renderState = null)
+        GuestRenderState? renderState = null,
+        GuestShaderIdentity shaderIdentity = default)
     {
         SubmitOffscreenTranslatedDraw(
             pixelSpirv,
@@ -453,7 +457,8 @@ internal static unsafe class VulkanVideoPresenter
             primitiveType,
             indexBuffer,
             vertexBuffers,
-            renderState);
+            renderState,
+            shaderIdentity);
     }
 
     // Manual scans (targets are <= 8) so the per-draw validation does not
@@ -504,7 +509,8 @@ internal static unsafe class VulkanVideoPresenter
         uint primitiveType = 4,
         GuestIndexBuffer? indexBuffer = null,
         IReadOnlyList<GuestVertexBuffer>? vertexBuffers = null,
-        GuestRenderState? renderState = null)
+        GuestRenderState? renderState = null,
+        GuestShaderIdentity shaderIdentity = default)
     {
         if (pixelSpirv.Length == 0 ||
             targets.Count == 0 ||
@@ -572,7 +578,8 @@ internal static unsafe class VulkanVideoPresenter
                         instanceCount,
                         primitiveType,
                         indexBuffer,
-                        effectiveRenderState),
+                        effectiveRenderState,
+                        shaderIdentity),
                     targets.ToArray(),
                     PublishTarget: true));
         }
@@ -614,7 +621,8 @@ internal static unsafe class VulkanVideoPresenter
                         1,
                         4,
                         null,
-                        GuestRenderState.Default),
+                        GuestRenderState.Default,
+                        default),
                     [new GuestRenderTarget(
                         Address: 0,
                         width,
@@ -5532,6 +5540,7 @@ internal static unsafe class VulkanVideoPresenter
                         Console.Error.WriteLine(
                             $"[LOADER][TRACE] vk.guest_write_sample " +
                             $"addr=0x{target.Address:X16} write={displayedWriteCount} " +
+                            $"ps=0x{work.Draw.ShaderIdentity.PixelShaderAddress:X16} " +
                             $"ps_bytes={work.Draw.PixelSpirv.Length}");
                         var fingerprint = TraceGuestImageContents(target);
                         if (captureThisWrite && fingerprint is { } capturedHash)

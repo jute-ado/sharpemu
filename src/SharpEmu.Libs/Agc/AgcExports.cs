@@ -187,6 +187,9 @@ public static partial class AgcExports
         Environment.GetEnvironmentVariable("SHARPEMU_TRACE_TEXTURE_HASHES"),
         "1",
         StringComparison.Ordinal);
+    private static readonly GuestDrawTraceRequest _guestDrawTraceRequest =
+        LoadGuestDrawTraceRequest();
+    private static int _guestDrawTraceMatchCount;
     private static long _dcbWriteDataTraceCount;
     private static long _dcbWaitRegMemTraceCount;
     private static long _createShaderTraceCount;
@@ -3160,7 +3163,10 @@ public static partial class AgcExports
                         globalMemoryBuffers,
                         translatedDisplayBuffer.Width,
                         translatedDisplayBuffer.Height,
-                        translatedDraw.AttributeCount);
+                        translatedDraw.AttributeCount,
+                        shaderIdentity: new GuestShaderIdentity(
+                            translatedDraw.ExportShaderAddress,
+                            translatedDraw.PixelShaderAddress));
                     TraceAgcShader(
                         $"agc.shader_present ps=0x{translatedDraw.PixelShaderAddress:X16} " +
                         $"spirv={translatedDraw.PixelShader.Payload.Length} textures={textures.Count} " +
@@ -3604,8 +3610,11 @@ public static partial class AgcExports
                     CreateGuestMemoryBuffers(translatedDraw.GlobalMemoryBindings);
                 var vertexBuffers =
                     CreateGuestVertexBuffers(translatedDraw.VertexInputs);
-                TraceRectListVertices(translatedDraw, vertexBuffers);
-                TraceGrassDrawVertices(translatedDraw, textures, vertexBuffers);
+                TraceSelectedDraw(
+                    translatedDraw,
+                    textures,
+                    globalMemoryBuffers,
+                    vertexBuffers);
                 GuestGpu.Current.SubmitOffscreenTranslatedDraw(
                     translatedDraw.PixelShader,
                     textures,
@@ -3618,7 +3627,10 @@ public static partial class AgcExports
                         translatedDraw.PrimitiveType,
                         translatedDraw.IndexBuffer,
                         vertexBuffers,
-                        translatedDraw.RenderState);
+                        translatedDraw.RenderState,
+                        new GuestShaderIdentity(
+                            translatedDraw.ExportShaderAddress,
+                            translatedDraw.PixelShaderAddress));
             }
             else
             {
@@ -4885,82 +4897,59 @@ public static partial class AgcExports
 
 
 
-    private static int _grassTraceCount;
-
-    private static void TraceGrassDrawVertices(
-        TranslatedGuestDraw draw,
-        IReadOnlyList<GuestDrawTexture> textures,
-        IReadOnlyList<GuestVertexBuffer> vertexBuffers)
+    private static GuestDrawTraceRequest LoadGuestDrawTraceRequest()
     {
-        if (_grassTraceCount >= 6 ||
-            !textures.Any(texture => texture.Width == 288 && texture.Height == 160) ||
-            vertexBuffers.Count == 0 ||
-            Interlocked.Increment(ref _grassTraceCount) > 6)
+        var value = Environment.GetEnvironmentVariable(
+            "SHARPEMU_TRACE_DRAW_SHADER");
+        if (GuestDrawTraceRequest.TryParse(value, out var request))
         {
-            return;
+            return request;
         }
 
-        var text = new System.Text.StringBuilder();
-        text.Append($"agc.grassdraw prim=0x{draw.PrimitiveType:X} verts={draw.VertexCount} ");
-        text.Append($"indexed={draw.IndexBuffer is not null} buffers={vertexBuffers.Count}");
-        foreach (var buffer in vertexBuffers)
-        {
-            text.Append(
-                $"\n  loc={buffer.Location} fmt={buffer.DataFormat}/{buffer.NumberFormat}x{buffer.ComponentCount} " +
-                $"stride={buffer.Stride} offset={buffer.OffsetBytes} bytes={buffer.Data.Length}");
-            var stride = Math.Max(buffer.Stride, 4u);
-            var maxVerts = Math.Min(6, (int)((buffer.Data.Length - buffer.OffsetBytes) / stride));
-            for (var vertex = 0; vertex < maxVerts; vertex++)
-            {
-                var baseOffset = (int)(buffer.OffsetBytes + vertex * stride);
-                var components = Math.Min(4, (int)((buffer.Data.Length - baseOffset) / 4));
-                text.Append($"\n    v{vertex}:");
-                for (var c = 0; c < components; c++)
-                {
-                    text.Append($" {BitConverter.ToSingle(buffer.Data, baseOffset + c * 4):0.#####}");
-                }
-            }
-        }
-
-        TraceAgcShader(text.ToString());
+        Console.Error.WriteLine(
+            "[LOADER][WARN] Invalid SHARPEMU_TRACE_DRAW_SHADER; " +
+            "selected draw trace disabled.");
+        return default;
     }
 
-    private static int _rectListTraceCount;
-
-    private static void TraceRectListVertices(
+    private static void TraceSelectedDraw(
         TranslatedGuestDraw draw,
+        IReadOnlyList<GuestDrawTexture> textures,
+        IReadOnlyList<GuestMemoryBuffer> globalMemoryBuffers,
         IReadOnlyList<GuestVertexBuffer> vertexBuffers)
     {
-        if (draw.PrimitiveType != 0x11 ||
-            draw.IndexBuffer is not null ||
-            vertexBuffers.Count == 0 ||
-            _rectListTraceCount >= 8 ||
-            Interlocked.Increment(ref _rectListTraceCount) > 8)
+        if (!_guestDrawTraceRequest.Matches(
+                draw.ExportShaderAddress,
+                draw.PixelShaderAddress))
         {
             return;
         }
 
-        var buffer = vertexBuffers[0];
-        var stride = Math.Max(buffer.Stride, 4u);
-        var text = new System.Text.StringBuilder();
-        for (var vertex = 0; vertex < 3; vertex++)
+        var matchingDraw = Interlocked.Increment(
+            ref _guestDrawTraceMatchCount);
+        if (!_guestDrawTraceRequest.ShouldTrace(
+                draw.ExportShaderAddress,
+                draw.PixelShaderAddress,
+                matchingDraw))
         {
-            var baseOffset = (int)(buffer.OffsetBytes + vertex * stride);
-            if (baseOffset + 16 > buffer.Data.Length)
-            {
-                break;
-            }
-
-            var x = BitConverter.ToSingle(buffer.Data, baseOffset);
-            var y = BitConverter.ToSingle(buffer.Data, baseOffset + 4);
-            var z = BitConverter.ToSingle(buffer.Data, baseOffset + 8);
-            var w = BitConverter.ToSingle(buffer.Data, baseOffset + 12);
-            text.Append($" v{vertex}=({x:0.###},{y:0.###},{z:0.###},{w:0.###})");
+            return;
         }
 
-        TraceAgcShader(
-            $"agc.rectlist verts={draw.VertexCount} stride={buffer.Stride} " +
-            $"fmt={buffer.DataFormat}/{buffer.NumberFormat}x{buffer.ComponentCount}{text}");
+        Console.Error.WriteLine(
+            "[LOADER][TRACE] " +
+            GuestDrawTraceFormatter.Format(
+                matchingDraw,
+                draw.ExportShaderAddress,
+                draw.PixelShaderAddress,
+                draw.PrimitiveType,
+                draw.VertexCount,
+                draw.InstanceCount,
+                draw.IndexBuffer,
+                textures,
+                globalMemoryBuffers,
+                vertexBuffers,
+                draw.GuestTargets,
+                draw.RenderState));
     }
 
     private static int _textureDumpCount;

@@ -53,6 +53,10 @@ internal sealed record GuestIndexBuffer(
     byte[] Data,
     bool Is32Bit);
 
+internal readonly record struct GuestShaderIdentity(
+    ulong ExportShaderAddress,
+    ulong PixelShaderAddress);
+
 internal readonly record struct GuestRect(
     int X,
     int Y,
