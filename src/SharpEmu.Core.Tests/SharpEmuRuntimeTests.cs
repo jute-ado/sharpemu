@@ -519,7 +519,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.DoesNotContain("Guest hardware exception", execution.StandardOutput, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [HostX64Fact]
     public async Task CliRejectsUnexpectedExecutionBundleBeforeGuestCode()
     {
         const string unexpectedSha256 =
