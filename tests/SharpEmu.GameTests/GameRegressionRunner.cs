@@ -75,6 +75,11 @@ internal static class GameRegressionRunner
         startInfo.ArgumentList.Add(executablePath);
         startInfo.Environment.Remove("SHARPEMU_MITIGATED_CHILD");
         startInfo.Environment.Remove("SHARPEMU_DISABLE_MITIGATION_RELAUNCH");
+        if (testCase.Expectations.RequiredVideoOutFrameFingerprints.Length != 0)
+        {
+            startInfo.Environment["SHARPEMU_DUMP_VIDEOOUT"] = "1";
+            startInfo.Environment["SHARPEMU_LOG_VIDEOOUT"] = "1";
+        }
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException(
@@ -186,6 +191,21 @@ internal static class GameRegressionRunner
                 throw new InvalidDataException(
                     $"Game regression '{testCase.Name}' contains an empty " +
                     "requiredOutputSubstrings entry.");
+                }
+        }
+        for (var index = 0;
+            index <
+                testCase.Expectations.RequiredVideoOutFrameFingerprints.Length;
+            index++)
+        {
+            if (!TryNormalizeFrameFingerprint(
+                    testCase.Expectations
+                        .RequiredVideoOutFrameFingerprints[index],
+                    out _))
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' has an invalid " +
+                    "requiredVideoOutFrameFingerprints entry.");
             }
         }
     }
@@ -313,6 +333,23 @@ internal static class GameRegressionRunner
             }
         }
 
+        for (var index = 0;
+            index <
+                testCase.Expectations.RequiredVideoOutFrameFingerprints.Length;
+            index++)
+        {
+            _ = TryNormalizeFrameFingerprint(
+                testCase.Expectations.RequiredVideoOutFrameFingerprints[index],
+                out var fingerprint);
+            var marker = $"fingerprint=0x{fingerprint}";
+            if (!capturedOutput.Contains(marker, StringComparison.OrdinalIgnoreCase))
+            {
+                failures.AppendLine(
+                    $"required VideoOut frame fingerprint was not observed: " +
+                    $"0x{fingerprint}.");
+            }
+        }
+
         if (failures.Length != 0)
         {
             throw new InvalidOperationException(
@@ -373,6 +410,38 @@ internal static class GameRegressionRunner
         }
 
         return maximum;
+    }
+
+    internal static bool TryNormalizeFrameFingerprint(
+        string value,
+        out string fingerprint)
+    {
+        fingerprint = string.Empty;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[2..];
+        }
+        if (normalized.Length != 16)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < normalized.Length; index++)
+        {
+            if (!char.IsAsciiHexDigit(normalized[index]))
+            {
+                return false;
+            }
+        }
+
+        fingerprint = normalized.ToUpperInvariant();
+        return true;
     }
 
     private static string ResolvePath(string baseDirectory, string path) =>

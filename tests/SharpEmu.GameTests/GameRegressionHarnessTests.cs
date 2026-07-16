@@ -208,6 +208,73 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
+    public void ExecutionCanRequireCapturedVideoOutFrameFingerprint()
+    {
+        var testCase = CreateExecutionCase(
+            requiredVideoOutFrameFingerprints:
+            [
+                "0x7238bf0c5c979715",
+            ]);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        GameRegressionRunner.ValidateReport(
+            testCase,
+            report.RootElement,
+            "synthetic-report.json",
+            """
+            [LOADER][TRACE] videoout.dump_frame path=frame.bmp
+            fingerprint=0x7238BF0C5C979715
+            """);
+
+        Assert.True(
+            GameRegressionRunner.TryNormalizeFrameFingerprint(
+                "7238bf0c5c979715",
+                out var normalized));
+        Assert.Equal("7238BF0C5C979715", normalized);
+    }
+
+    [Fact]
+    public void ExecutionFailsWhenCapturedFrameFingerprintChanges()
+    {
+        var testCase = CreateExecutionCase(
+            requiredVideoOutFrameFingerprints:
+            [
+                "7238BF0C5C979715",
+            ]);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                "fingerprint=0x0000000000000000"));
+
+        Assert.Contains(
+            "0x7238BF0C5C979715",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EarlyCpuTrapFailsExecutionSurvivalContract()
     {
         var testCase = CreateExecutionCase();
@@ -260,7 +327,8 @@ public sealed class GameRegressionHarnessTests
 
     private static GameRegressionCase CreateExecutionCase(
         long? minimumObservedImportDispatches = null,
-        string[]? requiredOutputSubstrings = null) => new()
+        string[]? requiredOutputSubstrings = null,
+        string[]? requiredVideoOutFrameFingerprints = null) => new()
     {
         Name = "execution survival",
         ExecutablePath = "eboot.bin",
@@ -284,6 +352,8 @@ public sealed class GameRegressionHarnessTests
                 minimumObservedImportDispatches,
             RequiredOutputSubstrings =
                 requiredOutputSubstrings ?? [],
+            RequiredVideoOutFrameFingerprints =
+                requiredVideoOutFrameFingerprints ?? [],
         },
     };
 
