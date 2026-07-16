@@ -158,6 +158,13 @@ internal static class GameRegressionRunner
             throw new InvalidDataException(
                 $"Game regression '{testCase.Name}' requires an executablePath.");
         }
+        if (!TryNormalizeSha256(testCase.ExpectedBundleSha256, out _))
+        {
+            throw new InvalidDataException(
+                $"Game regression '{testCase.Name}' requires a valid " +
+                "expectedBundleSha256 so its baseline cannot run against a " +
+                "different local game build.");
+        }
         if (!string.Equals(testCase.Mode, "load-only", StringComparison.Ordinal) &&
             !string.Equals(testCase.Mode, "execution", StringComparison.Ordinal))
         {
@@ -468,6 +475,34 @@ internal static class GameRegressionRunner
         }
 
         fingerprint = normalized.ToUpperInvariant();
+        return true;
+    }
+
+    internal static bool TryNormalizeSha256(
+        string? value,
+        out string fingerprint)
+    {
+        fingerprint = string.Empty;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.Length != 64)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < normalized.Length; index++)
+        {
+            if (!char.IsAsciiHexDigit(normalized[index]))
+            {
+                return false;
+            }
+        }
+
+        fingerprint = normalized.ToLowerInvariant();
         return true;
     }
 

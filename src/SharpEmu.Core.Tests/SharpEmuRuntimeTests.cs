@@ -519,15 +519,44 @@ public sealed class SharpEmuRuntimeTests
         Assert.DoesNotContain("Guest hardware exception", execution.StandardOutput, StringComparison.Ordinal);
     }
 
-    [Theory]
-    [InlineData("not-a-sha256", true)]
-    [InlineData("0000000000000000000000000000000000000000000000000000000000000000", false)]
-    public async Task CliRejectsInvalidBundleFingerprintAssertionUsage(string expectedSha256, bool loadOnly)
+    [Fact]
+    public async Task CliRejectsUnexpectedExecutionBundleBeforeGuestCode()
+    {
+        const string unexpectedSha256 =
+            "0000000000000000000000000000000000000000000000000000000000000000";
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0x0F, 0x0B],
+            requestReport: true,
+            expectedBundleSha256: unexpectedSha256);
+
+        Assert.Equal(8, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var document = JsonDocument.Parse(execution.ReportJson);
+        var root = document.RootElement;
+        Assert.Equal(
+            "BUNDLE_FINGERPRINT_MISMATCH",
+            root.GetProperty("result").GetProperty("name").GetString());
+        Assert.False(root.GetProperty("result").GetProperty("succeeded").GetBoolean());
+        Assert.NotEqual(
+            unexpectedSha256,
+            root.GetProperty("bundle").GetProperty("sha256").GetString());
+        Assert.Contains(
+            "fingerprint mismatch",
+            root.GetProperty("hostError").GetString(),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuSession").ValueKind);
+        Assert.DoesNotContain(
+            "Guest hardware exception",
+            execution.StandardOutput,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CliRejectsMalformedBundleFingerprint()
     {
         var execution = await RunSyntheticExecutableInCliAsync(
             [0xF4],
-            loadOnly: loadOnly,
-            expectedBundleSha256: expectedSha256);
+            expectedBundleSha256: "not-a-sha256");
 
         Assert.Equal(1, execution.ExitCode);
         Assert.Contains("Usage: SharpEmu.CLI", execution.StandardOutput, StringComparison.Ordinal);
