@@ -159,6 +159,11 @@ public static class Ngs2Exports
                 return SetReturn(ctx, OrbisNgs2ErrorInvalidRackHandle);
             }
 
+            if (outHandleAddress == 0)
+            {
+                return SetReturn(ctx, OrbisNgs2ErrorInvalidOutAddress);
+            }
+
             var existing = Voices.FirstOrDefault(
                 pair => pair.Value.RackHandle == rackHandle && pair.Value.VoiceIndex == voiceIndex);
             if (existing.Key != 0)
@@ -167,11 +172,6 @@ public static class Ngs2Exports
                     ? SetReturn(ctx, 0)
                     : SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
-        }
-
-        if (outHandleAddress == 0)
-        {
-            return SetReturn(ctx, OrbisNgs2ErrorInvalidOutAddress);
         }
 
         if (!TryCreateHandle(ctx, type: 4, rackHandle, out var handle) ||

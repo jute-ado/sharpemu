@@ -9,7 +9,7 @@ namespace SharpEmu.Libs.Tests;
 /// Minimal in-memory <see cref="ICpuMemory"/> for unit tests: sparse regions
 /// backed by byte arrays. Reads and writes must fall entirely inside one region.
 /// </summary>
-public sealed class FakeGuestMemory : ICpuMemory, IGuestMemoryAllocator, IGuestStackMemory
+public sealed class FakeGuestMemory : ICpuMemory, IGuestAddressSpace, IGuestStackMemory
 {
     private readonly List<(ulong Base, byte[] Data)> _regions = [];
     private readonly List<(ulong Start, ulong End)> _stackRanges = [];
@@ -43,7 +43,40 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestMemoryAllocator, IGuestS
 
     public bool TryAllocateGuestMemory(ulong size, ulong alignment, out ulong address)
     {
-        address = 0;
+        return TryAllocateAtOrAbove(
+            _nextAllocationAddress,
+            size,
+            executable: false,
+            alignment,
+            out address);
+    }
+
+    public ulong AllocateAt(
+        ulong desiredAddress,
+        ulong size,
+        bool executable = true,
+        bool allowAlternative = true)
+    {
+        _ = executable;
+        if (TryAddAllocation(desiredAddress, size))
+        {
+            return desiredAddress;
+        }
+
+        return allowAlternative && TryAllocateGuestMemory(size, 0x1000, out var alternative)
+            ? alternative
+            : 0;
+    }
+
+    public bool TryAllocateAtOrAbove(
+        ulong desiredAddress,
+        ulong size,
+        bool executable,
+        ulong alignment,
+        out ulong actualAddress)
+    {
+        _ = executable;
+        actualAddress = 0;
         if (size == 0 || size > int.MaxValue ||
             alignment == 0 || (alignment & (alignment - 1)) != 0)
         {
@@ -52,18 +85,45 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestMemoryAllocator, IGuestS
 
         try
         {
-            var alignedAddress = checked(
-                (_nextAllocationAddress + alignment - 1) & ~(alignment - 1));
-            _nextAllocationAddress = checked(alignedAddress + size);
-            _regions.Add((alignedAddress, new byte[(int)size]));
-            _guestAllocations.Add(alignedAddress);
-            address = alignedAddress;
+            var candidate = checked((desiredAddress + alignment - 1) & ~(alignment - 1));
+            foreach (var region in _regions.OrderBy(region => region.Base))
+            {
+                var regionEnd = checked(region.Base + (ulong)region.Data.Length);
+                var candidateEnd = checked(candidate + size);
+                if (candidateEnd <= region.Base)
+                {
+                    break;
+                }
+
+                if (candidate < regionEnd)
+                {
+                    candidate = checked((regionEnd + alignment - 1) & ~(alignment - 1));
+                }
+            }
+
+            if (!TryAddAllocation(candidate, size))
+            {
+                return false;
+            }
+
+            actualAddress = candidate;
             return true;
         }
         catch (OverflowException)
         {
             return false;
         }
+    }
+
+    public bool TryProtect(
+        ulong address,
+        ulong size,
+        GuestPageProtection protection)
+    {
+        _ = protection;
+        return size != 0 &&
+               size <= int.MaxValue &&
+               TryFind(address, checked((int)size), out _, out _);
     }
 
     public bool TryFreeGuestMemory(ulong address)
@@ -160,5 +220,34 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestMemoryAllocator, IGuestS
         data = [];
         offset = 0;
         return false;
+    }
+
+    private bool TryAddAllocation(ulong address, ulong size)
+    {
+        if (address == 0 || size == 0 || size > int.MaxValue ||
+            ulong.MaxValue - address < size)
+        {
+            return false;
+        }
+
+        var end = address + size;
+        foreach (var region in _regions)
+        {
+            if (ulong.MaxValue - region.Base < (ulong)region.Data.Length)
+            {
+                return false;
+            }
+
+            var regionEnd = region.Base + (ulong)region.Data.Length;
+            if (address < regionEnd && region.Base < end)
+            {
+                return false;
+            }
+        }
+
+        _regions.Add((address, new byte[(int)size]));
+        _guestAllocations.Add(address);
+        _nextAllocationAddress = Math.Max(_nextAllocationAddress, end);
+        return true;
     }
 }

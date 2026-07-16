@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using SharpEmu.HLE;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests;
@@ -54,5 +55,47 @@ public sealed class FakeGuestMemoryTests
         Assert.False(memory.TryCompare(ulong.MaxValue, [0x22]));
         Assert.True(memory.TryWrite(ulong.MaxValue, [0x22]));
         Assert.Equal(0x22, backing[0]);
+    }
+
+    [Fact]
+    public void FixedAddressAllocationRejectsOverlapWithoutAlternative()
+    {
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(0x2000, new byte[0x1000]);
+
+        Assert.Equal(0UL, memory.AllocateAt(0x2800, 0x1000, allowAlternative: false));
+        Assert.Equal(0, memory.GuestAllocationCount);
+    }
+
+    [Fact]
+    public void SearchAllocationSkipsOccupiedRangesAndHonorsAlignment()
+    {
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(0x2000, new byte[0x1800]);
+
+        Assert.True(memory.TryAllocateAtOrAbove(
+            0x2100,
+            0x1000,
+            executable: false,
+            alignment: 0x1000,
+            out var address));
+        Assert.Equal(0x4000UL, address);
+        Assert.Equal(1, memory.GuestAllocationCount);
+    }
+
+    [Fact]
+    public void ProtectionRequiresFullyMappedRange()
+    {
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(0x5000, new byte[0x1000]);
+
+        Assert.True(memory.TryProtect(
+            0x5800,
+            0x800,
+            GuestPageProtection.Read | GuestPageProtection.Write));
+        Assert.False(memory.TryProtect(
+            0x5800,
+            0x801,
+            GuestPageProtection.Read | GuestPageProtection.Write));
     }
 }
