@@ -17,6 +17,7 @@ public sealed class NativeImportBridgeTests
     private const string ClobberNonvolatileNid = "test-clobber-nonvolatile-nid";
     private const string FloatReturnNid = "test-float-return-nid";
     private const string FloatAddNid = "test-float-add-nid";
+    private const string ColdHandlerNid = "test-cold-handler-nid";
     private const ulong CodeAddress = 0x0000_0008_1000_0000;
     private const ulong ImportAddress = CodeAddress + 0x100;
     private const ulong FallbackImportAddress = 0x0000_6FFF_FF00_0000;
@@ -44,6 +45,56 @@ public sealed class NativeImportBridgeTests
         ];
         var execution = ExecuteImport(code, AddNid, "synthetic-import-roundtrip");
         AssertSuccessful(execution);
+    }
+
+    [HostX64Fact]
+    public async Task FirstGuestImportInitializesColdHandlerOnHostStack()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
+        Assert.Equal(0, ColdHandlerState.InitializerCalls);
+        SysAbiFunction handler = ColdHandler.Invoke;
+        Assert.Equal(0, ColdHandlerState.InitializerCalls);
+
+        byte[] code =
+        [
+            0xE8, 0xFB, 0x00, 0x00, 0x00, // call ImportAddress
+            0x83, 0xF8, 0x2A,             // cmp eax, 42
+            0x75, 0x03,                   // jne failure
+            0x31, 0xC0,                   // xor eax, eax
+            0xC3,                         // ret
+            0xB8, 0x01, 0x00, 0x00, 0x00, // failure: mov eax, 1
+            0xC3,                         // ret
+        ];
+        var execution = SyntheticNativeGuest.ExecuteModuleInitializer(
+            code,
+            Generation.Gen5,
+            "synthetic-cold-handler-import",
+            new Dictionary<ulong, string> { [ImportAddress] = ColdHandlerNid },
+            moduleManager =>
+            {
+                Assert.Equal(
+                    1,
+                    moduleManager.RegisterExports(
+                    [
+                        new ExportedFunction(
+                            "libSyntheticTest",
+                            ColdHandlerNid,
+                            "syntheticColdHandler",
+                            Generation.Gen5,
+                            handler),
+                    ]));
+                Assert.Equal(0, ColdHandlerState.InitializerCalls);
+            },
+            CodeAddress);
+
+        AssertSuccessful(execution);
+        Assert.Equal(1, ColdHandlerState.InitializerCalls);
+        Assert.Equal(1, ColdHandlerState.HandlerCalls);
+        Assert.True(ColdHandlerState.HandlerUsedHostStack);
     }
 
     [HostX64Fact]
@@ -366,6 +417,38 @@ public sealed class NativeImportBridgeTests
             var sumBits = unchecked((uint)BitConverter.SingleToInt32Bits(left + right));
             context.SetXmmRegister(0, sumBits, 0);
             return context.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+        }
+    }
+
+    private static class ColdHandlerState
+    {
+        public static int InitializerCalls;
+
+        public static int HandlerCalls;
+
+        public static bool HandlerUsedHostStack;
+    }
+
+    private static class ColdHandler
+    {
+        static ColdHandler()
+        {
+            ColdHandlerState.InitializerCalls++;
+        }
+
+        public static unsafe int Invoke(CpuContext context)
+        {
+            ColdHandlerState.HandlerCalls++;
+            byte* local = stackalloc byte[1];
+            var localAddress = unchecked((ulong)local);
+            ColdHandlerState.HandlerUsedHostStack =
+                context.Memory is IGuestStackMemory guestStacks &&
+                guestStacks.TryGetStackRange(
+                    context[CpuRegister.Rsp],
+                    out var guestStackStart,
+                    out var guestStackEnd) &&
+                (localAddress < guestStackStart || localAddress >= guestStackEnd);
+            return context.SetReturn(42);
         }
     }
 

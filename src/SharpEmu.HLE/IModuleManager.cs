@@ -8,6 +8,10 @@ public interface IModuleManager
     /// <summary>Registers pre-built exports (the compile-time generated registry).</summary>
     int RegisterExports(IReadOnlyList<ExportedFunction> exports);
 
+    /// <summary>
+    /// Completes registration. Managed HLE callbacks execute on the native worker's
+    /// host stack, so freezing does not need to discover or pre-JIT handler assemblies.
+    /// </summary>
     void Freeze();
 
     bool TryGetFunction(string nid, out Delegate function);
