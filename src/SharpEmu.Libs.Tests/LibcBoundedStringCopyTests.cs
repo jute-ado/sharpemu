@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
-using System.Reflection;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
 using Xunit;
@@ -122,20 +121,15 @@ public sealed class LibcBoundedStringCopyTests
     }
 
     [Theory]
-    [InlineData(nameof(KernelMemoryCompatExports.Strncpy), "6sJWiWSRuqk", "strncpy")]
-    [InlineData(nameof(KernelMemoryCompatExports.Wcsncpy), "0nV21JjYCH8", "wcsncpy")]
-    public void ExportMetadataIsExact(string methodName, string nid, string exportName)
+    [InlineData("6sJWiWSRuqk", "strncpy")]
+    [InlineData("0nV21JjYCH8", "wcsncpy")]
+    public void ExportMetadataIsExact(string nid, string exportName)
     {
-        var method = typeof(KernelMemoryCompatExports).GetMethod(
-            methodName,
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal(nid, attribute.Nid);
-        Assert.Equal(exportName, attribute.ExportName);
-        Assert.Equal("libc", attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            nid,
+            exportName,
+            "libc",
+            Generation.Gen4 | Generation.Gen5);
     }
 
     private static CpuContext CreateContext(

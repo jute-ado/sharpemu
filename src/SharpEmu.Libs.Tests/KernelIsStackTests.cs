@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
@@ -114,16 +113,11 @@ public sealed class KernelIsStackTests
     [Fact]
     public void KernelIsStackExportMetadataIsExact()
     {
-        var method = typeof(KernelMemoryCompatExports).GetMethod(
-            nameof(KernelMemoryCompatExports.KernelIsStack),
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal("yDBwVAolDgg", attribute.Nid);
-        Assert.Equal("sceKernelIsStack", attribute.ExportName);
-        Assert.Equal("libKernel", attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            "yDBwVAolDgg",
+            "sceKernelIsStack",
+            "libKernel",
+            Generation.Gen4 | Generation.Gen5);
     }
 
     private static (CpuContext Context, byte[] StartOut, byte[] EndOut) CreateContext(ulong address)

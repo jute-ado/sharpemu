@@ -1,7 +1,6 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using System.Reflection;
 using System.Text;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Np;
@@ -49,18 +48,10 @@ public sealed class NpUniversalDataSystemTests
     [Fact]
     public void ArraySetStringExportMetadataIsExact()
     {
-        var method = typeof(NpUniversalDataSystemExports).GetMethod(
-            nameof(NpUniversalDataSystemExports
-                .NpUniversalDataSystemEventPropertyArraySetString),
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal("4llLk7YJRTE", attribute.Nid);
-        Assert.Equal(
+        ExportMetadataAssert.Exact(
+            "4llLk7YJRTE",
             "sceNpUniversalDataSystemEventPropertyArraySetString",
-            attribute.ExportName);
-        Assert.Equal("libSceNpUniversalDataSystem", attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+            "libSceNpUniversalDataSystem",
+            Generation.Gen4 | Generation.Gen5);
     }
 }

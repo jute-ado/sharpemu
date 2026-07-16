@@ -1,7 +1,6 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using System.Reflection;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
 using Xunit;
@@ -62,24 +61,18 @@ public sealed class PthreadDetachCompatibilityTests
     }
 
     [Theory]
-    [InlineData(nameof(KernelPthreadExtendedCompatExports.PthreadDetach), "4qGrR6eoP9Y", "scePthreadDetach", "libKernel")]
-    [InlineData(nameof(KernelPthreadExtendedCompatExports.PosixPthreadDetach), "+U1R4WtXvoc", "pthread_detach", "libScePosix")]
+    [InlineData("4qGrR6eoP9Y", "scePthreadDetach", "libKernel")]
+    [InlineData("+U1R4WtXvoc", "pthread_detach", "libScePosix")]
     public void DetachExportMetadataIsExact(
-        string methodName,
         string nid,
         string exportName,
         string libraryName)
     {
-        var method = typeof(KernelPthreadExtendedCompatExports).GetMethod(
-            methodName,
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal(nid, attribute.Nid);
-        Assert.Equal(exportName, attribute.ExportName);
-        Assert.Equal(libraryName, attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            nid,
+            exportName,
+            libraryName,
+            Generation.Gen4 | Generation.Gen5);
     }
 
     private static CpuContext CreateContext(ulong thread)

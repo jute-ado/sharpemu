@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
@@ -157,22 +156,17 @@ public sealed class PthreadSchedulingCompatibilityTests
     }
 
     [Theory]
-    [InlineData(nameof(KernelPthreadExtendedCompatExports.PthreadGetschedparam), "P41kTWUS3EI", "scePthreadGetschedparam")]
-    [InlineData(nameof(KernelPthreadExtendedCompatExports.PosixPthreadGetschedparam), "FIs3-UQT9sg", "pthread_getschedparam")]
-    [InlineData(nameof(KernelPthreadExtendedCompatExports.PthreadSetschedparam), "oIRFTjoILbg", "scePthreadSetschedparam")]
-    [InlineData(nameof(KernelPthreadExtendedCompatExports.PosixPthreadSetschedparam), "Xs9hdiD7sAA", "pthread_setschedparam")]
-    public void SchedulingExportMetadataIsExact(string methodName, string nid, string exportName)
+    [InlineData("P41kTWUS3EI", "scePthreadGetschedparam")]
+    [InlineData("FIs3-UQT9sg", "pthread_getschedparam")]
+    [InlineData("oIRFTjoILbg", "scePthreadSetschedparam")]
+    [InlineData("Xs9hdiD7sAA", "pthread_setschedparam")]
+    public void SchedulingExportMetadataIsExact(string nid, string exportName)
     {
-        var method = typeof(KernelPthreadExtendedCompatExports).GetMethod(
-            methodName,
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal(nid, attribute.Nid);
-        Assert.Equal(exportName, attribute.ExportName);
-        Assert.Equal("libKernel", attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            nid,
+            exportName,
+            "libKernel",
+            Generation.Gen4 | Generation.Gen5);
     }
 
     private static CpuContext CreateContext(

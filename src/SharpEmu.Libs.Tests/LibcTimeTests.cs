@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
@@ -91,15 +90,10 @@ public sealed class LibcTimeTests
     [Fact]
     public void TimeExportMetadataIsExact()
     {
-        var method = typeof(KernelMemoryCompatExports).GetMethod(
-            nameof(KernelMemoryCompatExports.Time),
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal("wLlFkwG9UcQ", attribute.Nid);
-        Assert.Equal("time", attribute.ExportName);
-        Assert.Equal("libc", attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            "wLlFkwG9UcQ",
+            "time",
+            "libc",
+            Generation.Gen4 | Generation.Gen5);
     }
 }

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
-using System.Reflection;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Audio;
 using Xunit;
@@ -377,26 +376,21 @@ public sealed class AudioOut2CompatibilityTests
     }
 
     [Theory]
-    [InlineData(nameof(AudioOut2Exports.AudioOut2Initialize), "g2tViFIohHE", "sceAudioOut2Initialize")]
-    [InlineData(nameof(AudioOut2Exports.AudioOut2ContextResetParam), "t5YrizufpQc", "sceAudioOut2ContextResetParam")]
-    [InlineData(nameof(AudioOut2Exports.AudioOut2ContextQueryMemory), "pDmme7Bgm6E", "sceAudioOut2ContextQueryMemory")]
-    [InlineData(nameof(AudioOut2Exports.AudioOut2ContextCreate), "0x6o1VVAYSY", "sceAudioOut2ContextCreate")]
-    [InlineData(nameof(AudioOut2Exports.AudioOut2PortCreate), "JK2wamZPzwM", "sceAudioOut2PortCreate")]
-    [InlineData(nameof(AudioOut2Exports.AudioOut2PortGetState), "gatEUKG+Ea4", "sceAudioOut2PortGetState")]
-    [InlineData(nameof(AudioOut2Exports.AudioOut2GetSpeakerInfo), "DImz2Ft9E2g", "sceAudioOut2GetSpeakerInfo")]
-    [InlineData(nameof(AudioOut2Exports.AudioOut2UserCreate), "xywYcRB7nbQ", "sceAudioOut2UserCreate")]
-    public void ExportMetadataIsExact(string methodName, string nid, string exportName)
+    [InlineData("g2tViFIohHE", "sceAudioOut2Initialize")]
+    [InlineData("t5YrizufpQc", "sceAudioOut2ContextResetParam")]
+    [InlineData("pDmme7Bgm6E", "sceAudioOut2ContextQueryMemory")]
+    [InlineData("0x6o1VVAYSY", "sceAudioOut2ContextCreate")]
+    [InlineData("JK2wamZPzwM", "sceAudioOut2PortCreate")]
+    [InlineData("gatEUKG+Ea4", "sceAudioOut2PortGetState")]
+    [InlineData("DImz2Ft9E2g", "sceAudioOut2GetSpeakerInfo")]
+    [InlineData("xywYcRB7nbQ", "sceAudioOut2UserCreate")]
+    public void ExportMetadataIsExact(string nid, string exportName)
     {
-        var method = typeof(AudioOut2Exports).GetMethod(
-            methodName,
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal(nid, attribute.Nid);
-        Assert.Equal(exportName, attribute.ExportName);
-        Assert.Equal("libSceAudioOut2", attribute.LibraryName);
-        Assert.Equal(Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            nid,
+            exportName,
+            "libSceAudioOut2",
+            Generation.Gen5);
     }
 
     private static CpuContext CreateContext(FakeGuestMemory memory)

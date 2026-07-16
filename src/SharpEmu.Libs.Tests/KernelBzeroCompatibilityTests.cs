@@ -1,7 +1,6 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using System.Reflection;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
 using Xunit;
@@ -98,16 +97,11 @@ public sealed class KernelBzeroCompatibilityTests
     [Fact]
     public void BzeroExportMetadataIsExact()
     {
-        var method = typeof(KernelSocketCompatExports).GetMethod(
-            nameof(KernelSocketCompatExports.Bzero),
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal("9oiX1kyeedA", attribute.Nid);
-        Assert.Equal("bzero", attribute.ExportName);
-        Assert.Equal("libKernel", attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            "9oiX1kyeedA",
+            "bzero",
+            "libKernel",
+            Generation.Gen4 | Generation.Gen5);
     }
 
     private static void AssertError(

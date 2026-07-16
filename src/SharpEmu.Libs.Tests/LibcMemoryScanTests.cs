@@ -1,7 +1,6 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using System.Reflection;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
 using Xunit;
@@ -110,20 +109,15 @@ public sealed class LibcMemoryScanTests
     }
 
     [Theory]
-    [InlineData(nameof(KernelMemoryCompatExports.Memcmp), "DfivPArhucg", "memcmp")]
-    [InlineData(nameof(KernelMemoryCompatExports.Memchr), "8u8lPzUEq+U", "memchr")]
-    public void ExportMetadataIsExact(string methodName, string nid, string exportName)
+    [InlineData("DfivPArhucg", "memcmp")]
+    [InlineData("8u8lPzUEq+U", "memchr")]
+    public void ExportMetadataIsExact(string nid, string exportName)
     {
-        var method = typeof(KernelMemoryCompatExports).GetMethod(
-            methodName,
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal(nid, attribute.Nid);
-        Assert.Equal(exportName, attribute.ExportName);
-        Assert.Equal("libc", attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            nid,
+            exportName,
+            "libc",
+            Generation.Gen4 | Generation.Gen5);
     }
 
     private static CpuContext CreateContext(
