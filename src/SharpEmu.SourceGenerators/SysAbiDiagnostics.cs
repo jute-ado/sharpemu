@@ -77,4 +77,12 @@ public static class SysAbiDiagnostics
         Category,
         DiagnosticSeverity.Error,
         isEnabledByDefault: true);
+
+    public static readonly DiagnosticDescriptor ReturnValueOverwritten = new(
+        "SHEM009",
+        "SysAbi return value is overwritten",
+        "Method '{0}' writes CpuRegister.Rax and then calls CpuContext.SetReturn on the same context; return the dispatch status directly or use SetReturn as the sole RAX writer",
+        Category,
+        DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
 }
