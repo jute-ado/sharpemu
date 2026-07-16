@@ -71,7 +71,10 @@ jobs:
       - name: Summarize coverage
         if: ${{ runner.os == 'Linux' && !cancelled() }}
         shell: pwsh
-        run: ./.github/scripts/Summarize-Coverage.ps1 artifacts/test-results/Linux
+        run: >-
+          ./.github/scripts/Summarize-Coverage.ps1
+          artifacts/test-results/Linux
+          -BaselinePath ./.github/coverage-baseline.json
 
       - name: Test
         if: ${{ runner.os != 'Linux' }}

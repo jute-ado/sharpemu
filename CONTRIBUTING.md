@@ -39,6 +39,26 @@ When submitting an AI-assisted PR:
 
 The quality, correctness, maintainability, and long-term ownership of the submitted code remain the responsibility of the contributor.
 
+## Testing
+
+Run the tests that directly exercise your change while iterating, then run the
+complete suite before submitting:
+
+```text
+dotnet build SharpEmu.slnx -c Release -warnaserror
+dotnet test SharpEmu.slnx -c Release --no-build
+```
+
+Linux CI collects merged line and branch coverage for all test projects.
+The minimums in [`.github/coverage-baseline.json`](./.github/coverage-baseline.json)
+prevent untested growth from silently reducing the project-wide baseline.
+Coverage is only one signal: tests should still assert meaningful behavior and
+failure contracts rather than execute lines without checking results.
+
+The coverage floor should normally stay unchanged or increase. Lowering it
+requires an explicit explanation of why the regression is unavoidable and how
+the lost coverage will be recovered.
+
 ## Coding Style
 
 SharpEmu follows a consistent coding style across the project. Please ensure your contributions match the existing style.

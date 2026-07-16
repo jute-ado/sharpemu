@@ -6,6 +6,7 @@ path = [
     ".gitattributes",
     "nuget.config",
     "global.json",
+    ".github/coverage-baseline.json",
     "scripts/ps5_names.txt",
     "src/**/packages.lock.json",
     "src/SharpEmu.Libs.Tests/Corpus/**",

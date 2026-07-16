@@ -5,7 +5,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ResultsDirectory,
 
-    [string]$SummaryPath = $env:GITHUB_STEP_SUMMARY
+    [string]$SummaryPath = $env:GITHUB_STEP_SUMMARY,
+
+    [string]$BaselinePath
 )
 
 $reports = @(
@@ -69,13 +71,37 @@ foreach ($branch in $branchCoverage.Values) {
 
 $lineRate = if ($linesValid -eq 0) { 0 } else { 100 * $linesCovered / $linesValid }
 $branchRate = if ($branchesValid -eq 0) { 0 } else { 100 * $branchesCovered / $branchesValid }
+$minimumLineRate = 0.0
+$minimumBranchRate = 0.0
+if (![string]::IsNullOrWhiteSpace($BaselinePath)) {
+    if (!(Test-Path -LiteralPath $BaselinePath -PathType Leaf)) {
+        throw "Coverage baseline '$BaselinePath' does not exist."
+    }
+
+    $baseline = Get-Content -LiteralPath $BaselinePath -Raw | ConvertFrom-Json
+    if ($null -eq $baseline.linePercent -or $null -eq $baseline.branchPercent) {
+        throw "Coverage baseline must define linePercent and branchPercent."
+    }
+
+    $minimumLineRate = [double]$baseline.linePercent
+    $minimumBranchRate = [double]$baseline.branchPercent
+    if ($minimumLineRate -lt 0 -or $minimumLineRate -gt 100 -or
+        $minimumBranchRate -lt 0 -or $minimumBranchRate -gt 100) {
+        throw "Coverage baseline percentages must be between 0 and 100."
+    }
+}
+
+$lineRateText = $lineRate.ToString('F2', [Globalization.CultureInfo]::InvariantCulture)
+$branchRateText = $branchRate.ToString('F2', [Globalization.CultureInfo]::InvariantCulture)
+$minimumLineRateText = $minimumLineRate.ToString('F2', [Globalization.CultureInfo]::InvariantCulture)
+$minimumBranchRateText = $minimumBranchRate.ToString('F2', [Globalization.CultureInfo]::InvariantCulture)
 $summary = @(
     "## Test coverage baseline"
     ""
-    "| Metric | Covered | Total | Rate |"
-    "| --- | ---: | ---: | ---: |"
-    "| Lines | $linesCovered | $linesValid | $($lineRate.ToString('F2', [Globalization.CultureInfo]::InvariantCulture))% |"
-    "| Branches | $branchesCovered | $branchesValid | $($branchRate.ToString('F2', [Globalization.CultureInfo]::InvariantCulture))% |"
+    "| Metric | Covered | Total | Rate | Required |"
+    "| --- | ---: | ---: | ---: | ---: |"
+    "| Lines | $linesCovered | $linesValid | $lineRateText% | $minimumLineRateText% |"
+    "| Branches | $branchesCovered | $branchesValid | $branchRateText% | $minimumBranchRateText% |"
     ""
     "Merged reports: $($reports.Count)"
 ) -join "`n"
@@ -83,4 +109,17 @@ $summary = @(
 Write-Output $summary
 if (![string]::IsNullOrWhiteSpace($SummaryPath)) {
     Add-Content -LiteralPath $SummaryPath -Value $summary
+}
+
+$failures = @()
+if ($lineRate -lt $minimumLineRate) {
+    $failures += "line coverage $lineRateText% is below $minimumLineRateText%"
+}
+
+if ($branchRate -lt $minimumBranchRate) {
+    $failures += "branch coverage $branchRateText% is below $minimumBranchRateText%"
+}
+
+if ($failures.Count -gt 0) {
+    throw "Coverage baseline failed: $($failures -join '; ')."
 }
