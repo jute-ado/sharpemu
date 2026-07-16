@@ -9,9 +9,8 @@ namespace SharpEmu.Libs.Tests;
 /// <summary>
 /// Content invariants over the compile-time generated export registry
 /// (SharpEmu.Generated.SysAbiExportRegistry), which is the runtime's sole registration
-/// source. Replaces the parity test that pinned the registry to the retired reflection
-/// scan while both existed; equality with the scan proved the swap, these pin what must
-/// stay true now that only the registry remains.
+/// source. Independent reflection checks live only in SharpEmu.TestSupport and cannot
+/// become a production registration path.
 /// </summary>
 public sealed class SysAbiRegistryTests
 {
@@ -24,8 +23,8 @@ public sealed class SysAbiRegistryTests
         var exports = SharpEmu.Generated.SysAbiExportRegistry.CreateExports(generation);
         var manager = new ModuleManager();
 
-        // RegisterExports skips NIDs it has already seen, so a shortfall here means the
-        // generated table carries a duplicate the SHEM001 analyzer should have caught.
+        // RegisterExports validates the complete batch before committing it, so a
+        // duplicate here is both an analyzer regression and a runtime registration error.
         Assert.Equal(exports.Count, manager.RegisterExports(exports));
     }
 

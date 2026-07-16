@@ -4,6 +4,7 @@
 using System.Reflection;
 using SharpEmu.Core.Cpu;
 using SharpEmu.HLE;
+using SharpEmu.Testing;
 using Xunit;
 
 namespace SharpEmu.Core.Tests;
@@ -239,9 +240,10 @@ public sealed class NativeImportBridgeTests
             new Dictionary<ulong, string> { [importAddress] = nid },
             moduleManager =>
             {
-                var registered = moduleManager.RegisterFromAssembly(
-                    Assembly.GetExecutingAssembly(),
-                    Generation.Gen5);
+                var registered = moduleManager.RegisterExports(
+                    ReflectionExportDiscovery.Discover(
+                        Assembly.GetExecutingAssembly(),
+                        Generation.Gen5));
                 Assert.True(registered > 0);
                 Assert.True(moduleManager.TryGetExport(nid, out _));
             },
