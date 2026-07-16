@@ -75,7 +75,12 @@ internal static class GameRegressionRunner
         startInfo.ArgumentList.Add(executablePath);
         startInfo.Environment.Remove("SHARPEMU_MITIGATED_CHILD");
         startInfo.Environment.Remove("SHARPEMU_DISABLE_MITIGATION_RELAUNCH");
-        ConfigureVideoOutEnvironment(startInfo, testCase.Expectations);
+        ConfigureVideoOutEnvironment(
+            startInfo,
+            testCase.Expectations,
+            Path.Combine(
+                artifactDirectory,
+                artifactStem + ".presented"));
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException(
@@ -127,14 +132,19 @@ internal static class GameRegressionRunner
 
     internal static void ConfigureVideoOutEnvironment(
         ProcessStartInfo startInfo,
-        GameRegressionExpectations expectations)
+        GameRegressionExpectations expectations,
+        string presentedImageArtifactDirectory)
     {
         ArgumentNullException.ThrowIfNull(startInfo);
         ArgumentNullException.ThrowIfNull(expectations);
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            presentedImageArtifactDirectory);
         startInfo.Environment.Remove("SHARPEMU_DUMP_VIDEOOUT");
         startInfo.Environment.Remove("SHARPEMU_LOG_VIDEOOUT");
         startInfo.Environment.Remove(
             "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE");
+        startInfo.Environment.Remove(
+            "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR");
 
         if (expectations.RequiredVideoOutFrameFingerprints.Length != 0)
         {
@@ -145,6 +155,9 @@ internal static class GameRegressionRunner
         {
             startInfo.Environment[
                 "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE"] = "1";
+            startInfo.Environment[
+                "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR"] =
+                Path.GetFullPath(presentedImageArtifactDirectory);
         }
     }
 

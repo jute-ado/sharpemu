@@ -406,16 +406,25 @@ public sealed class GameRegressionHarnessTests
         startInfo.Environment["SHARPEMU_LOG_VIDEOOUT"] = "stale";
         startInfo.Environment[
             "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE"] = "stale";
+        startInfo.Environment[
+            "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR"] = "stale";
+        var artifactDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "sharpemu-presented-test");
 
         GameRegressionRunner.ConfigureVideoOutEnvironment(
             startInfo,
-            new GameRegressionExpectations());
+            new GameRegressionExpectations(),
+            artifactDirectory);
 
         Assert.False(startInfo.Environment.ContainsKey("SHARPEMU_DUMP_VIDEOOUT"));
         Assert.False(startInfo.Environment.ContainsKey("SHARPEMU_LOG_VIDEOOUT"));
         Assert.False(
             startInfo.Environment.ContainsKey(
                 "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE"));
+        Assert.False(
+            startInfo.Environment.ContainsKey(
+                "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR"));
 
         GameRegressionRunner.ConfigureVideoOutEnvironment(
             startInfo,
@@ -423,13 +432,18 @@ public sealed class GameRegressionHarnessTests
             {
                 RequiredVideoOutFrameFingerprints = ["0123456789ABCDEF"],
                 RequiredPresentedGuestImageFingerprints = ["FEDCBA9876543210"],
-            });
+            },
+            artifactDirectory);
 
         Assert.Equal("1", startInfo.Environment["SHARPEMU_DUMP_VIDEOOUT"]);
         Assert.Equal("1", startInfo.Environment["SHARPEMU_LOG_VIDEOOUT"]);
         Assert.Equal(
             "1",
             startInfo.Environment["SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE"]);
+        Assert.Equal(
+            Path.GetFullPath(artifactDirectory),
+            startInfo.Environment[
+                "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR"]);
     }
 
     [Fact]
