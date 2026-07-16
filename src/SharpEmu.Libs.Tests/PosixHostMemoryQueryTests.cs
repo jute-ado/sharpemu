@@ -29,7 +29,7 @@ public sealed class PosixHostMemoryQueryTests
                 address + pageSize,
                 pageSize,
                 HostPageProtection.ReadOnly,
-                out var oldProtection));
+                out var oldProtection), "Failed to protect the middle page read-only.");
             Assert.Equal(0x04U, oldProtection);
 
             AssertRegion(memory, address, address, pageSize, HostPageProtection.ReadWrite);
@@ -40,7 +40,7 @@ public sealed class PosixHostMemoryQueryTests
                 address,
                 pageSize,
                 HostPageProtection.ReadOnly,
-                out oldProtection));
+                out oldProtection), "Failed to protect the first page read-only.");
             Assert.Equal(0x04U, oldProtection);
             AssertRegion(memory, address, address, 2 * pageSize, HostPageProtection.ReadOnly);
 
@@ -48,13 +48,13 @@ public sealed class PosixHostMemoryQueryTests
                 address,
                 3 * pageSize,
                 HostPageProtection.ReadWrite,
-                out oldProtection));
+                out oldProtection), "Failed to restore the complete allocation to read-write.");
             Assert.Equal(0x02U, oldProtection);
             AssertRegion(memory, address, address, 3 * pageSize, HostPageProtection.ReadWrite);
         }
         finally
         {
-            Assert.True(memory.Free(address));
+            Assert.True(memory.Free(address), "Failed to release the three-page allocation.");
         }
     }
 
@@ -74,7 +74,7 @@ public sealed class PosixHostMemoryQueryTests
         try
         {
             var stopwatch = Stopwatch.StartNew();
-            Assert.True(memory.Query(address, out var region));
+            Assert.True(memory.Query(address, out var region), "Failed to query the large reservation.");
             stopwatch.Stop();
 
             Assert.Equal(address, region.BaseAddress);
@@ -86,7 +86,7 @@ public sealed class PosixHostMemoryQueryTests
         }
         finally
         {
-            Assert.True(memory.Free(address));
+            Assert.True(memory.Free(address), "Failed to release the large reservation.");
         }
     }
 
@@ -97,7 +97,7 @@ public sealed class PosixHostMemoryQueryTests
         ulong expectedSize,
         HostPageProtection expectedProtection)
     {
-        Assert.True(memory.Query(queryAddress, out var region));
+        Assert.True(memory.Query(queryAddress, out var region), $"Failed to query address 0x{queryAddress:X}.");
         Assert.Equal(expectedBase, region.BaseAddress);
         Assert.Equal(expectedSize, region.RegionSize);
         Assert.Equal(expectedProtection, region.Protection);
