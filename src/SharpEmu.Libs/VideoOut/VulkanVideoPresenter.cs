@@ -6707,16 +6707,25 @@ internal static unsafe class VulkanVideoPresenter
                     var center = Convert.ToHexString(
                         bytes.Slice(centerOffset, (int)bytesPerPixel));
                     Console.Error.WriteLine(
-                        "[LOADER][TRACE] " +
-                        (isPresentedImage
-                            ? $"vk.presented_guest_image fingerprint=0x{hash:X16} "
-                            : $"vk.guest_image hash=0x{hash:X16} ") +
-                        $"addr=0x{image.Address:X16} " +
-                        $"size={image.Width}x{image.Height} format={image.Format} " +
-                        $"nonzero_bytes={nonzeroBytes}/{byteCount} " +
-                        $"nonblack_pixels={nonblackPixels}/{(ulong)image.Width * image.Height} " +
-                        $"center={center}");
-                    DumpGuestImageBytes(image, bytes);
+                        isPresentedImage
+                            ? "[LOADER][TRACE] " +
+                              $"vk.presented_guest_image fingerprint=0x{hash:X16} " +
+                              $"addr=0x{image.Address:X16} " +
+                              $"size={image.Width}x{image.Height} format={image.Format} " +
+                              $"nonzero_bytes={nonzeroBytes}/{byteCount} " +
+                              $"nonblack_pixels={nonblackPixels}/{(ulong)image.Width * image.Height} " +
+                              $"center={center}"
+                            : "[LOADER][TRACE] " +
+                              $"vk.guest_image addr=0x{image.Address:X16} " +
+                              $"size={image.Width}x{image.Height} format={image.Format} " +
+                              $"nonzero_bytes={nonzeroBytes}/{byteCount} " +
+                              $"nonblack_pixels={nonblackPixels}/{(ulong)image.Width * image.Height} " +
+                              $"center={center} hash=0x{hash:X16}");
+                    DumpGuestImageBytes(
+                        image,
+                        bytes,
+                        isPresentedImage,
+                        hash);
                 }
                 finally
                 {
@@ -6732,21 +6741,88 @@ internal static unsafe class VulkanVideoPresenter
 
         private static void DumpGuestImageBytes(
             GuestImageResource image,
-            ReadOnlySpan<byte> bytes)
+            ReadOnlySpan<byte> bytes,
+            bool isPresentedImage,
+            ulong fingerprint)
         {
-            var directory =
+            var rawDirectory =
                 Environment.GetEnvironmentVariable("SHARPEMU_GUEST_IMAGE_DUMP_DIR");
-            if (string.IsNullOrWhiteSpace(directory))
+            var presentedDirectory = isPresentedImage
+                ? Environment.GetEnvironmentVariable(
+                    "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR")
+                : null;
+            if (string.IsNullOrWhiteSpace(rawDirectory) &&
+                string.IsNullOrWhiteSpace(presentedDirectory))
             {
                 return;
             }
 
-            Directory.CreateDirectory(directory);
             var sequence = Interlocked.Increment(ref _guestImageDumpSequence);
-            var path = Path.Combine(
-                directory,
-                $"{sequence:D4}-0x{image.Address:X16}-{image.Width}x{image.Height}-{image.Format}.rgba");
-            File.WriteAllBytes(path, bytes.ToArray());
+            if (!string.IsNullOrWhiteSpace(rawDirectory))
+            {
+                Directory.CreateDirectory(rawDirectory);
+                var rawPath = Path.Combine(
+                    rawDirectory,
+                    $"{sequence:D4}-0x{image.Address:X16}-" +
+                    $"{image.Width}x{image.Height}-{image.Format}.rgba");
+                File.WriteAllBytes(rawPath, bytes.ToArray());
+            }
+
+            if (!string.IsNullOrWhiteSpace(presentedDirectory) &&
+                TryConvertPresentedImageToRgb(image, bytes, out var rgb))
+            {
+                Directory.CreateDirectory(presentedDirectory);
+                var basePath = Path.Combine(
+                    presentedDirectory,
+                    $"{sequence:D4}-0x{fingerprint:X16}-" +
+                    $"{image.Width}x{image.Height}");
+                RgbBitmapWriter.Write(
+                    basePath + ".bmp",
+                    image.Width,
+                    image.Height,
+                    rgb);
+                File.WriteAllText(
+                    basePath + ".txt",
+                    $"fingerprint=0x{fingerprint:X16}\n" +
+                    $"address=0x{image.Address:X16}\n" +
+                    $"width={image.Width}\n" +
+                    $"height={image.Height}\n" +
+                    $"format={image.Format}\n");
+            }
+        }
+
+        private static bool TryConvertPresentedImageToRgb(
+            GuestImageResource image,
+            ReadOnlySpan<byte> bytes,
+            out byte[] rgb)
+        {
+            rgb = [];
+            if (image.Format is not (
+                    Format.R8G8B8A8Uint or
+                    Format.R8G8B8A8Sint or
+                    Format.R8G8B8A8Unorm))
+            {
+                return false;
+            }
+
+            var pixelCount = checked(
+                (int)((ulong)image.Width * image.Height));
+            if (bytes.Length != checked(pixelCount * 4))
+            {
+                return false;
+            }
+
+            rgb = new byte[checked(pixelCount * 3)];
+            for (var pixel = 0; pixel < pixelCount; pixel++)
+            {
+                var sourceOffset = pixel * 4;
+                var destinationOffset = pixel * 3;
+                rgb[destinationOffset + 0] = bytes[sourceOffset + 0];
+                rgb[destinationOffset + 1] = bytes[sourceOffset + 1];
+                rgb[destinationOffset + 2] = bytes[sourceOffset + 2];
+            }
+
+            return true;
         }
 
         private static uint GetReadbackBytesPerPixel(Format format) =>

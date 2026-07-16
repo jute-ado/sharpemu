@@ -30,4 +30,6 @@ builds and validates the harness but skips local game execution when no manifest
 is configured. `requiredVideoOutFrameFingerprints` checks the guest's CPU-visible
 VideoOut buffer. `requiredPresentedGuestImageFingerprints` performs one opt-in
 Vulkan readback and checks the image SharpEmu actually presents; use the latter
-when GPU rendering does not write the final pixels back into guest RAM.
+when GPU rendering does not write the final pixels back into guest RAM. Presented
+frame checks also write an ignored BMP and metadata file beside the JSON report
+so the exact tested output can be inspected without rerunning the game.

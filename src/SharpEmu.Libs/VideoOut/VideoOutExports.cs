@@ -1558,7 +1558,11 @@ public static class VideoOutExports
 
         var frameIndex = Interlocked.Increment(ref _nextFrameDumpIndex);
         var basePath = GetFrameDumpBasePath(frameIndex, port.Handle, bufferIndex);
-        WriteBmp(basePath + ".bmp", attribute.Width, attribute.Height, rgb);
+        RgbBitmapWriter.Write(
+            basePath + ".bmp",
+            attribute.Width,
+            attribute.Height,
+            rgb);
         WriteFrameMetadata(basePath + ".txt", slot.AddressLeft, attribute, bufferIndex, flipMode, flipArg, "bmp-linear-read", fingerprint);
         if (_logVideoOut)
         {
@@ -1720,44 +1724,6 @@ public static class VideoOutExports
         }
 
         return Path.Combine(Directory.GetCurrentDirectory(), "logs");
-    }
-
-    private static void WriteBmp(string path, uint width, uint height, byte[] rgb)
-    {
-        var rowStride = checked((int)(((width * 3u) + 3u) & ~3u));
-        var pixelBytes = checked(rowStride * (int)height);
-        var fileSize = 54 + pixelBytes;
-        using var stream = File.Create(path);
-        Span<byte> header = stackalloc byte[54];
-        header[0] = (byte)'B';
-        header[1] = (byte)'M';
-        BinaryPrimitives.WriteUInt32LittleEndian(header[0x02..], (uint)fileSize);
-        BinaryPrimitives.WriteUInt32LittleEndian(header[0x0A..], 54);
-        BinaryPrimitives.WriteUInt32LittleEndian(header[0x0E..], 40);
-        BinaryPrimitives.WriteInt32LittleEndian(header[0x12..], (int)width);
-        BinaryPrimitives.WriteInt32LittleEndian(header[0x16..], -(int)height);
-        BinaryPrimitives.WriteUInt16LittleEndian(header[0x1A..], 1);
-        BinaryPrimitives.WriteUInt16LittleEndian(header[0x1C..], 24);
-        BinaryPrimitives.WriteUInt32LittleEndian(header[0x22..], (uint)pixelBytes);
-        stream.Write(header);
-
-        var row = new byte[rowStride];
-        var sourceStride = (int)width * 3;
-        var heightInt = (int)height;
-        var widthInt = (int)width;
-        for (var y = 0; y < heightInt; y++)
-        {
-            row.AsSpan().Clear();
-            var src = rgb.AsSpan(y * sourceStride, sourceStride);
-            for (var x = 0; x < widthInt; x++)
-            {
-                row[(x * 3) + 0] = src[(x * 3) + 2];
-                row[(x * 3) + 1] = src[(x * 3) + 1];
-                row[(x * 3) + 2] = src[(x * 3) + 0];
-            }
-
-            stream.Write(row);
-        }
     }
 
     private static void WriteFrameMetadata(
