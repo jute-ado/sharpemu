@@ -4,6 +4,8 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
 
 namespace SharpEmu.SourceGenerators;
@@ -41,6 +43,7 @@ public sealed class SysAbiExportAnalyzer : DiagnosticAnalyzer
         SysAbiDiagnostics.NameNotInCatalog,
         SysAbiDiagnostics.HandlerNotAccessible,
         SysAbiDiagnostics.InvalidGuestCString,
+        SysAbiDiagnostics.ReturnValueOverwritten,
     ];
 
     public override void Initialize(AnalysisContext context)
@@ -55,6 +58,9 @@ public sealed class SysAbiExportAnalyzer : DiagnosticAnalyzer
             startContext.RegisterSymbolAction(
                 symbolContext => AnalyzeMethod(symbolContext, catalogNames, exportsByNid),
                 SymbolKind.Method);
+            startContext.RegisterSyntaxNodeAction(
+                AnalyzeReturnChannel,
+                SyntaxKind.MethodDeclaration);
         });
     }
 
@@ -198,5 +204,137 @@ public sealed class SysAbiExportAnalyzer : DiagnosticAnalyzer
                 $"{existing.ContainingType.ToDisplayString()}.{existing.Name}",
                 methodDisplay));
         }
+    }
+
+    private static void AnalyzeReturnChannel(SyntaxNodeAnalysisContext context)
+    {
+        var declaration = (MethodDeclarationSyntax)context.Node;
+        if (declaration.Body is null ||
+            declaration.AttributeLists.Count == 0 ||
+            context.SemanticModel.GetDeclaredSymbol(declaration, context.CancellationToken) is not IMethodSymbol method)
+        {
+            return;
+        }
+
+        var isExport = false;
+        foreach (var attribute in method.GetAttributes())
+        {
+            if (SysAbiExportShape.IsSysAbiExportAttribute(attribute.AttributeClass))
+            {
+                isExport = true;
+                break;
+            }
+        }
+
+        if (!isExport)
+        {
+            return;
+        }
+
+        var methodDisplay = $"{method.ContainingType.ToDisplayString()}.{method.Name}";
+        foreach (var returnStatement in declaration.Body.DescendantNodes().OfType<ReturnStatementSyntax>())
+        {
+            if (IsInsideNestedFunction(returnStatement, declaration) ||
+                returnStatement.Expression is not InvocationExpressionSyntax invocation ||
+                !TryGetCpuContextReceiver(context.SemanticModel, invocation, out var returnContext) ||
+                returnStatement.Parent is not BlockSyntax block)
+            {
+                continue;
+            }
+
+            var returnIndex = block.Statements.IndexOf(returnStatement);
+            for (var index = returnIndex - 1; index >= 0; index--)
+            {
+                var statement = block.Statements[index];
+                if (statement is ExpressionStatementSyntax
+                    {
+                        Expression: AssignmentExpressionSyntax assignment
+                    })
+                {
+                    if (WritesRax(context.SemanticModel, assignment, returnContext))
+                    {
+                        context.ReportDiagnostic(Diagnostic.Create(
+                            SysAbiDiagnostics.ReturnValueOverwritten,
+                            invocation.GetLocation(),
+                            methodDisplay));
+                        break;
+                    }
+
+                    continue;
+                }
+
+                if (statement is LocalDeclarationStatementSyntax or EmptyStatementSyntax)
+                {
+                    continue;
+                }
+
+                // Control flow requires full path-sensitive dataflow. Stop at that
+                // boundary so the rule remains conservative and false-positive free.
+                break;
+            }
+        }
+    }
+
+    private static bool IsInsideNestedFunction(
+        ReturnStatementSyntax returnStatement,
+        MethodDeclarationSyntax declaration)
+    {
+        for (var node = returnStatement.Parent; node is not null && node != declaration; node = node.Parent)
+        {
+            if (node is LocalFunctionStatementSyntax or AnonymousFunctionExpressionSyntax)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryGetCpuContextReceiver(
+        SemanticModel semanticModel,
+        InvocationExpressionSyntax invocation,
+        out ISymbol receiver)
+    {
+        receiver = null!;
+        if (semanticModel.GetSymbolInfo(invocation).Symbol is not IMethodSymbol
+            {
+                Name: "SetReturn",
+                ContainingType: { Name: "CpuContext" } containingType
+            } ||
+            containingType.ContainingNamespace.ToDisplayString() != "SharpEmu.HLE" ||
+            invocation.Expression is not MemberAccessExpressionSyntax memberAccess)
+        {
+            return false;
+        }
+
+        receiver = semanticModel.GetSymbolInfo(memberAccess.Expression).Symbol!;
+        return receiver is not null;
+    }
+
+    private static bool WritesRax(
+        SemanticModel semanticModel,
+        AssignmentExpressionSyntax assignment,
+        ISymbol returnContext)
+    {
+        if (assignment.Left is not ElementAccessExpressionSyntax elementAccess ||
+            semanticModel.GetSymbolInfo(elementAccess).Symbol is not IPropertySymbol
+            {
+                IsIndexer: true,
+                ContainingType: { Name: "CpuContext" } containingType
+            } ||
+            containingType.ContainingNamespace.ToDisplayString() != "SharpEmu.HLE" ||
+            elementAccess.ArgumentList.Arguments.Count != 1 ||
+            semanticModel.GetSymbolInfo(elementAccess.ArgumentList.Arguments[0].Expression).Symbol is not IFieldSymbol
+            {
+                Name: "Rax",
+                ContainingType: { Name: "CpuRegister" } registerType
+            } ||
+            registerType.ContainingNamespace.ToDisplayString() != "SharpEmu.HLE")
+        {
+            return false;
+        }
+
+        var writeContext = semanticModel.GetSymbolInfo(elementAccess.Expression).Symbol;
+        return SymbolEqualityComparer.Default.Equals(writeContext, returnContext);
     }
 }

@@ -237,4 +237,106 @@ public sealed class SysAbiExportAnalyzerTests
 
         AssertSingle(diagnostics, "SHEM007");
     }
+
+    [Fact]
+    public void ManualRaxWriteFollowedBySetReturnIsReported()
+    {
+        var diagnostics = Analyze("""
+            using SharpEmu.HLE;
+
+            public static class Exports
+            {
+                [SysAbiExport(Nid = "Zxa0VhQVTsk", ExportName = "sceKernelWaitSema")]
+                public static int Broken(CpuContext ctx)
+                {
+                    ctx[CpuRegister.Rax] = 0x1234;
+                    var dispatchStatus = 0;
+                    return ctx.SetReturn(dispatchStatus);
+                }
+            }
+            """);
+
+        AssertSingle(diagnostics, "SHEM009");
+    }
+
+    [Fact]
+    public void ManualRaxWriteWithDirectDispatchStatusIsAccepted()
+    {
+        var diagnostics = Analyze("""
+            using SharpEmu.HLE;
+
+            public static class Exports
+            {
+                [SysAbiExport(Nid = "Zxa0VhQVTsk", ExportName = "sceKernelWaitSema")]
+                public static int Correct(CpuContext ctx)
+                {
+                    ctx[CpuRegister.Rax] = 0x1234;
+                    return 0;
+                }
+            }
+            """);
+
+        Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public void SetReturnAsSoleRaxWriterIsAccepted()
+    {
+        var diagnostics = Analyze("""
+            using SharpEmu.HLE;
+
+            public static class Exports
+            {
+                [SysAbiExport(Nid = "Zxa0VhQVTsk", ExportName = "sceKernelWaitSema")]
+                public static int Correct(CpuContext ctx) => ctx.SetReturn(-1);
+            }
+            """);
+
+        Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public void BranchSeparatedReturnPathsAreAccepted()
+    {
+        var diagnostics = Analyze("""
+            using SharpEmu.HLE;
+
+            public static class Exports
+            {
+                [SysAbiExport(Nid = "Zxa0VhQVTsk", ExportName = "sceKernelWaitSema")]
+                public static int Correct(CpuContext ctx)
+                {
+                    if (ctx[CpuRegister.Rdi] != 0)
+                    {
+                        ctx[CpuRegister.Rax] = 0x1234;
+                        return 0;
+                    }
+
+                    return ctx.SetReturn(-1);
+                }
+            }
+            """);
+
+        Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public void OtherRegisterWriteBeforeSetReturnIsAccepted()
+    {
+        var diagnostics = Analyze("""
+            using SharpEmu.HLE;
+
+            public static class Exports
+            {
+                [SysAbiExport(Nid = "Zxa0VhQVTsk", ExportName = "sceKernelWaitSema")]
+                public static int Correct(CpuContext ctx)
+                {
+                    ctx[CpuRegister.Rdx] = 0x1234;
+                    return ctx.SetReturn(0);
+                }
+            }
+            """);
+
+        Assert.Empty(diagnostics);
+    }
 }
