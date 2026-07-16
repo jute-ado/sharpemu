@@ -9,6 +9,8 @@ path = [
     ".github/coverage-baseline.json",
     "scripts/ps5_names.txt",
     "src/**/packages.lock.json",
+    "tests/**/packages.lock.json",
+    "tests/SharpEmu.GameTests/games.example.json",
     "src/SharpEmu.Libs.Tests/Corpus/**",
     "src/SharpEmu.GUI/Languages/**",
     "_logs/**",
