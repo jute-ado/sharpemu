@@ -3,6 +3,7 @@
 
 using SharpEmu.HLE;
 using SharpEmu.HLE.Host;
+using SharpEmu.Libs.UserService;
 using System.Buffers.Binary;
 using System.Diagnostics;
 
@@ -14,11 +15,6 @@ public static class PadExports
     private const int OrbisPadErrorNotInitialized = unchecked((int)0x80920005);
     private const int OrbisPadErrorDeviceNotConnected = unchecked((int)0x80920007);
     private const int OrbisPadErrorDeviceNoHandle = unchecked((int)0x80920008);
-    // Keep the pad session on the same retail user id returned by
-    // libSceUserService.  A mismatched emulator-local id makes games pass a
-    // valid 0x10000000 user to scePadOpen and receive DEVICE_NOT_CONNECTED,
-    // leaving every later keyboard/gamepad read on an invalid handle.
-    private const int PrimaryUserId = 0x10000000;
     private const int StandardPortType = 0;
     private const int PrimaryPadHandle = 1;
     private const int ControllerInformationSize = 0x1C;
@@ -84,7 +80,7 @@ public static class PadExports
         }
 
         var typeAccepted = extended ? type is 0 or 1 or 2 : type == StandardPortType;
-        if (userId != PrimaryUserId || !typeAccepted || index != 0 || (!extended && parameterAddress != 0))
+        if (userId != EmulatedUser.PrimaryId || !typeAccepted || index != 0 || (!extended && parameterAddress != 0))
         {
             return ctx.SetReturn(OrbisPadErrorDeviceNotConnected);
         }

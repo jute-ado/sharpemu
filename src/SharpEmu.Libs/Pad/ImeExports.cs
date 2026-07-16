@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.HLE;
+using SharpEmu.Libs.UserService;
 
 namespace SharpEmu.Libs.Pad;
 
 public static class ImeExports
 {
-    private const int PrimaryUserId = 0x10000000;
     private const int ImeErrorInvalidAddress = unchecked((int)0x80BC0001);
     private const int ImeErrorInvalidUserId = unchecked((int)0x80BC0010);
     private const int ImeErrorNotOpened = unchecked((int)0x80BC0005);
@@ -22,7 +22,7 @@ public static class ImeExports
             return SetReturn(ctx, ImeErrorInvalidAddress);
         }
 
-        if (userId != PrimaryUserId)
+        if (userId != EmulatedUser.PrimaryId)
         {
             return SetReturn(ctx, ImeErrorInvalidUserId);
         }
