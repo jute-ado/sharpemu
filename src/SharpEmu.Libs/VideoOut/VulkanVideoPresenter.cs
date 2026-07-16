@@ -104,16 +104,31 @@ internal static unsafe class VulkanVideoPresenter
     private const string PortabilitySubsetExtensionName = "VK_KHR_portability_subset";
     private static bool _splashHidden;
     private static readonly GuestWorkCompletionTracker _guestWork = new();
+    private static readonly PresentedGuestImageCaptureRequest
+        _presentedGuestImageCaptureRequest =
+            LoadPresentedGuestImageCaptureRequest();
 
-    private static bool ShouldCapturePresentedGuestImageForRegression() =>
-        string.Equals(
-            Environment.GetEnvironmentVariable(
-                "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE"),
-            "1",
-            StringComparison.Ordinal);
+    private static PresentedGuestImageCaptureRequest
+        LoadPresentedGuestImageCaptureRequest()
+    {
+        var value = Environment.GetEnvironmentVariable(
+            "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME");
+        if (PresentedGuestImageCaptureRequest.TryParse(
+                value,
+                out var request))
+        {
+            return request;
+        }
+
+        Console.Error.WriteLine(
+            "[LOADER][WARN] Invalid " +
+            "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME; " +
+            "presented-image capture disabled.");
+        return default;
+    }
 
     private static TimeSpan GetGuestImageRenderWait() =>
-        ShouldCapturePresentedGuestImageForRegression()
+        _presentedGuestImageCaptureRequest.IsEnabled
             ? CapturedGuestImageRenderWait
             : GuestImageRenderWait;
 
@@ -134,9 +149,9 @@ internal static unsafe class VulkanVideoPresenter
 
     private static bool ShouldSamplePresentedGuestImageForDiagnostics(long frame)
     {
-        if (ShouldCapturePresentedGuestImageForRegression())
+        if (_presentedGuestImageCaptureRequest.IsEnabled)
         {
-            return frame == 1;
+            return _presentedGuestImageCaptureRequest.ShouldCapture(frame);
         }
 
         var mode = Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_IMAGES");
@@ -6519,7 +6534,8 @@ internal static unsafe class VulkanVideoPresenter
             {
                 TraceGuestImageContents(
                     presentedGuestImage,
-                    isPresentedImage: true);
+                    isPresentedImage: true,
+                    presentedFrame: _directPresentationCount);
             }
             while (_pendingAliasImageDumps.TryDequeue(out var aliasImage))
             {
@@ -6565,7 +6581,8 @@ internal static unsafe class VulkanVideoPresenter
 
         private void TraceGuestImageContents(
             GuestImageResource image,
-            bool isPresentedImage = false)
+            bool isPresentedImage = false,
+            long presentedFrame = 0)
         {
             var bytesPerPixel = GetReadbackBytesPerPixel(image.Format);
             if (bytesPerPixel == 0)
@@ -6709,7 +6726,8 @@ internal static unsafe class VulkanVideoPresenter
                     Console.Error.WriteLine(
                         isPresentedImage
                             ? "[LOADER][TRACE] " +
-                              $"vk.presented_guest_image fingerprint=0x{hash:X16} " +
+                              $"vk.presented_guest_image frame={presentedFrame} " +
+                              $"fingerprint=0x{hash:X16} " +
                               $"addr=0x{image.Address:X16} " +
                               $"size={image.Width}x{image.Height} format={image.Format} " +
                               $"nonzero_bytes={nonzeroBytes}/{byteCount} " +
@@ -6725,6 +6743,7 @@ internal static unsafe class VulkanVideoPresenter
                         image,
                         bytes,
                         isPresentedImage,
+                        presentedFrame,
                         hash);
                 }
                 finally
@@ -6743,6 +6762,7 @@ internal static unsafe class VulkanVideoPresenter
             GuestImageResource image,
             ReadOnlySpan<byte> bytes,
             bool isPresentedImage,
+            long presentedFrame,
             ulong fingerprint)
         {
             var rawDirectory =
@@ -6774,7 +6794,8 @@ internal static unsafe class VulkanVideoPresenter
                 Directory.CreateDirectory(presentedDirectory);
                 var basePath = Path.Combine(
                     presentedDirectory,
-                    $"{sequence:D4}-0x{fingerprint:X16}-" +
+                    $"{sequence:D4}-frame-{presentedFrame:D6}-" +
+                    $"0x{fingerprint:X16}-" +
                     $"{image.Width}x{image.Height}");
                 RgbBitmapWriter.Write(
                     basePath + ".bmp",
@@ -6783,6 +6804,7 @@ internal static unsafe class VulkanVideoPresenter
                     rgb);
                 File.WriteAllText(
                     basePath + ".txt",
+                    $"frame={presentedFrame}\n" +
                     $"fingerprint=0x{fingerprint:X16}\n" +
                     $"address=0x{image.Address:X16}\n" +
                     $"width={image.Width}\n" +

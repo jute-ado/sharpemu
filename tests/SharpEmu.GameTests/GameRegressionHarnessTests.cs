@@ -341,10 +341,11 @@ public sealed class GameRegressionHarnessTests
     public void ExecutionCanRequireActualPresentedGuestImageFingerprint()
     {
         var testCase = CreateExecutionCase(
-            requiredPresentedGuestImageFingerprints:
-            [
-                "0x7f046b95716664f5",
-            ]);
+            requiredPresentedGuestImage: new()
+            {
+                Frame = 1,
+                Fingerprint = "0x7f046b95716664f5",
+            });
         using var report = JsonDocument.Parse(
             """
             {
@@ -361,7 +362,7 @@ public sealed class GameRegressionHarnessTests
             report.RootElement,
             "synthetic-report.json",
             """
-            [LOADER][TRACE] vk.presented_guest_image fingerprint=0x7F046B95716664F5
+            [LOADER][TRACE] vk.presented_guest_image frame=1 fingerprint=0x7F046B95716664F5
             addr=0x0000000001260000 size=3840x2160
             """);
     }
@@ -370,10 +371,11 @@ public sealed class GameRegressionHarnessTests
     public void ExecutionRejectsDifferentPresentedGuestImageFingerprint()
     {
         var testCase = CreateExecutionCase(
-            requiredPresentedGuestImageFingerprints:
-            [
-                "7F046B95716664F5",
-            ]);
+            requiredPresentedGuestImage: new()
+            {
+                Frame = 30,
+                Fingerprint = "7F046B95716664F5",
+            });
         using var report = JsonDocument.Parse(
             """
             {
@@ -390,10 +392,11 @@ public sealed class GameRegressionHarnessTests
                 testCase,
                 report.RootElement,
                 "synthetic-report.json",
-                "vk.presented_guest_image fingerprint=0x0000000000000000"));
+                "vk.presented_guest_image frame=1 " +
+                "fingerprint=0x7F046B95716664F5"));
 
         Assert.Contains(
-            "presented guest image fingerprint",
+            "frame 30",
             error.Message,
             StringComparison.Ordinal);
     }
@@ -405,7 +408,7 @@ public sealed class GameRegressionHarnessTests
         startInfo.Environment["SHARPEMU_DUMP_VIDEOOUT"] = "stale";
         startInfo.Environment["SHARPEMU_LOG_VIDEOOUT"] = "stale";
         startInfo.Environment[
-            "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE"] = "stale";
+            "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME"] = "stale";
         startInfo.Environment[
             "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR"] = "stale";
         var artifactDirectory = Path.Combine(
@@ -421,7 +424,7 @@ public sealed class GameRegressionHarnessTests
         Assert.False(startInfo.Environment.ContainsKey("SHARPEMU_LOG_VIDEOOUT"));
         Assert.False(
             startInfo.Environment.ContainsKey(
-                "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE"));
+                "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME"));
         Assert.False(
             startInfo.Environment.ContainsKey(
                 "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR"));
@@ -431,15 +434,20 @@ public sealed class GameRegressionHarnessTests
             new GameRegressionExpectations
             {
                 RequiredVideoOutFrameFingerprints = ["0123456789ABCDEF"],
-                RequiredPresentedGuestImageFingerprints = ["FEDCBA9876543210"],
+                RequiredPresentedGuestImage = new()
+                {
+                    Frame = 30,
+                    Fingerprint = "0123456789ABCDEF",
+                },
             },
             artifactDirectory);
 
         Assert.Equal("1", startInfo.Environment["SHARPEMU_DUMP_VIDEOOUT"]);
         Assert.Equal("1", startInfo.Environment["SHARPEMU_LOG_VIDEOOUT"]);
         Assert.Equal(
-            "1",
-            startInfo.Environment["SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE"]);
+            "30",
+            startInfo.Environment[
+                "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME"]);
         Assert.Equal(
             Path.GetFullPath(artifactDirectory),
             startInfo.Environment[
@@ -518,12 +526,36 @@ public sealed class GameRegressionHarnessTests
             StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(0, "0123456789ABCDEF")]
+    [InlineData(-1, "0123456789ABCDEF")]
+    [InlineData(1, "not-a-fingerprint")]
+    public void GameCaseRequiresValidPresentedImageMilestone(
+        long frame,
+        string fingerprint)
+    {
+        var testCase = CreateExecutionCase(
+            requiredPresentedGuestImage: new()
+            {
+                Frame = frame,
+                Fingerprint = fingerprint,
+            });
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => GameRegressionRunner.ValidateCase(testCase));
+
+        Assert.Contains(
+            "requiredPresentedGuestImage",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
     private static GameRegressionCase CreateExecutionCase(
         long? minimumObservedImportDispatches = null,
         string[]? requiredOutputSubstrings = null,
         string[]? forbiddenOutputSubstrings = null,
         string[]? requiredVideoOutFrameFingerprints = null,
-        string[]? requiredPresentedGuestImageFingerprints = null,
+        PresentedGuestImageExpectation? requiredPresentedGuestImage = null,
         string? expectedBundleSha256 =
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") => new()
     {
@@ -554,8 +586,8 @@ public sealed class GameRegressionHarnessTests
                 forbiddenOutputSubstrings ?? [],
             RequiredVideoOutFrameFingerprints =
                 requiredVideoOutFrameFingerprints ?? [],
-            RequiredPresentedGuestImageFingerprints =
-                requiredPresentedGuestImageFingerprints ?? [],
+            RequiredPresentedGuestImage =
+                requiredPresentedGuestImage,
         },
     };
 

@@ -28,8 +28,9 @@ The harness launches the CLI in a child process so execution cases have a hard
 timeout and a crashed or stalled guest cannot take down the test runner. CI
 builds and validates the harness but skips local game execution when no manifest
 is configured. `requiredVideoOutFrameFingerprints` checks the guest's CPU-visible
-VideoOut buffer. `requiredPresentedGuestImageFingerprints` performs one opt-in
-Vulkan readback and checks the image SharpEmu actually presents; use the latter
-when GPU rendering does not write the final pixels back into guest RAM. Presented
-frame checks also write an ignored BMP and metadata file beside the JSON report
-so the exact tested output can be inspected without rerunning the game.
+VideoOut buffer. `requiredPresentedGuestImage` pins one explicit presented-frame
+number and fingerprint and checks the image SharpEmu actually presents. Use
+separate cases for separate milestones so each synchronous Vulkan readback runs
+in an isolated emulator process. Presented-frame checks also write ignored BMP
+and metadata files beside the JSON report so the exact tested output can be
+inspected without rerunning the game.

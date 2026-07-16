@@ -48,9 +48,10 @@
         "requiredVideoOutFrameFingerprints": [
           "0123456789ABCDEF"
         ],
-        "requiredPresentedGuestImageFingerprints": [
-          "FEDCBA9876543210"
-        ]
+        "requiredPresentedGuestImage": {
+          "frame": 1,
+          "fingerprint": "FEDCBA9876543210"
+        }
       }
     }
   ]

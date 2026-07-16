@@ -78,5 +78,16 @@ internal sealed class GameRegressionExpectations
 
     public string[] RequiredVideoOutFrameFingerprints { get; init; } = [];
 
-    public string[] RequiredPresentedGuestImageFingerprints { get; init; } = [];
+    public PresentedGuestImageExpectation? RequiredPresentedGuestImage
+    {
+        get;
+        init;
+    }
+}
+
+internal sealed class PresentedGuestImageExpectation
+{
+    public long Frame { get; init; }
+
+    public string Fingerprint { get; init; } = string.Empty;
 }
