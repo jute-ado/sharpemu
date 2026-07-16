@@ -17,6 +17,7 @@ public sealed class PhysicalVirtualMemoryTests
     private const ulong GuestAllocationArenaSize = 0x0100_0000UL;
     private const uint MemCommit = 0x1000;
     private const uint MemReserve = 0x2000;
+    private const uint MemDecommit = 0x4000;
     private const uint MemRelease = 0x8000;
     private const uint PageNoAccess = 0x01;
     private const uint PageReadWrite = 0x04;
@@ -52,16 +53,10 @@ public sealed class PhysicalVirtualMemoryTests
     [WindowsX64Fact]
     public void AdjacentAllocationsSupportCrossBoundaryAccess()
     {
-        var probe = VirtualAlloc(
-            0,
-            (nuint)(2 * HostAllocationGranularity),
-            MemReserve,
-            PageNoAccess);
-        Assert.NotEqual(0, probe);
-        Assert.True(VirtualFree(probe, 0, MemRelease));
-
-        using var memory = new PhysicalVirtualMemory();
-        var firstAddress = unchecked((ulong)probe);
+        using var hostMemory = new ContiguousWindowsHostMemory(
+            2 * HostAllocationGranularity);
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+        var firstAddress = hostMemory.BaseAddress;
         var secondAddress = firstAddress + HostAllocationGranularity;
         Assert.Equal(
             firstAddress,
@@ -479,6 +474,141 @@ public sealed class PhysicalVirtualMemoryTests
         public uint Protect;
         public uint Type;
         public uint Alignment2;
+    }
+
+    private sealed class ContiguousWindowsHostMemory : IHostMemory, IDisposable
+    {
+        private readonly IHostMemory _inner = HostPlatform.Current.Memory;
+        private readonly Dictionary<ulong, ulong> _allocationSizes = [];
+        private readonly ulong _size;
+        private bool _disposed;
+
+        public ContiguousWindowsHostMemory(ulong size)
+        {
+            _size = size;
+            // Keep the complete address window reserved for the test's lifetime.
+            // The old probe/free/reallocate pattern let concurrent runtime and test
+            // allocations steal this range before PhysicalVirtualMemory claimed it.
+            var reservation = VirtualAlloc(
+                0,
+                checked((nuint)size),
+                MemReserve,
+                PageNoAccess);
+            if (reservation == 0)
+            {
+                throw new OutOfMemoryException(
+                    $"Could not reserve {size} bytes for the contiguous-memory test.");
+            }
+
+            BaseAddress = unchecked((ulong)reservation);
+        }
+
+        public ulong BaseAddress { get; }
+
+        public ulong Allocate(
+            ulong desiredAddress,
+            ulong size,
+            HostPageProtection protection)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (desiredAddress < BaseAddress ||
+                size == 0 ||
+                size > _size ||
+                desiredAddress > BaseAddress + _size - size ||
+                _allocationSizes.ContainsKey(desiredAddress))
+            {
+                return 0;
+            }
+
+            var result = VirtualAlloc(
+                unchecked((nint)desiredAddress),
+                checked((nuint)size),
+                MemCommit,
+                ToNativeProtection(protection));
+            if (result == 0)
+            {
+                return 0;
+            }
+
+            _allocationSizes.Add(desiredAddress, size);
+            return unchecked((ulong)result);
+        }
+
+        public ulong Reserve(
+            ulong desiredAddress,
+            ulong size,
+            HostPageProtection protection)
+        {
+            _ = desiredAddress;
+            _ = size;
+            _ = protection;
+            return 0;
+        }
+
+        public bool Commit(
+            ulong address,
+            ulong size,
+            HostPageProtection protection) =>
+            _inner.Commit(address, size, protection);
+
+        public bool Free(ulong address)
+        {
+            if (!_allocationSizes.Remove(address, out var size))
+            {
+                return false;
+            }
+
+            return VirtualFree(
+                unchecked((nint)address),
+                checked((nuint)size),
+                MemDecommit);
+        }
+
+        public bool Protect(
+            ulong address,
+            ulong size,
+            HostPageProtection protection,
+            out uint rawOldProtection) =>
+            _inner.Protect(address, size, protection, out rawOldProtection);
+
+        public bool ProtectRaw(
+            ulong address,
+            ulong size,
+            uint rawProtection,
+            out uint rawOldProtection) =>
+            _inner.ProtectRaw(address, size, rawProtection, out rawOldProtection);
+
+        public bool Query(ulong address, out HostRegionInfo info) =>
+            _inner.Query(address, out info);
+
+        public void FlushInstructionCache(ulong address, ulong size) =>
+            _inner.FlushInstructionCache(address, size);
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            Assert.True(VirtualFree(
+                unchecked((nint)BaseAddress),
+                0,
+                MemRelease));
+        }
+
+        private static uint ToNativeProtection(HostPageProtection protection) => protection switch
+        {
+            HostPageProtection.NoAccess => PageNoAccess,
+            HostPageProtection.ReadOnly => 0x02,
+            HostPageProtection.ReadWrite => PageReadWrite,
+            HostPageProtection.Execute => 0x10,
+            HostPageProtection.ReadExecute => PageExecuteRead,
+            HostPageProtection.ReadWriteExecute => 0x40,
+            HostPageProtection.ExecuteWriteCopy => 0x80,
+            _ => throw new ArgumentOutOfRangeException(nameof(protection), protection, null),
+        };
     }
 
     private sealed class FailingRawProtectionHostMemory(IHostMemory inner) : IHostMemory
