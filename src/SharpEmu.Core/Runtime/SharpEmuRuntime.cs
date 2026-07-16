@@ -190,7 +190,9 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         return PrepareApplicationCore(normalizedEbootPath);
     }
 
-    public OrbisGen2Result Run(string ebootPath)
+    public OrbisGen2Result Run(
+        string ebootPath,
+        Action? onExecutionStarting = null)
     {
         if (!_allowExecution)
         {
@@ -226,6 +228,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             return failedInitializerResult;
         }
 
+        onExecutionStarting?.Invoke();
         Log.Info($"Dispatching, gen: {generation}");
         Log.Debug($"About to call DispatchEntry with entryPoint=0x{image.EntryPoint:X16}");
 

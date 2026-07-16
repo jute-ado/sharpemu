@@ -217,28 +217,45 @@ internal static class GameRegressionRunner
             }
         }
 
-        if (testCase.Expectations.RequireNoModuleLoadFailures &&
-            report.TryGetProperty("moduleLoadFailures", out var loadFailures) &&
-            loadFailures.ValueKind == JsonValueKind.Array &&
-            loadFailures.GetArrayLength() != 0)
+        if (testCase.Expectations.RequireNoModuleLoadFailures)
         {
-            failures.AppendLine(
-                $"module load failures: {loadFailures.GetArrayLength()}.");
+            if (!report.TryGetProperty(
+                    "moduleLoadFailures",
+                    out var loadFailures) ||
+                loadFailures.ValueKind != JsonValueKind.Array)
+            {
+                failures.AppendLine(
+                    "module load failure status was not captured.");
+            }
+            else if (loadFailures.GetArrayLength() != 0)
+            {
+                failures.AppendLine(
+                    $"module load failures: {loadFailures.GetArrayLength()}.");
+            }
         }
 
-        if (testCase.Expectations.RequireSuccessfulModuleInitializers &&
-            report.TryGetProperty("moduleInitializers", out var initializers) &&
-            initializers.ValueKind == JsonValueKind.Array)
+        if (testCase.Expectations.RequireSuccessfulModuleInitializers)
         {
-            foreach (var initializer in initializers.EnumerateArray())
+            if (!report.TryGetProperty(
+                    "moduleInitializers",
+                    out var initializers) ||
+                initializers.ValueKind != JsonValueKind.Array)
             {
-                if (!initializer.GetProperty("result")
-                    .GetProperty("succeeded")
-                    .GetBoolean())
+                failures.AppendLine(
+                    "module initializer status was not captured.");
+            }
+            else
+            {
+                foreach (var initializer in initializers.EnumerateArray())
                 {
-                    failures.AppendLine(
-                        "at least one module initializer failed.");
-                    break;
+                    if (!initializer.GetProperty("result")
+                        .GetProperty("succeeded")
+                        .GetBoolean())
+                    {
+                        failures.AppendLine(
+                            "at least one module initializer failed.");
+                        break;
+                    }
                 }
             }
         }
