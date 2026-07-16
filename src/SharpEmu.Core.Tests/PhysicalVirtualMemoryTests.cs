@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
 using SharpEmu.HLE.Host;
+using SharpEmu.HLE.Host.Posix;
 using Xunit;
 
 namespace SharpEmu.Core.Tests;
@@ -22,10 +23,28 @@ public sealed class PhysicalVirtualMemoryTests
     private const uint PageReadWrite = 0x04;
     private const uint PageExecuteRead = 0x20;
 
+    private static IHostMemory CreateHostMemory()
+    {
+        if (RuntimeInformation.ProcessArchitecture == Architecture.X64)
+        {
+            return HostPlatform.Current.Memory;
+        }
+
+        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+        {
+            return new PosixHostMemory();
+        }
+
+        return HostPlatform.Current.Memory;
+    }
+
+    private static PhysicalVirtualMemory CreatePhysicalMemory() =>
+        new(CreateHostMemory());
+
     [Fact]
     public void AllocatedRegionSupportsBoundedReadWriteAndEmptyEndAccess()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = CreatePhysicalMemory();
         var address = memory.AllocateAt(0, 0x2000, executable: false);
         var payload = new byte[] { 1, 2, 3, 4 };
 
@@ -149,7 +168,7 @@ public sealed class PhysicalVirtualMemoryTests
     [Fact]
     public void CompareMatchesMappedBytesWithoutCrossingRegionBounds()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = CreatePhysicalMemory();
         var address = memory.AllocateAt(0, 0x2000, executable: false);
         byte[] payload = [1, 2, 3, 4];
         Assert.True(memory.TryWrite(address + 0x100, payload));
@@ -184,7 +203,7 @@ public sealed class PhysicalVirtualMemoryTests
     [Fact]
     public void TemporaryAccessOperationsReportProtectionRestoreFailure()
     {
-        var hostMemory = new FailingRawProtectionHostMemory(HostPlatform.Current.Memory);
+        var hostMemory = new FailingRawProtectionHostMemory(CreateHostMemory());
         using var memory = new PhysicalVirtualMemory(hostMemory);
         var address = memory.AllocateAt(0, 0x1000, executable: true);
         byte[] payload = [1, 2, 3, 4];
@@ -209,7 +228,7 @@ public sealed class PhysicalVirtualMemoryTests
     [Fact]
     public void MappingCopiesPayloadZeroFillsSegmentAndPreservesAdjacentBytes()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = CreatePhysicalMemory();
         var address = memory.AllocateAt(0, 0x2000, executable: false);
         var initial = Enumerable.Repeat((byte)0xCC, 0x2000).ToArray();
         Assert.True(memory.TryWrite(address, initial));
@@ -274,7 +293,7 @@ public sealed class PhysicalVirtualMemoryTests
     [Fact]
     public void GuestAllocatorHonorsAlignmentAndReturnsDistinctRanges()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = CreatePhysicalMemory();
 
         Assert.True(memory.TryAllocateGuestMemory(3, 0x1000, out var first));
         Assert.True(memory.TryAllocateGuestMemory(5, 0x4000, out var second));
@@ -288,7 +307,7 @@ public sealed class PhysicalVirtualMemoryTests
     [Fact]
     public void GuestAllocatorReusesFreedRangeWithRequestedAlignment()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = CreatePhysicalMemory();
 
         Assert.True(memory.TryAllocateGuestMemory(0x80, 0x10, out var padding));
         Assert.True(memory.TryAllocateGuestMemory(0x180, 0x10, out var freed));
@@ -308,7 +327,7 @@ public sealed class PhysicalVirtualMemoryTests
     [Fact]
     public void GuestAllocatorCoalescesAdjacentFreedRanges()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = CreatePhysicalMemory();
 
         Assert.True(memory.TryAllocateGuestMemory(0x100, 0x10, out var first));
         Assert.True(memory.TryAllocateGuestMemory(0x100, 0x10, out var second));
@@ -327,7 +346,7 @@ public sealed class PhysicalVirtualMemoryTests
     [Fact]
     public void GuestAllocatorRejectsInteriorUnknownAndDoubleFrees()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = CreatePhysicalMemory();
 
         Assert.True(memory.TryAllocateGuestMemory(0x100, 0x10, out var address));
 
@@ -341,7 +360,7 @@ public sealed class PhysicalVirtualMemoryTests
     [Fact]
     public void GuestAllocatorGrowsAfterCurrentArenaIsExhausted()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = CreatePhysicalMemory();
         var firstSize = GuestAllocationArenaSize - 0x1000;
 
         Assert.True(memory.TryAllocateGuestMemory(firstSize, 0x1000, out var first));
@@ -362,7 +381,7 @@ public sealed class PhysicalVirtualMemoryTests
     [Fact]
     public void GuestAllocatorCreatesArenaLargeEnoughForOversizedRequest()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = CreatePhysicalMemory();
         const ulong requestedSize = GuestAllocationArenaSize + 0x20_0000;
 
         Assert.True(memory.TryAllocateGuestMemory(requestedSize, 0x20_000, out var address));
@@ -381,7 +400,7 @@ public sealed class PhysicalVirtualMemoryTests
     [Fact]
     public void GuestAllocatorRejectsInvalidRequests()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = CreatePhysicalMemory();
 
         Assert.False(memory.TryAllocateGuestMemory(0, 0x1000, out _));
         Assert.False(memory.TryAllocateGuestMemory(1, 0, out _));
@@ -391,7 +410,7 @@ public sealed class PhysicalVirtualMemoryTests
     [Fact]
     public void ClearReleasesRegionsAndAllowsFreshAllocation()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = CreatePhysicalMemory();
         var address = memory.AllocateAt(0, 0x1000, executable: false);
         Assert.True(memory.TryWrite(address, new byte[] { 1 }));
         var resetVersion = memory.ResetVersion;
@@ -591,7 +610,7 @@ public sealed class PhysicalVirtualMemoryTests
     [Fact]
     public void AllocationSearchRejectsNonPowerOfTwoAlignmentWithoutMutation()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = CreatePhysicalMemory();
 
         Assert.False(memory.TryAllocateAtOrAbove(
             0x0000_0008_4000_0000,
@@ -605,7 +624,7 @@ public sealed class PhysicalVirtualMemoryTests
     [Fact]
     public void AllocationSearchReturnsFalseInsteadOfThrowingOnOverflow()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = CreatePhysicalMemory();
         var result = true;
 
         var addressException = Record.Exception(() =>
@@ -688,7 +707,7 @@ public sealed class PhysicalVirtualMemoryTests
     [Fact]
     public void DisposedMemoryRejectsFurtherOperations()
     {
-        var memory = new PhysicalVirtualMemory();
+        var memory = CreatePhysicalMemory();
         memory.Dispose();
 
         Assert.Throws<ObjectDisposedException>(() =>
