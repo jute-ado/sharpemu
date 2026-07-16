@@ -41,6 +41,9 @@
         "requiredOutputSubstrings": [
           "Vulkan VideoOut presented guest frame"
         ],
+        "forbiddenOutputSubstrings": [
+          "DEVICE_NOT_CONNECTED"
+        ],
         "requiredVideoOutFrameFingerprints": [
           "0123456789ABCDEF"
         ]
