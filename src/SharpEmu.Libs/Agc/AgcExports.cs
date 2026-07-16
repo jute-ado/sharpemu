@@ -114,6 +114,8 @@ public static partial class AgcExports
     private const uint Gen5TextureFormatR16G16B16A16Float = 71;
     private const uint Gen5TextureType2D = 9;
     private const ulong MaxPresentedTextureBytes = 128UL * 1024UL * 1024UL;
+    private const uint MaxSubmittedDwords = 1_000_000;
+    private const int MaxIndirectCommandBufferDepth = 16;
     private const ulong VideoOutPixelFormatA8R8G8B8Srgb = 0x80000000;
     private const ulong VideoOutPixelFormatA8B8G8R8Srgb = 0x80002200;
     private const ulong VideoOutPixelFormatB8G8R8A8Unorm = 0x8100000000000000;
@@ -394,6 +396,11 @@ public static partial class AgcExports
         public uint IndexSize { get; set; }
         public uint InstanceCount { get; set; } = 1;
         public uint DrawIndexOffset { get; set; }
+    }
+
+    private sealed class SubmittedDcbParseBudget
+    {
+        public uint RemainingDwords { get; set; } = MaxSubmittedDwords;
     }
 
     private sealed class SubmittedGpuState
@@ -2010,7 +2017,7 @@ public static partial class AgcExports
         }
 
         if (!TryAllocateCommandDwords(ctx, dcb, 2, out var cmd) ||
-            !ctx.TryWriteUInt32(cmd, Pm4(2, ItNop, RZero)) ||
+            !ctx.TryWriteUInt32(cmd, Pm4(2, ItIndexBufferSize, 0)) ||
             !ctx.TryWriteUInt32(cmd + 4, indexCount))
         {
             return ReturnPointer(ctx, 0);
@@ -2720,9 +2727,31 @@ public static partial class AgcExports
         SubmittedDcbState state,
         ulong commandAddress,
         uint dwordCount,
-        bool tracePackets)
+        bool tracePackets) =>
+        ParseSubmittedDcb(
+            ctx,
+            gpuState,
+            state,
+            commandAddress,
+            dwordCount,
+            tracePackets,
+            new SubmittedDcbParseBudget(),
+            depth: 0);
+
+    private static void ParseSubmittedDcb(
+        CpuContext ctx,
+        SubmittedGpuState gpuState,
+        SubmittedDcbState state,
+        ulong commandAddress,
+        uint dwordCount,
+        bool tracePackets,
+        SubmittedDcbParseBudget budget,
+        int depth)
     {
-        if (commandAddress == 0 || dwordCount == 0 || dwordCount > 1_000_000)
+        if (commandAddress == 0 ||
+            dwordCount == 0 ||
+            dwordCount > budget.RemainingDwords ||
+            depth > MaxIndirectCommandBufferDepth)
         {
             return;
         }
@@ -2730,6 +2759,11 @@ public static partial class AgcExports
         var offset = 0u;
         while (offset < dwordCount)
         {
+            if ((ulong)offset > (ulong.MaxValue - commandAddress) / sizeof(uint))
+            {
+                return;
+            }
+
             var currentAddress = commandAddress + ((ulong)offset * sizeof(uint));
             if (!ctx.TryReadUInt32(currentAddress, out var header))
             {
@@ -2760,6 +2794,12 @@ public static partial class AgcExports
                 return;
             }
 
+            if (length > budget.RemainingDwords)
+            {
+                return;
+            }
+
+            budget.RemainingDwords -= length;
             var op = (header >> 8) & 0xFFu;
             var register = (header >> 2) & 0x3Fu;
             if (tracePackets)
@@ -2782,6 +2822,35 @@ public static partial class AgcExports
                 ctx.TryReadUInt64(currentAddress + 8, out var indirectArgsAddress))
             {
                 state.IndirectArgsAddress = indirectArgsAddress;
+            }
+
+            if (op == ItIndirectBuffer &&
+                length >= 4 &&
+                depth < MaxIndirectCommandBufferDepth &&
+                ctx.TryReadUInt32(currentAddress + 4, out var indirectAddressLow) &&
+                ctx.TryReadUInt32(currentAddress + 8, out var indirectAddressHigh) &&
+                ctx.TryReadUInt32(currentAddress + 12, out var indirectControl))
+            {
+                var indirectAddress =
+                    indirectAddressLow |
+                    ((ulong)(indirectAddressHigh & 0xFFFFu) << 32);
+                var indirectDwordCount = indirectControl & 0xF_FFFFu;
+                if (tracePackets)
+                {
+                    TraceAgc(
+                        $"agc.dcb.indirect depth={depth + 1} " +
+                        $"addr=0x{indirectAddress:X16} dwords={indirectDwordCount}");
+                }
+
+                ParseSubmittedDcb(
+                    ctx,
+                    gpuState,
+                    state,
+                    indirectAddress,
+                    indirectDwordCount,
+                    tracePackets,
+                    budget,
+                    depth + 1);
             }
 
             if (op == ItEventWrite &&
