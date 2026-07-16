@@ -379,12 +379,39 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
                 if (TryFindRegionLocked(pageAddress, out var region))
                 {
                     // Win32 VirtualQuery reports a run of pages sharing the
-                    // same protection, so stop the run where it changes.
-                    var protect = region.ProtectAt(pageAddress);
-                    var runEnd = pageAddress + PageSize;
-                    while (runEnd < region.End && region.ProtectAt(runEnd) == protect)
+                    // same protection, so stop the run where it changes. Guest
+                    // GPU apertures can span hundreds of GiB, while protection
+                    // overrides are sparse; walking every 4 KiB page here makes
+                    // even a tiny query scale with the entire aperture.
+                    var pageProtects = region.PageProtects;
+                    uint protect;
+                    ulong runEnd;
+                    if (pageProtects is null || pageProtects.Count == 0)
                     {
-                        runEnd += PageSize;
+                        protect = region.DefaultProtect;
+                        runEnd = region.End;
+                    }
+                    else if (pageProtects.TryGetValue(pageAddress, out protect))
+                    {
+                        runEnd = pageAddress + PageSize;
+                        while (runEnd < region.End &&
+                            pageProtects.TryGetValue(runEnd, out var nextProtect) &&
+                            nextProtect == protect)
+                        {
+                            runEnd += PageSize;
+                        }
+                    }
+                    else
+                    {
+                        protect = region.DefaultProtect;
+                        runEnd = region.End;
+                        foreach (var overrideAddress in pageProtects.Keys)
+                        {
+                            if (overrideAddress > pageAddress && overrideAddress < runEnd)
+                            {
+                                runEnd = overrideAddress;
+                            }
+                        }
                     }
 
                     info.BaseAddress = pageAddress;
