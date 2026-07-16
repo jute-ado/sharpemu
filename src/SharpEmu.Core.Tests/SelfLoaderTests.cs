@@ -19,6 +19,8 @@ public sealed class SelfLoaderTests
     private const int SyntheticSelfPayloadOffset = 0x200;
     private const int DynamicEntrySize = 16;
     private const long DynamicTagInit = 0x0C;
+    private const long DynamicTagInitArray = 0x19;
+    private const long DynamicTagInitArraySize = 0x1B;
     private const long DynamicTagStringTable = 0x05;
     private const long DynamicTagSymbolTable = 0x06;
     private const long DynamicTagRela = 0x07;
@@ -357,6 +359,41 @@ public sealed class SelfLoaderTests
     }
 
     [Fact]
+    public void RejectedDynamicMetadataInLoadSegmentBssDoesNotClearExistingGuestMemory()
+    {
+        var memory = CreateSentinelMemory();
+        var payloadOffset = ElfHeaderSize + (2 * ProgramHeaderSize);
+        var malformed = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 2);
+        Array.Resize(ref malformed, payloadOffset + DynamicEntrySize);
+
+        var loadHeader = malformed.AsSpan(ElfHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(loadHeader, (uint)ProgramHeaderType.Load);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[8..], (ulong)payloadOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[16..], 0x3000);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[32..], DynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[40..], 0x40);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[48..], 8);
+
+        var dynamicHeader = malformed.AsSpan(
+            ElfHeaderSize + ProgramHeaderSize,
+            ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            dynamicHeader,
+            (uint)ProgramHeaderType.Dynamic);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[8..], ulong.MaxValue);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[16..], 0x3020);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[32..], DynamicEntrySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[40..], DynamicEntrySize);
+
+        Assert.Throws<InvalidDataException>(() =>
+            new SelfLoader().Load(malformed, memory));
+
+        AssertSentinelMemoryPreserved(memory);
+    }
+
+    [Fact]
     public void RejectedOverlappingLoadSegmentsDoNotClearExistingGuestMemory()
     {
         var memory = new VirtualMemory();
@@ -533,6 +570,61 @@ public sealed class SelfLoaderTests
         var image = new SelfLoader().Load(elf, new VirtualMemory());
 
         Assert.Equal(0x20_000UL, image.InitFunctionEntryPoint);
+        Assert.Equal(new[] { 0x20_000UL }, image.InitializerFunctions);
+    }
+
+    [HostX64Fact]
+    public void PhysicalMemoryLoadsDynamicTablesFromNonReadableSegmentBacking()
+    {
+        var dynamicOffset = ElfHeaderSize + (2 * ProgramHeaderSize);
+        const int dynamicTableSize = 4 * DynamicEntrySize;
+        const int initializerArraySize = sizeof(ulong);
+        var elf = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 2);
+        Array.Resize(ref elf, dynamicOffset + dynamicTableSize + initializerArraySize);
+
+        var loadHeader = elf.AsSpan(ElfHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(loadHeader, (uint)ProgramHeaderType.Load);
+        BinaryPrimitives.WriteUInt32LittleEndian(loadHeader[4..], 0);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[8..], (ulong)dynamicOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[16..], 0x3000);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            loadHeader[32..],
+            dynamicTableSize + initializerArraySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            loadHeader[40..],
+            dynamicTableSize + initializerArraySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[48..], 8);
+
+        var dynamicHeader = elf.AsSpan(
+            ElfHeaderSize + ProgramHeaderSize,
+            ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(dynamicHeader, (uint)ProgramHeaderType.Dynamic);
+        BinaryPrimitives.WriteUInt32LittleEndian(dynamicHeader[4..], (uint)ProgramHeaderFlags.Read);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[8..], ulong.MaxValue);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[16..], 0x3000);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[32..], dynamicTableSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[40..], dynamicTableSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[48..], 8);
+
+        var dynamicTable = elf.AsSpan(dynamicOffset, dynamicTableSize);
+        BinaryPrimitives.WriteInt64LittleEndian(dynamicTable, DynamicTagInitArray);
+        BinaryPrimitives.WriteUInt64LittleEndian(dynamicTable[sizeof(long)..], 0x3040);
+        BinaryPrimitives.WriteInt64LittleEndian(
+            dynamicTable[DynamicEntrySize..],
+            DynamicTagInitArraySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            dynamicTable[(DynamicEntrySize + sizeof(long))..],
+            initializerArraySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            elf.AsSpan(dynamicOffset + dynamicTableSize, initializerArraySize),
+            0x20_000);
+
+        using var memory = new PhysicalVirtualMemory();
+        var image = new SelfLoader().Load(elf, memory);
+
+        Assert.Equal(0UL, image.InitFunctionEntryPoint);
         Assert.Equal(new[] { 0x20_000UL }, image.InitializerFunctions);
     }
 

@@ -459,10 +459,13 @@ public sealed class SelfLoader : ISelfLoader
 
             if (header.HeaderType == ProgramHeaderType.Dynamic &&
                 header.FileSize != 0 &&
-                !IsRangeMappedByLoadSegment(
+                !TryResolveContainingLoadSegmentFileOffset(
+                    imageData.Length,
+                    loadContext,
                     programHeaders,
                     header.VirtualAddress,
-                    header.FileSize))
+                    header.FileSize,
+                    out _))
             {
                 var dynamicOffset = ResolvePhysicalSegmentOffset(
                     imageData.Length,
@@ -536,18 +539,23 @@ public sealed class SelfLoader : ISelfLoader
         }
     }
 
-    private static bool IsRangeMappedByLoadSegment(
+    private static bool TryResolveContainingLoadSegmentFileOffset(
+        int imageLength,
+        LoadContext loadContext,
         IReadOnlyList<ProgramHeader> programHeaders,
         ulong virtualAddress,
-        ulong size)
+        ulong size,
+        out ulong fileOffset)
     {
         if (size == 0)
         {
+            fileOffset = 0;
             return true;
         }
 
         if (virtualAddress > ulong.MaxValue - size)
         {
+            fileOffset = 0;
             return false;
         }
 
@@ -556,20 +564,34 @@ public sealed class SelfLoader : ISelfLoader
         {
             var loadHeader = programHeaders[index];
             if (loadHeader.HeaderType != ProgramHeaderType.Load ||
-                loadHeader.MemorySize == 0 ||
-                loadHeader.VirtualAddress > ulong.MaxValue - loadHeader.MemorySize)
+                loadHeader.FileSize == 0 ||
+                loadHeader.VirtualAddress > ulong.MaxValue - loadHeader.FileSize)
             {
                 continue;
             }
 
-            var loadEndAddress = loadHeader.VirtualAddress + loadHeader.MemorySize;
+            var loadEndAddress = loadHeader.VirtualAddress + loadHeader.FileSize;
             if (virtualAddress >= loadHeader.VirtualAddress &&
                 endAddress <= loadEndAddress)
             {
-                return true;
+                var relativeOffset = virtualAddress - loadHeader.VirtualAddress;
+                var segmentOffset = ResolvePhysicalSegmentOffset(
+                    imageLength,
+                    loadContext,
+                    loadHeader,
+                    index);
+                if (segmentOffset > ulong.MaxValue - relativeOffset)
+                {
+                    throw new InvalidDataException(
+                        "ELF table offset within its load segment overflows.");
+                }
+
+                fileOffset = segmentOffset + relativeOffset;
+                return TryIsInRange(imageLength, fileOffset, size);
             }
         }
 
+        fileOffset = 0;
         return false;
     }
 
@@ -704,6 +726,7 @@ public sealed class SelfLoader : ISelfLoader
         if (!TryLoadDynamicTableBytes(
                 imageData,
                 loadContext,
+                programHeaders,
                 virtualMemory,
                 imageBase,
                 dynamicHeader,
@@ -728,13 +751,29 @@ public sealed class SelfLoader : ISelfLoader
         var relocations = new List<ElfRelocation>(512);
 
         if (dynamicInfo.RelaSize != 0 &&
-            TryLoadTableBytes(elfData, virtualMemory, imageBase, dynamicInfo.RelaOffset, dynamicInfo.RelaSize, out var relaBytes))
+            TryLoadTableBytes(
+                elfData,
+                loadContext,
+                programHeaders,
+                virtualMemory,
+                imageBase,
+                dynamicInfo.RelaOffset,
+                dynamicInfo.RelaSize,
+                out var relaBytes))
         {
             CollectRelocations(relaBytes, relocations);
         }
 
         if (dynamicInfo.JmpRelSize != 0 &&
-            TryLoadTableBytes(elfData, virtualMemory, imageBase, dynamicInfo.JmpRelOffset, dynamicInfo.JmpRelSize, out var jmpRelBytes))
+            TryLoadTableBytes(
+                elfData,
+                loadContext,
+                programHeaders,
+                virtualMemory,
+                imageBase,
+                dynamicInfo.JmpRelOffset,
+                dynamicInfo.JmpRelSize,
+                out var jmpRelBytes))
         {
             CollectRelocations(jmpRelBytes, relocations);
         }
@@ -775,6 +814,8 @@ public sealed class SelfLoader : ISelfLoader
         {
             if (!TryLoadTableBytes(
                     elfData,
+                    loadContext,
+                    programHeaders,
                     virtualMemory,
                     imageBase,
                     dynamicInfo.StrTabOffset,
@@ -789,6 +830,8 @@ public sealed class SelfLoader : ISelfLoader
                 : checked(((ulong)maxSymbolIndex + 1) * ElfSymbolSize);
             if (!TryLoadTableBytes(
                     elfData,
+                    loadContext,
+                    programHeaders,
                     virtualMemory,
                     imageBase,
                     dynamicInfo.SymTabOffset,
@@ -1198,6 +1241,7 @@ public sealed class SelfLoader : ISelfLoader
         if (!TryLoadDynamicTableBytes(
                 imageData,
                 loadContext,
+                programHeaders,
                 virtualMemory,
                 imageBase,
                 dynamicHeader,
@@ -1219,6 +1263,8 @@ public sealed class SelfLoader : ISelfLoader
         AppendInitializerArrayEntries(
             preInitializers,
             imageData,
+            loadContext,
+            programHeaders,
             virtualMemory,
             imageBase,
             dynamicInfo.PreInitArrayOffset,
@@ -1228,6 +1274,8 @@ public sealed class SelfLoader : ISelfLoader
         AppendInitializerArrayEntries(
             initializers,
             imageData,
+            loadContext,
+            programHeaders,
             virtualMemory,
             imageBase,
             dynamicInfo.InitArrayOffset,
@@ -1253,6 +1301,8 @@ public sealed class SelfLoader : ISelfLoader
     private static void AppendInitializerArrayEntries(
         ICollection<ulong> destination,
         ReadOnlySpan<byte> imageData,
+        LoadContext loadContext,
+        IReadOnlyList<ProgramHeader> programHeaders,
         IVirtualMemory virtualMemory,
         ulong imageBase,
         ulong arrayOffset,
@@ -1263,7 +1313,15 @@ public sealed class SelfLoader : ISelfLoader
             return;
         }
 
-        if (!TryLoadTableBytes(imageData, virtualMemory, imageBase, arrayOffset, arraySize, out var arrayBytes))
+        if (!TryLoadTableBytes(
+                imageData,
+                loadContext,
+                programHeaders,
+                virtualMemory,
+                imageBase,
+                arrayOffset,
+                arraySize,
+                out var arrayBytes))
         {
             return;
         }
@@ -1429,6 +1487,7 @@ public sealed class SelfLoader : ISelfLoader
         if (!TryLoadDynamicTableBytes(
                 imageData,
                 loadContext,
+                programHeaders,
                 virtualMemory,
                 imageBase,
                 dynamicHeader,
@@ -1446,6 +1505,8 @@ public sealed class SelfLoader : ISelfLoader
 
         if (!TryLoadTableBytes(
                 imageData,
+                loadContext,
+                programHeaders,
                 virtualMemory,
                 imageBase,
                 dynamicInfo.StrTabOffset,
@@ -1464,6 +1525,8 @@ public sealed class SelfLoader : ISelfLoader
 
         if (!TryLoadTableBytes(
                 imageData,
+                loadContext,
+                programHeaders,
                 virtualMemory,
                 imageBase,
                 dynamicInfo.SymTabOffset,
@@ -1574,6 +1637,7 @@ public sealed class SelfLoader : ISelfLoader
     private static bool TryLoadDynamicTableBytes(
         ReadOnlySpan<byte> imageData,
         LoadContext loadContext,
+        IReadOnlyList<ProgramHeader> programHeaders,
         IVirtualMemory virtualMemory,
         ulong imageBase,
         ProgramHeader dynamicHeader,
@@ -1591,6 +1655,17 @@ public sealed class SelfLoader : ISelfLoader
             return true;
         }
 
+        if (TryLoadTableBytesFromContainingSegment(
+                imageData,
+                loadContext,
+                programHeaders,
+                dynamicHeader.VirtualAddress,
+                dynamicHeader.FileSize,
+                out dynamicTable))
+        {
+            return true;
+        }
+
         var dynamicOffset = ResolvePhysicalSegmentOffset(imageData.Length, loadContext, dynamicHeader, dynamicHeaderIndex);
         if (!TrySlice(imageData, dynamicOffset, dynamicHeader.FileSize, out dynamicTable))
         {
@@ -1599,6 +1674,29 @@ public sealed class SelfLoader : ISelfLoader
         }
 
         return true;
+    }
+
+    private static bool TryLoadTableBytesFromContainingSegment(
+        ReadOnlySpan<byte> imageData,
+        LoadContext loadContext,
+        IReadOnlyList<ProgramHeader> programHeaders,
+        ulong virtualAddress,
+        ulong size,
+        out ReadOnlySpan<byte> tableBytes)
+    {
+        if (!TryResolveContainingLoadSegmentFileOffset(
+                imageData.Length,
+                loadContext,
+                programHeaders,
+                virtualAddress,
+                size,
+                out var fileOffset))
+        {
+            tableBytes = default;
+            return false;
+        }
+
+        return TrySlice(imageData, fileOffset, size, out tableBytes);
     }
 
     private static bool TryReadElfRelativeSlice(
@@ -2046,6 +2144,8 @@ public sealed class SelfLoader : ISelfLoader
 
     private static bool TryLoadTableBytes(
         ReadOnlySpan<byte> elfData,
+        LoadContext loadContext,
+        IReadOnlyList<ProgramHeader> programHeaders,
         IVirtualMemory virtualMemory,
         ulong imageBase,
         ulong location,
@@ -2068,6 +2168,18 @@ public sealed class SelfLoader : ISelfLoader
                 size,
                 out tableBytes))
         {
+            return true;
+        }
+
+        if (TryLoadTableBytesFromContainingSegment(
+                elfData,
+                loadContext,
+                programHeaders,
+                location,
+                size,
+                out var mappedFileBytes))
+        {
+            tableBytes = mappedFileBytes.ToArray();
             return true;
         }
 
