@@ -4,6 +4,7 @@
 using System.Text.Json;
 using SharpEmu.Core.Runtime;
 using SharpEmu.HLE;
+using SharpEmu.Logging;
 using Xunit;
 
 namespace SharpEmu.Core.Tests;
@@ -390,7 +391,9 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("eboot.bin", bundleFiles[0].GetProperty("path").GetString());
         Assert.Equal(execution.ExecutableSha256, bundleFiles[0].GetProperty("sha256").GetString());
         Assert.Equal("sce_sys/param.json", bundleFiles[1].GetProperty("path").GetString());
-        Assert.Equal("Release", root.GetProperty("build").GetProperty("configuration").GetString());
+        Assert.Equal(
+            BuildInfo.Configuration,
+            root.GetProperty("build").GetProperty("configuration").GetString());
         Assert.False(root.GetProperty("build").GetProperty("isOfficialRelease").GetBoolean());
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("host").GetProperty("osDescription").GetString()));
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("host").GetProperty("processArchitecture").GetString()));
