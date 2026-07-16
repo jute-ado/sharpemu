@@ -106,7 +106,11 @@ public static partial class KernelMemoryCompatExports
     private static readonly object _guestMountGate = new();
     private static readonly Dictionary<ulong, DirectAllocation> _directAllocations = new();
     private static readonly Dictionary<ulong, LibcHeapAllocation> _libcAllocations = new();
-    private static readonly Dictionary<ulong, MappedRegion> _mappedRegions = new();
+    // Keyed by (and kept sorted on) region base address so VirtualQuery can find a
+    // containing/next region with a binary search instead of an O(n) scan. Every
+    // write uses the region's own Address as the key (see AddMappedRegionSliceLocked
+    // and the mmap sites), so Values enumerate in ascending address order.
+    private static readonly SortedList<ulong, MappedRegion> _mappedRegions = new();
     private static readonly Dictionary<ulong, string> _mappedRegionNames = new();
     private static readonly Dictionary<ulong, ulong> _tlsModuleBlocks = new();
     private static readonly Dictionary<string, string> _guestMounts = new(StringComparer.OrdinalIgnoreCase);
@@ -6101,7 +6105,9 @@ public static partial class KernelMemoryCompatExports
 
         var affected = new List<MappedRegion>();
         var cursor = address;
-        foreach (var region in _mappedRegions.Values.OrderBy(static region => region.Address))
+        // _mappedRegions is a SortedList keyed by address, so Values already
+        // enumerate in ascending address order.
+        foreach (var region in _mappedRegions.Values)
         {
             if (!TryAddU64(region.Address, region.Length, out var regionEnd) || regionEnd <= cursor)
             {
@@ -6260,9 +6266,33 @@ public static partial class KernelMemoryCompatExports
     private static bool TryFindVirtualQueryRegionLocked(ulong queryAddress, bool findNext, out MappedRegion region)
     {
         region = default;
-        var foundNext = false;
-        foreach (var candidate in _mappedRegions.Values)
+        var keys = _mappedRegions.Keys;
+        var values = _mappedRegions.Values;
+        var count = keys.Count;
+
+        // First index whose region address is >= queryAddress.
+        var lo = 0;
+        var hi = count;
+        while (lo < hi)
         {
+            var mid = (int)(((uint)lo + (uint)hi) >> 1);
+            if (keys[mid] < queryAddress)
+            {
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid;
+            }
+        }
+
+        // Regions do not overlap, so only the one with the greatest base address
+        // <= queryAddress can contain it — index lo when it starts exactly at
+        // queryAddress, otherwise lo - 1.
+        var floorIndex = (lo < count && keys[lo] == queryAddress) ? lo : lo - 1;
+        if (floorIndex >= 0)
+        {
+            var candidate = values[floorIndex];
             if (TryAddU64(candidate.Address, candidate.Length, out var candidateEnd) &&
                 queryAddress >= candidate.Address &&
                 queryAddress < candidateEnd)
@@ -6270,20 +6300,16 @@ public static partial class KernelMemoryCompatExports
                 region = candidate;
                 return true;
             }
-
-            if (!findNext || candidate.Address < queryAddress)
-            {
-                continue;
-            }
-
-            if (!foundNext || candidate.Address < region.Address)
-            {
-                region = candidate;
-                foundNext = true;
-            }
         }
 
-        return foundNext;
+        // findNext: the region with the smallest base address >= queryAddress.
+        if (findNext && lo < count)
+        {
+            region = values[lo];
+            return true;
+        }
+
+        return false;
     }
 
     private static void TraceDirectMemoryCall(
@@ -6312,10 +6338,12 @@ public static partial class KernelMemoryCompatExports
             $"[LOADER][TRACE] {operation}: ret=0x{returnRip:X16} len=0x{length:X16} align=0x{alignment:X16} type=0x{memoryType:X8} out=0x{outAddress:X16} selected=0x{selectedAddress:X16} result={result?.ToString() ?? "<pending>"}");
     }
 
-    private static bool ShouldTraceDirectMemory()
-    {
-        return string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_DIRECT_MEMORY"), "1", StringComparison.Ordinal);
-    }
+    // Cached once so the ~8 direct-memory call sites don't each do a
+    // GetEnvironmentVariable P/Invoke per operation.
+    private static readonly bool _traceDirectMemory = string.Equals(
+        Environment.GetEnvironmentVariable("SHARPEMU_LOG_DIRECT_MEMORY"), "1", StringComparison.Ordinal);
+
+    private static bool ShouldTraceDirectMemory() => _traceDirectMemory;
 
     private static bool TryAllocateDirectMemoryLocked(
         ulong searchStart,

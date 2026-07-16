@@ -3620,10 +3620,42 @@ public static partial class AgcExports
             return false;
         }
 
-        var renderTargets = GetRenderTargets(state.CxRegisters)
-            .Where(target => HasPixelColorExport(pixelState, target.Slot))
-            .OrderBy(target => target.Slot)
-            .ToArray();
+        // Every bound color target the shader exports to. Deferred renderers
+        // draw a multi-render-target G-buffer (up to eight slots) in one pass.
+        // Fall back to slot 0 if we cannot match any export to a bound target.
+        var allBoundTargets = GetRenderTargets(state.CxRegisters);
+        // At most 8 slots; a manual filter avoids the per-draw LINQ iterator/
+        // closure allocations. Slots are distinct, so sorting by slot is stable.
+        var selectedTargets = new List<RenderTargetDescriptor>(allBoundTargets.Count);
+        foreach (var target in allBoundTargets)
+        {
+            if (HasPixelColorExport(pixelState, target.Slot))
+            {
+                selectedTargets.Add(target);
+            }
+        }
+
+        if (selectedTargets.Count == 0)
+        {
+            foreach (var target in allBoundTargets)
+            {
+                if (target.Slot == 0)
+                {
+                    selectedTargets.Add(target);
+                }
+            }
+        }
+
+        selectedTargets.Sort(static (left, right) => left.Slot.CompareTo(right.Slot));
+        var renderTargets = selectedTargets.ToArray();
+        if (_traceAgcShader && allBoundTargets.Count > 1)
+        {
+            TraceAgcShader(
+                $"agc.mrt_filter ps=0x{pixelShaderAddress:X16} " +
+                $"bound=[{string.Join(",", allBoundTargets.Select(t => $"s{t.Slot}:0x{t.Address:X}:exp{(HasPixelColorExport(pixelState, t.Slot) ? 1 : 0)}"))}] " +
+                $"kept={renderTargets.Length}");
+        }
+
         var renderTargetOutputKinds = new Gen5PixelOutputKind[renderTargets.Length];
         for (var index = 0; index < renderTargets.Length; index++)
         {
@@ -3861,12 +3893,23 @@ public static partial class AgcExports
     private static bool HasPixelColorExport(Gen5ShaderState state, uint target) =>
         GetPixelColorExportMask(state, target) != 0;
 
-    private static uint GetPixelColorExportMask(Gen5ShaderState state, uint target) =>
-        state.Program.Instructions
-            .Select(instruction => instruction.Control)
-            .OfType<Gen5ExportControl>()
-            .Where(export => export.Target == target)
-            .Aggregate(0u, (mask, export) => mask | (export.EnableMask & 0xFu));
+    private static uint GetPixelColorExportMask(Gen5ShaderState state, uint target)
+    {
+        // Called per render target (twice per draw via CreateRenderState +
+        // HasPixelColorExport); a manual scan avoids the per-call LINQ iterator
+        // and closure allocations. Same result as the previous
+        // Select/OfType/Where/Aggregate chain.
+        var mask = 0u;
+        foreach (var instruction in state.Program.Instructions)
+        {
+            if (instruction.Control is Gen5ExportControl export && export.Target == target)
+            {
+                mask |= export.EnableMask & 0xFu;
+            }
+        }
+
+        return mask;
+    }
 
     private static uint GetInterpolatedAttributeCount(Gen5ShaderState state)
     {
