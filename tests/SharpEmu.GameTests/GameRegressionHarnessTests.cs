@@ -208,6 +208,68 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
+    public void ExecutionPassesWhenForbiddenOutputIsAbsent()
+    {
+        var testCase = CreateExecutionCase(
+            forbiddenOutputSubstrings:
+            [
+                "DEVICE_NOT_CONNECTED",
+            ]);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        GameRegressionRunner.ValidateReport(
+            testCase,
+            report.RootElement,
+            "synthetic-report.json",
+            "[LOADER][INFO] Controls: keyboard fallback active");
+    }
+
+    [Fact]
+    public void ExecutionFailsWhenForbiddenOutputIsObserved()
+    {
+        var testCase = CreateExecutionCase(
+            forbiddenOutputSubstrings:
+            [
+                "DEVICE_NOT_CONNECTED",
+            ]);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                "[LOADER][WARN] scePadOpen: DEVICE_NOT_CONNECTED"));
+
+        Assert.Contains(
+            "forbidden output was observed",
+            error.Message,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "DEVICE_NOT_CONNECTED",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExecutionCanRequireCapturedVideoOutFrameFingerprint()
     {
         var testCase = CreateExecutionCase(
@@ -328,6 +390,7 @@ public sealed class GameRegressionHarnessTests
     private static GameRegressionCase CreateExecutionCase(
         long? minimumObservedImportDispatches = null,
         string[]? requiredOutputSubstrings = null,
+        string[]? forbiddenOutputSubstrings = null,
         string[]? requiredVideoOutFrameFingerprints = null) => new()
     {
         Name = "execution survival",
@@ -352,6 +415,8 @@ public sealed class GameRegressionHarnessTests
                 minimumObservedImportDispatches,
             RequiredOutputSubstrings =
                 requiredOutputSubstrings ?? [],
+            ForbiddenOutputSubstrings =
+                forbiddenOutputSubstrings ?? [],
             RequiredVideoOutFrameFingerprints =
                 requiredVideoOutFrameFingerprints ?? [],
         },

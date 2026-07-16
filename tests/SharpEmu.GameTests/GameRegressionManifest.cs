@@ -74,5 +74,7 @@ internal sealed class GameRegressionExpectations
 
     public string[] RequiredOutputSubstrings { get; init; } = [];
 
+    public string[] ForbiddenOutputSubstrings { get; init; } = [];
+
     public string[] RequiredVideoOutFrameFingerprints { get; init; } = [];
 }

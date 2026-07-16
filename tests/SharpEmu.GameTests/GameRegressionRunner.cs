@@ -194,6 +194,18 @@ internal static class GameRegressionRunner
                 }
         }
         for (var index = 0;
+            index < testCase.Expectations.ForbiddenOutputSubstrings.Length;
+            index++)
+        {
+            if (string.IsNullOrWhiteSpace(
+                testCase.Expectations.ForbiddenOutputSubstrings[index]))
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' contains an empty " +
+                    "forbiddenOutputSubstrings entry.");
+            }
+        }
+        for (var index = 0;
             index <
                 testCase.Expectations.RequiredVideoOutFrameFingerprints.Length;
             index++)
@@ -330,6 +342,21 @@ internal static class GameRegressionRunner
                 failures.AppendLine(
                     $"required output milestone was not observed: " +
                     $"'{requiredOutput}'.");
+            }
+        }
+
+        for (var index = 0;
+            index < testCase.Expectations.ForbiddenOutputSubstrings.Length;
+            index++)
+        {
+            var forbiddenOutput =
+                testCase.Expectations.ForbiddenOutputSubstrings[index];
+            if (capturedOutput.Contains(
+                    forbiddenOutput,
+                    StringComparison.Ordinal))
+            {
+                failures.AppendLine(
+                    $"forbidden output was observed: '{forbiddenOutput}'.");
             }
         }
 
