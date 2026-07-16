@@ -15,6 +15,8 @@ public sealed class Gfx10UnifiedFormatTests
     [InlineData(36u, 6u, 7u)]
     [InlineData(43u, 7u, 7u)]
     [InlineData(44u, 8u, 0u)]
+    [InlineData(60u, 10u, 4u)]
+    [InlineData(61u, 10u, 5u)]
     [InlineData(77u, 14u, 7u)]
     [InlineData(128u, 1u, 9u)]
     [InlineData(132u, 34u, 7u)]

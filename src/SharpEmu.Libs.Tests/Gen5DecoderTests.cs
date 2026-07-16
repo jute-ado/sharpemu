@@ -1913,6 +1913,68 @@ public sealed class Gen5DecoderTests
         Assert.False(ContainsSpirvConstant(shader.Spirv, 16));
     }
 
+    [Theory]
+    [InlineData(22u, SpirvImageFormat.R32f)]
+    [InlineData(29u, SpirvImageFormat.Rg16f)]
+    [InlineData(44u, SpirvImageFormat.Rgb10A2)]
+    [InlineData(48u, SpirvImageFormat.Rgb10A2ui)]
+    [InlineData(56u, SpirvImageFormat.Rgba8)]
+    [InlineData(60u, SpirvImageFormat.Rgba8ui)]
+    [InlineData(61u, SpirvImageFormat.Rgba8i)]
+    [InlineData(71u, SpirvImageFormat.Rgba16f)]
+    [InlineData(75u, SpirvImageFormat.Rgba32ui)]
+    [InlineData(76u, SpirvImageFormat.Rgba32i)]
+    [InlineData(77u, SpirvImageFormat.Rgba32f)]
+    public void CompilesUnifiedImageFormatsExactly(
+        uint unifiedFormat,
+        SpirvImageFormat expectedFormat)
+    {
+        var ctx = CreateContext(
+        [
+            0xF0200108u, 0x00000800u, // image_store v8, v[0:1], s[0:7] dmask:0x1 dim:2d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[1] =
+            0xC000_0000u |
+            (unifiedFormat << 20);
+        scalarRegisters[2] = 0x0003_C003u; // 16x16 image
+        var state = new Gen5ShaderState(
+            program,
+            scalarRegisters,
+            Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+
+        var imageType = GetSpirvInstruction(
+            shader.Spirv,
+            SpirvOp.TypeImage);
+        Assert.Equal((uint)expectedFormat, imageType[8]);
+    }
+
     [Fact]
     public void RejectsDynamicImageStoreMipInsteadOfWritingMipZero()
     {
@@ -2168,7 +2230,7 @@ public sealed class Gen5DecoderTests
                 out _,
                 out var compileError));
         Assert.Contains(
-            "image atomic requires an R32ui or R32i resource, got R32f",
+            "image atomic requires an R32ui or R32i resource, got Rg16f",
             compileError,
             StringComparison.Ordinal);
     }
