@@ -48,13 +48,17 @@ public sealed class GuestImageWriteCaptureRequestTests
             1,
             1,
             expectedWrite + 1));
+        Assert.Equal(
+            $"0x{expectedAddress:X}@{expectedWrite}",
+            request.ToString());
     }
 
     [Theory]
-    [InlineData("1280x720@120")]
-    [InlineData(" 1280 X 720 @ 1 ")]
+    [InlineData("1280x720@120", 120)]
+    [InlineData(" 1280 X 720 @ 1 ", 1)]
     public void DimensionValue_MatchesStructurally(
-        string value)
+        string value,
+        int expectedWrite)
     {
         Assert.True(
             GuestImageWriteCaptureRequest.TryParse(
@@ -65,6 +69,9 @@ public sealed class GuestImageWriteCaptureRequestTests
         Assert.Equal(720U, request.Height);
         Assert.True(request.Matches(0xABCDEF, 1280, 720));
         Assert.False(request.Matches(0xABCDEF, 1920, 1080));
+        Assert.Equal(
+            $"1280x720@{expectedWrite}",
+            request.ToString());
     }
 
     [Theory]

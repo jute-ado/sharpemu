@@ -402,34 +402,117 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
-    public void VideoOutCaptureEnvironmentIsDerivedOnlyFromExpectations()
+    public void ExecutionCanRequireIntermediateGuestImageWrite()
+    {
+        var testCase = CreateExecutionCase(
+            requiredGuestImageWrite: new()
+            {
+                Selector = " 1280 X 720 @ 105 ",
+                Fingerprint = "0xDAF3D652D1606985",
+            });
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        GameRegressionRunner.ValidateReport(
+            testCase,
+            report.RootElement,
+            "synthetic-report.json",
+            """
+            [LOADER][TRACE] vk.guest_image_write_capture selector=1280x720@105 fingerprint=0xDAF3D652D1606985
+            """);
+    }
+
+    [Fact]
+    public void ExecutionRejectsDifferentIntermediateGuestImageWrite()
+    {
+        var testCase = CreateExecutionCase(
+            requiredGuestImageWrite: new()
+            {
+                Selector = "1280x720@105",
+                Fingerprint = "DAF3D652D1606985",
+            });
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                "vk.guest_image_write_capture selector=1280x720@105 " +
+                "fingerprint=0x0000000000000000"));
+
+        Assert.Contains(
+            "1280x720@105",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CaptureEnvironmentIsDerivedOnlyFromExpectations()
     {
         var startInfo = new ProcessStartInfo();
         startInfo.Environment["SHARPEMU_DUMP_VIDEOOUT"] = "stale";
         startInfo.Environment["SHARPEMU_LOG_VIDEOOUT"] = "stale";
+        startInfo.Environment["SHARPEMU_TRACE_GUEST_IMAGES"] = "stale";
+        startInfo.Environment["SHARPEMU_TRACE_GUEST_WRITES"] = "stale";
         startInfo.Environment[
             "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME"] = "stale";
         startInfo.Environment[
             "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR"] = "stale";
-        var artifactDirectory = Path.Combine(
+        startInfo.Environment[
+            "SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE"] = "stale";
+        startInfo.Environment[
+            "SHARPEMU_GUEST_IMAGE_DUMP_DIR"] = "stale";
+        var presentedArtifactDirectory = Path.Combine(
             Path.GetTempPath(),
             "sharpemu-presented-test");
+        var guestWriteArtifactDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "sharpemu-guest-write-test");
 
-        GameRegressionRunner.ConfigureVideoOutEnvironment(
+        GameRegressionRunner.ConfigureCaptureEnvironment(
             startInfo,
             new GameRegressionExpectations(),
-            artifactDirectory);
+            presentedArtifactDirectory,
+            guestWriteArtifactDirectory);
 
         Assert.False(startInfo.Environment.ContainsKey("SHARPEMU_DUMP_VIDEOOUT"));
         Assert.False(startInfo.Environment.ContainsKey("SHARPEMU_LOG_VIDEOOUT"));
+        Assert.False(
+            startInfo.Environment.ContainsKey("SHARPEMU_TRACE_GUEST_IMAGES"));
+        Assert.False(
+            startInfo.Environment.ContainsKey("SHARPEMU_TRACE_GUEST_WRITES"));
         Assert.False(
             startInfo.Environment.ContainsKey(
                 "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME"));
         Assert.False(
             startInfo.Environment.ContainsKey(
                 "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR"));
+        Assert.False(
+            startInfo.Environment.ContainsKey(
+                "SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE"));
+        Assert.False(
+            startInfo.Environment.ContainsKey(
+                "SHARPEMU_GUEST_IMAGE_DUMP_DIR"));
 
-        GameRegressionRunner.ConfigureVideoOutEnvironment(
+        GameRegressionRunner.ConfigureCaptureEnvironment(
             startInfo,
             new GameRegressionExpectations
             {
@@ -439,8 +522,14 @@ public sealed class GameRegressionHarnessTests
                     Frame = 30,
                     Fingerprint = "0123456789ABCDEF",
                 },
+                RequiredGuestImageWrite = new()
+                {
+                    Selector = " 0xC490000 @ 3 ",
+                    Fingerprint = "FEDCBA9876543210",
+                },
             },
-            artifactDirectory);
+            presentedArtifactDirectory,
+            guestWriteArtifactDirectory);
 
         Assert.Equal("1", startInfo.Environment["SHARPEMU_DUMP_VIDEOOUT"]);
         Assert.Equal("1", startInfo.Environment["SHARPEMU_LOG_VIDEOOUT"]);
@@ -449,9 +538,15 @@ public sealed class GameRegressionHarnessTests
             startInfo.Environment[
                 "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME"]);
         Assert.Equal(
-            Path.GetFullPath(artifactDirectory),
+            Path.GetFullPath(presentedArtifactDirectory),
             startInfo.Environment[
                 "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR"]);
+        Assert.Equal(
+            "0xC490000@3",
+            startInfo.Environment["SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE"]);
+        Assert.Equal(
+            Path.GetFullPath(guestWriteArtifactDirectory),
+            startInfo.Environment["SHARPEMU_GUEST_IMAGE_DUMP_DIR"]);
     }
 
     [Fact]
@@ -550,12 +645,38 @@ public sealed class GameRegressionHarnessTests
             StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("", "0123456789ABCDEF")]
+    [InlineData("1280x720", "0123456789ABCDEF")]
+    [InlineData("1280x720@0", "0123456789ABCDEF")]
+    [InlineData("1280x720@1", "not-a-fingerprint")]
+    public void GameCaseRequiresValidGuestImageWriteMilestone(
+        string selector,
+        string fingerprint)
+    {
+        var testCase = CreateExecutionCase(
+            requiredGuestImageWrite: new()
+            {
+                Selector = selector,
+                Fingerprint = fingerprint,
+            });
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => GameRegressionRunner.ValidateCase(testCase));
+
+        Assert.Contains(
+            "requiredGuestImageWrite",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
     private static GameRegressionCase CreateExecutionCase(
         long? minimumObservedImportDispatches = null,
         string[]? requiredOutputSubstrings = null,
         string[]? forbiddenOutputSubstrings = null,
         string[]? requiredVideoOutFrameFingerprints = null,
         PresentedGuestImageExpectation? requiredPresentedGuestImage = null,
+        GuestImageWriteExpectation? requiredGuestImageWrite = null,
         string? expectedBundleSha256 =
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") => new()
     {
@@ -588,6 +709,8 @@ public sealed class GameRegressionHarnessTests
                 requiredVideoOutFrameFingerprints ?? [],
             RequiredPresentedGuestImage =
                 requiredPresentedGuestImage,
+            RequiredGuestImageWrite =
+                requiredGuestImageWrite,
         },
     };
 

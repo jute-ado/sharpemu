@@ -5533,7 +5533,15 @@ internal static unsafe class VulkanVideoPresenter
                             $"[LOADER][TRACE] vk.guest_write_sample " +
                             $"addr=0x{target.Address:X16} write={displayedWriteCount} " +
                             $"ps_bytes={work.Draw.PixelSpirv.Length}");
-                        TraceGuestImageContents(target);
+                        var fingerprint = TraceGuestImageContents(target);
+                        if (captureThisWrite && fingerprint is { } capturedHash)
+                        {
+                            Console.Error.WriteLine(
+                                "[LOADER][TRACE] " +
+                                "vk.guest_image_write_capture " +
+                                $"selector={_guestImageWriteCaptureRequest} " +
+                                $"fingerprint=0x{capturedHash:X16}");
+                        }
                     }
                 }
                 TraceVulkanShader(
@@ -6626,7 +6634,7 @@ internal static unsafe class VulkanVideoPresenter
             }
         }
 
-        private void TraceGuestImageContents(
+        private ulong? TraceGuestImageContents(
             GuestImageResource image,
             bool isPresentedImage = false,
             long presentedFrame = 0)
@@ -6638,9 +6646,10 @@ internal static unsafe class VulkanVideoPresenter
                     "[LOADER][TRACE] " +
                     $"vk.guest_image addr=0x{image.Address:X16} " +
                     $"format={image.Format} readback=unsupported");
-                return;
+                return null;
             }
 
+            ulong? fingerprint = null;
             var byteCount = checked((ulong)image.Width * image.Height * bytesPerPixel);
             var buffer = CreateBuffer(
                 byteCount,
@@ -6747,6 +6756,7 @@ internal static unsafe class VulkanVideoPresenter
                         nonzeroBytes += value == 0 ? 0 : 1;
                         hash = (hash ^ value) * 1099511628211UL;
                     }
+                    fingerprint = hash;
 
                     var nonblackPixels = CountNonblackPixels(
                         bytes,
@@ -6801,6 +6811,8 @@ internal static unsafe class VulkanVideoPresenter
                 _vk.DestroyBuffer(_device, buffer, null);
                 _vk.FreeMemory(_device, memory, null);
             }
+
+            return fingerprint;
         }
 
         private static void DumpGuestImageBytes(
