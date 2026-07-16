@@ -494,15 +494,38 @@ public sealed class PhysicalVirtualMemoryTests
             HostPageProtection protection)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (size == 0 || size > _size)
+            {
+                return 0;
+            }
+
+            if (desiredAddress == 0)
+            {
+                desiredAddress = BaseAddress + _reservedPrefixSize;
+                while (_allocationSizes.Any(allocation =>
+                    RangesOverlap(
+                        desiredAddress,
+                        size,
+                        allocation.Key,
+                        allocation.Value)))
+                {
+                    desiredAddress = checked(desiredAddress + HostAllocationGranularity);
+                }
+            }
+
             var allocationBase = desiredAddress & ~(HostAllocationGranularity - 1);
             var allocationSize = checked(desiredAddress - allocationBase + size);
             if (desiredAddress < BaseAddress ||
-                size == 0 ||
-                size > _size ||
                 desiredAddress > BaseAddress + _size - size ||
                 allocationBase < BaseAddress ||
+                allocationBase < BaseAddress + _reservedPrefixSize ||
                 allocationSize > BaseAddress + _size - allocationBase ||
-                _allocationSizes.ContainsKey(allocationBase))
+                _allocationSizes.Any(allocation =>
+                    RangesOverlap(
+                        allocationBase,
+                        allocationSize,
+                        allocation.Key,
+                        allocation.Value)))
             {
                 return 0;
             }
@@ -515,6 +538,14 @@ public sealed class PhysicalVirtualMemoryTests
             _allocationSizes.Add(allocationBase, allocationSize);
             return allocationBase;
         }
+
+        private static bool RangesOverlap(
+            ulong firstAddress,
+            ulong firstSize,
+            ulong secondAddress,
+            ulong secondSize) =>
+            firstAddress < secondAddress + secondSize &&
+            secondAddress < firstAddress + firstSize;
 
         public ulong Reserve(
             ulong desiredAddress,
