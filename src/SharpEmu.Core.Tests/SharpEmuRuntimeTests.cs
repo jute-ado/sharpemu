@@ -78,7 +78,7 @@ public sealed class SharpEmuRuntimeTests
         }
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task DefaultRuntimeBootsContentFreeSyntheticExecutable()
     {
         var execution = await RunSyntheticExecutableInCliAsync(
@@ -100,7 +100,7 @@ public sealed class SharpEmuRuntimeTests
             report.RootElement.GetProperty("cpuSession").GetProperty("reason").GetString());
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task RuntimeStillRejectsNonZeroProcessEntryReturnValue()
     {
         var execution = await RunSyntheticExecutableInCliAsync(
@@ -121,7 +121,7 @@ public sealed class SharpEmuRuntimeTests
             report.RootElement.GetProperty("cpuSession").GetProperty("reason").GetString());
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task RuntimeClearsModuleInitializerTraceBeforeNextPreparation()
     {
         if (await NativeTestProcess.RunIfNeededAsync(typeof(SharpEmuRuntimeTests)))
@@ -162,7 +162,7 @@ public sealed class SharpEmuRuntimeTests
         }
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task RuntimeExecutesAdjacentModuleInitializerBeforeMainEntry()
     {
         var execution = await RunSyntheticExecutableInCliAsync(
@@ -193,7 +193,7 @@ public sealed class SharpEmuRuntimeTests
             StringComparison.Ordinal);
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task RuntimeContinuesToMainEntryAfterModuleInitializerReturns()
     {
         var execution = await RunSyntheticExecutableInCliAsync(
@@ -222,7 +222,7 @@ public sealed class SharpEmuRuntimeTests
             StringComparison.Ordinal);
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task RuntimeExecutesModuleInitializerArrayBeforeMainEntry()
     {
         var execution = await RunSyntheticExecutableInCliAsync(
@@ -342,7 +342,7 @@ public sealed class SharpEmuRuntimeTests
             opcode: "F4");
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task CliWritesVersionedJsonExecutionReport()
     {
         var execution = await RunSyntheticExecutableInCliAsync(
