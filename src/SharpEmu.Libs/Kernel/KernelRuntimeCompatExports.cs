@@ -87,10 +87,13 @@ public static class KernelRuntimeCompatExports
     private static readonly (ulong Base, ulong Size)[] _prtApertures = new (ulong Base, ulong Size)[3];
     private static int _stackChkFailCount;
     private static long _usleepTraceCount;
+    private static long _clockTraceCount;
     private static readonly bool _traceUsleep =
         string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_USLEEP"), "1", StringComparison.Ordinal);
     private static readonly bool _traceGuestThreads =
         string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_GUEST_THREADS"), "1", StringComparison.Ordinal);
+    private static readonly bool _traceClock =
+        string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_CLOCK"), "1", StringComparison.Ordinal);
 
     [ThreadStatic]
     private static int _shortUsleepCount;
@@ -401,6 +404,7 @@ public static class KernelRuntimeCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
+        TraceClockTime(clockId, seconds, nanoseconds);
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -884,9 +888,48 @@ public static class KernelRuntimeCompatExports
 
     internal static void GetProcessMonotonicTime(out long seconds, out long nanoseconds)
     {
-        var elapsedTicks = Stopwatch.GetTimestamp() - _processStartCounter;
-        seconds = elapsedTicks / Stopwatch.Frequency;
-        nanoseconds = (elapsedTicks % Stopwatch.Frequency) * 1_000_000_000L / Stopwatch.Frequency;
+        (seconds, nanoseconds) = ConvertMonotonicCounterToTimespec(
+            Stopwatch.GetTimestamp(),
+            _processStartCounter,
+            Stopwatch.Frequency);
+    }
+
+    internal static (long Seconds, long Nanoseconds) ConvertMonotonicCounterToTimespec(
+        long timestamp,
+        long origin,
+        long frequency)
+    {
+        if (frequency <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(frequency));
+        }
+
+        var elapsedTicks = timestamp > origin ? timestamp - origin : 0;
+        var seconds = elapsedTicks / frequency;
+        var remainder = elapsedTicks % frequency;
+        var nanoseconds = (long)(
+            (UInt128)(ulong)remainder * 1_000_000_000UL /
+            (ulong)frequency);
+        return (seconds, nanoseconds);
+    }
+
+    internal static bool ShouldTraceClockSample(long callNumber) =>
+        callNumber is > 0 and <= 8 || callNumber > 0 && callNumber % 120 == 0;
+
+    internal static void TraceClockTime(int clockId, long seconds, long nanoseconds)
+    {
+        if (!_traceClock)
+        {
+            return;
+        }
+
+        var callNumber = Interlocked.Increment(ref _clockTraceCount);
+        if (ShouldTraceClockSample(callNumber))
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] clock_gettime call={callNumber} id={clockId} " +
+                $"seconds={seconds} nanoseconds={nanoseconds}");
+        }
     }
 
     [SysAbiExport(

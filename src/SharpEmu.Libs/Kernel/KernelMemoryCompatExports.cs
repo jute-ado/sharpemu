@@ -2935,6 +2935,7 @@ public static partial class KernelMemoryCompatExports
             return -1;
         }
 
+        KernelRuntimeCompatExports.TraceClockTime(clockId, seconds, nanoseconds);
         ctx[CpuRegister.Rax] = 0;
         return 0;
     }
