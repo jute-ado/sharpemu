@@ -40,3 +40,31 @@ public sealed class WindowsX64TheoryAttribute : TheoryAttribute
         }
     }
 }
+
+public sealed class HostX64FactAttribute : FactAttribute
+{
+    public HostX64FactAttribute()
+    {
+        if (RuntimeInformation.ProcessArchitecture != Architecture.X64 ||
+            !(OperatingSystem.IsWindows() ||
+              OperatingSystem.IsLinux() ||
+              OperatingSystem.IsMacOS()))
+        {
+            Skip = "This test requires a supported x64 host.";
+        }
+    }
+}
+
+public sealed class HostX64TheoryAttribute : TheoryAttribute
+{
+    public HostX64TheoryAttribute()
+    {
+        if (RuntimeInformation.ProcessArchitecture != Architecture.X64 ||
+            !(OperatingSystem.IsWindows() ||
+              OperatingSystem.IsLinux() ||
+              OperatingSystem.IsMacOS()))
+        {
+            Skip = "This test requires a supported x64 host.";
+        }
+    }
+}

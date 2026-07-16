@@ -656,7 +656,7 @@ public sealed class NativeCpuConformanceTests
         },
     };
 
-    [WindowsX64Theory]
+    [HostX64Theory]
     [MemberData(nameof(InstructionSequences))]
     public async Task ExecutesNativeInstructionSequence(string name, byte[] code)
     {
@@ -677,7 +677,7 @@ public sealed class NativeCpuConformanceTests
             report.RootElement.GetProperty("result").GetProperty("name").GetString());
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task RepeatedModuleInitializersShareNativeExecutionSession()
     {
         var execution = await SyntheticCliGuest.RunAsync(
