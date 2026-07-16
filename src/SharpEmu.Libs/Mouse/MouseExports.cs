@@ -4,12 +4,12 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
 using SharpEmu.HLE;
+using SharpEmu.Libs.UserService;
 
 namespace SharpEmu.Libs.Mouse;
 
 public static class MouseExports
 {
-    private const int PrimaryUserId = 0x10000000;
     private const int MouseDataSize = 0x28;
     private const int MouseErrorInvalidArgument = unchecked((int)0x80020002);
     private const int MouseErrorInvalidHandle = unchecked((int)0x80020003);
@@ -53,7 +53,7 @@ public static class MouseExports
                 return ctx.SetReturn(MouseErrorNotInitialized);
             }
 
-            if (userId != PrimaryUserId || type != 0 || index is < 0 or > 1)
+            if (userId != EmulatedUser.PrimaryId || type != 0 || index is < 0 or > 1)
             {
                 return ctx.SetReturn(MouseErrorInvalidArgument);
             }

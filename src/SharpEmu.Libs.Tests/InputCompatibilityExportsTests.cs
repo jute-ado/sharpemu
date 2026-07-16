@@ -12,7 +12,6 @@ namespace SharpEmu.Libs.Tests;
 public sealed class InputCompatibilityExportsTests
 {
     private const ulong OutputAddress = 0x1000;
-    private const int PrimaryUserId = 1000;
     private const int OrbisUserServiceErrorInvalidArgument = unchecked((int)0x80960005);
     private const int OrbisUserServiceErrorInvalidParameter = unchecked((int)0x80960009);
 
@@ -58,7 +57,7 @@ public sealed class InputCompatibilityExportsTests
     public void UserServiceGetAgeLevelRejectsNullOutput()
     {
         var context = new CpuContext(new FakeGuestMemory(), Generation.Gen5);
-        context[CpuRegister.Rdi] = PrimaryUserId;
+        context[CpuRegister.Rdi] = EmulatedUser.PrimaryId;
 
         var result = UserServiceExports.UserServiceGetAgeLevel(context);
 
@@ -70,7 +69,7 @@ public sealed class InputCompatibilityExportsTests
     public void UserServiceGetAgeLevelRejectsUnmappedOutput()
     {
         var context = new CpuContext(new FakeGuestMemory(), Generation.Gen5);
-        context[CpuRegister.Rdi] = PrimaryUserId;
+        context[CpuRegister.Rdi] = EmulatedUser.PrimaryId;
         context[CpuRegister.Rsi] = OutputAddress;
 
         var result = UserServiceExports.UserServiceGetAgeLevel(context);
@@ -103,7 +102,7 @@ public sealed class InputCompatibilityExportsTests
         var memory = new FakeGuestMemory();
         memory.AddRegion(OutputAddress, output);
         var context = new CpuContext(memory, Generation.Gen5);
-        context[CpuRegister.Rdi] = PrimaryUserId;
+        context[CpuRegister.Rdi] = EmulatedUser.PrimaryId;
         context[CpuRegister.Rsi] = OutputAddress;
         return context;
     }

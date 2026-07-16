@@ -13,8 +13,6 @@ public static class UserServiceExports
     private const int OrbisUserServiceErrorNoEvent = unchecked((int)0x80960007);
     private const int OrbisUserServiceErrorInvalidParameter = unchecked((int)0x80960009);
     private const int OrbisUserServiceErrorBufferTooShort = unchecked((int)0x8096000A);
-    // Retail user-service IDs begin at 0x3E8.
-    private const int PrimaryUserId = 1000;
     private const int InvalidUserId = -1;
     private const string PrimaryUserName = "SharpEmu";
     private static int _loginEventDelivered;
@@ -46,10 +44,10 @@ public static class UserServiceExports
             return ctx.SetReturn(OrbisUserServiceErrorInvalidArgument);
         }
 
-        var result = ctx.TryWriteInt32(userIdAddress, PrimaryUserId)
+        var result = ctx.TryWriteInt32(userIdAddress, EmulatedUser.PrimaryId)
             ? 0
             : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-        TraceUserService($"get_initial_user out=0x{userIdAddress:X16} value={PrimaryUserId} result=0x{result:X8}");
+        TraceUserService($"get_initial_user out=0x{userIdAddress:X16} value={EmulatedUser.PrimaryId} result=0x{result:X8}");
         return ctx.SetReturn(result);
     }
 
@@ -67,7 +65,7 @@ public static class UserServiceExports
         }
 
         Span<byte> userIds = stackalloc byte[sizeof(int) * 4];
-        BinaryPrimitives.WriteInt32LittleEndian(userIds[0x00..], PrimaryUserId);
+        BinaryPrimitives.WriteInt32LittleEndian(userIds[0x00..], EmulatedUser.PrimaryId);
         BinaryPrimitives.WriteInt32LittleEndian(userIds[0x04..], InvalidUserId);
         BinaryPrimitives.WriteInt32LittleEndian(userIds[0x08..], InvalidUserId);
         BinaryPrimitives.WriteInt32LittleEndian(userIds[0x0C..], InvalidUserId);
@@ -96,7 +94,7 @@ public static class UserServiceExports
 
         Span<byte> payload = stackalloc byte[sizeof(int) * 2];
         BinaryPrimitives.WriteInt32LittleEndian(payload[0..], 0);
-        BinaryPrimitives.WriteInt32LittleEndian(payload[sizeof(int)..], PrimaryUserId);
+        BinaryPrimitives.WriteInt32LittleEndian(payload[sizeof(int)..], EmulatedUser.PrimaryId);
         return ctx.Memory.TryWrite(eventAddress, payload)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
@@ -113,7 +111,7 @@ public static class UserServiceExports
         var nameAddress = ctx[CpuRegister.Rsi];
         var capacity = ctx[CpuRegister.Rdx];
         // Zero selects the current user.
-        if (userId != 0 && userId != PrimaryUserId)
+        if (userId != 0 && userId != EmulatedUser.PrimaryId)
         {
             return ctx.SetReturn(OrbisUserServiceErrorInvalidParameter);
         }
@@ -148,7 +146,7 @@ public static class UserServiceExports
     {
         var userId = unchecked((int)ctx[CpuRegister.Rdi]);
         var ageLevelAddress = ctx[CpuRegister.Rsi];
-        if (userId != PrimaryUserId)
+        if (userId != EmulatedUser.PrimaryId)
         {
             return ctx.SetReturn(OrbisUserServiceErrorInvalidParameter);
         }

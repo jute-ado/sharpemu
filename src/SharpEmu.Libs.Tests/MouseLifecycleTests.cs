@@ -4,13 +4,13 @@
 using System.Buffers.Binary;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Mouse;
+using SharpEmu.Libs.UserService;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests;
 
 public sealed class MouseLifecycleTests
 {
-    private const int PrimaryUserId = 0x10000000;
     private const int MouseErrorInvalidArgument = unchecked((int)0x80020002);
     private const int MouseErrorInvalidHandle = unchecked((int)0x80020003);
     private const int MouseErrorAlreadyOpened = unchecked((int)0x80020008);
@@ -44,7 +44,7 @@ public sealed class MouseLifecycleTests
         context[CpuRegister.Rdx] = 0;
         AssertCall(MouseErrorInvalidArgument, context, MouseExports.MouseOpen);
 
-        context[CpuRegister.Rdi] = PrimaryUserId;
+        context[CpuRegister.Rdi] = EmulatedUser.PrimaryId;
         context[CpuRegister.Rsi] = 1;
         AssertCall(MouseErrorInvalidArgument, context, MouseExports.MouseOpen);
 
@@ -138,7 +138,7 @@ public sealed class MouseLifecycleTests
 
     private static int Open(CpuContext context, int index)
     {
-        context[CpuRegister.Rdi] = PrimaryUserId;
+        context[CpuRegister.Rdi] = EmulatedUser.PrimaryId;
         context[CpuRegister.Rsi] = 0;
         context[CpuRegister.Rdx] = unchecked((ulong)index);
         return Call(context, MouseExports.MouseOpen);
