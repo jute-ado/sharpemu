@@ -403,6 +403,12 @@ public static partial class AgcExports
         public uint RemainingDwords { get; set; } = MaxSubmittedDwords;
     }
 
+    private sealed record SubmittedDcbContinuation(
+        ulong CommandAddress,
+        uint DwordCount,
+        int Depth,
+        SubmittedDcbContinuation? Next);
+
     private sealed class SubmittedGpuState
     {
         public object Gate { get; } = new();
@@ -2697,12 +2703,7 @@ public static partial class AgcExports
             foreach (var waiter in woken)
             {
                 var remainingDwords = waiter.TotalDwords - waiter.ResumeOffset;
-                if (remainingDwords == 0)
-                {
-                    continue;
-                }
-
-                if (tracePackets)
+                if (tracePackets && remainingDwords != 0)
                 {
                     TraceAgc(
                         $"agc.dcb.resumed addr=0x{waiter.WaitAddress:X16} " +
@@ -2710,13 +2711,36 @@ public static partial class AgcExports
                 }
 
                 var state = waiter.State as SubmittedDcbState ?? gpuState.Graphics;
-                ParseSubmittedDcb(
-                    ctx,
-                    gpuState,
-                    state,
-                    waiter.ResumeAddress,
-                    remainingDwords,
-                    tracePackets);
+                var budget = new SubmittedDcbParseBudget
+                {
+                    RemainingDwords = waiter.RemainingDwordBudget,
+                };
+                var completed = remainingDwords == 0 ||
+                    ParseSubmittedDcb(
+                        ctx,
+                        gpuState,
+                        state,
+                        waiter.ResumeAddress,
+                        remainingDwords,
+                        tracePackets,
+                        budget,
+                        waiter.Depth,
+                        waiter.Continuation as SubmittedDcbContinuation);
+                var continuation = waiter.Continuation as SubmittedDcbContinuation;
+                while (completed && continuation is not null)
+                {
+                    completed = ParseSubmittedDcb(
+                        ctx,
+                        gpuState,
+                        state,
+                        continuation.CommandAddress,
+                        continuation.DwordCount,
+                        tracePackets,
+                        budget,
+                        continuation.Depth,
+                        continuation.Next);
+                    continuation = continuation.Next;
+                }
             }
         }
     }
@@ -2736,9 +2760,10 @@ public static partial class AgcExports
             dwordCount,
             tracePackets,
             new SubmittedDcbParseBudget(),
-            depth: 0);
+            depth: 0,
+            continuation: null);
 
-    private static void ParseSubmittedDcb(
+    private static bool ParseSubmittedDcb(
         CpuContext ctx,
         SubmittedGpuState gpuState,
         SubmittedDcbState state,
@@ -2746,28 +2771,28 @@ public static partial class AgcExports
         uint dwordCount,
         bool tracePackets,
         SubmittedDcbParseBudget budget,
-        int depth)
+        int depth,
+        SubmittedDcbContinuation? continuation)
     {
         if (commandAddress == 0 ||
             dwordCount == 0 ||
             dwordCount > budget.RemainingDwords ||
             depth > MaxIndirectCommandBufferDepth)
         {
-            return;
+            return true;
         }
 
         var offset = 0u;
         while (offset < dwordCount)
         {
-            if ((ulong)offset > (ulong.MaxValue - commandAddress) / sizeof(uint))
+            if (!TryGetDwordAddress(commandAddress, offset, out var currentAddress))
             {
-                return;
+                return true;
             }
 
-            var currentAddress = commandAddress + ((ulong)offset * sizeof(uint));
             if (!ctx.TryReadUInt32(currentAddress, out var header))
             {
-                return;
+                return true;
             }
 
             var packetType = header >> 30;
@@ -2785,18 +2810,24 @@ public static partial class AgcExports
 
             if (packetType != 3)
             {
-                return;
+                return true;
             }
 
             var length = Pm4Length(header);
             if (length == 0 || offset + length > dwordCount)
             {
-                return;
+                return true;
+            }
+
+            var nextOffset = offset + length;
+            if (!TryGetDwordAddress(commandAddress, nextOffset, out var nextAddress))
+            {
+                return true;
             }
 
             if (length > budget.RemainingDwords)
             {
-                return;
+                return true;
             }
 
             budget.RemainingDwords -= length;
@@ -2842,7 +2873,12 @@ public static partial class AgcExports
                         $"addr=0x{indirectAddress:X16} dwords={indirectDwordCount}");
                 }
 
-                ParseSubmittedDcb(
+                var childContinuation = new SubmittedDcbContinuation(
+                    nextAddress,
+                    dwordCount - nextOffset,
+                    depth,
+                    continuation);
+                if (!ParseSubmittedDcb(
                     ctx,
                     gpuState,
                     state,
@@ -2850,7 +2886,11 @@ public static partial class AgcExports
                     indirectDwordCount,
                     tracePackets,
                     budget,
-                    depth + 1);
+                    depth + 1,
+                    childContinuation))
+                {
+                    return false;
+                }
             }
 
             if (op == ItEventWrite &&
@@ -2951,14 +2991,17 @@ public static partial class AgcExports
                     var waiter = new GpuWaitRegistry.WaitingDcb
                     {
                         CommandBufferAddress = commandAddress,
-                        ResumeAddress = currentAddress + ((ulong)length * sizeof(uint)),
+                        ResumeAddress = nextAddress,
                         TotalDwords = dwordCount,
-                        ResumeOffset = offset + length,
+                        ResumeOffset = nextOffset,
                         ReferenceValue = refVal,
                         Mask = waitMask,
                         CompareFunction = cmpFunc,
                         Is64Bit = register == RWaitMem64,
+                        RemainingDwordBudget = budget.RemainingDwords,
+                        Depth = depth,
                         State = state,
+                        Continuation = continuation,
                     };
                     if (hasCurVal && !GpuWaitRegistry.Compare(waiter, curVal))
                     {
@@ -2971,7 +3014,7 @@ public static partial class AgcExports
                                 $"mask=0x{waitMask:X16} cur=0x{curVal:X16} cmp={cmpFunc}");
                         }
 
-                        return; // suspend parsing of this DCB
+                        return false; // suspend parsing of this DCB
                     }
                 }
             }
@@ -2985,14 +3028,17 @@ public static partial class AgcExports
                     var waiter = new GpuWaitRegistry.WaitingDcb
                     {
                         CommandBufferAddress = commandAddress,
-                        ResumeAddress = currentAddress + ((ulong)length * sizeof(uint)),
+                        ResumeAddress = nextAddress,
                         TotalDwords = dwordCount,
-                        ResumeOffset = offset + length,
+                        ResumeOffset = nextOffset,
                         ReferenceValue = refVal,
                         Mask = waitMask,
                         CompareFunction = cmpFunc,
                         Is64Bit = false,
+                        RemainingDwordBudget = budget.RemainingDwords,
+                        Depth = depth,
                         State = state,
+                        Continuation = continuation,
                     };
                     if (!GpuWaitRegistry.Compare(waiter, curVal))
                     {
@@ -3005,7 +3051,7 @@ public static partial class AgcExports
                                 $"mask=0x{waitMask:X16} cur=0x{curVal:X16} cmp={cmpFunc}");
                         }
 
-                        return;
+                        return false;
                     }
                 }
             }
@@ -3070,7 +3116,7 @@ public static partial class AgcExports
                     !ctx.TryReadUInt32(currentAddress + 16, out var flipArgLo) ||
                     !ctx.TryReadUInt32(currentAddress + 20, out var flipArgHi))
                 {
-                    return;
+                    return true;
                 }
 
                 var flipArg = unchecked((long)(((ulong)flipArgHi << 32) | flipArgLo));
@@ -3163,8 +3209,10 @@ public static partial class AgcExports
                 state.TranslatedDraw = null;
             }
 
-            offset += length;
+            offset = nextOffset;
         }
+
+        return true;
     }
 
     private static void TraceDisplayBuffer(
@@ -6575,6 +6623,21 @@ public static partial class AgcExports
 
     private static uint Pm4Length(uint header) =>
         ((header >> 16) & 0x3FFFu) + 2u;
+
+    private static bool TryGetDwordAddress(
+        ulong baseAddress,
+        uint dwordOffset,
+        out ulong address)
+    {
+        if ((ulong)dwordOffset > (ulong.MaxValue - baseAddress) / sizeof(uint))
+        {
+            address = 0;
+            return false;
+        }
+
+        address = baseAddress + ((ulong)dwordOffset * sizeof(uint));
+        return true;
+    }
 
     private static bool TryReadGuestCString(
         CpuContext ctx,
