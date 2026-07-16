@@ -71,76 +71,72 @@ chmod +x ./SharpEmu
 ```
 
 A Vulkan-capable GPU and current graphics driver are required. The macOS
-release includes MoltenVK.
-
-### Automation and inspection
-
-- Add `--report-json execution.json` to atomically write a versioned,
-  machine-readable execution result. Schema version 3 includes execution mode,
-  loaded-image and module-initializer summaries, typed CPU/fault information,
-  traces, application identity, executable SHA-256, timing, and host/build
-  provenance.
-- Add `--load-only` to validate and map the primary executable and adjacent
-  modules without dispatching guest code. The report includes a
-  path-independent bundle manifest with file sizes and SHA-256 fingerprints,
-  making local regression baselines possible without storing copyrighted game
-  files.
-- Add `--expect-bundle-sha256 HASH` in load-only mode to require an exact local
-  content bundle. A mismatch reports `BUNDLE_FINGERPRINT_MISMATCH` and exits
-  with code 8.
-- On Windows, add `--timeout-seconds N` to enforce a wall-clock execution
-  budget. A timeout reports `EXECUTION_TIMED_OUT` and exits with code 7.
-- Native watchdog termination reports `EXECUTION_STALLED` and exits with code
-  6 instead of leaving automation without a result.
+release includes the MoltenVK Vulkan implementation.
 
 ## Games Tested
 
-- **Demon's Souls Remake**
-  - [Demon's Souls [PPSA01341]](https://github.com/par274/sharpemu/issues/2)
-  - Reaches a video loop while shader conversion work continues.
-  ![Demon's Souls video output](./.github/images/des-videoout-shaders.jpg)
-- **Poppy Playtime Chapter 1**
-  - [Poppy Playtime Chapter 1 [PPSA20591]](https://github.com/par274/sharpemu/issues/3)
-- **SILENT HILL: The Short Message**
-  - [SILENT HILL: The Short Message [PPSA10112]](https://github.com/par274/sharpemu/issues/4)
-- **Dreaming Sarah**
-  - [Dreaming Sarah [PPSA02929]](https://github.com/par274/sharpemu/issues/9)
-  - Reaches rendered gameplay on supported host/GPU configurations.
-  ![Dreaming Sarah texture rendering](./.github/images/dreaming-sarah.jpg)
+* **Demon's Souls Remake**
+  * [Demon's Souls [PPSA01341]](https://github.com/sharpemu/sharpemu/issues/2)
+  * Demon's Souls is now video loop. Shaders are ready to be converted to SPIR-V/Vulkan. We are continuing our work on this.
+  ![DeS videoOut submit first frame](./.github/images/des-videoout-shaders.jpg)
 
-> [!IMPORTANT]
-> This project does not support or condone piracy. All development and testing
-> must use legally obtained software dumped from hardware owned by the user.
+* **Poppy Playtime Chapter 1**
+  * [Poppy Playtime Chapter 1 [PPSA20591]](https://github.com/sharpemu/sharpemu/issues/3)
+
+* **SILENT HILL: The Short Message**
+  * [SILENT HILL: The Short Message [PPSA10112]](https://github.com/sharpemu/sharpemu/issues/4)
+
+* **Dreaming Sarah**
+  * [Dreaming Sarah [PPSA02929]](https://github.com/sharpemu/sharpemu/issues/9)
+  * Real texture rendering for this game;
+  ![Splash texture](./.github/images/dreaming-sarah.jpg)
+
+
+> [!IMPORTANT]  
+> This project does **not** support or condone piracy.  
+> All games used during development and testing are dumped from consoles that we personally own.  
+> Users are expected to use legally obtained copies of their games.
 
 ## Build
 
 1. Install the .NET SDK version specified in [`global.json`](./global.json).
-2. Clone the repository: `git clone https://github.com/par274/sharpemu.git`
-3. Open `SharpEmu.slnx` in an IDE, or build with `dotnet build`.
-4. Build artifacts are written below the `artifacts` directory.
-
-The repository also provides `scripts/test-linux-docker.sh` for a pinned Linux
-container smoke test and `scripts/fetch-macos-moltenvk.sh` for staging the
-universal MoltenVK runtime used by macOS publishing.
+2. Clone the repository: `git clone https://github.com/sharpemu/sharpemu.git`
+3. Open the solution file (`SharpEmu.slnx`) in **VSCode**.
+4. Build the project: `dotnet build` or `dotnet publish`
+5. Build artifacts will be located in the `artifacts` directory.
 
 ## Disclaimer
 
-SharpEmu is intended for research and education. It contains no copyrighted
-system firmware, game data, or proprietary PlayStation assets.
+SharpEmu is an experimental emulator intended for research and educational purposes.
+
+This project does not contain any copyrighted system firmware, game data, or proprietary PlayStation assets.
 
 ## Special Thanks
 
-- **[ShadPS4](https://github.com/shadps4-emu/shadPS4)** — architecture and
-  low-level emulation references.
-- **[Kyty](https://github.com/InoriRus/Kyty)** — PS5 native-execution research.
-- **Ryujinx** — filesystem and low-level C# implementation references.
+The following projects were extremely helpful during development:
+
+* **[ShadPS4](https://github.com/shadps4-emu/shadPS4)**  
+Helped with understanding the basic architecture of the PlayStation 4.
+
+* **[Kyty](https://github.com/InoriRus/Kyty)**  
+One of the few PS5 emulator projects available and very useful for studying native code execution.
+
+* **Ryujinx**  
+Provided valuable references for filesystem handling and low-level C# implementation patterns.
 
 # License
 
-[GPL-2.0 license](https://github.com/par274/sharpemu/blob/main/LICENSE)
+- [**GPL-2.0 license**](https://github.com/sharpemu/sharpemu/blob/main/LICENSE)
 
 ## Contributing
 
-Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or pull
-request. It documents coding style, AI-assisted contributions, testing, pull
-request expectations, and the project's legal/reverse-engineering policy.
+Before opening an issue or pull request, please read our contribution guidelines:
+
+**[CONTRIBUTING.md](./CONTRIBUTING.md)**
+
+The guide covers:
+- Coding style and formatting
+- AI-assisted contributions
+- Pull request expectations
+- Testing guidelines
+- Legal and reverse engineering policy

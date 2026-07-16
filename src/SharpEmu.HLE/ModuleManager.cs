@@ -13,12 +13,12 @@ public sealed class ModuleManager : IModuleManager
     private readonly ConcurrentDictionary<string, ExportedFunction> _exportTable = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ExportedFunction> _exportNameTable = new(StringComparer.Ordinal);
     private readonly object _registrationGate = new();
-    private readonly HashSet<(Assembly Assembly, Generation Generation)> _scannedAssemblies = new();
+    private readonly HashSet<Assembly> _warmupAssemblies = new();
     private bool _isFrozen;
 
-    public int RegisterFromAssembly(Assembly assembly, Generation generation, ISymbolCatalog? symbolCatalog = null)
+    public int RegisterExports(IReadOnlyList<ExportedFunction> exports)
     {
-        ArgumentNullException.ThrowIfNull(assembly);
+        ArgumentNullException.ThrowIfNull(exports);
 
         lock (_registrationGate)
         {
@@ -27,45 +27,21 @@ public sealed class ModuleManager : IModuleManager
                 throw new InvalidOperationException("Module registration is frozen.");
             }
 
-            // Deduplicated: one assembly is reached through many types.
-            if (_scannedAssemblies.Contains((assembly, generation)))
+            var registeredCount = 0;
+            foreach (var export in exports)
             {
-                return 0;
-            }
-
-            var instances = new Dictionary<Type, object>();
-            var candidates = new List<RegistrationCandidate>();
-
-            foreach (var type in assembly.GetTypes().OrderBy(type => type.FullName, StringComparer.Ordinal))
-            {
-                foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
-                    .OrderBy(method => method.MetadataToken))
+                if (!_dispatchTable.TryAdd(export.Nid, export.Function))
                 {
-                    var exportAttribute = method.GetCustomAttribute<SysAbiExportAttribute>(inherit: false);
-                    if (exportAttribute is null)
-                    {
-                        continue;
-                    }
-
-                    var exportInfo = ResolveExportInfo(exportAttribute, method, generation, symbolCatalog);
-                    if (exportInfo is null)
-                    {
-                        continue;
-                    }
-
-                    var handler = CreateHandler(type, method, instances);
-                    var export = new ExportedFunction(
-                        exportInfo.Value.LibraryName,
-                        exportInfo.Value.Nid,
-                        exportInfo.Value.ExportName,
-                        exportInfo.Value.Target,
-                        (SysAbiFunction)handler);
-                    candidates.Add(new RegistrationCandidate(
-                        exportInfo.Value,
-                        handler,
-                        export,
-                        $"{method.DeclaringType?.FullName}.{method.Name}"));
+                    Console.Error.WriteLine($"[HLE] Duplicate NID '{export.Nid}' ({export.Name}) — already registered, skipping.");
+                    continue;
                 }
+
+                _exportTable[export.Nid] = export;
+                _exportNameTable.TryAdd(export.Name, export);
+                // The warm sweep in Freeze() covers every assembly that contributed a
+                // handler (generated thunks resolve to their home assembly too).
+                _warmupAssemblies.Add(export.Function.Method.Module.Assembly);
+                registeredCount++;
             }
 
             var candidatesByNid = new Dictionary<string, RegistrationCandidate>(StringComparer.Ordinal);
@@ -118,7 +94,8 @@ public sealed class ModuleManager : IModuleManager
         Assembly[] assemblies;
         lock (_registrationGate)
         {
-            assemblies = _scannedAssemblies.Select(entry => entry.Assembly).Distinct().ToArray();
+            assemblies = new Assembly[_warmupAssemblies.Count];
+            _warmupAssemblies.CopyTo(assemblies);
         }
 
         assemblies = WithGuestReachableDependencies(assemblies);
@@ -354,113 +331,4 @@ public sealed class ModuleManager : IModuleManager
         return true;
     }
 
-    private static Delegate CreateHandler(Type ownerType, MethodInfo method, IDictionary<Type, object> instances)
-    {
-        ValidateSignature(method);
-
-        object? target = null;
-        if (!method.IsStatic)
-        {
-            if (!instances.TryGetValue(ownerType, out target))
-            {
-                target = Activator.CreateInstance(ownerType)
-                    ?? throw new InvalidOperationException($"Cannot instantiate module type: {ownerType.FullName}");
-                instances.Add(ownerType, target);
-            }
-        }
-
-        var parameterCount = method.GetParameters().Length;
-        if (parameterCount == 0)
-        {
-            var noArg = method.IsStatic
-                ? (Func<int>)method.CreateDelegate(typeof(Func<int>))
-                : (Func<int>)method.CreateDelegate(typeof(Func<int>), target!);
-
-            SysAbiFunction adapter = _ => noArg();
-            return adapter;
-        }
-
-        return method.IsStatic
-            ? method.CreateDelegate(typeof(SysAbiFunction))
-            : method.CreateDelegate(typeof(SysAbiFunction), target!);
-    }
-
-    private static void ValidateSignature(MethodInfo method)
-    {
-        if (method.ReturnType != typeof(int))
-        {
-            throw new InvalidOperationException(
-                $"Method {method.DeclaringType?.FullName}.{method.Name} must return int.");
-        }
-
-        var parameters = method.GetParameters();
-        if (parameters.Length == 0)
-        {
-            return;
-        }
-
-        if (parameters.Length == 1 && parameters[0].ParameterType == typeof(CpuContext))
-        {
-            return;
-        }
-
-        throw new InvalidOperationException(
-            $"Method {method.DeclaringType?.FullName}.{method.Name} must accept no arguments or one {nameof(CpuContext)} argument.");
-    }
-
-    private static ExportInfo? ResolveExportInfo(
-        SysAbiExportAttribute exportAttribute,
-        MethodInfo method,
-        Generation generation,
-        ISymbolCatalog? symbolCatalog)
-    {
-        var target = exportAttribute.Target == Generation.None
-            ? generation
-            : exportAttribute.Target;
-        if ((target & generation) == 0)
-        {
-            return null;
-        }
-
-        var nid = exportAttribute.Nid;
-        var exportName = exportAttribute.ExportName;
-
-        if (string.IsNullOrWhiteSpace(nid) && !string.IsNullOrWhiteSpace(exportName) && symbolCatalog?.TryGetByExportName(exportName, out var byName) == true)
-        {
-            nid = byName.Nid;
-        }
-
-        if (!string.IsNullOrWhiteSpace(nid) && symbolCatalog?.TryGetByNid(nid, out var byNid) == true)
-        {
-            exportName = string.IsNullOrWhiteSpace(exportName) ? byNid.ExportName : exportName;
-            target = exportAttribute.Target == Generation.None ? byNid.Target : target;
-        }
-
-        if (string.IsNullOrWhiteSpace(nid))
-        {
-            throw new InvalidOperationException(
-                $"Method {method.DeclaringType?.FullName}.{method.Name} must define a NID or match one in symbols catalog.");
-        }
-
-        if (string.IsNullOrWhiteSpace(exportName))
-        {
-            exportName = method.Name;
-        }
-
-        if ((target & generation) == 0)
-        {
-            return null;
-        }
-
-        var libraryName = string.IsNullOrWhiteSpace(exportAttribute.LibraryName) ? "libKernel" : exportAttribute.LibraryName;
-        return new ExportInfo(nid, exportName, libraryName, target);
-    }
-
-    private readonly record struct ExportInfo(string Nid, string ExportName, string LibraryName, Generation Target);
-
-    private readonly record struct RegistrationCandidate(
-        ExportInfo Info,
-        Delegate Handler,
-        ExportedFunction Export,
-        string Source);
 }

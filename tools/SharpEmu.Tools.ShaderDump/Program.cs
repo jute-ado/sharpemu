@@ -734,10 +734,26 @@ foreach (var (name, expectTranslate, words) in testPrograms)
         }
     }
 
+    // The binding's scalar base (8 -> s[8:11]) must match the srsrc field of
+    // the hand-assembled buffer_store words, and the 64-byte backing store
+    // must cover every hand-assembled store offset.
+    var globalBindings = storePcs.Count > 0
+        ? new[]
+        {
+            new Gen5GlobalMemoryBinding(
+                8u,
+                0UL,
+                storePcs,
+                new byte[64],
+                64,
+                false),
+        }
+        : Array.Empty<Gen5GlobalMemoryBinding>();
+
+    var state = new Gen5ShaderState(program, new uint[16], Metadata: null);
     var evaluation = new Gen5ShaderEvaluation(
         initialScalarRegisters,
         new uint[256],
-        new Dictionary<uint, IReadOnlyList<uint>>(),
         Array.Empty<Gen5ImageBinding>(),
         globalBindings,
         ComputeSystemRegisters: computeSystemRegisters);

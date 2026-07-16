@@ -96,12 +96,25 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.103
+          cache: true
+          cache-dependency-path: |
+            Directory.Packages.props
+            Directory.Build.props
 
       - name: Restore solution
-        run: dotnet restore SharpEmu.slnx --locked-mode
+        run: dotnet restore SharpEmu.slnx
 
       - name: Build solution
-        run: dotnet build SharpEmu.slnx -c Release --no-restore -warnaserror
+        run: dotnet build SharpEmu.slnx -c Release --no-restore
+
+      # Runs every test project in the solution; a test failure fails the build, as
+      # does an aerolib.bin generation failure in the build step above (the MSBuild
+      # task logs an error and returns false).
+      - name: Run tests
+        run: dotnet test SharpEmu.slnx -c Release --no-build --verbosity normal
+
+      - name: Validate synthetic shaders
+        run: dotnet run --project tools/SharpEmu.Tools.ShaderDump/SharpEmu.Tools.ShaderDump.csproj -c Release -- artifacts/shader-dump
 
       - name: Publish win-x64 CLI
         run: dotnet publish src/SharpEmu.CLI/SharpEmu.CLI.csproj -c Release -r win-x64 --self-contained true --no-restore -p:PublishDir="${env:PUBLISH_DIR}"
@@ -143,7 +156,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path $env:RELEASE_DIR -Force | Out-Null
 
-          $archiveName = "sharpemu-${{ needs.init.outputs.version }}-win-x64-${{ needs.init.outputs.short-sha }}.zip"
+          $archiveName = "sharpemu-${{ needs.init.outputs.version }}-win-x64.zip"
           $archivePath = Join-Path $env:RELEASE_DIR $archiveName
           if (Test-Path $archivePath) {
             Remove-Item $archivePath -Force
@@ -159,7 +172,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sharpemu-win-x64-${{ needs.init.outputs.short-sha }}
-          path: ${{ env.RELEASE_DIR }}\*
+          path: ${{ env.RELEASE_DIR }}\sharpemu-${{ needs.init.outputs.version }}-win-x64.zip
           if-no-files-found: error
 
   build-posix:
@@ -189,9 +202,13 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.103
+          cache: true
+          cache-dependency-path: |
+            Directory.Packages.props
+            Directory.Build.props
 
       - name: Restore solution
-        run: dotnet restore SharpEmu.slnx --locked-mode
+        run: dotnet restore SharpEmu.slnx
 
       - name: Build solution
         run: dotnet build SharpEmu.slnx -c Release --no-restore -warnaserror
@@ -212,6 +229,11 @@ jobs:
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
         run: scripts/execute-synthetic-shaders.sh artifacts/shader-dump
 
+      # Also runs on Linux/macOS: the aerolib.bin MSBuild task does platform-sensitive
+      # path handling, so a cross-platform generation regression surfaces here.
+      - name: Run tests
+        run: dotnet test SharpEmu.slnx -c Release --no-build --verbosity normal
+
       - name: Publish ${{ matrix.rid }} CLI
         run: dotnet publish src/SharpEmu.CLI/SharpEmu.CLI.csproj -c Release -r ${{ matrix.rid }} --self-contained true --no-restore -p:PublishDir="$PUBLISH_DIR"
 
@@ -223,14 +245,14 @@ jobs:
         run: |
           mkdir -p "$RELEASE_DIR"
           # tar keeps the executable bit, which zip would drop.
-          tar -czf "$RELEASE_DIR/sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}-${{ needs.init.outputs.short-sha }}.tar.gz" \
+          tar -czf "$RELEASE_DIR/sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}.tar.gz" \
             -C "$PUBLISH_DIR" .
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
           name: sharpemu-${{ matrix.rid }}-${{ needs.init.outputs.short-sha }}
-          path: ${{ env.RELEASE_DIR }}/sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}-${{ needs.init.outputs.short-sha }}.tar.gz
+          path: ${{ env.RELEASE_DIR }}/sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}.tar.gz
           if-no-files-found: error
 
   release:
@@ -280,3 +302,18 @@ jobs:
               --notes "${notes}" \
               --target "${GITHUB_SHA}"
           fi
+
+          keep=()
+          for asset_path in "${assets[@]}"; do
+            keep+=("$(basename "${asset_path}")")
+          done
+          mapfile -t release_assets < <(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | sort)
+          for asset in "${release_assets[@]}"; do
+            case "${asset}" in
+              sharpemu-${VERSION}-*.zip|sharpemu-${VERSION}-*.tar.gz)
+                if ! printf '%s\n' "${keep[@]}" | grep -Fxq "${asset}"; then
+                  gh release delete-asset "${RELEASE_TAG}" "${asset}" --yes
+                fi
+                ;;
+            esac
+          done
