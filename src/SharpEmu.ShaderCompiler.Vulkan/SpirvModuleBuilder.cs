@@ -146,6 +146,8 @@ public enum SpirvOp : ushort
     AtomicLoad = 227,
     AtomicExchange = 229,
     AtomicCompareExchange = 230,
+    AtomicIIncrement = 232,
+    AtomicIDecrement = 233,
     AtomicIAdd = 234,
     AtomicISub = 235,
     AtomicSMin = 236,
