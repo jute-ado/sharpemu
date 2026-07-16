@@ -161,10 +161,11 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.False(memory.TryCompare(address + 0x2000, [0]));
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void CompareTemporarilyReadsExecuteOnlyMemoryAndRestoresProtection()
     {
-        using var memory = new PhysicalVirtualMemory();
+        var hostMemory = CreateHostMemory();
+        using var memory = new PhysicalVirtualMemory(hostMemory);
         var address = memory.AllocateAt(0, 0x1000, executable: true);
         byte[] payload = [1, 2, 3, 4];
         memory.Map(
@@ -173,12 +174,12 @@ public sealed class PhysicalVirtualMemoryTests
             fileOffset: 0,
             fileData: payload,
             ProgramHeaderFlags.Execute);
-        Assert.Equal(PageExecuteRead, QueryPage(address).Protect);
+        var originalProtection = QueryHostPage(hostMemory, address).Protection;
 
         Assert.True(memory.TryCompare(address, payload));
-        Assert.Equal(PageExecuteRead, QueryPage(address).Protect);
+        Assert.Equal(originalProtection, QueryHostPage(hostMemory, address).Protection);
         Assert.False(memory.TryCompare(address, [1, 2, 3, 5]));
-        Assert.Equal(PageExecuteRead, QueryPage(address).Protect);
+        Assert.Equal(originalProtection, QueryHostPage(hostMemory, address).Protection);
     }
 
     [Fact]
@@ -236,38 +237,39 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Equal(0x05, region.Protection);
     }
 
-    [WindowsX64Theory]
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public void HostWriteAcrossMixedPageProtectionsRestoresEveryPage(bool executableFirst)
     {
-        using var memory = new PhysicalVirtualMemory();
-        var address = memory.AllocateAt(0, 0x2000, executable: true);
+        var hostMemory = CreateHostMemory();
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+        var hostPageSize = checked((ulong)Environment.SystemPageSize);
+        var address = memory.AllocateAt(0, 2 * hostPageSize, executable: true);
         var executableProtection = ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute;
         var writableProtection = ProgramHeaderFlags.Read | ProgramHeaderFlags.Write;
         memory.Map(
             address,
-            0x1000,
+            hostPageSize,
             fileOffset: 0,
             fileData: [],
             executableFirst ? executableProtection : writableProtection);
         memory.Map(
-            address + 0x1000,
-            0x1000,
+            address + hostPageSize,
+            hostPageSize,
             fileOffset: 0,
             fileData: [],
             executableFirst ? writableProtection : executableProtection);
-        var expectedFirst = executableFirst ? PageExecuteRead : PageReadWrite;
-        var expectedSecond = executableFirst ? PageReadWrite : PageExecuteRead;
-        Assert.Equal(expectedFirst, QueryPage(address).Protect);
-        Assert.Equal(expectedSecond, QueryPage(address + 0x1000).Protect);
+        var originalFirst = QueryHostPage(hostMemory, address).Protection;
+        var originalSecond = QueryHostPage(hostMemory, address + hostPageSize).Protection;
+        Assert.NotEqual(originalFirst, originalSecond);
 
-        Assert.True(memory.TryWrite(address + 0xFFF, [0xAA, 0xBB]));
+        Assert.True(memory.TryWrite(address + hostPageSize - 1, [0xAA, 0xBB]));
 
-        Assert.Equal(expectedFirst, QueryPage(address).Protect);
-        Assert.Equal(expectedSecond, QueryPage(address + 0x1000).Protect);
+        Assert.Equal(originalFirst, QueryHostPage(hostMemory, address).Protection);
+        Assert.Equal(originalSecond, QueryHostPage(hostMemory, address + hostPageSize).Protection);
         Span<byte> actual = stackalloc byte[2];
-        Assert.True(memory.TryRead(address + 0xFFF, actual));
+        Assert.True(memory.TryRead(address + hostPageSize - 1, actual));
         Assert.Equal(new byte[] { 0xAA, 0xBB }, actual.ToArray());
     }
 
@@ -459,6 +461,12 @@ public sealed class PhysicalVirtualMemoryTests
                 unchecked((nint)address),
                 out var information,
                 (nuint)Marshal.SizeOf<MemoryBasicInformation64>()));
+        return information;
+    }
+
+    private static HostRegionInfo QueryHostPage(IHostMemory hostMemory, ulong address)
+    {
+        Assert.True(hostMemory.Query(address, out var information));
         return information;
     }
 
