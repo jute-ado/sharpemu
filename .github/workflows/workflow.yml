@@ -220,7 +220,7 @@ jobs:
         if: matrix.rid == 'linux-x64'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libvulkan1 mesa-vulkan-drivers spirv-tools
+          sudo apt-get install --yes libglfw3 libvulkan1 mesa-vulkan-drivers spirv-tools xvfb
 
       - name: Validate synthetic SPIR-V
         if: matrix.rid == 'linux-x64'
@@ -231,6 +231,16 @@ jobs:
         env:
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
         run: scripts/execute-synthetic-shaders.sh artifacts/shader-dump
+
+      - name: Test presenter render-target sampling
+        if: matrix.rid == 'linux-x64'
+        env:
+          SHARPEMU_RUN_GPU_TESTS: 1
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+        run: >-
+          xvfb-run --auto-servernum
+          dotnet test tests/SharpEmu.GpuTests/SharpEmu.GpuTests.csproj
+          -c Release --no-build --verbosity normal
 
       # Also runs on Linux/macOS: the aerolib.bin MSBuild task does platform-sensitive
       # path handling, so a cross-platform generation regression surfaces here.
