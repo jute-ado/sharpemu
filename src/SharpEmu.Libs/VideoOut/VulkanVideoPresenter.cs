@@ -64,6 +64,8 @@ internal static unsafe class VulkanVideoPresenter
     private const uint DefaultWindowWidth = 1280;
     private const uint DefaultWindowHeight = 720;
     private const int MaxPendingGuestWork = 16;
+    private static readonly TimeSpan GuestImageRenderWait =
+        TimeSpan.FromMilliseconds(250);
     // A single guest frame commonly contains 30-50 translated draws.  Limiting
     // this to 16 split one frame across several 60 Hz window callbacks and
     // unnecessarily throttled the producer behind the bounded work queue.
@@ -99,8 +101,7 @@ internal static unsafe class VulkanVideoPresenter
     private const string PortabilityEnumerationExtensionName = "VK_KHR_portability_enumeration";
     private const string PortabilitySubsetExtensionName = "VK_KHR_portability_subset";
     private static bool _splashHidden;
-    private static long _enqueuedGuestWorkSequence;
-    private static long _completedGuestWorkSequence;
+    private static readonly GuestWorkCompletionTracker _guestWork = new();
 
     private static bool ShouldTracePresentedGuestImageContentsForDiagnostics()
     {
@@ -168,7 +169,7 @@ internal static unsafe class VulkanVideoPresenter
                     1,
                     GuestDrawKind.None,
                     TranslatedDraw: null,
-                    RequiredGuestWorkSequence: _enqueuedGuestWorkSequence,
+                    RequiredGuestWorkSequence: _guestWork.EnqueuedSequence,
                     IsSplash: false)
                 : hasSplash
                 ? new Presentation(
@@ -178,7 +179,7 @@ internal static unsafe class VulkanVideoPresenter
                     1,
                     GuestDrawKind.None,
                     TranslatedDraw: null,
-                    RequiredGuestWorkSequence: _enqueuedGuestWorkSequence,
+                    RequiredGuestWorkSequence: _guestWork.EnqueuedSequence,
                     IsSplash: true)
                 : new Presentation(
                     null,
@@ -187,7 +188,7 @@ internal static unsafe class VulkanVideoPresenter
                     0,
                     GuestDrawKind.None,
                     TranslatedDraw: null,
-                    RequiredGuestWorkSequence: _enqueuedGuestWorkSequence,
+                    RequiredGuestWorkSequence: _guestWork.EnqueuedSequence,
                     IsSplash: false);
             StartPresenterLocked();
         }
@@ -211,7 +212,7 @@ internal static unsafe class VulkanVideoPresenter
                 sequence,
                 GuestDrawKind.None,
                 TranslatedDraw: null,
-                RequiredGuestWorkSequence: _enqueuedGuestWorkSequence,
+                RequiredGuestWorkSequence: _guestWork.EnqueuedSequence,
                 IsSplash: false);
             System.Threading.Monitor.PulseAll(_gate);
             Console.Error.WriteLine("[LOADER][INFO] Vulkan VideoOut hid splash");
@@ -245,7 +246,7 @@ internal static unsafe class VulkanVideoPresenter
                 sequence,
                 GuestDrawKind.None,
                 TranslatedDraw: null,
-                RequiredGuestWorkSequence: _enqueuedGuestWorkSequence,
+                RequiredGuestWorkSequence: _guestWork.EnqueuedSequence,
                 IsSplash: false);
             System.Threading.Monitor.PulseAll(_gate);
             if (_thread is not null)
@@ -290,7 +291,7 @@ internal static unsafe class VulkanVideoPresenter
                 sequence,
                 drawKind,
                 TranslatedDraw: null,
-                RequiredGuestWorkSequence: _enqueuedGuestWorkSequence,
+                RequiredGuestWorkSequence: _guestWork.EnqueuedSequence,
                 IsSplash: false);
             System.Threading.Monitor.PulseAll(_gate);
             if (_thread is not null)
@@ -356,7 +357,7 @@ internal static unsafe class VulkanVideoPresenter
                     primitiveType,
                     indexBuffer,
                     renderState ?? GuestRenderState.Default),
-                RequiredGuestWorkSequence: _enqueuedGuestWorkSequence,
+                RequiredGuestWorkSequence: _guestWork.EnqueuedSequence,
                 IsSplash: false);
             System.Threading.Monitor.PulseAll(_gate);
             if (_thread is not null)
@@ -612,10 +613,13 @@ internal static unsafe class VulkanVideoPresenter
         uint pitchInPixel)
     {
         var traceSubmission = false;
+        bool known;
+        long requiredSequence;
         lock (_gate)
         {
             // VideoOut registration does not imply a rendered Vulkan image.
-            var known = _gpuGuestImages.ContainsKey(address);
+            known = _gpuGuestImages.ContainsKey(address);
+            requiredSequence = _guestWork.EnqueuedSequence;
             if (ShouldTraceGuestImageSubmissionsForDiagnostics())
             {
                 Console.Error.WriteLine(
@@ -627,6 +631,26 @@ internal static unsafe class VulkanVideoPresenter
             {
                 return false;
             }
+        }
+
+        if (!known)
+        {
+            if (requiredSequence > _guestWork.CompletedSequence)
+            {
+                _ = _guestWork.WaitUntilCompleted(
+                    requiredSequence,
+                    GuestImageRenderWait);
+            }
+        }
+
+        lock (_gate)
+        {
+            if (_closed)
+            {
+                return false;
+            }
+
+            known = _gpuGuestImages.ContainsKey(address);
 
             // The caller (VideoOutExports.SubmitFlip) reports the flip as successful either
             // way, so an unregistered address means the frame is dropped silently; warn once
@@ -655,7 +679,7 @@ internal static unsafe class VulkanVideoPresenter
                 TranslatedDraw: null,
                 // A flip targets the image produced by all work already queued
                 // for this frame.  Do not expose it until those draws finish.
-                RequiredGuestWorkSequence: _enqueuedGuestWorkSequence,
+                RequiredGuestWorkSequence: requiredSequence,
                 IsSplash: false,
                 GuestImageAddress: address);
             System.Threading.Monitor.PulseAll(_gate);
@@ -1156,7 +1180,7 @@ internal static unsafe class VulkanVideoPresenter
         {
             if (_latestPresentation is not { } latest ||
                 latest.Sequence == presentedSequence ||
-                latest.RequiredGuestWorkSequence > _completedGuestWorkSequence)
+                latest.RequiredGuestWorkSequence > _guestWork.CompletedSequence)
             {
                 presentation = default;
                 return false;
@@ -1182,7 +1206,7 @@ internal static unsafe class VulkanVideoPresenter
         }
 
         _pendingGuestWork.Enqueue(work);
-        _enqueuedGuestWorkSequence++;
+        _guestWork.MarkEnqueued();
         System.Threading.Monitor.PulseAll(_gate);
     }
 
@@ -1196,9 +1220,9 @@ internal static unsafe class VulkanVideoPresenter
 
     private static void CompleteGuestWork()
     {
+        _guestWork.MarkCompleted();
         lock (_gate)
         {
-            _completedGuestWorkSequence++;
             System.Threading.Monitor.PulseAll(_gate);
         }
     }
@@ -6010,7 +6034,8 @@ internal static unsafe class VulkanVideoPresenter
                     {
                         guestBacklog = Math.Max(
                             0,
-                            _enqueuedGuestWorkSequence - _completedGuestWorkSequence);
+                            _guestWork.EnqueuedSequence -
+                            _guestWork.CompletedSequence);
                         queuedGuestWork = _pendingGuestWork.Count;
                     }
 
@@ -6141,7 +6166,8 @@ internal static unsafe class VulkanVideoPresenter
                     _pendingGuestWork.Count > 0 ||
                     (_latestPresentation is { } latest &&
                      latest.Sequence != _presentedSequence &&
-                     latest.RequiredGuestWorkSequence <= _completedGuestWorkSequence))
+                     latest.RequiredGuestWorkSequence <=
+                     _guestWork.CompletedSequence))
                 {
                     return;
                 }
