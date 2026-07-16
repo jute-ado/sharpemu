@@ -21,7 +21,8 @@ public sealed class UpdaterTests
 
     [Theory]
     [InlineData("jute-ado/sharpemu", "Release", "push", "refs/heads/main", "0123456", true)]
-    [InlineData("JUTE-ADO/SHARPEMU", "release", "workflow_dispatch", "refs/heads/topic", "0123456", true)]
+    [InlineData("JUTE-ADO/SHARPEMU", "release", "workflow_dispatch", "refs/heads/main", "0123456", true)]
+    [InlineData("jute-ado/sharpemu", "Release", "workflow_dispatch", "refs/heads/topic", "0123456", false)]
     [InlineData("sharpemu/sharpemu", "Release", "push", "refs/heads/main", "0123456", false)]
     [InlineData("jute-ado/sharpemu", "Release", "push", "refs/heads/topic", "0123456", false)]
     [InlineData("jute-ado/sharpemu", "Debug", "push", "refs/heads/main", "0123456", false)]

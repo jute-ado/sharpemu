@@ -32,8 +32,8 @@ public static class BuildInfo
 
     /// <summary>
     /// Whether this build is an official release: a Release-configuration CI build
-    /// from the canonical repository, produced by a push to <c>main</c> or a manual
-    /// workflow dispatch (matching the CI <c>release</c> job). All other builds
+    /// from the canonical repository and the <c>main</c> branch, produced by a push
+    /// or a manual workflow dispatch (matching the CI <c>release</c> job). All other builds
     /// (pull requests, forks, feature branches, and local/Debug builds) are
     /// considered unofficial.
     /// </summary>
@@ -153,9 +153,9 @@ public static class BuildInfo
             CanonicalRepository,
             StringComparison.OrdinalIgnoreCase);
         var isReleaseTrigger =
-            string.Equals(eventName, "workflow_dispatch", StringComparison.OrdinalIgnoreCase) ||
-            (string.Equals(eventName, "push", StringComparison.OrdinalIgnoreCase) &&
-             string.Equals(gitRef, "refs/heads/main", StringComparison.OrdinalIgnoreCase));
+            string.Equals(gitRef, "refs/heads/main", StringComparison.OrdinalIgnoreCase) &&
+            (string.Equals(eventName, "workflow_dispatch", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(eventName, "push", StringComparison.OrdinalIgnoreCase));
         return isReleaseConfig && isCanonicalRepo && isReleaseTrigger &&
             !string.IsNullOrWhiteSpace(commitSha);
     }

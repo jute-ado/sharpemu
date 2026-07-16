@@ -394,7 +394,9 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(
             BuildInfo.Configuration,
             root.GetProperty("build").GetProperty("configuration").GetString());
-        Assert.False(root.GetProperty("build").GetProperty("isOfficialRelease").GetBoolean());
+        Assert.Equal(
+            BuildInfo.IsOfficialRelease,
+            root.GetProperty("build").GetProperty("isOfficialRelease").GetBoolean());
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("host").GetProperty("osDescription").GetString()));
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("host").GetProperty("processArchitecture").GetString()));
         var application = root.GetProperty("application");
