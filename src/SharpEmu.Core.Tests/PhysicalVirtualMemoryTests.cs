@@ -22,7 +22,7 @@ public sealed class PhysicalVirtualMemoryTests
     private const uint PageReadWrite = 0x04;
     private const uint PageExecuteRead = 0x20;
 
-    [WindowsX64Fact]
+    [Fact]
     public void AllocatedRegionSupportsBoundedReadWriteAndEmptyEndAccess()
     {
         using var memory = new PhysicalVirtualMemory();
@@ -146,7 +146,7 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Equal(new byte[] { 0x11, 0x22 }, edges.ToArray());
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void CompareMatchesMappedBytesWithoutCrossingRegionBounds()
     {
         using var memory = new PhysicalVirtualMemory();
@@ -181,7 +181,7 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Equal(PageExecuteRead, QueryPage(address).Protect);
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void TemporaryAccessOperationsReportProtectionRestoreFailure()
     {
         var hostMemory = new FailingRawProtectionHostMemory(HostPlatform.Current.Memory);
@@ -206,7 +206,7 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Equal(3, hostMemory.FailedRawProtectionCalls);
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void MappingCopiesPayloadZeroFillsSegmentAndPreservesAdjacentBytes()
     {
         using var memory = new PhysicalVirtualMemory();
@@ -271,7 +271,7 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Equal(new byte[] { 0xAA, 0xBB }, actual.ToArray());
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void GuestAllocatorHonorsAlignmentAndReturnsDistinctRanges()
     {
         using var memory = new PhysicalVirtualMemory();
@@ -285,7 +285,7 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.True(memory.TryWrite(second, new byte[] { 4, 5, 6, 7, 8 }));
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void GuestAllocatorReusesFreedRangeWithRequestedAlignment()
     {
         using var memory = new PhysicalVirtualMemory();
@@ -305,7 +305,7 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Single(memory.SnapshotRegions());
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void GuestAllocatorCoalescesAdjacentFreedRanges()
     {
         using var memory = new PhysicalVirtualMemory();
@@ -324,7 +324,7 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Equal(third, coalesced + 0x200);
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void GuestAllocatorRejectsInteriorUnknownAndDoubleFrees()
     {
         using var memory = new PhysicalVirtualMemory();
@@ -338,7 +338,7 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.False(memory.TryFreeGuestMemory(address));
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void GuestAllocatorGrowsAfterCurrentArenaIsExhausted()
     {
         using var memory = new PhysicalVirtualMemory();
@@ -359,7 +359,7 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Equal(0x5A, secondContents[0]);
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void GuestAllocatorCreatesArenaLargeEnoughForOversizedRequest()
     {
         using var memory = new PhysicalVirtualMemory();
@@ -378,7 +378,7 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Equal(new byte[] { 0x11, 0x22 }, edges.ToArray());
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void GuestAllocatorRejectsInvalidRequests()
     {
         using var memory = new PhysicalVirtualMemory();
@@ -388,7 +388,7 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.False(memory.TryAllocateGuestMemory(1, 3, out _));
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void ClearReleasesRegionsAndAllowsFreshAllocation()
     {
         using var memory = new PhysicalVirtualMemory();
@@ -588,7 +588,7 @@ public sealed class PhysicalVirtualMemoryTests
         }
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void AllocationSearchRejectsNonPowerOfTwoAlignmentWithoutMutation()
     {
         using var memory = new PhysicalVirtualMemory();
@@ -602,7 +602,7 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Empty(memory.SnapshotRegions());
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void AllocationSearchReturnsFalseInsteadOfThrowingOnOverflow()
     {
         using var memory = new PhysicalVirtualMemory();
@@ -685,7 +685,7 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.True(memory.IsAccessible(actualAddress, 0x2000));
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void DisposedMemoryRejectsFurtherOperations()
     {
         var memory = new PhysicalVirtualMemory();
