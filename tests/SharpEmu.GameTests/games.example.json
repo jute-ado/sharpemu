@@ -40,6 +40,9 @@
         "minimumObservedImportDispatches": 1000,
         "requiredOutputSubstrings": [
           "Vulkan VideoOut presented guest frame"
+        ],
+        "requiredVideoOutFrameFingerprints": [
+          "0123456789ABCDEF"
         ]
       }
     }
