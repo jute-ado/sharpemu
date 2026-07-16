@@ -42,7 +42,9 @@ internal static class SyntheticNativeGuest
         int executionCount,
         IReadOnlyDictionary<ulong, string>? importStubs = null,
         Action<ModuleManager>? configureModules = null,
-        ulong codeAddress = DefaultCodeAddress)
+        ulong codeAddress = DefaultCodeAddress,
+        ulong guestThreadHandle = 0,
+        bool useDedicatedHostThreads = false)
     {
         ArgumentNullException.ThrowIfNull(code);
         ArgumentException.ThrowIfNullOrWhiteSpace(moduleName);
@@ -76,20 +78,72 @@ internal static class SyntheticNativeGuest
         moduleManager.Freeze();
         using var dispatcher = new CpuDispatcher(memory, moduleManager);
         var executions = new SyntheticGuestExecutionResult[executionCount];
+
+        void Execute(int index)
+        {
+            var currentGuestThreadHandle = guestThreadHandle == 0
+                ? 0
+                : checked(guestThreadHandle + (ulong)index);
+            var previousGuestThreadHandle = currentGuestThreadHandle == 0
+                ? 0
+                : GuestThreadExecution.EnterGuestThread(currentGuestThreadHandle);
+            try
+            {
+                var currentModuleName = executions.Length == 1
+                    ? moduleName
+                    : $"{moduleName}#{index}";
+                var result = dispatcher.DispatchModuleInitializer(
+                    entryPoint,
+                    generation,
+                    importStubs,
+                    moduleName: currentModuleName);
+                executions[index] = new SyntheticGuestExecutionResult(
+                    result,
+                    dispatcher.LastSessionSummary.Reason,
+                    dispatcher.LastNotImplementedInfo?.Detail);
+            }
+            finally
+            {
+                if (currentGuestThreadHandle != 0)
+                {
+                    GuestThreadExecution.RestoreGuestThread(previousGuestThreadHandle);
+                }
+            }
+        }
+
         for (var i = 0; i < executions.Length; i++)
         {
-            var currentModuleName = executions.Length == 1
-                ? moduleName
-                : $"{moduleName}#{i}";
-            var result = dispatcher.DispatchModuleInitializer(
-                entryPoint,
-                generation,
-                importStubs,
-                moduleName: currentModuleName);
-            executions[i] = new SyntheticGuestExecutionResult(
-                result,
-                dispatcher.LastSessionSummary.Reason,
-                dispatcher.LastNotImplementedInfo?.Detail);
+            if (!useDedicatedHostThreads)
+            {
+                Execute(i);
+                continue;
+            }
+
+            Exception? executionException = null;
+            var executionIndex = i;
+            var hostThread = new Thread(() =>
+            {
+                try
+                {
+                    Execute(executionIndex);
+                }
+                catch (Exception ex)
+                {
+                    executionException = ex;
+                }
+            })
+            {
+                IsBackground = true,
+                Name = $"{moduleName}-host-{i}",
+            };
+            hostThread.Start();
+            hostThread.Join();
+            if (executionException is not null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                    .Capture(executionException)
+                    .Throw();
+            }
         }
 
         return executions;

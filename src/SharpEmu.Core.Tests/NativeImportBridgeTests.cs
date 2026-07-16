@@ -16,8 +16,10 @@ public sealed class NativeImportBridgeTests
     private const string FloatReturnNid = "test-float-return-nid";
     private const string FloatAddNid = "test-float-add-nid";
     private const string ColdHandlerNid = "test-cold-handler-nid";
+    private const string BlockingYieldNid = "test-blocking-yield-nid";
     private const ulong CodeAddress = 0x0000_0008_1000_0000;
     private const ulong ImportAddress = CodeAddress + 0x100;
+    private const ulong SecondImportAddress = ImportAddress + 0x10;
     private const ulong FallbackImportAddress = 0x0000_6FFF_FF00_0000;
     private const ulong NonvolatileSentinel = 0x1122_3344_5566_7788;
 
@@ -276,6 +278,50 @@ public sealed class NativeImportBridgeTests
         AssertSuccessful(execution);
     }
 
+    [HostX64Fact]
+    public async Task ReusedNativeWorkerSurvivesRepeatedBlockingImportYields()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
+        const int executionCount = 64;
+        SyntheticExports.BlockingYieldCalls = 0;
+        byte[] code =
+        [
+            0xE8, 0xFB, 0x00, 0x00, 0x00, // call ImportAddress
+            0xE8, 0x06, 0x01, 0x00, 0x00, // call SecondImportAddress
+            0xB8, 0x01, 0x00, 0x00, 0x00, // failure: mov eax, 1
+            0xC3,                         // ret
+        ];
+        var executions = SyntheticNativeGuest.ExecuteModuleInitializers(
+            code,
+            Generation.Gen5,
+            "synthetic-repeated-blocking-yield",
+            executionCount,
+            new Dictionary<ulong, string>
+            {
+                [ImportAddress] = AddNid,
+                [SecondImportAddress] = BlockingYieldNid,
+            },
+            moduleManager =>
+            {
+                var registered = moduleManager.RegisterExports(
+                    SharpEmu.Core.Tests.Generated.SysAbiExportRegistry.CreateExports(
+                        Generation.Gen5));
+                Assert.True(registered > 0);
+                Assert.True(moduleManager.TryGetExport(BlockingYieldNid, out _));
+            },
+            CodeAddress,
+            guestThreadHandle: 0xB10C,
+            useDedicatedHostThreads: true);
+
+        Assert.Equal(executionCount, executions.Count);
+        Assert.All(executions, AssertSuccessful);
+        Assert.Equal(executionCount, SyntheticExports.BlockingYieldCalls);
+    }
+
     private static SyntheticGuestExecutionResult ExecuteImport(
         byte[] code,
         string nid,
@@ -413,6 +459,22 @@ public sealed class NativeImportBridgeTests
             var right = BitConverter.Int32BitsToSingle(unchecked((int)rightBits));
             var sumBits = unchecked((uint)BitConverter.SingleToInt32Bits(left + right));
             context.SetXmmRegister(0, sumBits, 0);
+            return context.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+        }
+
+        public static int BlockingYieldCalls;
+
+        [SysAbiExport(
+            Nid = BlockingYieldNid,
+            ExportName = "syntheticBlockingYield",
+            Target = Generation.Gen5,
+            LibraryName = "libSyntheticTest")]
+        public static int BlockingYield(CpuContext context)
+        {
+            Interlocked.Increment(ref BlockingYieldCalls);
+            Assert.True(GuestThreadExecution.RequestCurrentThreadBlock(
+                context,
+                "synthetic blocking yield"));
             return context.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
         }
     }
