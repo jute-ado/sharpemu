@@ -34,3 +34,23 @@ separate cases for separate milestones so each synchronous Vulkan readback runs
 in an isolated emulator process. Presented-frame checks also write ignored BMP
 and metadata files beside the JSON report so the exact tested output can be
 inspected without rerunning the game.
+
+## Intermediate GPU captures
+
+When a presented frame is wrong but the game is rendering, capture one
+intermediate guest-image write without changing the game-test manifest:
+
+```text
+SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE=0xC490000@3
+SHARPEMU_GUEST_IMAGE_DUMP_DIR=C:\path\to\captures
+```
+
+The selector before `@` may instead be a structural image size, such as
+`1280x720@100`. Size selectors are useful when guest addresses vary between
+processes. The number after `@` is the matching write to capture. Each capture
+logs a fingerprint and, for supported RGBA formats, writes both the raw bytes
+and a viewable BMP to the dump directory.
+
+Capture directories and machine-specific environment values are local
+diagnostics. Do not add game binaries, captures, local paths, or local
+fingerprints to the repository.
