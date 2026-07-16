@@ -657,8 +657,20 @@ public static partial class Gen5SpirvTranslator
                 return (SpirvImageFormat.Unknown, ImageComponentKind.Float);
             }
 
-            var dataFormat = (descriptor[1] >> 20) & 0x1FFu;
-            var numberType = (descriptor[1] >> 26) & 0xFu;
+            // RDNA2 replaced the legacy DATA_FORMAT/NUM_FORMAT pair with one
+            // sparse nine-bit FORMAT field. Its upper bits are not a separate
+            // number type; decode the field once before selecting SPIR-V types.
+            var unifiedFormat = (descriptor[1] >> 20) & 0x1FFu;
+            if (!Gfx10UnifiedFormat.TryDecode(
+                    unifiedFormat,
+                    out var dataFormat,
+                    out var numberType))
+            {
+                return (
+                    SpirvImageFormat.Unknown,
+                    ImageComponentKind.Float);
+            }
+
             return (dataFormat, numberType) switch
             {
                 (1, _) => (SpirvImageFormat.R8, ImageComponentKind.Float),
@@ -674,8 +686,12 @@ public static partial class Gen5SpirvTranslator
                 (6 or 7, _) => (
                     SpirvImageFormat.R11fG11fB10f,
                     ImageComponentKind.Float),
-                (9, 4) => (SpirvImageFormat.Rgb10A2ui, ImageComponentKind.Uint),
-                (9, _) => (SpirvImageFormat.Rgb10A2, ImageComponentKind.Float),
+                (8 or 9, 4) => (
+                    SpirvImageFormat.Rgb10A2ui,
+                    ImageComponentKind.Uint),
+                (8 or 9, _) => (
+                    SpirvImageFormat.Rgb10A2,
+                    ImageComponentKind.Float),
                 (10, 4) => (SpirvImageFormat.Rgba8ui, ImageComponentKind.Uint),
                 (10, 5) => (SpirvImageFormat.Rgba8i, ImageComponentKind.Sint),
                 (10, _) => (SpirvImageFormat.Rgba8, ImageComponentKind.Float),
@@ -698,14 +714,6 @@ public static partial class Gen5SpirvTranslator
                 (20, _) => (SpirvImageFormat.R32ui, ImageComponentKind.Uint),
                 (21, _) => (SpirvImageFormat.R32i, ImageComponentKind.Sint),
                 (22, _) => (SpirvImageFormat.Rgba16f, ImageComponentKind.Float),
-                (29, _) => (SpirvImageFormat.R32f, ImageComponentKind.Float),
-                (36, _) => (SpirvImageFormat.R8, ImageComponentKind.Float),
-                (49, _) => (SpirvImageFormat.R8ui, ImageComponentKind.Uint),
-                (56 or 62 or 64, _) => (
-                    SpirvImageFormat.Rgba8,
-                    ImageComponentKind.Float),
-                (71, _) => (SpirvImageFormat.Rgba16f, ImageComponentKind.Float),
-                (75, _) => (SpirvImageFormat.Rg32f, ImageComponentKind.Float),
                 (_, 4) => (SpirvImageFormat.Unknown, ImageComponentKind.Uint),
                 (_, 5) => (SpirvImageFormat.Unknown, ImageComponentKind.Sint),
                 _ => (SpirvImageFormat.Unknown, ImageComponentKind.Float),
