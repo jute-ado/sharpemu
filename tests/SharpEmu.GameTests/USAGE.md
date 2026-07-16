@@ -27,4 +27,7 @@ also ignored.
 The harness launches the CLI in a child process so execution cases have a hard
 timeout and a crashed or stalled guest cannot take down the test runner. CI
 builds and validates the harness but skips local game execution when no manifest
-is configured.
+is configured. `requiredVideoOutFrameFingerprints` checks the guest's CPU-visible
+VideoOut buffer. `requiredPresentedGuestImageFingerprints` performs one opt-in
+Vulkan readback and checks the image SharpEmu actually presents; use the latter
+when GPU rendering does not write the final pixels back into guest RAM.

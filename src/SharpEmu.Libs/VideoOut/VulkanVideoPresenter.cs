@@ -66,6 +66,8 @@ internal static unsafe class VulkanVideoPresenter
     private const int MaxPendingGuestWork = 16;
     private static readonly TimeSpan GuestImageRenderWait =
         TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan CapturedGuestImageRenderWait =
+        TimeSpan.FromSeconds(10);
     // A single guest frame commonly contains 30-50 translated draws.  Limiting
     // this to 16 split one frame across several 60 Hz window callbacks and
     // unnecessarily throttled the producer behind the bounded work queue.
@@ -103,6 +105,18 @@ internal static unsafe class VulkanVideoPresenter
     private static bool _splashHidden;
     private static readonly GuestWorkCompletionTracker _guestWork = new();
 
+    private static bool ShouldCapturePresentedGuestImageForRegression() =>
+        string.Equals(
+            Environment.GetEnvironmentVariable(
+                "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE"),
+            "1",
+            StringComparison.Ordinal);
+
+    private static TimeSpan GetGuestImageRenderWait() =>
+        ShouldCapturePresentedGuestImageForRegression()
+            ? CapturedGuestImageRenderWait
+            : GuestImageRenderWait;
+
     private static bool ShouldTracePresentedGuestImageContentsForDiagnostics()
     {
         var mode = Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_IMAGES");
@@ -120,6 +134,11 @@ internal static unsafe class VulkanVideoPresenter
 
     private static bool ShouldSamplePresentedGuestImageForDiagnostics(long frame)
     {
+        if (ShouldCapturePresentedGuestImageForRegression())
+        {
+            return frame == 1;
+        }
+
         var mode = Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_IMAGES");
         if (string.Equals(mode, "present", StringComparison.OrdinalIgnoreCase))
         {
@@ -639,7 +658,7 @@ internal static unsafe class VulkanVideoPresenter
             {
                 _ = _guestWork.WaitUntilCompleted(
                     requiredSequence,
-                    GuestImageRenderWait);
+                    GetGuestImageRenderWait());
             }
         }
 
@@ -6498,7 +6517,9 @@ internal static unsafe class VulkanVideoPresenter
             // diagnostic run stop immediately after vk.present_sample.
             if (tracePresentedGuestImage && presentedGuestImage is not null)
             {
-                TraceGuestImageContents(presentedGuestImage);
+                TraceGuestImageContents(
+                    presentedGuestImage,
+                    isPresentedImage: true);
             }
             while (_pendingAliasImageDumps.TryDequeue(out var aliasImage))
             {
@@ -6542,7 +6563,9 @@ internal static unsafe class VulkanVideoPresenter
             }
         }
 
-        private void TraceGuestImageContents(GuestImageResource image)
+        private void TraceGuestImageContents(
+            GuestImageResource image,
+            bool isPresentedImage = false)
         {
             var bytesPerPixel = GetReadbackBytesPerPixel(image.Format);
             if (bytesPerPixel == 0)
@@ -6685,11 +6708,14 @@ internal static unsafe class VulkanVideoPresenter
                         bytes.Slice(centerOffset, (int)bytesPerPixel));
                     Console.Error.WriteLine(
                         "[LOADER][TRACE] " +
-                        $"vk.guest_image addr=0x{image.Address:X16} " +
+                        (isPresentedImage
+                            ? $"vk.presented_guest_image fingerprint=0x{hash:X16} "
+                            : $"vk.guest_image hash=0x{hash:X16} ") +
+                        $"addr=0x{image.Address:X16} " +
                         $"size={image.Width}x{image.Height} format={image.Format} " +
                         $"nonzero_bytes={nonzeroBytes}/{byteCount} " +
                         $"nonblack_pixels={nonblackPixels}/{(ulong)image.Width * image.Height} " +
-                        $"center={center} hash=0x{hash:X16}");
+                        $"center={center}");
                     DumpGuestImageBytes(image, bytes);
                 }
                 finally
