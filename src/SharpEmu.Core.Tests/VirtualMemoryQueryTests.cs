@@ -5,6 +5,7 @@ using SharpEmu.Core.Cpu;
 using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
 using SharpEmu.HLE;
+using SharpEmu.HLE.Host;
 using Xunit;
 
 namespace SharpEmu.Core.Tests;
@@ -111,7 +112,7 @@ public sealed class VirtualMemoryQueryTests
     [Fact]
     public void PhysicalMemoryRegionQueryUsesLogarithmicProbeDepth()
     {
-        using var memory = TestHostMemory.CreatePhysicalMemory();
+        using var memory = new PhysicalVirtualMemory(new SparseAddressHostMemory());
         const int regionCount = 256;
         for (var index = 0; index < regionCount; index++)
         {
@@ -126,6 +127,72 @@ public sealed class VirtualMemoryQueryTests
         Assert.True(memory.TryQueryMemoryRegion(last.VirtualAddress - 1, findNext: true, out var next));
         Assert.Equal(last.VirtualAddress, next.Address);
         Assert.InRange(memory.CountRegionQueryProbes(last.VirtualAddress - 1, findNext: true), 1, 9);
+    }
+
+    private sealed class SparseAddressHostMemory : IHostMemory
+    {
+        private const ulong Gap = 0x1000;
+        private ulong _nextAddress = 0x0000_1000_0000_0000;
+
+        public ulong Allocate(
+            ulong desiredAddress,
+            ulong size,
+            HostPageProtection protection)
+        {
+            _ = protection;
+            if (desiredAddress != 0)
+            {
+                return desiredAddress;
+            }
+
+            var result = _nextAddress;
+            _nextAddress = checked(result + size + Gap);
+            return result;
+        }
+
+        public ulong Reserve(
+            ulong desiredAddress,
+            ulong size,
+            HostPageProtection protection) =>
+            Allocate(desiredAddress, size, protection);
+
+        public bool Commit(
+            ulong address,
+            ulong size,
+            HostPageProtection protection) =>
+            true;
+
+        public bool Free(ulong address) => true;
+
+        public bool Protect(
+            ulong address,
+            ulong size,
+            HostPageProtection protection,
+            out uint rawOldProtection)
+        {
+            rawOldProtection = 0;
+            return true;
+        }
+
+        public bool ProtectRaw(
+            ulong address,
+            ulong size,
+            uint rawProtection,
+            out uint rawOldProtection)
+        {
+            rawOldProtection = 0;
+            return true;
+        }
+
+        public bool Query(ulong address, out HostRegionInfo info)
+        {
+            info = default;
+            return false;
+        }
+
+        public void FlushInstructionCache(ulong address, ulong size)
+        {
+        }
     }
 
     [Fact]
