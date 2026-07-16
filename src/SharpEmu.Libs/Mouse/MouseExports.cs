@@ -1,30 +1,39 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers.Binary;
+using System.Diagnostics;
 using SharpEmu.HLE;
 
 namespace SharpEmu.Libs.Mouse;
 
 public static class MouseExports
 {
+    private const int PrimaryUserId = 0x10000000;
+    private const int MouseDataSize = 0x28;
+    private const int MouseErrorInvalidArgument = unchecked((int)0x80020002);
+    private const int MouseErrorInvalidHandle = unchecked((int)0x80020003);
+    private const int MouseErrorNotInitialized = unchecked((int)0x80020005);
+    private const int MouseErrorAlreadyOpened = unchecked((int)0x80020008);
+
+    private static readonly object Gate = new();
+    private static readonly bool[] OpenHandles = new bool[2];
+    private static bool _initialized;
+
     [SysAbiExport(
         Nid = "Qs0wWulgl7U",
         ExportName = "sceMouseInit",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libSceMouse")]
-    public static int MouseInit(CpuContext ctx) => ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
-
-    // Returns 0 read entries: no mouse is connected. This NID was previously misbound
-    // as an sceNgs2VoiceGetState alias.
-    [SysAbiExport(
-        Nid = "x8qnXqh-tiM",
-        ExportName = "sceMouseRead",
-        Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libSceMouse")]
-    public static int MouseRead(CpuContext ctx)
+    public static int MouseInit(CpuContext ctx)
     {
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        lock (Gate)
+        {
+            _initialized = true;
+            Array.Clear(OpenHandles);
+        }
+
+        return ctx.SetReturn(0);
     }
 
     [SysAbiExport(
@@ -34,7 +43,84 @@ public static class MouseExports
         LibraryName = "libSceMouse")]
     public static int MouseOpen(CpuContext ctx)
     {
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        var userId = unchecked((int)ctx[CpuRegister.Rdi]);
+        var type = unchecked((int)ctx[CpuRegister.Rsi]);
+        var index = unchecked((int)ctx[CpuRegister.Rdx]);
+        lock (Gate)
+        {
+            if (!_initialized)
+            {
+                return ctx.SetReturn(MouseErrorNotInitialized);
+            }
+
+            if (userId != PrimaryUserId || type != 0 || index is < 0 or > 1)
+            {
+                return ctx.SetReturn(MouseErrorInvalidArgument);
+            }
+
+            if (OpenHandles[index])
+            {
+                return ctx.SetReturn(MouseErrorAlreadyOpened);
+            }
+
+            OpenHandles[index] = true;
+            return ctx.SetReturn(index);
+        }
+    }
+
+    [SysAbiExport(
+        Nid = "x8qnXqh-tiM",
+        ExportName = "sceMouseRead",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceMouse")]
+    public static int MouseRead(CpuContext ctx)
+    {
+        var handle = unchecked((int)ctx[CpuRegister.Rdi]);
+        var dataAddress = ctx[CpuRegister.Rsi];
+        var count = unchecked((int)ctx[CpuRegister.Rdx]);
+        if (dataAddress == 0 || count is < 1 or > 64)
+        {
+            return ctx.SetReturn(MouseErrorInvalidArgument);
+        }
+
+        lock (Gate)
+        {
+            if (handle is < 0 or > 1 || !OpenHandles[handle])
+            {
+                return ctx.SetReturn(MouseErrorInvalidHandle);
+            }
+        }
+
+        Span<byte> data = stackalloc byte[MouseDataSize];
+        data.Clear();
+        var ticks = Stopwatch.GetTimestamp();
+        var timestamp =
+            ((ulong)(ticks / Stopwatch.Frequency) * 1_000_000UL) +
+            ((ulong)(ticks % Stopwatch.Frequency) * 1_000_000UL / (ulong)Stopwatch.Frequency);
+        BinaryPrimitives.WriteUInt64LittleEndian(data, timestamp);
+        data[0x08] = 0; // No host mouse is exposed to the guest yet.
+        return ctx.Memory.TryWrite(dataAddress, data)
+            ? ctx.SetReturn(1)
+            : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    [SysAbiExport(
+        Nid = "cAnT0Rw-IwU",
+        ExportName = "sceMouseClose",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceMouse")]
+    public static int MouseClose(CpuContext ctx)
+    {
+        var handle = unchecked((int)ctx[CpuRegister.Rdi]);
+        lock (Gate)
+        {
+            if (handle is < 0 or > 1 || !OpenHandles[handle])
+            {
+                return ctx.SetReturn(MouseErrorInvalidHandle);
+            }
+
+            OpenHandles[handle] = false;
+            return ctx.SetReturn(0);
+        }
     }
 }
