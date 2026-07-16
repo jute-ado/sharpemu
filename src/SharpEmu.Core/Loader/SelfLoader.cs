@@ -203,7 +203,12 @@ public sealed class SelfLoader : ISelfLoader
             }
         }
 
-        MapLoadSegments(imageData, loadContext, programHeaders, virtualMemory, imageBase);
+        var mappedImageRegions = MapLoadSegments(
+            imageData,
+            loadContext,
+            programHeaders,
+            virtualMemory,
+            imageBase);
         var importStubs = ResolveAndPatchImportStubs(
             imageData,
             loadContext,
@@ -266,11 +271,16 @@ public sealed class SelfLoader : ISelfLoader
         }
         Log.Debug($"TLS load_done assigned={tlsModuleId} next={_nextTlsModuleId}");
 
+        if (virtualMemory is IGuestImageMemory imageMemory)
+        {
+            imageMemory.RegisterImage(mappedImageRegions);
+        }
+
         return new SelfImage(
             loadContext.IsSelf,
             elfHeader,
             programHeaders,
-            virtualMemory.SnapshotRegions(),
+            mappedImageRegions,
             finalizedImportStubs,
             finalizedRuntimeSymbols,
             importedRelocations,
@@ -620,13 +630,14 @@ public sealed class SelfLoader : ISelfLoader
         }
     }
 
-    private static void MapLoadSegments(
+    private static IReadOnlyList<VirtualMemoryRegion> MapLoadSegments(
         ReadOnlySpan<byte> imageData,
         LoadContext loadContext,
         IReadOnlyList<ProgramHeader> programHeaders,
         IVirtualMemory virtualMemory,
         ulong imageBase)
     {
+        var mappedRegions = new List<VirtualMemoryRegion>();
         for (var index = 0; index < programHeaders.Count; index++)
         {
             var header = programHeaders[index];
@@ -678,7 +689,15 @@ public sealed class SelfLoader : ISelfLoader
                 sourceOffset,
                 fileData,
                 header.Flags);
+            mappedRegions.Add(new VirtualMemoryRegion(
+                virtualAddress,
+                header.MemorySize,
+                sourceOffset,
+                header.FileSize,
+                header.Flags));
         }
+
+        return mappedRegions.ToArray();
     }
 
     private static ulong ResolveProcParamAddress(IReadOnlyList<ProgramHeader> programHeaders, ulong imageBase)

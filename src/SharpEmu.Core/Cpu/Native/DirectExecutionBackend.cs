@@ -175,10 +175,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private const ulong CODE_BASE_INCR = 268435456uL;
 
-	private const ulong GuestImageScanStart = 34359738368uL;
-
-	private const ulong GuestImageScanEnd = 36507222016uL;
-
 	private const ulong FallbackTlsScanSize = 33554432uL;
 
 	// The 0x7FFx window is Windows-specific; dyld and Rosetta reserve that
@@ -1216,7 +1212,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				result = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
 				return false;
 			}
-			if (!PatchTlsPatterns())
+			if (!PatchTlsPatterns(context.Memory))
 			{
 				RollbackTlsSetup(tlsSetupCheckpoint);
 				tlsSetupCheckpoint = null;
@@ -2564,11 +2560,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return true;
 	}
 
-	private unsafe bool PatchTlsPatterns()
+	private unsafe bool PatchTlsPatterns(ICpuMemory memory)
 	{
-		var (scanStart, scanEnd) = GetTlsPatchScanRange(_entryPoint);
-		ulong num = scanStart;
-		ulong num2 = scanEnd;
+		var scanRegions = GetTlsPatchScanRegions(memory, _entryPoint);
 		int num3 = 0;
 		int num4 = 0;
 		int num9 = 0;
@@ -2577,87 +2571,93 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		var scanSucceeded = false;
 		try
 		{
-			while (num < num2)
+			for (var regionIndex = 0; regionIndex < scanRegions.Count; regionIndex++)
 			{
-				if (!_hostMemory.Query(num, out var lpBuffer) || lpBuffer.RegionSize == 0)
+				ulong num = scanRegions[regionIndex].Start;
+				ulong num2 = scanRegions[regionIndex].End;
+				while (num < num2)
 				{
-					num = AdvanceTlsScanAddress(num, num2);
-					continue;
-				}
-				ulong num5 = Math.Max(num, lpBuffer.BaseAddress);
-				ulong num6 = lpBuffer.RegionSize > ulong.MaxValue - lpBuffer.BaseAddress
-					? ulong.MaxValue
-					: lpBuffer.BaseAddress + lpBuffer.RegionSize;
-				if (num6 > num2)
-				{
-					num6 = num2;
-				}
-				uint num7 = lpBuffer.RawProtection & 0xFF;
-				bool flag = lpBuffer.State == HostRegionState.Committed && (lpBuffer.RawProtection & PAGE_GUARD) == 0 && num7 != PAGE_NOACCESS;
-				bool flag2 = num7 == PAGE_EXECUTE || num7 == 32 || num7 == 64 || num7 == PAGE_EXECUTE_WRITECOPY;
-				var nextScanAddress = flag && flag2
-					? GetTlsScanChunkEnd(num5, num6)
-					: num6;
-				var scanReadEnd = nextScanAddress < num6
-					? GetTlsScanLookaheadEnd(nextScanAddress, num6)
-					: nextScanAddress;
-				if (flag &&
-					flag2 &&
-					nextScanAddress > num5 &&
-					scanReadEnd - num5 >= MinTlsPatchInstructionBytes)
-				{
-					byte* ptr = (byte*)num5;
-					int scanBytes = checked((int)(scanReadEnd - num5));
-					int ownedStartBytes = checked((int)(nextScanAddress - num5));
-					for (int i = 0;
-						i < ownedStartBytes && i <= scanBytes - MinTlsPatchInstructionBytes;
-						i++)
+					if (!_hostMemory.Query(num, out var lpBuffer) || lpBuffer.RegionSize == 0)
 					{
-						nint address = (nint)(ptr + i);
-						int remainingBytes = scanBytes - i;
-						var candidateLength = Math.Min(MaxX86InstructionBytes, remainingBytes);
-						if (!NativeTlsInstructionDecoder.TryDecode(
-							new ReadOnlySpan<byte>(ptr + i, candidateLength),
-							out var recognizedInstruction))
+						num = AdvanceTlsScanAddress(num, num2);
+						continue;
+					}
+					ulong num5 = Math.Max(num, lpBuffer.BaseAddress);
+					ulong num6 = lpBuffer.RegionSize > ulong.MaxValue - lpBuffer.BaseAddress
+						? ulong.MaxValue
+						: lpBuffer.BaseAddress + lpBuffer.RegionSize;
+					if (num6 > num2)
+					{
+						num6 = num2;
+					}
+					uint num7 = lpBuffer.RawProtection & 0xFF;
+					bool flag = lpBuffer.State == HostRegionState.Committed && (lpBuffer.RawProtection & PAGE_GUARD) == 0 && num7 != PAGE_NOACCESS;
+					bool flag2 = num7 == PAGE_EXECUTE || num7 == 32 || num7 == 64 || num7 == PAGE_EXECUTE_WRITECOPY;
+					var nextScanAddress = flag && flag2
+						? GetTlsScanChunkEnd(num5, num6)
+						: num6;
+					var scanReadEnd = nextScanAddress < num6
+						? GetTlsScanLookaheadEnd(nextScanAddress, num6)
+						: nextScanAddress;
+					if (flag &&
+						flag2 &&
+						nextScanAddress > num5 &&
+						scanReadEnd - num5 >= MinTlsPatchInstructionBytes)
+					{
+						byte* ptr = (byte*)num5;
+						int scanBytes = checked((int)(scanReadEnd - num5));
+						int ownedStartBytes = checked((int)(nextScanAddress - num5));
+						var candidates = GetTlsPatchCandidates(
+							new ReadOnlySpan<byte>(ptr, scanBytes),
+							ownedStartBytes,
+							out var consumedBytes);
+						for (var candidateIndex = 0;
+							candidateIndex < candidates.Count;
+							candidateIndex++)
 						{
-							continue;
-						}
-
-						recognizedPatches.Add((
-							address,
-							new ReadOnlySpan<byte>(ptr + i, recognizedInstruction.Length).ToArray()));
-						if (TryPatchTlsInstruction(
-							address,
-							ptr + i,
-							remainingBytes,
-							out var tlsInstructionKind))
-						{
-							if (tlsInstructionKind == NativeTlsInstructionKind.Load)
+							var candidate = candidates[candidateIndex];
+							int i = candidate.Offset;
+							nint address = (nint)(ptr + i);
+							int remainingBytes = scanBytes - i;
+							recognizedPatches.Add((
+								address,
+								new ReadOnlySpan<byte>(ptr + i, candidate.Instruction.Length).ToArray()));
+							if (TryPatchTlsInstruction(
+								address,
+								ptr + i,
+								remainingBytes,
+								out var tlsInstructionKind))
 							{
-								num3++;
-							}
-							else if (tlsInstructionKind is
-								NativeTlsInstructionKind.StackCanaryXor or
-								NativeTlsInstructionKind.StackCanarySub)
-							{
-								num4++;
+								if (tlsInstructionKind == NativeTlsInstructionKind.Load)
+								{
+									num3++;
+								}
+								else if (tlsInstructionKind is
+									NativeTlsInstructionKind.StackCanaryXor or
+									NativeTlsInstructionKind.StackCanarySub)
+								{
+									num4++;
+								}
+								else
+								{
+									num9++;
+								}
 							}
 							else
 							{
-								num9++;
+								failedPatchCount++;
+								Console.Error.WriteLine(
+									$"[LOADER][ERROR] Failed to patch recognized {candidate.Instruction.Kind} TLS instruction at 0x{address:X16}");
 							}
 						}
-						else
-						{
-							failedPatchCount++;
-							Console.Error.WriteLine(
-								$"[LOADER][ERROR] Failed to patch recognized {recognizedInstruction.Kind} TLS instruction at 0x{address:X16}");
-						}
 
-						i += recognizedInstruction.Length - 1;
+						var consumedEnd = num5 + (ulong)consumedBytes;
+						nextScanAddress = Math.Min(
+							num6,
+							Math.Max(nextScanAddress, consumedEnd));
 					}
+					num = nextScanAddress > num ? nextScanAddress : AdvanceTlsScanAddress(num, num2);
 				}
-				num = nextScanAddress > num ? nextScanAddress : AdvanceTlsScanAddress(num, num2);
 			}
 			Console.Error.WriteLine(
 				$"[LOADER][INFO] Patched {num3} TLS loads, {num9} TLS stores, {num4} stack-canary accesses; failures={failedPatchCount}");
@@ -2730,21 +2730,112 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 	}
 
-	internal static (ulong Start, ulong End) GetTlsPatchScanRange(ulong entryPoint)
+	internal static IReadOnlyList<TlsPatchScanRegion> GetTlsPatchScanRegions(
+		ICpuMemory memory,
+		ulong entryPoint)
 	{
-		// PS4/PS5 executables can place their entry point well after code that is
-		// subsequently reached by guest threads. Scanning forward from the entry
-		// point missed those earlier TLS accesses and also truncated large images.
-		if (entryPoint >= GuestImageScanStart && entryPoint < GuestImageScanEnd)
+		ArgumentNullException.ThrowIfNull(memory);
+		if (memory is IGuestImageMemory imageMemory &&
+			imageMemory.TryGetImageRegions(entryPoint, out var imageRegions))
 		{
-			return (GuestImageScanStart, GuestImageScanEnd);
+			var executableRegions = new List<TlsPatchScanRegion>();
+			for (var index = 0; index < imageRegions.Count; index++)
+			{
+				var region = imageRegions[index];
+				if (region.MemorySize == 0 ||
+					(region.Protection & ProgramHeaderFlags.Execute) == 0 ||
+					region.VirtualAddress > ulong.MaxValue - region.MemorySize)
+				{
+					continue;
+				}
+
+				executableRegions.Add(new TlsPatchScanRegion(
+					region.VirtualAddress,
+					region.VirtualAddress + region.MemorySize));
+			}
+
+			executableRegions.Sort(static (left, right) =>
+				left.Start.CompareTo(right.Start));
+			if (executableRegions.Count < 2)
+			{
+				return executableRegions.ToArray();
+			}
+
+			var mergedRegions = new List<TlsPatchScanRegion>(
+				executableRegions.Count);
+			mergedRegions.Add(executableRegions[0]);
+			for (var index = 1; index < executableRegions.Count; index++)
+			{
+				var current = executableRegions[index];
+				var previous = mergedRegions[^1];
+				if (current.Start <= previous.End)
+				{
+					mergedRegions[^1] = new TlsPatchScanRegion(
+						previous.Start,
+						Math.Max(previous.End, current.End));
+					continue;
+				}
+
+				mergedRegions.Add(current);
+			}
+
+			return mergedRegions.ToArray();
 		}
 
 		var end = entryPoint > ulong.MaxValue - FallbackTlsScanSize
 			? ulong.MaxValue
 			: entryPoint + FallbackTlsScanSize;
-		return (entryPoint, end);
+		return [new TlsPatchScanRegion(entryPoint, end)];
 	}
+
+	internal readonly record struct TlsPatchScanRegion(
+		ulong Start,
+		ulong End);
+
+	internal static IReadOnlyList<TlsPatchCandidate> GetTlsPatchCandidates(
+		ReadOnlySpan<byte> bytes,
+		int ownedLength,
+		out int consumedLength)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(ownedLength);
+		if (ownedLength > bytes.Length)
+		{
+			throw new ArgumentOutOfRangeException(nameof(ownedLength));
+		}
+
+		var candidates = new List<TlsPatchCandidate>();
+		var offset = 0;
+		while (offset < ownedLength)
+		{
+			var candidateLength = Math.Min(
+				MaxX86InstructionBytes,
+				bytes.Length - offset);
+			var instructionBytes = bytes.Slice(offset, candidateLength);
+			var instructionLength =
+				NativeTlsInstructionDecoder.GetInstructionLength(instructionBytes);
+			if (instructionLength == 0)
+			{
+				offset++;
+				continue;
+			}
+
+			if (NativeTlsInstructionDecoder.TryDecode(
+				instructionBytes,
+				out var tlsInstruction))
+			{
+				candidates.Add(new TlsPatchCandidate(offset, tlsInstruction));
+			}
+
+			offset += instructionLength;
+		}
+
+		consumedLength = offset;
+		return candidates;
+	}
+
+	internal readonly record struct TlsPatchCandidate(
+		int Offset,
+		NativeTlsInstruction Instruction);
 
 	private unsafe bool IsPatternMatch(byte* ptr, byte[] pattern)
 	{
@@ -5459,6 +5550,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				if (ApplyActiveGuestHardwareException(context, out var hardwareExceptionDetail))
 				{
 					LastError = hardwareExceptionDetail;
+					DumpGuestDisasmDiagnostics(
+						_activeGuestHardwareExceptionRip,
+						rbp: 0);
+					DumpGuestReferenceDiagnostics();
+					DumpGuestPointerWindowDiagnostics();
 				}
 				Console.Error.WriteLine($"[LOADER][INFO] Guest returned: {num6}");
 				PumpUntilGuestThreadsIdle(context, "entry_return");

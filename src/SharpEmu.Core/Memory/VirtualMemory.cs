@@ -6,11 +6,12 @@ using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Memory;
 
-public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVirtualMemoryQuery
+public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVirtualMemoryQuery, IGuestImageMemory
 {
     private readonly object _gate = new();
     private readonly List<MappedRegion> _regions = new();
     private readonly List<StackRange> _stackRanges = new();
+    private readonly GuestImageRegionRegistry _imageRegions = new();
     private ulong _resetVersion = 1;
 
     public ulong ResetVersion
@@ -30,6 +31,7 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
         {
             _regions.Clear();
             _stackRanges.Clear();
+            _imageRegions.Clear();
             _resetVersion++;
             if (_resetVersion == 0)
             {
@@ -124,6 +126,24 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
             }
 
             return snapshot;
+        }
+    }
+
+    public void RegisterImage(IReadOnlyList<VirtualMemoryRegion> regions)
+    {
+        lock (_gate)
+        {
+            _imageRegions.Register(regions);
+        }
+    }
+
+    public bool TryGetImageRegions(
+        ulong address,
+        out IReadOnlyList<VirtualMemoryRegion> regions)
+    {
+        lock (_gate)
+        {
+            return _imageRegions.TryGet(address, out regions);
         }
     }
 

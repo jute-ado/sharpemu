@@ -505,6 +505,44 @@ public sealed class SelfLoaderTests
     }
 
     [Fact]
+    public void AdditionalImageReportsOnlyRegionsMappedForThatImage()
+    {
+        var mainElf = CreateElfWithLoadSegment(
+            fileOffset: ElfHeaderSize + ProgramHeaderSize,
+            virtualAddress: 0x2000,
+            fileSize: 1,
+            memorySize: 1,
+            payload: [0xC3]);
+        var moduleElf = CreateElfWithLoadSegment(
+            fileOffset: ElfHeaderSize + ProgramHeaderSize,
+            virtualAddress: 0x3000,
+            fileSize: 1,
+            memorySize: 1,
+            payload: [0xC3]);
+        var memory = new VirtualMemory();
+        var loader = new SelfLoader();
+        var moduleManager = new ModuleManager();
+
+        var mainImage = loader.Load(
+            mainElf,
+            memory,
+            moduleManager);
+        var moduleImage = loader.LoadAdditional(
+            moduleElf,
+            memory,
+            moduleManager,
+            fs: null,
+            mountRoot: null);
+
+        var mainRegion = Assert.Single(mainImage.MappedRegions);
+        var moduleRegion = Assert.Single(moduleImage.MappedRegions);
+        Assert.NotEqual(mainRegion.VirtualAddress, moduleRegion.VirtualAddress);
+        Assert.Equal(
+            moduleImage.ImageBase + 0x3000,
+            moduleRegion.VirtualAddress);
+    }
+
+    [Fact]
     public void LoadsDynamicMetadataFromProgramHeaderFileOffset()
     {
         var dynamicOffset = ElfHeaderSize + ProgramHeaderSize;

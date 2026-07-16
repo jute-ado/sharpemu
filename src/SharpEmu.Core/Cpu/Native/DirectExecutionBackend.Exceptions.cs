@@ -377,10 +377,61 @@ public sealed partial class DirectExecutionBackend
 			exceptionRecord->NumberParameters >= 2
 				? exceptionRecord->ExceptionInformation[1]
 				: 0;
+		if (_logGuestContext)
+		{
+			LogRedirectedGuestExceptionContext(
+				contextRecord,
+				exceptionCode,
+				rip,
+				rsp,
+				_activeGuestHardwareExceptionAccessType,
+				_activeGuestHardwareExceptionAccessAddress);
+		}
 		_activeForcedGuestExit = true;
 		WriteCtxU64(contextRecord, CTX_RAX, ulong.MaxValue);
 		WriteCtxU64(contextRecord, CTX_RIP, (ulong)_guestReturnStub);
 		return true;
+	}
+
+	private unsafe void LogRedirectedGuestExceptionContext(
+		void* contextRecord,
+		uint exceptionCode,
+		ulong rip,
+		ulong rsp,
+		ulong accessType,
+		ulong accessAddress)
+	{
+		Console.Error.WriteLine(
+			$"[LOADER][TRACE] guest_exception code=0x{exceptionCode:X8} " +
+			$"rip=0x{rip:X16} rsp=0x{rsp:X16} " +
+			$"rax=0x{ReadCtxU64(contextRecord, CTX_RAX):X16} " +
+			$"rbx=0x{ReadCtxU64(contextRecord, CTX_RBX):X16} " +
+			$"rcx=0x{ReadCtxU64(contextRecord, CTX_RCX):X16} " +
+			$"rdx=0x{ReadCtxU64(contextRecord, CTX_RDX):X16} " +
+			$"rsi=0x{ReadCtxU64(contextRecord, CTX_RSI):X16} " +
+			$"rdi=0x{ReadCtxU64(contextRecord, CTX_RDI):X16} " +
+			$"rbp=0x{ReadCtxU64(contextRecord, CTX_RBP):X16} " +
+			$"r8=0x{ReadCtxU64(contextRecord, CTX_R8):X16} " +
+			$"r9=0x{ReadCtxU64(contextRecord, CTX_R9):X16} " +
+			$"r10=0x{ReadCtxU64(contextRecord, CTX_R10):X16} " +
+			$"r11=0x{ReadCtxU64(contextRecord, CTX_R11):X16} " +
+			$"r12=0x{ReadCtxU64(contextRecord, CTX_R12):X16} " +
+			$"r13=0x{ReadCtxU64(contextRecord, CTX_R13):X16} " +
+			$"r14=0x{ReadCtxU64(contextRecord, CTX_R14):X16} " +
+			$"r15=0x{ReadCtxU64(contextRecord, CTX_R15):X16} " +
+			$"access_type={accessType} access=0x{accessAddress:X16}");
+		if (rip < 16)
+		{
+			return;
+		}
+
+		byte[] codeWindow = new byte[48];
+		if (TryReadHostBytes(rip - 16, codeWindow))
+		{
+			Console.Error.WriteLine(
+				"[LOADER][TRACE] guest_exception.code_window " +
+				BitConverter.ToString(codeWindow).Replace("-", " "));
+		}
 	}
 
 	private static bool IsRecoverableGuestProcessorException(uint exceptionCode)

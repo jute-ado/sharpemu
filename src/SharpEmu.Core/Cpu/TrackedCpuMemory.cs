@@ -1,11 +1,12 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using SharpEmu.Core.Memory;
 using SharpEmu.HLE;
 
 namespace SharpEmu.Core.Cpu;
 
-public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemoryAllocator, IGuestStackMemory, IGuestVirtualMemoryQuery, ICpuMemoryWrapper
+public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemoryAllocator, IGuestStackMemory, IGuestVirtualMemoryQuery, IGuestImageMemory, ICpuMemoryWrapper
 {
     private readonly ICpuMemory _inner;
 
@@ -91,6 +92,30 @@ public sealed class TrackedCpuMemory : ICpuMemory, ITrackedCpuMemory, IGuestMemo
         }
 
         region = default;
+        return false;
+    }
+
+    public void RegisterImage(IReadOnlyList<VirtualMemoryRegion> regions)
+    {
+        if (_inner is not IGuestImageMemory imageMemory)
+        {
+            throw new NotSupportedException(
+                "The wrapped memory does not track loaded guest images.");
+        }
+
+        imageMemory.RegisterImage(regions);
+    }
+
+    public bool TryGetImageRegions(
+        ulong address,
+        out IReadOnlyList<VirtualMemoryRegion> regions)
+    {
+        if (_inner is IGuestImageMemory imageMemory)
+        {
+            return imageMemory.TryGetImageRegions(address, out regions);
+        }
+
+        regions = Array.Empty<VirtualMemoryRegion>();
         return false;
     }
 }
