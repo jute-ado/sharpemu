@@ -144,6 +144,10 @@ public static class GuestTlsTemplate
         {
             throw new InvalidDataException($"PT_TLS alignment 0x{alignment:X} is not a power of two.");
         }
+        // ELF requires p_vaddr and the TLS block address to be congruent only
+        // modulo p_align. Keeping the full virtual address can overflow layout
+        // arithmetic even though its low alignment bits are perfectly valid.
+        var normalizedAlignmentBias = alignmentBias & (normalizedAlignment - 1);
         if (memorySize > int.MaxValue || (ulong)initImage.Length > memorySize)
         {
             throw new InvalidDataException("PT_TLS template size is invalid or exceeds the supported process limit.");
@@ -155,7 +159,7 @@ public static class GuestTlsTemplate
             {
                 if (existing.MemorySize != memorySize ||
                     existing.Alignment != normalizedAlignment ||
-                    existing.AlignmentBias != alignmentBias ||
+                    existing.AlignmentBias != normalizedAlignmentBias ||
                     !existing.InitImage.AsSpan().SequenceEqual(initImage))
                 {
                     throw new InvalidOperationException($"TLS module {moduleId} was registered with a different template.");
@@ -170,7 +174,7 @@ public static class GuestTlsTemplate
                 _staticTlsSize,
                 memorySize,
                 normalizedAlignment,
-                alignmentBias);
+                normalizedAlignmentBias);
             if (staticOffset > StartupStaticTlsReservation)
             {
                 throw new InvalidOperationException(
@@ -183,7 +187,7 @@ public static class GuestTlsTemplate
                 InitImage = initImage.ToArray(),
                 MemorySize = memorySize,
                 Alignment = normalizedAlignment,
-                AlignmentBias = alignmentBias,
+                AlignmentBias = normalizedAlignmentBias,
                 StaticOffset = staticOffset,
             });
             _staticTlsSize = staticOffset;
