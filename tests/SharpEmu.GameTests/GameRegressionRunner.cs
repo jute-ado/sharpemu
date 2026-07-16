@@ -75,11 +75,7 @@ internal static class GameRegressionRunner
         startInfo.ArgumentList.Add(executablePath);
         startInfo.Environment.Remove("SHARPEMU_MITIGATED_CHILD");
         startInfo.Environment.Remove("SHARPEMU_DISABLE_MITIGATION_RELAUNCH");
-        if (testCase.Expectations.RequiredVideoOutFrameFingerprints.Length != 0)
-        {
-            startInfo.Environment["SHARPEMU_DUMP_VIDEOOUT"] = "1";
-            startInfo.Environment["SHARPEMU_LOG_VIDEOOUT"] = "1";
-        }
+        ConfigureVideoOutEnvironment(startInfo, testCase.Expectations);
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException(
@@ -127,6 +123,29 @@ internal static class GameRegressionRunner
             reportPath,
             standardOutputPath,
             standardErrorPath);
+    }
+
+    internal static void ConfigureVideoOutEnvironment(
+        ProcessStartInfo startInfo,
+        GameRegressionExpectations expectations)
+    {
+        ArgumentNullException.ThrowIfNull(startInfo);
+        ArgumentNullException.ThrowIfNull(expectations);
+        startInfo.Environment.Remove("SHARPEMU_DUMP_VIDEOOUT");
+        startInfo.Environment.Remove("SHARPEMU_LOG_VIDEOOUT");
+        startInfo.Environment.Remove(
+            "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE");
+
+        if (expectations.RequiredVideoOutFrameFingerprints.Length != 0)
+        {
+            startInfo.Environment["SHARPEMU_DUMP_VIDEOOUT"] = "1";
+            startInfo.Environment["SHARPEMU_LOG_VIDEOOUT"] = "1";
+        }
+        if (expectations.RequiredPresentedGuestImageFingerprints.Length != 0)
+        {
+            startInfo.Environment[
+                "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE"] = "1";
+        }
     }
 
     public static string ResolveArtifactDirectory(
@@ -225,6 +244,22 @@ internal static class GameRegressionRunner
                 throw new InvalidDataException(
                     $"Game regression '{testCase.Name}' has an invalid " +
                     "requiredVideoOutFrameFingerprints entry.");
+            }
+        }
+        for (var index = 0;
+            index <
+                testCase.Expectations
+                    .RequiredPresentedGuestImageFingerprints.Length;
+            index++)
+        {
+            if (!TryNormalizeFrameFingerprint(
+                    testCase.Expectations
+                        .RequiredPresentedGuestImageFingerprints[index],
+                    out _))
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' has an invalid " +
+                    "requiredPresentedGuestImageFingerprints entry.");
             }
         }
     }
@@ -381,6 +416,28 @@ internal static class GameRegressionRunner
                 failures.AppendLine(
                     $"required VideoOut frame fingerprint was not observed: " +
                     $"0x{fingerprint}.");
+            }
+        }
+
+        for (var index = 0;
+            index <
+                testCase.Expectations
+                    .RequiredPresentedGuestImageFingerprints.Length;
+            index++)
+        {
+            _ = TryNormalizeFrameFingerprint(
+                testCase.Expectations
+                    .RequiredPresentedGuestImageFingerprints[index],
+                out var fingerprint);
+            var marker =
+                $"vk.presented_guest_image fingerprint=0x{fingerprint}";
+            if (!capturedOutput.Contains(
+                    marker,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                failures.AppendLine(
+                    "required presented guest image fingerprint was not " +
+                    $"observed: 0x{fingerprint}.");
             }
         }
 

@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Diagnostics;
 using System.Text.Json;
 using Xunit;
 
@@ -337,6 +338,101 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
+    public void ExecutionCanRequireActualPresentedGuestImageFingerprint()
+    {
+        var testCase = CreateExecutionCase(
+            requiredPresentedGuestImageFingerprints:
+            [
+                "0x7f046b95716664f5",
+            ]);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        GameRegressionRunner.ValidateReport(
+            testCase,
+            report.RootElement,
+            "synthetic-report.json",
+            """
+            [LOADER][TRACE] vk.presented_guest_image fingerprint=0x7F046B95716664F5
+            addr=0x0000000001260000 size=3840x2160
+            """);
+    }
+
+    [Fact]
+    public void ExecutionRejectsDifferentPresentedGuestImageFingerprint()
+    {
+        var testCase = CreateExecutionCase(
+            requiredPresentedGuestImageFingerprints:
+            [
+                "7F046B95716664F5",
+            ]);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                "vk.presented_guest_image fingerprint=0x0000000000000000"));
+
+        Assert.Contains(
+            "presented guest image fingerprint",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void VideoOutCaptureEnvironmentIsDerivedOnlyFromExpectations()
+    {
+        var startInfo = new ProcessStartInfo();
+        startInfo.Environment["SHARPEMU_DUMP_VIDEOOUT"] = "stale";
+        startInfo.Environment["SHARPEMU_LOG_VIDEOOUT"] = "stale";
+        startInfo.Environment[
+            "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE"] = "stale";
+
+        GameRegressionRunner.ConfigureVideoOutEnvironment(
+            startInfo,
+            new GameRegressionExpectations());
+
+        Assert.False(startInfo.Environment.ContainsKey("SHARPEMU_DUMP_VIDEOOUT"));
+        Assert.False(startInfo.Environment.ContainsKey("SHARPEMU_LOG_VIDEOOUT"));
+        Assert.False(
+            startInfo.Environment.ContainsKey(
+                "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE"));
+
+        GameRegressionRunner.ConfigureVideoOutEnvironment(
+            startInfo,
+            new GameRegressionExpectations
+            {
+                RequiredVideoOutFrameFingerprints = ["0123456789ABCDEF"],
+                RequiredPresentedGuestImageFingerprints = ["FEDCBA9876543210"],
+            });
+
+        Assert.Equal("1", startInfo.Environment["SHARPEMU_DUMP_VIDEOOUT"]);
+        Assert.Equal("1", startInfo.Environment["SHARPEMU_LOG_VIDEOOUT"]);
+        Assert.Equal(
+            "1",
+            startInfo.Environment["SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE"]);
+    }
+
+    [Fact]
     public void EarlyCpuTrapFailsExecutionSurvivalContract()
     {
         var testCase = CreateExecutionCase();
@@ -413,6 +509,7 @@ public sealed class GameRegressionHarnessTests
         string[]? requiredOutputSubstrings = null,
         string[]? forbiddenOutputSubstrings = null,
         string[]? requiredVideoOutFrameFingerprints = null,
+        string[]? requiredPresentedGuestImageFingerprints = null,
         string? expectedBundleSha256 =
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") => new()
     {
@@ -443,6 +540,8 @@ public sealed class GameRegressionHarnessTests
                 forbiddenOutputSubstrings ?? [],
             RequiredVideoOutFrameFingerprints =
                 requiredVideoOutFrameFingerprints ?? [],
+            RequiredPresentedGuestImageFingerprints =
+                requiredPresentedGuestImageFingerprints ?? [],
         },
     };
 
