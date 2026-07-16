@@ -4562,11 +4562,12 @@ public static partial class AgcExports
             var initialPixels = Array.Empty<byte>();
             if (descriptor.Address != 0)
             {
-                var storageSource = new byte[(int)sourceByteCount];
-                if ((ctx.Memory.TryRead(descriptor.Address, storageSource) ||
-                     KernelMemoryCompatExports.TryReadTrackedLibcHeapGpuAlias(
-                         descriptor.Address,
-                         storageSource)) &&
+                if (TryReadTexturePixels(
+                        ctx,
+                        descriptor,
+                        sourceWidth,
+                        out var storageSource,
+                        out _) &&
                     storageSource.AsSpan().IndexOfAnyExcept((byte)0) >= 0)
                 {
                     initialPixels = storageSource;
@@ -4591,15 +4592,16 @@ public static partial class AgcExports
             return true;
         }
 
-        var source = new byte[(int)sourceByteCount];
-        if (!ctx.Memory.TryRead(descriptor.Address, source) &&
-            !KernelMemoryCompatExports.TryReadTrackedLibcHeapGpuAlias(
-                descriptor.Address,
-                source))
+        if (!TryReadTexturePixels(
+                ctx,
+                descriptor,
+                sourceWidth,
+                out var source,
+                out var readFailure))
         {
             TraceTextureFallback(
                 descriptor,
-                $"guest-read-failed:{sourceByteCount}");
+                readFailure);
             texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType);
             return true;
         }
@@ -4643,6 +4645,100 @@ public static partial class AgcExports
             TileMode: descriptor.TileMode,
             DstSelect: descriptor.DstSelect,
             Sampler: ToGuestSampler(samplerDescriptor));
+        return true;
+    }
+
+    private static bool TryReadTexturePixels(
+        CpuContext ctx,
+        TextureDescriptor descriptor,
+        uint sourceWidth,
+        out byte[] pixels,
+        out string failure)
+    {
+        pixels = [];
+        failure = "unsupported-layout";
+        if (!TryGetTextureElementLayout(
+                descriptor.Format,
+                sourceWidth,
+                descriptor.Height,
+                out var elementsWide,
+                out var elementsHigh,
+                out var bytesPerElement))
+        {
+            return false;
+        }
+
+        ulong linearByteCount;
+        try
+        {
+            linearByteCount = checked(
+                (ulong)elementsWide *
+                (ulong)elementsHigh *
+                (ulong)bytesPerElement);
+        }
+        catch (OverflowException)
+        {
+            failure = "linear-byte-count-overflow";
+            return false;
+        }
+
+        var readByteCount = linearByteCount;
+        var needsDetile = GnmTiling.NeedsDetile(descriptor.TileMode);
+        if (needsDetile &&
+            !GnmTiling.TryGetTiledByteCount(
+                descriptor.TileMode,
+                elementsWide,
+                elementsHigh,
+                bytesPerElement,
+                out readByteCount))
+        {
+            failure = $"unsupported-tile:{descriptor.TileMode}";
+            return false;
+        }
+
+        if (linearByteCount == 0 ||
+            readByteCount == 0 ||
+            linearByteCount > MaxPresentedTextureBytes ||
+            readByteCount > MaxPresentedTextureBytes ||
+            linearByteCount > int.MaxValue ||
+            readByteCount > int.MaxValue)
+        {
+            failure = $"invalid-read-byte-count:{readByteCount}";
+            return false;
+        }
+
+        var source = new byte[(int)readByteCount];
+        if (!ctx.Memory.TryRead(descriptor.Address, source) &&
+            !KernelMemoryCompatExports.TryReadTrackedLibcHeapGpuAlias(
+                descriptor.Address,
+                source))
+        {
+            failure = $"guest-read-failed:{readByteCount}";
+            return false;
+        }
+
+        if (!needsDetile)
+        {
+            pixels = source;
+            failure = "";
+            return true;
+        }
+
+        var linear = new byte[(int)linearByteCount];
+        if (!GnmTiling.TryDetile(
+                source,
+                linear,
+                descriptor.TileMode,
+                elementsWide,
+                elementsHigh,
+                bytesPerElement))
+        {
+            failure = $"detile-failed:{descriptor.TileMode}";
+            return false;
+        }
+
+        pixels = linear;
+        failure = "";
         return true;
     }
 
@@ -5464,22 +5560,66 @@ public static partial class AgcExports
 
     private static ulong GetTextureByteCount(uint format, uint width, uint height)
     {
-        var bytesPerTexel = GetTextureBytesPerTexel(format);
-        if (bytesPerTexel != 0)
+        if (!TryGetTextureElementLayout(
+                format,
+                width,
+                height,
+                out var elementsWide,
+                out var elementsHigh,
+                out var bytesPerElement))
         {
-            return checked((ulong)width * height * bytesPerTexel);
+            return 0;
         }
 
-        var blockBytes = format switch
+        return checked(
+            (ulong)elementsWide *
+            (ulong)elementsHigh *
+            (ulong)bytesPerElement);
+    }
+
+    private static bool TryGetTextureElementLayout(
+        uint format,
+        uint width,
+        uint height,
+        out int elementsWide,
+        out int elementsHigh,
+        out int bytesPerElement)
+    {
+        elementsWide = 0;
+        elementsHigh = 0;
+        bytesPerElement = 0;
+        if (width == 0 ||
+            height == 0 ||
+            width > int.MaxValue ||
+            height > int.MaxValue)
         {
-            169 or 170 => 8UL,
+            return false;
+        }
+
+        var bytesPerTexel = GetTextureBytesPerTexel(format);
+        if (bytesPerTexel is > 0 and <= int.MaxValue)
+        {
+            elementsWide = (int)width;
+            elementsHigh = (int)height;
+            bytesPerElement = (int)bytesPerTexel;
+            return true;
+        }
+
+        bytesPerElement = format switch
+        {
+            169 or 170 => 8,
             171 or 172 or 173 or 174 or 175 or 176 or
-            177 or 178 or 179 or 180 or 181 or 182 => 16UL,
-            _ => 0UL,
+            177 or 178 or 179 or 180 or 181 or 182 => 16,
+            _ => 0,
         };
-        return blockBytes == 0
-            ? 0
-            : checked(((ulong)width + 3) / 4 * (((ulong)height + 3) / 4) * blockBytes);
+        if (bytesPerElement == 0)
+        {
+            return false;
+        }
+
+        elementsWide = checked((int)(((ulong)width + 3) / 4));
+        elementsHigh = checked((int)(((ulong)height + 3) / 4));
+        return true;
     }
 
     private static uint GetLinearTexturePitch(uint pitch, uint format)
