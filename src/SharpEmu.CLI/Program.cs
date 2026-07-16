@@ -360,7 +360,16 @@ internal static partial class Program
             Console.CancelKeyPress += cancelHandler;
 
             Console.Error.WriteLine($"[DEBUG] Running: {ebootPath}");
-            result = runtime.Run(ebootPath);
+            result = runtime.Run(
+                ebootPath,
+                () => TryWriteExecutionReport(
+                    reportJsonPath,
+                    ebootPath,
+                    result: null,
+                    runtime,
+                    hostError: null,
+                    invocationStartedTimestamp: invocationStartedTimestamp,
+                    incompleteResultName: "EXECUTION_RUNNING"));
             Console.Error.WriteLine($"[DEBUG] Result: {result}");
         }
         catch (Exception ex)
@@ -843,14 +852,23 @@ internal static partial class Program
         var unit = executionTimeoutSeconds == 1 ? "second" : "seconds";
         var timeoutMessage = $"Execution timed out after {executionTimeoutSeconds} {unit}.";
         Console.Error.WriteLine($"[ERROR] {timeoutMessage}");
-        TryWriteExecutionReport(
-            reportJsonPath,
-            Path.GetFullPath(ebootPath),
-            result: null,
-            runtime: null,
-            hostError: timeoutMessage,
-            invocationStartedTimestamp: invocationStartedTimestamp,
-            incompleteResultName: "EXECUTION_TIMED_OUT");
+        var fullEbootPath = Path.GetFullPath(ebootPath);
+        if (!TryFinalizeRunningExecutionReport(
+                reportJsonPath,
+                fullEbootPath,
+                "EXECUTION_TIMED_OUT",
+                timeoutMessage,
+                invocationStartedTimestamp))
+        {
+            TryWriteExecutionReport(
+                reportJsonPath,
+                fullEbootPath,
+                result: null,
+                runtime: null,
+                hostError: timeoutMessage,
+                invocationStartedTimestamp: invocationStartedTimestamp,
+                incompleteResultName: "EXECUTION_TIMED_OUT");
+        }
         return ExecutionTimeoutExitCode;
     }
 
@@ -865,14 +883,25 @@ internal static partial class Program
             return;
         }
 
-        TryWriteExecutionReport(
-            reportJsonPath,
-            Path.GetFullPath(ebootPath),
-            result: null,
-            runtime: null,
-            hostError: "Execution stalled and was terminated by the native watchdog.",
-            invocationStartedTimestamp: invocationStartedTimestamp,
-            incompleteResultName: "EXECUTION_STALLED");
+        const string stallMessage =
+            "Execution stalled and was terminated by the native watchdog.";
+        var fullEbootPath = Path.GetFullPath(ebootPath);
+        if (!TryFinalizeRunningExecutionReport(
+                reportJsonPath,
+                fullEbootPath,
+                "EXECUTION_STALLED",
+                stallMessage,
+                invocationStartedTimestamp))
+        {
+            TryWriteExecutionReport(
+                reportJsonPath,
+                fullEbootPath,
+                result: null,
+                runtime: null,
+                hostError: stallMessage,
+                invocationStartedTimestamp: invocationStartedTimestamp,
+                incompleteResultName: "EXECUTION_STALLED");
+        }
     }
 
     private static void TryKillPortableChild(Process process)
@@ -1238,7 +1267,6 @@ internal static partial class Program
             return true;
         }
 
-        string? temporaryPath = null;
         try
         {
             var fullPath = Path.GetFullPath(reportJsonPath);
@@ -1283,16 +1311,7 @@ internal static partial class Program
                 MilestoneLog: runtime?.LastMilestoneLog,
                 BasicBlockTrace: runtime?.LastBasicBlockTrace,
                 HostError: hostError);
-            var json = JsonSerializer.Serialize(report, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                WriteIndented = true,
-            });
-
-            temporaryPath = $"{fullPath}.{Guid.NewGuid():N}.tmp";
-            File.WriteAllText(temporaryPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-            File.Move(temporaryPath, fullPath, overwrite: true);
-            temporaryPath = null;
+            WriteExecutionReport(fullPath, report);
             return true;
         }
         catch (Exception ex)
@@ -1300,9 +1319,91 @@ internal static partial class Program
             Log.Error($"Failed to write execution report '{reportJsonPath}'.", ex);
             return false;
         }
+    }
+
+    private static bool TryFinalizeRunningExecutionReport(
+        string? reportJsonPath,
+        string executablePath,
+        string resultName,
+        string hostError,
+        long invocationStartedTimestamp)
+    {
+        if (string.IsNullOrWhiteSpace(reportJsonPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var fullPath = Path.GetFullPath(reportJsonPath);
+            if (!File.Exists(fullPath))
+            {
+                return false;
+            }
+
+            var report = JsonSerializer.Deserialize<CliExecutionReport>(
+                File.ReadAllText(fullPath),
+                new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true,
+                });
+            if (report is null ||
+                !string.Equals(
+                    report.Result.Name,
+                    "EXECUTION_RUNNING",
+                    StringComparison.Ordinal) ||
+                !string.Equals(
+                    Path.GetFullPath(report.ExecutablePath),
+                    executablePath,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var finalizedReport = report with
+            {
+                GeneratedAtUtc = DateTimeOffset.UtcNow,
+                DurationMilliseconds =
+                    GetElapsedMilliseconds(invocationStartedTimestamp),
+                Result = new CliExecutionResult(
+                    resultName,
+                    Code: null,
+                    Succeeded: false),
+                HostError = hostError,
+            };
+            WriteExecutionReport(fullPath, finalizedReport);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Warn(
+                $"Could not preserve running execution report " +
+                $"'{reportJsonPath}': {ex.Message}");
+            return false;
+        }
+    }
+
+    private static void WriteExecutionReport(
+        string fullPath,
+        CliExecutionReport report)
+    {
+        var json = JsonSerializer.Serialize(report, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            WriteIndented = true,
+        });
+        var temporaryPath = $"{fullPath}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            File.WriteAllText(
+                temporaryPath,
+                json,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            File.Move(temporaryPath, fullPath, overwrite: true);
+        }
         finally
         {
-            if (temporaryPath is not null)
+            if (File.Exists(temporaryPath))
             {
                 try
                 {

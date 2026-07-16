@@ -660,6 +660,8 @@ public sealed class SharpEmuRuntimeTests
             root.GetProperty("hostError").GetString(),
             StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Execution stalled", execution.StandardError, StringComparison.Ordinal);
+        Assert.Equal("ELF", root.GetProperty("image").GetProperty("format").GetString());
+        Assert.Empty(root.GetProperty("moduleLoadFailures").EnumerateArray());
     }
 
     [HostX64Fact]
@@ -686,6 +688,11 @@ public sealed class SharpEmuRuntimeTests
         Assert.InRange(root.GetProperty("durationMilliseconds").GetInt64(), 900, 10_000);
         Assert.Equal(execution.ExecutableSha256, root.GetProperty("executableSha256").GetString());
         Assert.Equal("PPSA00001", root.GetProperty("application").GetProperty("titleId").GetString());
+        Assert.Equal("ELF", root.GetProperty("image").GetProperty("format").GetString());
+        Assert.True(root.GetProperty("image").GetProperty("mappedRegionCount").GetInt32() > 0);
+        Assert.Empty(root.GetProperty("modules").EnumerateArray());
+        Assert.Empty(root.GetProperty("moduleInitializers").EnumerateArray());
+        Assert.Empty(root.GetProperty("moduleLoadFailures").EnumerateArray());
     }
 
     [Fact]

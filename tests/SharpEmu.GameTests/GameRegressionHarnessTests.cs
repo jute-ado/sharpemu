@@ -50,8 +50,8 @@ public sealed class GameRegressionHarnessTests
               "result": {
                 "name": "EXECUTION_TIMED_OUT"
               },
-              "moduleInitializers": null,
-              "moduleLoadFailures": null
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
             }
             """);
 
@@ -59,6 +59,33 @@ public sealed class GameRegressionHarnessTests
             testCase,
             report.RootElement,
             "synthetic-report.json");
+    }
+
+    [Fact]
+    public void ExecutionTimeoutWithoutPreparedMilestonesFails()
+    {
+        var testCase = CreateExecutionCase();
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": null,
+              "moduleLoadFailures": null
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json"));
+
+        Assert.Contains(
+            "status was not captured",
+            error.Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]
