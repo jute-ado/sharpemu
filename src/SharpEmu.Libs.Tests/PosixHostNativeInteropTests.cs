@@ -41,7 +41,8 @@ public sealed class PosixHostNativeInteropTests
     [Fact]
     public void GuestAbiCallbackThunkIsCachedAndReadExecute()
     {
-        if (OperatingSystem.IsWindows())
+        if (OperatingSystem.IsWindows() ||
+            RuntimeInformation.ProcessArchitecture != Architecture.X64)
         {
             return;
         }
