@@ -21,11 +21,10 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
 ## About This Fork
 
-This fork exists purely for emulator research and education. It is mostly
-developed through AI-assisted, exploratory “vibe coding” under human direction,
-followed by code review, focused regression tests, full-suite validation, and
-cross-platform CI. AI assistance is a development tool here, not evidence that
-a change is correct.
+This fork exists purely for research and education. Much of its development is
+AI-assisted and exploratory, with a strong TDD approach to catch regressions,
+validate behavior, and keep generated code grounded in observable results. AI
+assistance is a development tool here, not evidence that a change is correct.
 
 The fork is kept synchronized with upstream while experimenting with a more
 test-driven workflow. Its current emphasis includes:
