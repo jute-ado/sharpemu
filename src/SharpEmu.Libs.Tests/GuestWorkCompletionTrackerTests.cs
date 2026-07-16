@@ -19,7 +19,6 @@ public sealed class GuestWorkCompletionTrackerTests
             () => tracker.WaitUntilCompleted(
                 target,
                 TimeSpan.FromSeconds(1)));
-        await Task.Delay(20);
         tracker.MarkEnqueued();
         tracker.MarkCompleted();
 
