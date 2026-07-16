@@ -114,7 +114,7 @@ internal static class GameRegressionRunner
             testCase,
             report.RootElement,
             reportPath,
-            standardError);
+            standardOutput + Environment.NewLine + standardError);
         return new GameRegressionExecution(
             testCase.Name,
             testCase.Mode,
@@ -176,13 +176,25 @@ internal static class GameRegressionRunner
                 $"Game regression '{testCase.Name}' has a negative " +
                 "minimumObservedImportDispatches.");
         }
+        for (var index = 0;
+            index < testCase.Expectations.RequiredOutputSubstrings.Length;
+            index++)
+        {
+            if (string.IsNullOrWhiteSpace(
+                testCase.Expectations.RequiredOutputSubstrings[index]))
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' contains an empty " +
+                    "requiredOutputSubstrings entry.");
+            }
+        }
     }
 
     internal static void ValidateReport(
         GameRegressionCase testCase,
         JsonElement report,
         string reportPath,
-        string standardError = "")
+        string capturedOutput = "")
     {
         var failures = new StringBuilder();
         var resultName = GetRequiredString(
@@ -275,13 +287,29 @@ internal static class GameRegressionRunner
             { } minimumImportDispatches)
         {
             var observedImportDispatches =
-                GetMaximumObservedImportDispatch(standardError);
+                GetMaximumObservedImportDispatch(capturedOutput);
             if (observedImportDispatches < minimumImportDispatches)
             {
                 failures.AppendLine(
                     $"maximum observed import dispatch " +
                     $"{observedImportDispatches} was below " +
                     $"{minimumImportDispatches}.");
+            }
+        }
+
+        for (var index = 0;
+            index < testCase.Expectations.RequiredOutputSubstrings.Length;
+            index++)
+        {
+            var requiredOutput =
+                testCase.Expectations.RequiredOutputSubstrings[index];
+            if (!capturedOutput.Contains(
+                    requiredOutput,
+                    StringComparison.Ordinal))
+            {
+                failures.AppendLine(
+                    $"required output milestone was not observed: " +
+                    $"'{requiredOutput}'.");
             }
         }
 

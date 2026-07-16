@@ -150,6 +150,64 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
+    public void ExecutionCanRequireGpuOutputMilestone()
+    {
+        var testCase = CreateExecutionCase(
+            requiredOutputSubstrings:
+            [
+                "Vulkan VideoOut presented guest frame",
+            ]);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        GameRegressionRunner.ValidateReport(
+            testCase,
+            report.RootElement,
+            "synthetic-report.json",
+            "[LOADER][INFO] Vulkan VideoOut presented guest frame: image=0x1234");
+    }
+
+    [Fact]
+    public void ExecutionFailsWhenRequiredOutputMilestoneIsMissing()
+    {
+        var testCase = CreateExecutionCase(
+            requiredOutputSubstrings:
+            [
+                "Vulkan VideoOut presented guest frame",
+            ]);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                "[LOADER][INFO] Vulkan VideoOut ready"));
+
+        Assert.Contains(
+            "presented guest frame",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EarlyCpuTrapFailsExecutionSurvivalContract()
     {
         var testCase = CreateExecutionCase();
@@ -201,7 +259,8 @@ public sealed class GameRegressionHarnessTests
     }
 
     private static GameRegressionCase CreateExecutionCase(
-        long? minimumObservedImportDispatches = null) => new()
+        long? minimumObservedImportDispatches = null,
+        string[]? requiredOutputSubstrings = null) => new()
     {
         Name = "execution survival",
         ExecutablePath = "eboot.bin",
@@ -223,6 +282,8 @@ public sealed class GameRegressionHarnessTests
             RequireSuccessfulModuleInitializers = true,
             MinimumObservedImportDispatches =
                 minimumObservedImportDispatches,
+            RequiredOutputSubstrings =
+                requiredOutputSubstrings ?? [],
         },
     };
 

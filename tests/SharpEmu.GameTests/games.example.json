@@ -37,7 +37,10 @@
         ],
         "requireNoModuleLoadFailures": true,
         "requireSuccessfulModuleInitializers": true,
-        "minimumObservedImportDispatches": 1000
+        "minimumObservedImportDispatches": 1000,
+        "requiredOutputSubstrings": [
+          "Vulkan VideoOut presented guest frame"
+        ]
       }
     }
   ]
