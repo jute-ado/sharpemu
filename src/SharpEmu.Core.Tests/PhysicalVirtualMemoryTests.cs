@@ -5,7 +5,6 @@ using System.Runtime.InteropServices;
 using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
 using SharpEmu.HLE.Host;
-using SharpEmu.HLE.Host.Posix;
 using Xunit;
 
 namespace SharpEmu.Core.Tests;
@@ -23,23 +22,10 @@ public sealed class PhysicalVirtualMemoryTests
     private const uint PageReadWrite = 0x04;
     private const uint PageExecuteRead = 0x20;
 
-    private static IHostMemory CreateHostMemory()
-    {
-        if (RuntimeInformation.ProcessArchitecture == Architecture.X64)
-        {
-            return HostPlatform.Current.Memory;
-        }
-
-        if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
-        {
-            return new PosixHostMemory();
-        }
-
-        return HostPlatform.Current.Memory;
-    }
+    private static IHostMemory CreateHostMemory() => TestHostMemory.Create();
 
     private static PhysicalVirtualMemory CreatePhysicalMemory() =>
-        new(CreateHostMemory());
+        TestHostMemory.CreatePhysicalMemory();
 
     [Fact]
     public void AllocatedRegionSupportsBoundedReadWriteAndEmptyEndAccess()
