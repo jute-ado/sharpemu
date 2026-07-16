@@ -142,5 +142,23 @@
   "About.Discord.Label": "Discord",
   "About.Discord.Desc": "Csatlakozz a közösséghe, kérj segítéget és kövesd nyomon a fejlesztést.",
   "About.GithubButton": "Járulj hozzá GitHubon!",
-  "About.DiscordButton": "Csatlakozz a Discordunhoz!"
+  "About.DiscordButton": "Csatlakozz a Discordunhoz!",
+
+  "Options.Env.LogIo.Desc": "A fájlmegnyitási, olvasási és útvonalfeloldási műveletek naplózása a konzolra.\nAkkor használd, ha egy játék indítás közben nem találja az adatfájljait.",
+  "Options.Env.WritableApp0.Desc": "Lehetővé teszi, hogy a játékok fájlokat hozzanak létre és írjanak a telepítési mappájukban.\nAzokhoz a nem csomagolt dumpokhoz szükséges, amelyek mentési vagy konfigurációs adatokat írnak az /app0 alá.",
+
+  "Updater.Auto.Label": "Frissítések keresése indításkor",
+  "Updater.Auto.Desc": "A GitHub ellenőrzése az indítás késleltetése nélkül.",
+  "Updater.Label": "Frissítések",
+  "Updater.Check": "Frissítések keresése",
+  "Updater.DownloadRestart": "Letöltés és újraindítás",
+  "Updater.Status.Ready": "Jelenlegi build: {0}",
+  "Updater.Status.Checking": "Frissítések keresése…",
+  "Updater.Status.Current": "A legfrissebb verziót használod ({0}).",
+  "Updater.Status.Available": "Új build érhető el: {0}",
+  "Updater.Status.Downloading": "Frissítés letöltése… {0}%",
+  "Updater.Status.Installing": "Frissítés telepítése…",
+  "Updater.Status.Timeout": "A frissítéskeresés 10 másodperc után túllépte az időkorlátot.",
+  "Updater.Status.Failed": "Nem sikerült frissítéseket keresni.",
+  "Updater.Status.Unsupported": "Az automatikus frissítéshez Windows, Linux vagy macOS x64 build szükséges."
 }

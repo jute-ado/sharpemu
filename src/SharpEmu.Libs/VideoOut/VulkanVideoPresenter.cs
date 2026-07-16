@@ -2498,6 +2498,51 @@ internal static unsafe class VulkanVideoPresenter
             _vk.FreeCommandBuffers(_device, _commandPool, 1, &commandBuffer);
         }
 
+        private void TransitionNewGuestImageToSampled(Image image, uint mipLevels)
+        {
+            var commandBuffer = AllocateGuestCommandBuffer();
+            var beginInfo = new CommandBufferBeginInfo
+            {
+                SType = StructureType.CommandBufferBeginInfo,
+                Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
+            };
+            Check(
+                _vk.BeginCommandBuffer(commandBuffer, &beginInfo),
+                "vkBeginCommandBuffer(guest image init)");
+            var barrier = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = 0,
+                DstAccessMask = AccessFlags.ShaderReadBit,
+                OldLayout = ImageLayout.Undefined,
+                NewLayout = ImageLayout.ShaderReadOnlyOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = image,
+                SubresourceRange = ColorSubresourceRange(0, mipLevels),
+            };
+            _vk.CmdPipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.TopOfPipeBit,
+                PipelineStageFlags.AllCommandsBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &barrier);
+            Check(
+                _vk.EndCommandBuffer(commandBuffer),
+                "vkEndCommandBuffer(guest image init)");
+            // Same-queue submission order makes the transition visible to any
+            // later use of the image; no CPU-side wait is needed.
+            SubmitGuestCommandBuffer(
+                commandBuffer,
+                new TranslatedDrawResources { DebugName = "guest image init" },
+                []);
+        }
+
         private void EnsureGuestSubmissionCapacity()
         {
             CollectCompletedGuestSubmissions(waitForOldest: false);
@@ -2526,23 +2571,43 @@ internal static unsafe class VulkanVideoPresenter
                     &fence,
                     true,
                     ulong.MaxValue);
-                Check(result, $"vkWaitForFences(guest: {oldest.DebugName})");
+                if (result == Result.ErrorDeviceLost)
+                {
+                    _deviceLost = true;
+                }
+                else
+                {
+                    Check(result, $"vkWaitForFences(guest: {oldest.DebugName})");
+                }
             }
 
             while (_pendingGuestSubmissions.TryPeek(out var submission))
             {
                 var status = _vk.GetFenceStatus(_device, submission.Fence);
-                if (status == Result.NotReady)
+                if (status == Result.NotReady && !_deviceLost)
                 {
                     break;
                 }
 
-                Check(status, $"vkGetFenceStatus(guest: {submission.DebugName})");
+                if (status == Result.ErrorDeviceLost)
+                {
+                    // Pending fences never signal on a lost device; retire the
+                    // submission anyway so teardown and back-pressure survive.
+                    _deviceLost = true;
+                }
+                else if (status != Result.NotReady)
+                {
+                    Check(status, $"vkGetFenceStatus(guest: {submission.DebugName})");
+                }
+
                 _pendingGuestSubmissions.Dequeue();
 
-                foreach (var image in submission.TraceImages)
+                if (!_deviceLost)
                 {
-                    TraceGuestImageContents(image);
+                    foreach (var image in submission.TraceImages)
+                    {
+                        TraceGuestImageContents(image);
+                    }
                 }
 
                 DestroyTranslatedDrawResources(submission.Resources);
@@ -4782,7 +4847,7 @@ internal static unsafe class VulkanVideoPresenter
             return (properties.OptimalTilingFeatures & FormatFeatureFlags.ColorAttachmentBit) != 0;
         }
 
-        private static Format GetTextureFormat(uint format, uint numberType) =>
+        internal static Format GetTextureFormat(uint format, uint numberType) =>
             (format, numberType) switch
             {
                 (9, _) => Format.A2R10G10B10UnormPack32,
@@ -5478,6 +5543,9 @@ internal static unsafe class VulkanVideoPresenter
                 _vk.AllocateMemory(_device, &allocationInfo, null, out var memory),
                 "vkAllocateMemory(offscreen)");
             Check(_vk.BindImageMemory(_device, image, memory, 0), "vkBindImageMemory(offscreen)");
+            // Rendering and uploads only define the mips they touch; define the whole
+            // chain once so full-chain sampled binds never read Undefined layout.
+            TransitionNewGuestImageToSampled(image, mipLevels);
 
             var viewInfo = new ImageViewCreateInfo
             {
@@ -5791,7 +5859,7 @@ internal static unsafe class VulkanVideoPresenter
             return view;
         }
 
-        private static bool IsCompatibleViewFormat(Format imageFormat, Format viewFormat)
+        internal static bool IsCompatibleViewFormat(Format imageFormat, Format viewFormat)
         {
             if (imageFormat == viewFormat)
             {
@@ -6056,6 +6124,23 @@ internal static unsafe class VulkanVideoPresenter
 
         private void Render(double _)
         {
+            try
+            {
+                RenderCore();
+            }
+            catch (Exception exception)
+            {
+                // Device loss can strike between any two Vulkan calls in the frame;
+                // keep the window loop pumping instead of tearing the presenter down.
+                if (!TryMarkDeviceLost(exception))
+                {
+                    throw;
+                }
+            }
+        }
+
+        private void RenderCore()
+        {
             if (Volatile.Read(ref _presenterCloseRequested))
             {
                 _window.Close();
@@ -6064,6 +6149,18 @@ internal static unsafe class VulkanVideoPresenter
 
             if (!_vulkanReady)
             {
+                return;
+            }
+
+            if (_deviceLost)
+            {
+                // Drain queued work so producers aren't back-pressured, then
+                // return without any Vulkan call (fences never signal post-loss).
+                while (TryTakeGuestWork(out _))
+                {
+                    CompleteGuestWork();
+                }
+
                 return;
             }
 
@@ -7872,20 +7969,38 @@ internal static unsafe class VulkanVideoPresenter
                 return;
             }
 
+            if (result == Result.ErrorDeviceLost)
+            {
+                throw new VulkanDeviceLostException(operation);
+            }
+
             throw new InvalidOperationException($"{operation} failed with {result}.");
         }
 
         private static void Check(Result result, string operation)
         {
+            if (result == Result.ErrorDeviceLost)
+            {
+                throw new VulkanDeviceLostException(operation);
+            }
+
             if (result != Result.Success)
             {
                 throw new InvalidOperationException($"{operation} failed with {result}.");
             }
         }
 
+        // Typed so the frame-boundary catch can recognize device loss without
+        // depending on the exact wording of the exception message.
+        private sealed class VulkanDeviceLostException(string operation)
+            : InvalidOperationException($"{operation} failed with {Result.ErrorDeviceLost}.");
+
         private bool TryMarkDeviceLost(Exception exception)
         {
-            if (!exception.Message.Contains(nameof(Result.ErrorDeviceLost), StringComparison.Ordinal))
+            // Prefer the typed signal; fall back to the message for losses that
+            // surface through other layers (e.g. Silk.NET bindings).
+            if (exception is not VulkanDeviceLostException &&
+                !exception.Message.Contains(nameof(Result.ErrorDeviceLost), StringComparison.Ordinal))
             {
                 return false;
             }

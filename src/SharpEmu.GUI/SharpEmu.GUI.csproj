@@ -4,6 +4,10 @@ SPDX-License-Identifier: GPL-2.0-or-later
 -->
 
 <Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <InternalsVisibleTo Include="SharpEmu.GUI.Tests" />
+  </ItemGroup>
+
 
   <!-- Class library: the GUI is hosted by SharpEmu.CLI, which opens it when
        the executable is started without arguments. -->

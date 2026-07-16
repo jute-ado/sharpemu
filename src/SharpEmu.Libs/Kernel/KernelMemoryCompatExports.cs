@@ -2134,7 +2134,7 @@ public static partial class KernelMemoryCompatExports
         Nid = "E6ao34wPw+U",
         ExportName = "stat",
         Target = Generation.Gen4 | Generation.Gen5,
-        LibraryName = "libKernel")]
+        LibraryName = "libc")]
     public static int PosixStat(CpuContext ctx)
     {
         var result = KernelStat(ctx);
@@ -2143,11 +2143,14 @@ public static partial class KernelMemoryCompatExports
             return 0;
         }
 
+        // stat(2) follows the libc/POSIX ABI: failures return -1 and expose
+        // the reason through errno. Returning the raw Orbis kernel code here
+        // makes callers treat a missing file as a non-negative success value.
         var errno = result switch
         {
             (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT => Einval,
             (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT => Efault,
-            _ => 2,
+            _ => 2, // ENOENT
         };
         KernelRuntimeCompatExports.TrySetErrno(ctx, errno);
         ctx[CpuRegister.Rax] = ulong.MaxValue;
@@ -5456,8 +5459,19 @@ public static partial class KernelMemoryCompatExports
     private static bool IsMutatingOpen(int flags) =>
         (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) != 0;
 
+    // Dev-build dumps (unpackaged UE titles, etc.) may write their Saved/ tree under
+    // /app0, which is read-only on retail hardware. Opt in via SHARPEMU_WRITABLE_APP0=1
+    // to allow those writes so such dumps can boot; defaults off to keep retail semantics.
+    private static readonly bool _writableApp0 =
+        string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_WRITABLE_APP0"), "1", StringComparison.Ordinal);
+
     public static bool IsReadOnlyGuestMutationPath(string guestPath)
     {
+        if (_writableApp0)
+        {
+            return false;
+        }
+
         var normalized = NormalizeGuestStatCachePath(guestPath);
         return normalized is not null &&
                (string.Equals(normalized, "/app0", StringComparison.OrdinalIgnoreCase) ||

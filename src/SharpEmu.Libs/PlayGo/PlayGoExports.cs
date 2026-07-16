@@ -424,12 +424,18 @@ public static class PlayGoExports
                         $"[LOADER][TRACE] playgo.unknown_chunk_id id={chunkId} entries={numberOfEntries} " +
                         $"known=[{string.Join(',', knownChunkIds)}]");
                 }
+
+                // Real firmware rejects chunk ids outside the package's chunk set.
+                // Titles rely on this as an enumeration terminator: Monster Truck
+                // scans ids 0,1,2,... until BAD_CHUNK_ID, and answering OK for every
+                // id makes that scan wrap the ushort range and spin forever.
+                return OrbisPlayGoErrorBadChunkId;
             }
 
             loci[i] = PlayGoLocusLocalFast;
         }
 
-        TracePlayGoLocus(numberOfEntries, chunkIds, outLoci);
+        TracePlayGoLocus(ctx, numberOfEntries, chunkIds, outLoci);
         return ctx.Memory.TryWrite(outLoci, loci)
             ? (int)OrbisGen2Result.ORBIS_GEN2_OK
             : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
@@ -669,7 +675,7 @@ public static class PlayGoExports
     {
         lock (_stateGate)
         {
-            return _metadata.ChunkIds.Length == 0 || Array.BinarySearch(_metadata.ChunkIds, chunkId) >= 0;
+            return Array.BinarySearch(_metadata.ChunkIds, chunkId) >= 0;
         }
     }
 
@@ -678,7 +684,9 @@ public static class PlayGoExports
         var app0Root = Environment.GetEnvironmentVariable("SHARPEMU_APP0_DIR");
         if (string.IsNullOrWhiteSpace(app0Root))
         {
-            return PlayGoMetadata.Empty;
+            // No app0 override to probe for sidecar files: same fully-installed
+            // single-chunk fallback as below, or scePlayGoOpen fails fatally.
+            return new PlayGoMetadata(true, [(ushort)0]);
         }
 
         var playGoDat = Path.Combine(app0Root, "sce_sys", "playgo-chunk.dat");
@@ -688,12 +696,23 @@ public static class PlayGoExports
         var hasMetadata = File.Exists(playGoDat) || File.Exists(scenarioJson) || File.Exists(chunkDefsXml);
         if (!hasMetadata)
         {
-            // Full installs may omit PlayGo sidecar metadata.
-            TracePlayGo("metadata_missing; using fully-installed default chunk");
+            // No PlayGo sidecar: report a fully-installed single chunk. Available must
+            // stay true or scePlayGoOpen fails with NotSupportPlayGo (fatal PS5-component
+            // init failure for UE titles); chunk 0 reports LocalFast and every other id
+            // returns BAD_CHUNK_ID, terminating title-side chunk enumeration.
+            TracePlayGo("metadata_missing; fully-installed single chunk");
             return new PlayGoMetadata(true, [(ushort)0]);
         }
 
         var chunkIds = LoadChunkIds(chunkDefsXml);
+        if (chunkIds.Length == 0)
+        {
+            // Unreadable/empty sidecar: fall back to chunk 0, not an empty set
+            // (which IsKnownChunkId would treat as "every id valid").
+            TracePlayGo("metadata_unreadable; fully-installed single chunk");
+            return new PlayGoMetadata(true, [(ushort)0]);
+        }
+
         return new PlayGoMetadata(true, chunkIds);
     }
 
@@ -744,7 +763,7 @@ public static class PlayGoExports
         }
     }
 
-    private static void TracePlayGoLocus(uint entries, ulong chunkIds, ulong outLoci)
+    private static void TracePlayGoLocus(CpuContext ctx, uint entries, ulong chunkIds, ulong outLoci)
     {
         if (!string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_PLAYGO"), "1", StringComparison.Ordinal))
         {
@@ -754,8 +773,10 @@ public static class PlayGoExports
         var count = Interlocked.Increment(ref _locusTraceDiagnostics);
         if (entries != 1 || count <= 32 || count % 1000 == 0)
         {
+            _ = ctx.TryReadUInt16(chunkIds, out var firstChunkId);
             Console.Error.WriteLine(
-                $"[LOADER][TRACE] playgo.get_locus entries={entries} chunk_ids=0x{chunkIds:X16} out=0x{outLoci:X16}");
+                $"[LOADER][TRACE] playgo.get_locus entries={entries} first_chunk={firstChunkId} " +
+                $"chunk_ids=0x{chunkIds:X16} out=0x{outLoci:X16}");
         }
     }
 

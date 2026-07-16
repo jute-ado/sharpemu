@@ -12,6 +12,8 @@ using SharpEmu.Libs.VideoOut;
 using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.AppContent;
 using SharpEmu.Libs.SaveData;
+using SharpEmu.Libs.Fiber;
+using SharpEmu.Libs.SystemService;
 using SharpEmu.Logging;
 using System.Buffers.Binary;
 using System.Collections.Generic;
@@ -462,6 +464,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         LastLoadedImage = null;
         LastPreparedApplication = null;
         _moduleInitializerExecutions.Clear();
+        FiberExports.ResetRuntimeState();
     }
 
     private PreparedApplication PrepareApplicationCore(string normalizedEbootPath)
@@ -471,6 +474,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         var image = LoadImage(normalizedEbootPath);
         VideoOutExports.ConfigureApplicationInfo(image.Title, image.TitleId, image.Version, BuildInfo.CommitSha);
         SaveDataExports.ConfigureApplicationInfo(image.TitleId);
+        SystemServiceExports.ConfigureApplicationInfo(image.TitleId);
         LogAppBundleInfo(normalizedEbootPath, image);
         RegisterLoadedModule(normalizedEbootPath, image, isMain: true, isSystemModule: false);
         KernelRuntimeCompatExports.ConfigureProcessProcParamAddress(image.ProcParamAddress);
