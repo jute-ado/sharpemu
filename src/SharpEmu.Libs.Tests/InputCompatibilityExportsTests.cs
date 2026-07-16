@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
-using System.Reflection;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Mouse;
 using SharpEmu.Libs.UserService;
@@ -83,23 +82,20 @@ public sealed class InputCompatibilityExportsTests
     }
 
     [Theory]
-    [InlineData(typeof(MouseExports), nameof(MouseExports.MouseInit), "Qs0wWulgl7U", "sceMouseInit", "libSceMouse")]
-    [InlineData(typeof(UserServiceExports), nameof(UserServiceExports.UserServiceGetAgeLevel), "woNpu+45RLk", "sceUserServiceGetAgeLevel", "libSceUserService")]
+    [InlineData("Qs0wWulgl7U", "sceMouseInit", "libSceMouse")]
+    [InlineData("woNpu+45RLk", "sceUserServiceGetAgeLevel", "libSceUserService")]
     public void CompatibilityExportMetadataIsExact(
-        Type declaringType,
-        string methodName,
         string nid,
         string exportName,
         string libraryName)
     {
-        var method = declaringType.GetMethod(methodName, BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
+        var exports = SharpEmu.Generated.SysAbiExportRegistry
+            .CreateExports(Generation.Gen4 | Generation.Gen5);
+        var export = Assert.Single(exports, candidate => candidate.Nid == nid);
 
-        Assert.NotNull(attribute);
-        Assert.Equal(nid, attribute.Nid);
-        Assert.Equal(exportName, attribute.ExportName);
-        Assert.Equal(libraryName, attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        Assert.Equal(exportName, export.Name);
+        Assert.Equal(libraryName, export.LibraryName);
+        Assert.Equal(Generation.Gen4 | Generation.Gen5, export.Target);
     }
 
     private static CpuContext CreateAgeLevelContext(byte[] output)
