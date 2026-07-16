@@ -20,7 +20,7 @@ public sealed class VirtualMemoryContractTests
         AssertGuestMemoryContract(fixture);
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void PhysicalMemorySatisfiesGuestMemoryContract()
     {
         using var fixture = CreatePhysicalFixture();
@@ -128,7 +128,7 @@ public sealed class VirtualMemoryContractTests
 
     private static MemoryFixture CreatePhysicalFixture()
     {
-        var memory = new PhysicalVirtualMemory();
+        var memory = TestHostMemory.CreatePhysicalMemory();
         var address = memory.AllocateAt(0, RegionSize, executable: false);
         return new MemoryFixture(memory, address, memory);
     }

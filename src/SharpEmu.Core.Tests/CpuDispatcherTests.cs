@@ -211,10 +211,10 @@ public sealed class CpuDispatcherTests
         Assert.Equal(2, backend.ExecutionCount);
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void PhysicalMemorySupportsReusableDispatcherRegions()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = TestHostMemory.CreatePhysicalMemory();
         var backend = new SuccessfulNativeBackend();
         using var dispatcher = new CpuDispatcher(memory, new ModuleManager(), backend);
         var regionCountAfterFirstEntry = 0;

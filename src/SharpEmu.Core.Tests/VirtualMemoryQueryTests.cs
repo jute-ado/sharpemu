@@ -96,10 +96,10 @@ public sealed class VirtualMemoryQueryTests
         Assert.Equal(new GuestVirtualMemoryRegion(0x8000, 0x1000, 0x03), region);
     }
 
-    [WindowsFact]
+    [Fact]
     public void PhysicalMemoryReportsAllocatedRegionProtection()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = TestHostMemory.CreatePhysicalMemory();
         var address = memory.AllocateAt(0, 0x2000, executable: false);
 
         Assert.True(memory.TryQueryMemoryRegion(address + 0x1000, findNext: false, out var region));
@@ -108,10 +108,10 @@ public sealed class VirtualMemoryQueryTests
         Assert.Equal(0x03, region.Protection);
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void PhysicalMemoryRegionQueryUsesLogarithmicProbeDepth()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = TestHostMemory.CreatePhysicalMemory();
         const int regionCount = 256;
         for (var index = 0; index < regionCount; index++)
         {
@@ -128,10 +128,10 @@ public sealed class VirtualMemoryQueryTests
         Assert.InRange(memory.CountRegionQueryProbes(last.VirtualAddress - 1, findNext: true), 1, 9);
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void PhysicalMemorySnapshotsPageProtectionRuns()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = TestHostMemory.CreatePhysicalMemory();
         var address = memory.AllocateAt(0, 0x4000, executable: true);
         memory.Map(
             address,
@@ -167,10 +167,10 @@ public sealed class VirtualMemoryQueryTests
                 ProgramHeaderFlags.Read | ProgramHeaderFlags.Write | ProgramHeaderFlags.Execute));
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void PhysicalMemoryCoalescesUniformSegmentProtectionApplications()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = TestHostMemory.CreatePhysicalMemory();
         var address = memory.AllocateAt(0, 0x40_0000, executable: true);
         var applicationsBeforeMap = memory.ProtectionApplicationCount;
 
@@ -190,10 +190,10 @@ public sealed class VirtualMemoryQueryTests
             ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
     }
 
-    [WindowsX64Fact]
+    [Fact]
     public void PhysicalMemoryPreservesMergedProtectionRunBoundaries()
     {
-        using var memory = new PhysicalVirtualMemory();
+        using var memory = TestHostMemory.CreatePhysicalMemory();
         var address = memory.AllocateAt(0, 0x4000, executable: true);
         memory.Map(
             address + 0x1000,
