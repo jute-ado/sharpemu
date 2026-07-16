@@ -4,7 +4,6 @@
 using System.Reflection;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
-using SharpEmu.Testing;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests;
@@ -21,12 +20,11 @@ public sealed class HleExportCatalogTests
         var applicableExports = GetExports(assembly)
             .Where(export => (export.Attribute.Target & generation) != 0)
             .ToArray();
-        var reflected = ReflectionExportDiscovery.Discover(assembly, generation);
         var generated = SharpEmu.Generated.SysAbiExportRegistry.CreateExports(generation);
 
         Assert.Equal(applicableExports.Length, generated.Count);
         Assert.Equal(
-            reflected.Select(export => export.Nid).Order(StringComparer.Ordinal),
+            applicableExports.Select(export => export.Attribute.Nid).Order(StringComparer.Ordinal),
             generated.Select(export => export.Nid).Order(StringComparer.Ordinal));
         foreach (var export in applicableExports)
         {

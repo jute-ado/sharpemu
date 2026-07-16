@@ -50,9 +50,17 @@ internal static class RoslynTestHost
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
     }
 
-    public static (Compilation Updated, string GeneratedSource) RunGenerator(CSharpCompilation compilation)
+    public static (Compilation Updated, string GeneratedSource) RunGenerator(
+        CSharpCompilation compilation,
+        IReadOnlyDictionary<string, string>? globalOptions = null)
     {
-        var driver = CSharpGeneratorDriver.Create(new SysAbiExportGenerator());
+        GeneratorDriver driver = globalOptions is null
+            ? CSharpGeneratorDriver.Create(new SysAbiExportGenerator())
+            : CSharpGeneratorDriver.Create(
+                [new SysAbiExportGenerator().AsSourceGenerator()],
+                additionalTexts: [],
+                parseOptions: CSharpParseOptions.Default.WithLanguageVersion(LanguageVersion.Latest),
+                optionsProvider: new DictionaryAnalyzerConfigOptionsProvider(globalOptions));
         driver.RunGeneratorsAndUpdateCompilation(compilation, out var updated, out _);
         var generated = string.Empty;
         foreach (var tree in updated.SyntaxTrees)
@@ -96,6 +104,28 @@ internal static class RoslynTestHost
 
         Xunit.Assert.True(errors.Count == 0, string.Join(Environment.NewLine, errors));
     }
+}
+
+internal sealed class DictionaryAnalyzerConfigOptionsProvider(
+    IReadOnlyDictionary<string, string> globalOptions) : AnalyzerConfigOptionsProvider
+{
+    private readonly AnalyzerConfigOptions _globalOptions =
+        new DictionaryAnalyzerConfigOptions(globalOptions);
+    private static readonly AnalyzerConfigOptions EmptyOptions =
+        new DictionaryAnalyzerConfigOptions(new Dictionary<string, string>());
+
+    public override AnalyzerConfigOptions GlobalOptions => _globalOptions;
+
+    public override AnalyzerConfigOptions GetOptions(SyntaxTree tree) => EmptyOptions;
+
+    public override AnalyzerConfigOptions GetOptions(AdditionalText textFile) => EmptyOptions;
+}
+
+internal sealed class DictionaryAnalyzerConfigOptions(
+    IReadOnlyDictionary<string, string> options) : AnalyzerConfigOptions
+{
+    public override bool TryGetValue(string key, out string value) =>
+        options.TryGetValue(key, out value!);
 }
 
 internal sealed class InMemoryAdditionalText(string path, string content) : AdditionalText

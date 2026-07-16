@@ -1,10 +1,8 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using System.Reflection;
 using SharpEmu.Core.Cpu;
 using SharpEmu.HLE;
-using SharpEmu.Testing;
 using Xunit;
 
 namespace SharpEmu.Core.Tests;
@@ -292,8 +290,7 @@ public sealed class NativeImportBridgeTests
             moduleManager =>
             {
                 var registered = moduleManager.RegisterExports(
-                    ReflectionExportDiscovery.Discover(
-                        Assembly.GetExecutingAssembly(),
+                    SharpEmu.Core.Tests.Generated.SysAbiExportRegistry.CreateExports(
                         Generation.Gen5));
                 Assert.True(registered > 0);
                 Assert.True(moduleManager.TryGetExport(nid, out _));
@@ -309,7 +306,7 @@ public sealed class NativeImportBridgeTests
         Assert.Equal(CpuExitReason.ReturnedToHost, execution.ExitReason);
     }
 
-    private static class SyntheticExports
+    internal static class SyntheticExports
     {
         [SysAbiExport(
             Nid = AddNid,

@@ -1,10 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using System.Reflection;
-using System.Reflection.Emit;
 using SharpEmu.HLE;
-using SharpEmu.Testing;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests;
@@ -12,16 +9,18 @@ namespace SharpEmu.Libs.Tests;
 public sealed class ModuleManagerRegistrationTests
 {
     [Fact]
-    public void DuplicateNidsRejectTheWholeAssembly()
+    public void DuplicateNidsRejectTheWholeBatch()
     {
-        var assembly = CreateExportAssembly(
-            new ExportSpec("Unique", "unique-nid"),
-            new ExportSpec("FirstDuplicate", "duplicate-nid"),
-            new ExportSpec("SecondDuplicate", "duplicate-nid"));
         var manager = new ModuleManager();
+        var exports = new[]
+        {
+            CreateExport("Unique", "unique-nid"),
+            CreateExport("FirstDuplicate", "duplicate-nid"),
+            CreateExport("SecondDuplicate", "duplicate-nid"),
+        };
 
         var exception = Assert.Throws<InvalidOperationException>(
-            () => ReflectionExportDiscovery.Discover(assembly, Generation.Gen5));
+            () => manager.RegisterExports(exports));
 
         Assert.Contains("duplicate-nid", exception.Message, StringComparison.Ordinal);
         Assert.Contains("FirstDuplicate", exception.Message, StringComparison.Ordinal);
@@ -31,40 +30,34 @@ public sealed class ModuleManagerRegistrationTests
     }
 
     [Fact]
-    public void InvalidHandlerRejectsTheWholeAssemblyAndCanBeRetried()
+    public void NullExportRejectsTheWholeBatch()
     {
-        var assembly = CreateExportAssembly(
-            new ExportSpec("Valid", "valid-nid"),
-            new ExportSpec("Invalid", "invalid-nid", typeof(string)));
         var manager = new ModuleManager();
+        ExportedFunction[] exports =
+        [
+            CreateExport("Valid", "valid-nid"),
+            null!,
+        ];
 
-        var first = Assert.Throws<InvalidOperationException>(
-            () => ReflectionExportDiscovery.Discover(assembly, Generation.Gen5));
-        var second = Assert.Throws<InvalidOperationException>(
-            () => ReflectionExportDiscovery.Discover(assembly, Generation.Gen5));
+        Assert.Throws<ArgumentNullException>(() => manager.RegisterExports(exports));
 
-        Assert.Contains("Invalid", first.Message, StringComparison.Ordinal);
-        Assert.Equal(first.Message, second.Message);
         Assert.False(manager.TryGetExport("valid-nid", out _));
-        Assert.False(manager.TryGetExport("invalid-nid", out _));
     }
 
     [Fact]
     public void ExistingNidConflictDoesNotCommitOtherExports()
     {
-        var originalAssembly = CreateExportAssembly(new ExportSpec("Original", "shared-nid"));
-        var conflictingAssembly = CreateExportAssembly(
-            new ExportSpec("Unrelated", "unrelated-nid"),
-            new ExportSpec("Conflict", "shared-nid"));
         var manager = new ModuleManager();
         Assert.Equal(
             1,
-            manager.RegisterExports(
-                ReflectionExportDiscovery.Discover(originalAssembly, Generation.Gen5)));
+            manager.RegisterExports([CreateExport("Original", "shared-nid")]));
 
         var exception = Assert.Throws<InvalidOperationException>(
             () => manager.RegisterExports(
-                ReflectionExportDiscovery.Discover(conflictingAssembly, Generation.Gen5)));
+            [
+                CreateExport("Unrelated", "unrelated-nid"),
+                CreateExport("Conflict", "shared-nid"),
+            ]));
 
         Assert.Contains("shared-nid", exception.Message, StringComparison.Ordinal);
         Assert.True(manager.TryGetExport("shared-nid", out var original));
@@ -75,9 +68,8 @@ public sealed class ModuleManagerRegistrationTests
     [Fact]
     public void RepeatedRegistrationIsRejectedWithoutMutation()
     {
-        var assembly = CreateExportAssembly(new ExportSpec("Export", "export-nid"));
         var manager = new ModuleManager();
-        var exports = ReflectionExportDiscovery.Discover(assembly, Generation.Gen5);
+        ExportedFunction[] exports = [CreateExport("Export", "export-nid")];
 
         Assert.Equal(1, manager.RegisterExports(exports));
         Assert.Throws<InvalidOperationException>(() => manager.RegisterExports(exports));
@@ -85,55 +77,6 @@ public sealed class ModuleManagerRegistrationTests
         Assert.Equal("Export", registered.Name);
     }
 
-    private static Assembly CreateExportAssembly(params ExportSpec[] exports)
-    {
-        var assemblyName = new AssemblyName($"SharpEmu.DynamicExports.{Guid.NewGuid():N}");
-        var assembly = AssemblyBuilder.DefineDynamicAssembly(assemblyName, AssemblyBuilderAccess.Run);
-        var module = assembly.DefineDynamicModule(assemblyName.Name!);
-        var type = module.DefineType(
-            "SyntheticExports",
-            TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed);
-
-        var attributeConstructor = typeof(SysAbiExportAttribute).GetConstructor(Type.EmptyTypes)!;
-        var attributeProperties = new[]
-        {
-            typeof(SysAbiExportAttribute).GetProperty(nameof(SysAbiExportAttribute.Nid))!,
-            typeof(SysAbiExportAttribute).GetProperty(nameof(SysAbiExportAttribute.ExportName))!,
-            typeof(SysAbiExportAttribute).GetProperty(nameof(SysAbiExportAttribute.LibraryName))!,
-            typeof(SysAbiExportAttribute).GetProperty(nameof(SysAbiExportAttribute.Target))!,
-        };
-
-        foreach (var export in exports)
-        {
-            var method = type.DefineMethod(
-                export.MethodName,
-                MethodAttributes.Public | MethodAttributes.Static,
-                export.ReturnType,
-                new[] { typeof(CpuContext) });
-            var il = method.GetILGenerator();
-            if (export.ReturnType == typeof(int))
-            {
-                il.Emit(OpCodes.Ldc_I4_0);
-            }
-            else
-            {
-                il.Emit(OpCodes.Ldstr, string.Empty);
-            }
-
-            il.Emit(OpCodes.Ret);
-            method.SetCustomAttribute(new CustomAttributeBuilder(
-                attributeConstructor,
-                Array.Empty<object>(),
-                attributeProperties,
-                new object[] { export.Nid, export.MethodName, "libSynthetic", Generation.Gen5 }));
-        }
-
-        _ = type.CreateType();
-        return assembly;
-    }
-
-    private sealed record ExportSpec(string MethodName, string Nid, Type? ResultType = null)
-    {
-        public Type ReturnType { get; } = ResultType ?? typeof(int);
-    }
+    private static ExportedFunction CreateExport(string name, string nid) =>
+        new("libSynthetic", nid, name, Generation.Gen5, static _ => 0);
 }

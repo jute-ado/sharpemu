@@ -50,6 +50,20 @@ public sealed class SysAbiExportGeneratorTests
     }
 
     [Fact]
+    public void GeneratedRegistryCanUseAnAssemblySpecificNamespace()
+    {
+        var (_, generated) = RoslynTestHost.RunGenerator(
+            RoslynTestHost.Compile(HandlerSource),
+            new Dictionary<string, string>
+            {
+                ["build_property.SharpEmuGeneratedNamespace"] = "TestExports.Generated",
+            });
+
+        Assert.Contains("namespace TestExports.Generated;", generated, StringComparison.Ordinal);
+        Assert.DoesNotContain("namespace SharpEmu.Generated;", generated, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RegistryContainsDeclaredDerivedAndWrappedExports()
     {
         var (_, generated) = RoslynTestHost.RunGenerator(RoslynTestHost.Compile(HandlerSource));
@@ -113,12 +127,12 @@ public sealed class SysAbiExportGeneratorTests
     }
 
     [Fact]
-    public void GenerationFilteringMatchesTheReflectionScanSemantics()
+    public void GenerationFilteringMatchesTheExportAttributeContract()
     {
         var (_, generated) = RoslynTestHost.RunGenerator(RoslynTestHost.Compile(HandlerSource));
 
-        // The Add helper reproduces ResolveExportInfo: None inherits the registration
-        // generation, and exports outside the registration generation are skipped.
+        // None inherits the registration generation, and exports outside the
+        // requested registration generation are skipped.
         Assert.Contains("attributeTarget == global::SharpEmu.HLE.Generation.None ? registrationGeneration : attributeTarget", generated, StringComparison.Ordinal);
         Assert.Contains("(target & registrationGeneration) == 0", generated, StringComparison.Ordinal);
     }

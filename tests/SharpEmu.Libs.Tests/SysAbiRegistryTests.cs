@@ -9,8 +9,8 @@ namespace SharpEmu.Libs.Tests;
 /// <summary>
 /// Content invariants over the compile-time generated export registry
 /// (SharpEmu.Generated.SysAbiExportRegistry), which is the runtime's sole registration
-/// source. Independent reflection checks live only in SharpEmu.TestSupport and cannot
-/// become a production registration path.
+/// source. A raw-attribute inventory test verifies generator coverage without providing
+/// a reflection-based registration path.
 /// </summary>
 public sealed class SysAbiRegistryTests
 {

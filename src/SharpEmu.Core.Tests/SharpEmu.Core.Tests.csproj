@@ -26,7 +26,19 @@ SPDX-License-Identifier: GPL-2.0-or-later
   <ItemGroup>
     <ProjectReference Include="..\SharpEmu.Core\SharpEmu.Core.csproj" />
     <ProjectReference Include="..\SharpEmu.CLI\SharpEmu.CLI.csproj" ReferenceOutputAssembly="false" />
-    <ProjectReference Include="..\..\tests\SharpEmu.TestSupport\SharpEmu.TestSupport.csproj" />
+    <ProjectReference Include="..\SharpEmu.SourceGenerators\SharpEmu.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- Synthetic test exports intentionally use private test NIDs and names. -->
+    <NoWarn>$(NoWarn);SHEM002;SHEM004;SHEM006</NoWarn>
+    <SharpEmuGeneratedNamespace>SharpEmu.Core.Tests.Generated</SharpEmuGeneratedNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <CompilerVisibleProperty Include="SharpEmuGeneratedNamespace" />
   </ItemGroup>
 
   <ItemGroup>
