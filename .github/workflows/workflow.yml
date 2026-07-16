@@ -172,7 +172,10 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sharpemu-win-x64-${{ needs.init.outputs.short-sha }}
-          path: ${{ env.RELEASE_DIR }}\sharpemu-${{ needs.init.outputs.version }}-win-x64.zip
+          path: |
+            ${{ env.RELEASE_DIR }}\sharpemu-${{ needs.init.outputs.version }}-win-x64.zip
+            ${{ env.RELEASE_DIR }}\sharpemu-${{ needs.init.outputs.version }}-win-x64.zip.sha256
+            ${{ env.RELEASE_DIR }}\${{ needs.init.outputs.sbom-name }}
           if-no-files-found: error
 
   build-posix:
@@ -244,15 +247,21 @@ jobs:
       - name: Create release archive
         run: |
           mkdir -p "$RELEASE_DIR"
+          archive_name="sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}.tar.gz"
           # tar keeps the executable bit, which zip would drop.
-          tar -czf "$RELEASE_DIR/sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}.tar.gz" \
-            -C "$PUBLISH_DIR" .
+          tar -czf "$RELEASE_DIR/$archive_name" -C "$PUBLISH_DIR" .
+          (
+            cd "$RELEASE_DIR"
+            sha256sum "$archive_name" > "$archive_name.sha256"
+          )
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
           name: sharpemu-${{ matrix.rid }}-${{ needs.init.outputs.short-sha }}
-          path: ${{ env.RELEASE_DIR }}/sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}.tar.gz
+          path: |
+            ${{ env.RELEASE_DIR }}/sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}.tar.gz
+            ${{ env.RELEASE_DIR }}/sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}.tar.gz.sha256
           if-no-files-found: error
 
   release:
@@ -278,6 +287,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_NAME: ${{ needs.init.outputs.release-name }}
           RELEASE_TAG: ${{ needs.init.outputs.release-tag }}
+          SBOM_NAME: ${{ needs.init.outputs.sbom-name }}
           VERSION: ${{ needs.init.outputs.version }}
         run: |
           mapfile -t assets < <(find release -type f \( \
@@ -286,10 +296,36 @@ jobs:
             -name '*.sha256' -o \
             -name '*.spdx.json' \
           \) | sort)
-          if [ "${#assets[@]}" -eq 0 ]; then
-            echo "No release assets found." >&2
+          expected=(
+            "sharpemu-${VERSION}-win-x64.zip"
+            "sharpemu-${VERSION}-win-x64.zip.sha256"
+            "sharpemu-${VERSION}-linux-x64.tar.gz"
+            "sharpemu-${VERSION}-linux-x64.tar.gz.sha256"
+            "sharpemu-${VERSION}-osx-x64.tar.gz"
+            "sharpemu-${VERSION}-osx-x64.tar.gz.sha256"
+            "${SBOM_NAME}"
+          )
+
+          if [ "${#assets[@]}" -ne "${#expected[@]}" ]; then
+            echo "Expected ${#expected[@]} release assets, found ${#assets[@]}." >&2
+            printf 'Found: %s\n' "${assets[@]}" >&2
             exit 1
           fi
+
+          for expected_name in "${expected[@]}"; do
+            mapfile -t matches < <(find release -type f -name "${expected_name}")
+            if [ "${#matches[@]}" -ne 1 ]; then
+              echo "Expected exactly one ${expected_name}, found ${#matches[@]}." >&2
+              exit 1
+            fi
+          done
+
+          while IFS= read -r checksum; do
+            (
+              cd "$(dirname "${checksum}")"
+              sha256sum --check "$(basename "${checksum}")"
+            )
+          done < <(find release -type f -name '*.sha256' | sort)
 
           notes="Automated SharpEmu v${VERSION} build for commit ${GITHUB_SHA}."
 
@@ -310,7 +346,7 @@ jobs:
           mapfile -t release_assets < <(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | sort)
           for asset in "${release_assets[@]}"; do
             case "${asset}" in
-              sharpemu-${VERSION}-*.zip|sharpemu-${VERSION}-*.tar.gz)
+              sharpemu-${VERSION}-*)
                 if ! printf '%s\n' "${keep[@]}" | grep -Fxq "${asset}"; then
                   gh release delete-asset "${RELEASE_TAG}" "${asset}" --yes
                 fi
