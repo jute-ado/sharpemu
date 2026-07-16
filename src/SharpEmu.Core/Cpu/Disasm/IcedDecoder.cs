@@ -173,8 +173,7 @@ public static class IcedDecoder
         }
 
         if (instruction.MemoryBase == Register.None &&
-            instruction.MemoryIndex == Register.None &&
-            instruction.MemoryDisplacement64 != 0)
+            instruction.MemoryIndex == Register.None)
         {
             return instruction.MemoryDisplacement64;
         }
