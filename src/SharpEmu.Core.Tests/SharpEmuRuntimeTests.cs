@@ -110,7 +110,11 @@ public sealed class SharpEmuRuntimeTests
         ],
         requestReport: true);
 
-        Assert.Equal(4, execution.ExitCode);
+        Assert.True(
+            execution.ExitCode == 4,
+            $"Synthetic trap exited with {execution.ExitCode}.{Environment.NewLine}" +
+            $"stdout:{Environment.NewLine}{execution.StandardOutput}{Environment.NewLine}" +
+            $"stderr:{Environment.NewLine}{execution.StandardError}");
         Assert.NotNull(execution.ReportJson);
         using var report = JsonDocument.Parse(execution.ReportJson);
         Assert.Equal(
@@ -261,7 +265,7 @@ public sealed class SharpEmuRuntimeTests
             StringComparison.Ordinal);
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public Task CliReportsSyntheticIllegalInstructionWithoutCrashingHostProcess()
     {
         return AssertSyntheticGuestTrapAsync(
@@ -271,7 +275,7 @@ public sealed class SharpEmuRuntimeTests
             diagnostic: "trap=ud2");
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public Task CliReportsSyntheticAccessViolationWithoutCrashingHostProcess()
     {
         return AssertSyntheticGuestTrapAsync(
@@ -284,7 +288,7 @@ public sealed class SharpEmuRuntimeTests
             access: "read@0x0000000000000000");
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public Task CliReportsSyntheticWriteAccessViolationWithoutCrashingHostProcess()
     {
         return AssertSyntheticGuestTrapAsync(
@@ -297,7 +301,7 @@ public sealed class SharpEmuRuntimeTests
             access: "write@0x0000000000000000");
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public Task CliReportsSyntheticExecuteAccessViolationAtZeroWithoutCrashingHostProcess()
     {
         return AssertSyntheticGuestTrapAsync(
@@ -310,7 +314,7 @@ public sealed class SharpEmuRuntimeTests
             access: "execute@0x0000000000000000");
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public Task CliReportsSyntheticBreakpointWithoutCrashingHostProcess()
     {
         return AssertSyntheticGuestTrapAsync(
@@ -319,7 +323,7 @@ public sealed class SharpEmuRuntimeTests
             opcode: "CC");
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public Task CliReportsSyntheticIntegerDivideByZeroWithoutCrashingHostProcess()
     {
         return AssertSyntheticGuestTrapAsync(
@@ -333,7 +337,7 @@ public sealed class SharpEmuRuntimeTests
             opcode: "F7");
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public Task CliReportsSyntheticPrivilegedInstructionWithoutCrashingHostProcess()
     {
         return AssertSyntheticGuestTrapAsync(
@@ -558,7 +562,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Contains("Usage: SharpEmu.CLI", execution.StandardOutput, StringComparison.Ordinal);
     }
 
-    [WindowsX64Fact]
+    [HostX64Fact]
     public async Task CliWritesGuestTrapDetailsToJsonExecutionReport()
     {
         var execution = await RunSyntheticExecutableInCliAsync(
@@ -714,7 +718,10 @@ public sealed class SharpEmuRuntimeTests
             Assert.Contains(diagnostic, execution.StandardOutput, StringComparison.Ordinal);
         }
         Assert.Contains("reason=CpuTrap", execution.StandardOutput, StringComparison.Ordinal);
-        Assert.Contains("CET/CFG disabled", execution.StandardError, StringComparison.Ordinal);
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Contains("CET/CFG disabled", execution.StandardError, StringComparison.Ordinal);
+        }
         Assert.DoesNotContain("FAST_FAIL", execution.StandardError, StringComparison.OrdinalIgnoreCase);
     }
 

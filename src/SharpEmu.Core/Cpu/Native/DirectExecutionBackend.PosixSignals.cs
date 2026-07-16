@@ -11,7 +11,7 @@ namespace SharpEmu.Core.Cpu.Native;
 public sealed unsafe partial class DirectExecutionBackend
 {
 	// POSIX bridge for the Windows vectored-exception-handler logic. A
-	// sigaction(SIGSEGV/SIGBUS/SIGILL) handler rebuilds the EXCEPTION_POINTERS
+	// sigaction(SIGSEGV/SIGBUS/SIGILL/SIGTRAP/SIGFPE) handler rebuilds the EXCEPTION_POINTERS
 	// view the shared handlers expect (Win64 CONTEXT register offsets) from
 	// the signal's mcontext, runs the same recovery chain the VEH path uses
 	// (unresolved-import trap sentinels, demand-paging of lazily-committed
@@ -21,6 +21,8 @@ public sealed unsafe partial class DirectExecutionBackend
 	// runtime keeps turning its own faults into managed exceptions.
 
 	private const int PosixSigIll = 4;
+	private const int PosixSigTrap = 5;
+	private const int PosixSigFpe = 8;
 	private const int PosixSigSegv = 11;
 	private static readonly int PosixSigBus = OperatingSystem.IsMacOS() ? 10 : 7;
 
@@ -91,13 +93,17 @@ public sealed unsafe partial class DirectExecutionBackend
 
 		if (!InstallPosixSignalHandler(PosixSigSegv) ||
 			!InstallPosixSignalHandler(PosixSigBus) ||
-			!InstallPosixSignalHandler(PosixSigIll))
+			!InstallPosixSignalHandler(PosixSigIll) ||
+			!InstallPosixSignalHandler(PosixSigTrap) ||
+			!InstallPosixSignalHandler(PosixSigFpe))
 		{
 			throw new InvalidOperationException("Failed to install POSIX fault signal handlers");
 		}
 
 		_posixSignalHandlersInstalled = true;
-		Console.Error.WriteLine("[LOADER][INFO] POSIX signal exception bridge installed (SIGSEGV/SIGBUS/SIGILL)");
+		Console.Error.WriteLine(
+			"[LOADER][INFO] POSIX signal exception bridge installed " +
+			"(SIGSEGV/SIGBUS/SIGILL/SIGTRAP/SIGFPE)");
 	}
 
 	/// <summary>
@@ -226,15 +232,35 @@ public sealed unsafe partial class DirectExecutionBackend
 		}
 
 		EXCEPTION_RECORD record = default;
-		record.ExceptionAddress = (void*)ReadCtxU64(contextRecord, CTX_RIP);
-		if (signal == PosixSigIll)
+		ulong instructionPointer = ReadCtxU64(contextRecord, CTX_RIP);
+		// Linux reports RIP after INT3, while Windows reports the address of
+		// the breakpoint instruction in EXCEPTION_RECORD.ExceptionAddress.
+		ulong exceptionAddress = signal == PosixSigTrap && instructionPointer > 0
+			? instructionPointer - 1
+			: instructionPointer;
+		record.ExceptionAddress = (void*)exceptionAddress;
+		bool privilegedHalt = exceptionAddress >= 0x10000 &&
+			*(byte*)exceptionAddress == 0xF4;
+		if (privilegedHalt)
 		{
-			record.ExceptionCode = 3221225501u;
+			record.ExceptionCode = WindowsFaultCodes.PrivilegedInstruction;
+		}
+		else if (signal == PosixSigIll)
+		{
+			record.ExceptionCode = WindowsFaultCodes.IllegalInstruction;
+		}
+		else if (signal == PosixSigTrap)
+		{
+			record.ExceptionCode = WindowsFaultCodes.Breakpoint;
+		}
+		else if (signal == PosixSigFpe)
+		{
+			record.ExceptionCode = WindowsFaultCodes.IntegerDivideByZero;
 		}
 		else
 		{
 			ulong faultAddress = GetPosixFaultAddress(siginfo, registers);
-			record.ExceptionCode = 3221225477u;
+			record.ExceptionCode = WindowsFaultCodes.AccessViolation;
 			record.NumberParameters = 2;
 			record.ExceptionInformation[0] = GetPosixAccessType(registers, faultAddress, ReadCtxU64(contextRecord, CTX_RIP));
 			record.ExceptionInformation[1] = faultAddress;

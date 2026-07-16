@@ -13,6 +13,8 @@ internal static class WindowsFaultCodes
     public const uint AccessViolation = 0xC0000005u;         // 3221225477
     public const uint Breakpoint = 0x80000003u;              // 2147483651
     public const uint IllegalInstruction = 0xC000001Du;      // 3221225501
+    public const uint IntegerDivideByZero = 0xC0000094u;
+    public const uint PrivilegedInstruction = 0xC0000096u;
     public const uint FastFail = 0xC0000409u;                // 3221226505
     public const uint StackOverflow = 0xC00000FDu;
     public const uint ClrManagedException = 0xE0434352u;
