@@ -608,6 +608,27 @@ public static partial class Gen5SpirvTranslator
                 case "VFmaLegacyF32":
                     result = EmitLegacyFloatFma(instruction);
                     break;
+                case "VMadF32":
+                {
+                    var multiplied = _module.AddInstruction(
+                        SpirvOp.FMul,
+                        _floatType,
+                        GetFloatSource(instruction, 0),
+                        GetFloatSource(instruction, 1));
+                    _module.AddDecoration(
+                        multiplied,
+                        SpirvDecoration.NoContraction);
+                    var added = _module.AddInstruction(
+                        SpirvOp.FAdd,
+                        _floatType,
+                        multiplied,
+                        GetFloatSource(instruction, 2));
+                    _module.AddDecoration(
+                        added,
+                        SpirvDecoration.NoContraction);
+                    result = EmitFloatResult(instruction, added);
+                    break;
+                }
                 case "VFmaF32":
                 case "VMadMkF32":
                 case "VMadAkF32":
