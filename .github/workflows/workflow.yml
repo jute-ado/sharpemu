@@ -220,7 +220,7 @@ jobs:
         if: matrix.rid == 'linux-x64'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libvulkan1 mesa-vulkan-drivers spirv-tools xvfb
+          sudo apt-get install --yes libglfw3 libvulkan1 mesa-vulkan-drivers spirv-tools xvfb
 
       - name: Validate synthetic SPIR-V
         if: matrix.rid == 'linux-x64'
