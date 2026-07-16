@@ -2381,6 +2381,47 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void RejectsReservedUnifiedBufferFormat()
+    {
+        const ulong dataAddress = 0x2000_0000;
+        var ctx = CreateContext(
+        [
+            0xE0000000u, 0x80000800u, // buffer_load_format_x v8, off, s[0:3], 0
+            SEndpgm,
+        ]);
+        Assert.IsType<FakeGuestMemory>(ctx.Memory)
+            .AddRegion(dataAddress, new byte[64]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var state = new Gen5ShaderState(
+            program,
+            [
+                unchecked((uint)dataAddress),
+                4u << 16,
+                16u,
+                30u << 12,
+            ],
+            Metadata: null);
+
+        Assert.False(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out _,
+                out var evaluationError));
+        Assert.Contains(
+            "buffer-descriptor-invalid",
+            evaluationError,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FormatBufferLoadR16FloatEmitsHalfConversion()
     {
         var ctx = CreateContext(
