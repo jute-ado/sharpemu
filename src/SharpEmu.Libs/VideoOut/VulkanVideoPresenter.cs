@@ -68,6 +68,7 @@ internal static unsafe class VulkanVideoPresenter
     // this to 16 split one frame across several 60 Hz window callbacks and
     // unnecessarily throttled the producer behind the bounded work queue.
     private const int MaxGuestWorkPerRender = 128;
+    private const ulong MaximumCachedHostBufferBytes = 128UL * 1024 * 1024;
     private const uint GuestPrimitiveRectList = 0x11;
     private const uint GuestFormatR32Uint = 0x10004;
     private const uint GuestFormatR32Sint = 0x20004;
@@ -1316,9 +1317,7 @@ internal static unsafe class VulkanVideoPresenter
             new(ReferenceEqualityComparer.Instance);
         private readonly Dictionary<DescriptorLayoutKey, DescriptorLayoutBundle>
             _descriptorLayouts = new();
-        private readonly Dictionary<HostBufferPoolKey, Stack<HostBufferAllocation>>
-            _hostBufferPool = new();
-        private readonly Dictionary<ulong, HostBufferAllocation> _hostBufferAllocations = new();
+        private readonly VulkanHostBufferPool _hostBufferPool;
         private readonly Queue<PendingGuestSubmission> _pendingGuestSubmissions = new();
 
         private readonly record struct GraphicsPipelineKey(
@@ -1330,10 +1329,6 @@ internal static unsafe class VulkanVideoPresenter
             string ResourceLayout,
             string VertexLayout);
 
-        private readonly record struct HostBufferPoolKey(
-            BufferUsageFlags Usage,
-            ulong Capacity);
-
         private readonly record struct DescriptorLayoutKey(
             ShaderStageFlags Stages,
             string Resources);
@@ -1341,11 +1336,6 @@ internal static unsafe class VulkanVideoPresenter
         private sealed record DescriptorLayoutBundle(
             DescriptorSetLayout DescriptorSetLayout,
             PipelineLayout PipelineLayout);
-
-        private sealed record HostBufferAllocation(
-            VkBuffer Buffer,
-            DeviceMemory Memory,
-            HostBufferPoolKey Key);
 
         private sealed class TranslatedDrawResources
         {
@@ -1444,6 +1434,9 @@ internal static unsafe class VulkanVideoPresenter
 
         public Presenter(uint width, uint height)
         {
+            _hostBufferPool = new VulkanHostBufferPool(
+                MaximumCachedHostBufferBytes,
+                DestroyHostBufferAllocation);
             var options = WindowOptions.DefaultVulkan;
             options.Size = new Vector2D<int>((int)DefaultWindowWidth, (int)DefaultWindowHeight);
             options.Title = VideoOutExports.GetWindowTitle();
@@ -4437,15 +4430,10 @@ internal static unsafe class VulkanVideoPresenter
         {
             var size = (ulong)Math.Max(data.Length, sizeof(uint));
             var capacity = BitOperations.RoundUpToPowerOf2(size);
-            var key = new HostBufferPoolKey(usage, capacity);
-            if (!_hostBufferPool.TryGetValue(key, out var available))
-            {
-                available = new Stack<HostBufferAllocation>();
-                _hostBufferPool.Add(key, available);
-            }
+            var key = new VulkanHostBufferPoolKey(usage, capacity);
 
-            HostBufferAllocation allocation;
-            if (available.TryPop(out var pooled))
+            VulkanHostBufferAllocation allocation;
+            if (_hostBufferPool.TryRent(key, out var pooled))
             {
                 allocation = pooled;
             }
@@ -4456,27 +4444,26 @@ internal static unsafe class VulkanVideoPresenter
                     usage,
                     MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
                     out var allocatedMemory);
-                allocation = new HostBufferAllocation(buffer, allocatedMemory, key);
-                _hostBufferAllocations.Add(buffer.Handle, allocation);
+                void* persistentMapping;
+                Check(
+                    _vk.MapMemory(_device, allocatedMemory, 0, capacity, 0, &persistentMapping),
+                    "vkMapMemory(host persistent)");
+                allocation = new VulkanHostBufferAllocation(
+                    buffer,
+                    allocatedMemory,
+                    key,
+                    (nint)persistentMapping);
+                _hostBufferPool.Register(allocation);
             }
 
             memory = allocation.Memory;
-            void* mapped;
-            Check(_vk.MapMemory(_device, memory, 0, size, 0, &mapped), "vkMapMemory(host)");
-            try
+            fixed (byte* source = data)
             {
-                fixed (byte* source = data)
-                {
-                    System.Buffer.MemoryCopy(
-                        source,
-                        mapped,
-                        checked((long)size),
-                        data.Length);
-                }
-            }
-            finally
-            {
-                _vk.UnmapMemory(_device, memory);
+                System.Buffer.MemoryCopy(
+                    source,
+                    (void*)allocation.Mapped,
+                    checked((long)allocation.Key.Capacity),
+                    data.Length);
             }
 
             return allocation.Buffer;
@@ -4489,10 +4476,8 @@ internal static unsafe class VulkanVideoPresenter
                 return;
             }
 
-            if (_hostBufferAllocations.TryGetValue(buffer.Handle, out var allocation) &&
-                allocation.Memory.Handle == memory.Handle)
+            if (_hostBufferPool.Return(buffer, memory))
             {
-                _hostBufferPool[allocation.Key].Push(allocation);
                 return;
             }
 
@@ -4501,6 +4486,13 @@ internal static unsafe class VulkanVideoPresenter
             {
                 _vk.FreeMemory(_device, memory, null);
             }
+        }
+
+        private void DestroyHostBufferAllocation(VulkanHostBufferAllocation allocation)
+        {
+            _vk.UnmapMemory(_device, allocation.Memory);
+            _vk.DestroyBuffer(_device, allocation.Buffer, null);
+            _vk.FreeMemory(_device, allocation.Memory, null);
         }
 
         private static PrimitiveTopology GetPrimitiveTopology(uint primitiveType) =>
@@ -7804,13 +7796,7 @@ internal static unsafe class VulkanVideoPresenter
                     }
                     _samplers.Clear();
                     _shaderDigests.Clear();
-                    foreach (var allocation in _hostBufferAllocations.Values)
-                    {
-                        _vk.DestroyBuffer(_device, allocation.Buffer, null);
-                        _vk.FreeMemory(_device, allocation.Memory, null);
-                    }
-                    _hostBufferAllocations.Clear();
-                    _hostBufferPool.Clear();
+                    _hostBufferPool.Dispose();
                     foreach (var guestImage in _guestImages.Values)
                     {
                         DestroyGuestImage(guestImage);
