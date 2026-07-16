@@ -120,7 +120,11 @@ public static unsafe class GuestImageWriteTracker
             return;
         }
 
-        var (start, length) = PageAlign(address, byteCount);
+        if (!TryPageAlign(address, byteCount, out var start, out var length))
+        {
+            return;
+        }
+
         lock (_gate)
         {
             _rangesByAddress.TryGetValue(address, out var range);
@@ -461,12 +465,30 @@ public static unsafe class GuestImageWriteTracker
         _rangeSnapshot = _rangesByAddress.Values.ToArray();
     }
 
-    private static (ulong Start, ulong Length) PageAlign(ulong address, ulong byteCount)
+    internal static bool TryPageAlign(
+        ulong address,
+        ulong byteCount,
+        out ulong start,
+        out ulong length)
     {
         const ulong pageMask = 0xFFFUL;
-        var start = address & ~pageMask;
-        var end = (address + byteCount + pageMask) & ~pageMask;
-        return (start, end - start);
+        start = 0;
+        length = 0;
+        if (byteCount == 0 || address > ulong.MaxValue - byteCount)
+        {
+            return false;
+        }
+
+        var end = address + byteCount;
+        if (end > ulong.MaxValue - pageMask)
+        {
+            return false;
+        }
+
+        start = address & ~pageMask;
+        var alignedEnd = (end + pageMask) & ~pageMask;
+        length = alignedEnd - start;
+        return length != 0;
     }
 
     private static bool ShouldTraceRange(ulong start, ulong end)
