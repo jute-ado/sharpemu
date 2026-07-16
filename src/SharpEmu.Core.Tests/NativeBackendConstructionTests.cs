@@ -1076,6 +1076,55 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public void NativeWorkerEventFailureClosesCreatedEventBeforeReturning()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(failedAllocation: int.MaxValue);
+        var nativeInterop = new RecordingHostNativeInterop(failedEventCreation: 2);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1),
+            nativeInterop);
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        const ulong stackAddress = 0x1000;
+        var context = new CpuContext(
+            new StackSlotMemory(stackAddress, 0x1122_3344_5566_7788),
+            Generation.Gen5)
+        {
+            [CpuRegister.Rsp] = stackAddress,
+        };
+
+        try
+        {
+            var executed = backend.TryExecute(
+                context,
+                entryPoint: 0x2000,
+                Generation.Gen5,
+                new Dictionary<ulong, string>(),
+                new Dictionary<string, ulong>(),
+                default,
+                NativeEntryReturnContract.RequireZero,
+                out var result);
+
+            Assert.False(executed);
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP, result);
+            Assert.Contains("native guest worker", backend.LastError, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(2, nativeInterop.EventCreationAttempts);
+            Assert.Equal([1], nativeInterop.SignaledEvents);
+            Assert.Equal([1], nativeInterop.ClosedEvents);
+            Assert.Equal(0, threading.NativeThreadCreationAttempts);
+        }
+        finally
+        {
+            backend.Dispose();
+        }
+    }
+
+    [Fact]
     public void FailedEntryStubHostRspSlotAllocationReleasesCodeStub()
     {
         var threading = new RecordingHostThreading([17u, 23u]);
@@ -1128,7 +1177,8 @@ public sealed class NativeBackendConstructionTests
     private sealed class StubHostPlatform(
         IHostThreading threading,
         IHostMemory? memory = null,
-        IHostSymbolResolver? symbols = null) : IHostPlatform
+        IHostSymbolResolver? symbols = null,
+        IHostNativeInterop? nativeInterop = null) : IHostPlatform
     {
         public IHostMemory Memory { get; } = memory ?? new StubHostMemory();
 
@@ -1136,9 +1186,43 @@ public sealed class NativeBackendConstructionTests
 
         public IHostSymbolResolver Symbols { get; } = symbols ?? new StubHostSymbolResolver();
 
+        public IHostNativeInterop NativeInterop { get; } = nativeInterop ?? new RecordingHostNativeInterop();
+
         public IHostAudioOutput Audio { get; } = new StubHostAudioOutput();
 
         public IHostInput Input { get; } = new StubHostInput();
+    }
+
+    private sealed class RecordingHostNativeInterop(int failedEventCreation = int.MaxValue) : IHostNativeInterop
+    {
+        private nint _nextEvent = 1;
+
+        public int EventCreationAttempts { get; private set; }
+
+        public List<nint> SignaledEvents { get; } = [];
+
+        public List<nint> ClosedEvents { get; } = [];
+
+        public nint AdaptGuestAbiCallback(nint hostTarget) => hostTarget;
+
+        public nint CreateWorkerEvent()
+        {
+            EventCreationAttempts++;
+            return EventCreationAttempts == failedEventCreation ? 0 : _nextEvent++;
+        }
+
+        public bool SignalWorkerEvent(nint handle)
+        {
+            SignaledEvents.Add(handle);
+            return true;
+        }
+
+        public bool WaitWorkerEvent(nint handle, int timeoutMilliseconds) => true;
+
+        public void CloseWorkerEvent(nint handle)
+        {
+            ClosedEvents.Add(handle);
+        }
     }
 
     private sealed class StubHostAudioOutput : IHostAudioOutput

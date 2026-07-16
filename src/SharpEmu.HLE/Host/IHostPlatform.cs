@@ -17,6 +17,8 @@ public interface IHostPlatform
 
     IHostSymbolResolver Symbols { get; }
 
+    IHostNativeInterop NativeInterop { get; }
+
     IHostAudioOutput Audio { get; }
 
     IHostInput Input { get; }

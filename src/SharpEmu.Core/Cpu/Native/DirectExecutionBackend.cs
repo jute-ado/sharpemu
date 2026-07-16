@@ -14,7 +14,6 @@ using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
 using SharpEmu.HLE;
 using SharpEmu.HLE.Host;
-using SharpEmu.HLE.Host.Posix;
 using SharpEmu.Logging;
 
 namespace SharpEmu.Core.Cpu.Native;
@@ -707,6 +706,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private readonly IHostSymbolResolver _hostSymbols;
 
+	private readonly IHostNativeInterop _hostNativeInterop;
+
 	private readonly IHostMemory _hostMemory;
 
 	private readonly IHostFaultHandling _faultHandling;
@@ -732,10 +733,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private static nint ResolveImportGatewayPtr()
 	{
 		var managedPtr = Marshal.GetFunctionPointerForDelegate(ImportGatewayDelegateInstance);
-		return OperatingSystem.IsWindows() ||
-			RuntimeInformation.ProcessArchitecture != Architecture.X64
+		return RuntimeInformation.ProcessArchitecture != Architecture.X64
 			? managedPtr
-			: PosixHostStubs.CreateWin64ToSysVThunk(managedPtr);
+			: HostPlatform.Current.NativeInterop.AdaptGuestAbiCallback(managedPtr);
 	}
 
 	private static readonly nint RawVectoredHandlerPtrManaged =
@@ -1034,6 +1034,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_hostPlatform = hostPlatform ?? HostPlatform.Current;
 		_hostThreading = _hostPlatform.Threading;
 		_hostSymbols = _hostPlatform.Symbols;
+		_hostNativeInterop = _hostPlatform.NativeInterop;
 		_hostMemory = _hostPlatform.Memory;
 		_usePosixSignalHandling = !OperatingSystem.IsWindows() && faultHandling is null;
 		_faultHandling = faultHandling ?? (OperatingSystem.IsWindows()

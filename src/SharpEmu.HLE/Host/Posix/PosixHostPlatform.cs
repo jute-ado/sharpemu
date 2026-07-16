@@ -11,6 +11,8 @@ internal sealed class PosixHostPlatform : IHostPlatform
 
     public IHostSymbolResolver Symbols { get; } = new PosixHostSymbolResolver();
 
+    public IHostNativeInterop NativeInterop { get; } = new PosixHostNativeInterop();
+
     public IHostAudioOutput Audio { get; } = new PosixHostAudio();
 
     public IHostInput Input { get; } = new PosixHostInput();
