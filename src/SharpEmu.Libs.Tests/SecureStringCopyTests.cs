@@ -1,7 +1,6 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using SharpEmu.HLE;
@@ -246,20 +245,15 @@ public sealed class SecureStringCopyTests
     }
 
     [Theory]
-    [InlineData(nameof(KernelMemoryCompatExports.StrcpyS), "5Xa2ACNECdo", "strcpy_s")]
-    [InlineData(nameof(KernelMemoryCompatExports.StrncpyS), "YNzNkJzYqEg", "strncpy_s")]
-    public void SecureCopyExportMetadataIsExact(string methodName, string nid, string exportName)
+    [InlineData("5Xa2ACNECdo", "strcpy_s")]
+    [InlineData("YNzNkJzYqEg", "strncpy_s")]
+    public void SecureCopyExportMetadataIsExact(string nid, string exportName)
     {
-        var method = typeof(KernelMemoryCompatExports).GetMethod(
-            methodName,
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal(nid, attribute.Nid);
-        Assert.Equal(exportName, attribute.ExportName);
-        Assert.Equal("libc", attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            nid,
+            exportName,
+            "libc",
+            Generation.Gen4 | Generation.Gen5);
     }
 
     private static CpuContext CreateContext(byte[] destination, string source)

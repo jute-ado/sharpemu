@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
-using System.Reflection;
 using System.Text;
 using SharpEmu.HLE;
 using SharpEmu.Libs.SaveData;
@@ -202,28 +201,20 @@ public sealed class SaveDataMutationTests
 
     [Theory]
     [InlineData(
-        nameof(SaveDataExports.SaveDataSetParam),
         "85zul--eGXs",
         "sceSaveDataSetParam")]
     [InlineData(
-        nameof(SaveDataExports.SaveDataDelete),
         "S1GkePI17zQ",
         "sceSaveDataDelete")]
     public void MutationExportMetadataIsExact(
-        string methodName,
         string nid,
         string exportName)
     {
-        var method = typeof(SaveDataExports).GetMethod(
-            methodName,
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal(nid, attribute.Nid);
-        Assert.Equal(exportName, attribute.ExportName);
-        Assert.Equal("libSceSaveData", attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            nid,
+            exportName,
+            "libSceSaveData",
+            Generation.Gen4 | Generation.Gen5);
     }
 
     private static void MountSave(CpuContext context, FakeGuestMemory memory)

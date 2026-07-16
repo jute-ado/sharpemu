@@ -1,7 +1,6 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using SharpEmu.HLE;
@@ -106,16 +105,11 @@ public sealed class WideStringSearchTests
     [Fact]
     public void WcsstrExportMetadataIsExact()
     {
-        var method = typeof(KernelMemoryCompatExports).GetMethod(
-            nameof(KernelMemoryCompatExports.Wcsstr),
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal("WDpobjImAb4", attribute.Nid);
-        Assert.Equal("wcsstr", attribute.ExportName);
-        Assert.Equal("libc", attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            "WDpobjImAb4",
+            "wcsstr",
+            "libc",
+            Generation.Gen4 | Generation.Gen5);
     }
 
     private static CpuContext CreateContext(string haystack, string needle)

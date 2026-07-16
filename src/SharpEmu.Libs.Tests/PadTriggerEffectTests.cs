@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
-using System.Reflection;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Pad;
 using Xunit;
@@ -138,16 +137,11 @@ public sealed class PadTriggerEffectTests
     [Fact]
     public void ExportMetadataIsExact()
     {
-        var method = typeof(PadExports).GetMethod(
-            nameof(PadExports.PadSetTriggerEffect),
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal("2JgFB2n9oUM", attribute.Nid);
-        Assert.Equal("scePadSetTriggerEffect", attribute.ExportName);
-        Assert.Equal("libScePad", attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            "2JgFB2n9oUM",
+            "scePadSetTriggerEffect",
+            "libScePad",
+            Generation.Gen4 | Generation.Gen5);
     }
 
     private static byte[] CreateCommand(uint mode)

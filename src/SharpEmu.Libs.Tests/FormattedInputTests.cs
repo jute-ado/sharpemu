@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
-using System.Reflection;
 using System.Text;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
@@ -204,16 +203,11 @@ public sealed class FormattedInputTests
     [Fact]
     public void SscanfExportMetadataIsExact()
     {
-        var method = typeof(KernelMemoryCompatExports).GetMethod(
-            nameof(KernelMemoryCompatExports.Sscanf),
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal("1Pk0qZQGeWo", attribute.Nid);
-        Assert.Equal("sscanf", attribute.ExportName);
-        Assert.Equal("libc", attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            "1Pk0qZQGeWo",
+            "sscanf",
+            "libc",
+            Generation.Gen4 | Generation.Gen5);
     }
 
     private static CpuContext CreateContext(string input, string format)

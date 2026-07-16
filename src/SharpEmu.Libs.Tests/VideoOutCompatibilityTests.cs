@@ -1,7 +1,6 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using System.Reflection;
 using SharpEmu.HLE;
 using SharpEmu.Libs.VideoOut;
 using Xunit;
@@ -53,16 +52,11 @@ public sealed class VideoOutCompatibilityTests
     [Fact]
     public void ConfigureOutputExportMetadataIsExact()
     {
-        var method = typeof(VideoOutExports).GetMethod(
-            nameof(VideoOutExports.VideoOutConfigureOutput),
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal("w0hLuNarQxY", attribute.Nid);
-        Assert.Equal("sceVideoOutConfigureOutput", attribute.ExportName);
-        Assert.Equal("libSceVideoOut", attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            "w0hLuNarQxY",
+            "sceVideoOutConfigureOutput",
+            "libSceVideoOut",
+            Generation.Gen4 | Generation.Gen5);
     }
 
     [Theory]
@@ -81,15 +75,10 @@ public sealed class VideoOutCompatibilityTests
     [Fact]
     public void OutputSupportExportMetadataIsExact()
     {
-        var method = typeof(VideoOutExports).GetMethod(
-            nameof(VideoOutExports.VideoOutIsOutputSupported),
-            BindingFlags.Public | BindingFlags.Static);
-        var attribute = method?.GetCustomAttribute<SysAbiExportAttribute>();
-
-        Assert.NotNull(attribute);
-        Assert.Equal("Nv8c-Kb+DUM", attribute.Nid);
-        Assert.Equal("sceVideoOutIsOutputSupported", attribute.ExportName);
-        Assert.Equal("libSceVideoOut", attribute.LibraryName);
-        Assert.Equal(Generation.Gen4 | Generation.Gen5, attribute.Target);
+        ExportMetadataAssert.Exact(
+            "Nv8c-Kb+DUM",
+            "sceVideoOutIsOutputSupported",
+            "libSceVideoOut",
+            Generation.Gen4 | Generation.Gen5);
     }
 }
