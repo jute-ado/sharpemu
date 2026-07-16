@@ -22,4 +22,6 @@ public enum CpuExitReason
     UnhandledSyscall = 7,
 
     NativeBackendUnavailable = 8,
+
+    MemoryFault = 9,
 }

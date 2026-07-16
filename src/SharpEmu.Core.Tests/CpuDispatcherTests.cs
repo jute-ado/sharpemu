@@ -21,7 +21,7 @@ public sealed class CpuDispatcherTests
         CpuExitReason.NativeBackendUnavailable)]
     [InlineData(
         OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
-        CpuExitReason.UnhandledException)]
+        CpuExitReason.MemoryFault)]
     public void NativeBackendFailurePreservesSpecificResult(
         OrbisGen2Result backendResult,
         CpuExitReason expectedReason)
@@ -48,6 +48,90 @@ public sealed class CpuDispatcherTests
         {
             Assert.Null(dispatcher.LastNotImplementedInfo);
         }
+    }
+
+    [Fact]
+    public void InfrastructureMappingFailureReportsExactStage()
+    {
+        var stackBaseAddress = OperatingSystem.IsWindows()
+            ? 0x7FFF_F000_0000UL
+            : 0x6FFF_F000_0000UL;
+        const ulong stackStride = 0x0100_0000UL;
+        var memory = new VirtualMemory();
+        for (var index = 0; index < 32; index++)
+        {
+            memory.Map(
+                stackBaseAddress - ((ulong)index * stackStride),
+                0x1000,
+                fileOffset: 0,
+                ReadOnlySpan<byte>.Empty,
+                ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        }
+
+        using var dispatcher = new CpuDispatcher(
+            memory,
+            new ModuleManager(),
+            new SuccessfulNativeBackend());
+
+        var result = dispatcher.DispatchModuleInitializer(
+            0x0000_0008_0000_0000,
+            Generation.Gen5,
+            moduleName: "mapping-failure-test");
+
+        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+        Assert.Equal(CpuExitReason.MemoryFault, dispatcher.LastSessionSummary.Reason);
+        Assert.Contains("stage=map-stack", dispatcher.LastMilestoneLog);
+    }
+
+    [Fact]
+    public void TlsFallbackSearchAvoidsReservedStubBands()
+    {
+        var tlsBaseAddress = OperatingSystem.IsWindows()
+            ? 0x7FFE_0000_0000UL
+            : 0x6FFE_0000_0000UL;
+        var tlsPrefixSize = OperatingSystem.IsWindows()
+            ? 0x0000_1000UL
+            : 0x0001_0000UL;
+        const ulong tlsStride = 0x0100_0000UL;
+        var memory = new VirtualMemory();
+
+        // Occupy both directions used by the old 32-candidate search as well
+        // as the first 32 candidates in the new upward band. The canonical
+        // search must continue upward instead of falling into stub addresses.
+        for (var index = 0; index < 32; index++)
+        {
+            var upwardBase = tlsBaseAddress + ((ulong)index * tlsStride);
+            memory.Map(
+                upwardBase - tlsPrefixSize,
+                0x1000,
+                fileOffset: 0,
+                ReadOnlySpan<byte>.Empty,
+                ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+
+            if (index != 0)
+            {
+                var downwardBase = tlsBaseAddress - ((ulong)index * tlsStride);
+                memory.Map(
+                    downwardBase - tlsPrefixSize,
+                    0x1000,
+                    fileOffset: 0,
+                    ReadOnlySpan<byte>.Empty,
+                    ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+            }
+        }
+
+        using var dispatcher = new CpuDispatcher(
+            memory,
+            new ModuleManager(),
+            new SuccessfulNativeBackend());
+
+        var result = dispatcher.DispatchModuleInitializer(
+            0x0000_0008_0000_0000,
+            Generation.Gen5,
+            moduleName: "tls-fallback-layout-test");
+
+        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, result);
+        Assert.Equal(CpuExitReason.ReturnedToHost, dispatcher.LastSessionSummary.Reason);
     }
 
     [Fact]

@@ -170,8 +170,17 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         OrbisGen2Result FailEarly(
             OrbisGen2Result result,
             CpuExitReason reason = CpuExitReason.UnhandledException,
-            ulong? lastGuestRip = null)
+            ulong? lastGuestRip = null,
+            string? stage = null)
         {
+            if (!string.IsNullOrWhiteSpace(stage))
+            {
+                var failureMilestone = $"Infrastructure failure: stage={stage}, result={result}";
+                LastMilestoneLog = string.IsNullOrWhiteSpace(LastMilestoneLog)
+                    ? failureMilestone
+                    : string.Concat(LastMilestoneLog, Environment.NewLine, failureMilestone);
+            }
+
             LastSessionSummary = new CpuSessionSummary(
                 result,
                 reason,
@@ -187,13 +196,19 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         var stackBase = TryMapStackRegion();
         if (stackBase == 0 || !TryZeroRegion(stackBase, StackSize))
         {
-            return FailEarly(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            return FailEarly(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                CpuExitReason.MemoryFault,
+                stage: stackBase == 0 ? "map-stack" : "zero-stack");
         }
 
         var tlsBase = TryMapTlsRegion();
         if (tlsBase == 0 || !TryZeroRegion(tlsBase - TlsPrefixSize, TlsSize + TlsPrefixSize))
         {
-            return FailEarly(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            return FailEarly(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                CpuExitReason.MemoryFault,
+                stage: tlsBase == 0 ? "map-tls" : "zero-tls");
         }
 
         var trackedMemory = new TrackedCpuMemory(_virtualMemory);
@@ -208,23 +223,35 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         var returnToHostStubAddress = TryMapReturnToHostStubRegion();
         if (returnToHostStubAddress == 0)
         {
-            return FailEarly(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            return FailEarly(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                CpuExitReason.MemoryFault,
+                stage: "map-return-to-host-stub");
         }
 
         context[CpuRegister.Rsp] = stackBase + StackSize - sizeof(ulong);
         if (!context.TryWriteUInt64(context[CpuRegister.Rsp], returnToHostStubAddress))
         {
-            return FailEarly(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            return FailEarly(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                CpuExitReason.MemoryFault,
+                stage: "write-return-to-host-sentinel");
         }
 
         if (!InitializeGuestFrameChainSentinel(context))
         {
-            return FailEarly(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            return FailEarly(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                CpuExitReason.MemoryFault,
+                stage: "initialize-frame-chain");
         }
 
         if (!InitializeTls(context, tlsBase))
         {
-            return FailEarly(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            return FailEarly(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                CpuExitReason.MemoryFault,
+                stage: "initialize-tls");
         }
 
         var effectiveImportStubs = importStubs is null
@@ -236,12 +263,18 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
             var programExitHandlerStubAddress = TryMapDynlibFallbackStubRegion();
             if (programExitHandlerStubAddress == 0)
             {
-                return FailEarly(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                return FailEarly(
+                    OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                    CpuExitReason.MemoryFault,
+                    stage: "map-dynlib-fallback-stub");
             }
 
             if (!InitializeProcessEntryFrame(context, processImageName, programExitHandlerStubAddress))
             {
-                return FailEarly(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                return FailEarly(
+                    OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                    CpuExitReason.MemoryFault,
+                    stage: "initialize-process-entry-frame");
             }
 
             entryParamsConfigured = true;
@@ -250,13 +283,19 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
             {
                 if (!TryInstallBootstrapPayload(context, effectiveImportStubs))
                 {
-                    return FailEarly(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                    return FailEarly(
+                        OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                        CpuExitReason.MemoryFault,
+                        stage: "install-bootstrap-payload");
                 }
             }
         }
         else if (!InitializeModuleInitializerFrame(context))
         {
-            return FailEarly(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            return FailEarly(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                CpuExitReason.MemoryFault,
+                stage: "initialize-module-entry-frame");
         }
 
         var entryFrameDiagnostic = BuildEntryFrameDiagnostic(
@@ -341,6 +380,8 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
             OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP => CpuExitReason.CpuTrap,
             OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_IMPLEMENTED =>
                 CpuExitReason.NativeBackendUnavailable,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT =>
+                CpuExitReason.MemoryFault,
             _ => CpuExitReason.UnhandledException,
         };
         if (nativeResult == OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP)
@@ -404,9 +445,14 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         }
 
         const ulong tlsStride = 0x0100_0000UL;
-        for (var i = 0; i < 32; i++)
+        // Search upward into the multi-gigabyte gap below the stack band.
+        // Searching downward used to enter the bootstrap/dynlib stub bands
+        // after sixteen collisions, so unrelated host reservations could make
+        // TLS consume a later infrastructure slot and turn process startup
+        // into an address-layout lottery.
+        for (var i = 0; i < 256; i++)
         {
-            var candidateBase = TlsBaseAddress - ((ulong)i * tlsStride);
+            var candidateBase = TlsBaseAddress + ((ulong)i * tlsStride);
             var mappedBase = candidateBase - TlsPrefixSize;
             try
             {

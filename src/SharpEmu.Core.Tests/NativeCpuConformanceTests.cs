@@ -669,7 +669,8 @@ public sealed class NativeCpuConformanceTests
             execution.ExitCode == 0,
             $"Conformance case '{name}' exited with {execution.ExitCode}.{Environment.NewLine}" +
             $"stdout:{Environment.NewLine}{execution.StandardOutput}{Environment.NewLine}" +
-            $"stderr:{Environment.NewLine}{execution.StandardError}");
+            $"stderr:{Environment.NewLine}{execution.StandardError}{Environment.NewLine}" +
+            $"report:{Environment.NewLine}{execution.ReportJson ?? "(missing)"}");
         Assert.NotNull(execution.ReportJson);
         using var report = JsonDocument.Parse(execution.ReportJson);
         Assert.Equal(
