@@ -18,7 +18,7 @@ public sealed class PosixHostMemoryQueryTests
             return;
         }
 
-        const ulong pageSize = 0x1000;
+        var pageSize = checked((ulong)Environment.SystemPageSize);
         var memory = new PosixHostMemory();
         var address = memory.Allocate(0, 3 * pageSize, HostPageProtection.ReadWrite);
         Assert.NotEqual(0UL, address);

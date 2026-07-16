@@ -29,7 +29,7 @@ public static unsafe class HostMemory
     public const uint PAGE_EXECUTE_READ = 0x20;
     public const uint PAGE_EXECUTE_READWRITE = 0x40;
 
-    private const ulong PageSize = 0x1000;
+    private static readonly ulong PageSize = checked((ulong)Environment.SystemPageSize);
 
     /// <summary>Win32 MEMORY_BASIC_INFORMATION (64-bit) layout.</summary>
     public struct BasicInfo

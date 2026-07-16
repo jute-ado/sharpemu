@@ -9,40 +9,24 @@ namespace SharpEmu.Libs.Tests;
 
 public sealed unsafe class GuestImageWriteTrackerTests
 {
-    [Theory]
-    [InlineData(0x1000UL, 0x1000UL, 0x1000UL, 0x1000UL)]
-    [InlineData(0x1234UL, 1UL, 0x1000UL, 0x1000UL)]
-    [InlineData(0x1FFFUL, 2UL, 0x1000UL, 0x2000UL)]
-    public void PageAlignmentCoversTheCompleteRequestedRange(
-        ulong address,
-        ulong byteCount,
-        ulong expectedStart,
-        ulong expectedLength)
+    [Fact]
+    public void PageAlignmentCoversTheCompleteRequestedRange()
     {
-        Assert.True(GuestImageWriteTracker.TryPageAlign(
-            address,
-            byteCount,
-            out var start,
-            out var length));
-        Assert.Equal(expectedStart, start);
-        Assert.Equal(expectedLength, length);
+        var pageSize = checked((ulong)Environment.SystemPageSize);
+
+        AssertAlignment(2 * pageSize, pageSize, 2 * pageSize, pageSize);
+        AssertAlignment(2 * pageSize + 0x234, 1, 2 * pageSize, pageSize);
+        AssertAlignment(3 * pageSize - 1, 2, 2 * pageSize, 2 * pageSize);
     }
 
-    [Theory]
-    [InlineData(0x1000UL, 0UL)]
-    [InlineData(ulong.MaxValue - 7, 16UL)]
-    [InlineData(ulong.MaxValue - 0x7FF, 1UL)]
-    public void PageAlignmentRejectsEmptyOrOverflowingRanges(
-        ulong address,
-        ulong byteCount)
+    [Fact]
+    public void PageAlignmentRejectsEmptyOrOverflowingRanges()
     {
-        Assert.False(GuestImageWriteTracker.TryPageAlign(
-            address,
-            byteCount,
-            out var start,
-            out var length));
-        Assert.Equal(0UL, start);
-        Assert.Equal(0UL, length);
+        var pageSize = checked((ulong)Environment.SystemPageSize);
+
+        AssertInvalidAlignment(pageSize, 0);
+        AssertInvalidAlignment(ulong.MaxValue - 7, 16);
+        AssertInvalidAlignment(ulong.MaxValue - (pageSize / 2), 1);
     }
 
     [Fact]
@@ -53,7 +37,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
             return;
         }
 
-        const nuint pageSize = 0x1000;
+        var pageSize = checked((nuint)Environment.SystemPageSize);
         var memory = NativeMemory.AlignedAlloc(pageSize, pageSize);
         Assert.NotEqual((nint)0, (nint)memory);
         var address = (ulong)memory + 32;
@@ -86,7 +70,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
             return;
         }
 
-        const nuint pageSize = 0x1000;
+        var pageSize = checked((nuint)Environment.SystemPageSize);
         var memory = NativeMemory.AlignedAlloc(pageSize, pageSize);
         Assert.NotEqual((nint)0, (nint)memory);
         var first = (ulong)memory + 16;
@@ -106,5 +90,31 @@ public sealed unsafe class GuestImageWriteTrackerTests
             GuestImageWriteTracker.Untrack(second);
             NativeMemory.AlignedFree(memory);
         }
+    }
+
+    private static void AssertAlignment(
+        ulong address,
+        ulong byteCount,
+        ulong expectedStart,
+        ulong expectedLength)
+    {
+        Assert.True(GuestImageWriteTracker.TryPageAlign(
+            address,
+            byteCount,
+            out var start,
+            out var length));
+        Assert.Equal(expectedStart, start);
+        Assert.Equal(expectedLength, length);
+    }
+
+    private static void AssertInvalidAlignment(ulong address, ulong byteCount)
+    {
+        Assert.False(GuestImageWriteTracker.TryPageAlign(
+            address,
+            byteCount,
+            out var start,
+            out var length));
+        Assert.Equal(0UL, start);
+        Assert.Equal(0UL, length);
     }
 }

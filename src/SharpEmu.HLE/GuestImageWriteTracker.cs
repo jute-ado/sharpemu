@@ -21,6 +21,8 @@ public static unsafe class GuestImageWriteTracker
     private const int ProtRead = 0x1;
     private const int ProtWrite = 0x2;
     private const int ClockMonotonicRaw = 4;
+    private static readonly ulong PageSize = checked((ulong)Environment.SystemPageSize);
+    private static readonly ulong PageMask = PageSize - 1;
 
     private sealed class TrackedRange
     {
@@ -90,21 +92,28 @@ public static unsafe class GuestImageWriteTracker
             return;
         }
 
-        var scratch = NativeMemory.AllocZeroed(4096);
+        var nativePageSize = checked((nuint)PageSize);
+        var scratch = NativeMemory.AlignedAlloc(nativePageSize, nativePageSize);
+        if (scratch is null)
+        {
+            return;
+        }
+
         try
         {
+            NativeMemory.Clear(scratch, nativePageSize);
             // Warm the timestamp P/Invoke used by the signal-safe scalar
             // capture path before a real protected-page write reaches it.
             _ = GetMonotonicNanoseconds();
             var address = (ulong)scratch;
-            Track(address, 4096);
+            Track(address, PageSize);
             _ = TryHandleWriteFault(address);
             _ = ConsumeDirty(address);
             Untrack(address);
         }
         finally
         {
-            NativeMemory.Free(scratch);
+            NativeMemory.AlignedFree(scratch);
         }
     }
 
@@ -274,7 +283,7 @@ public static unsafe class GuestImageWriteTracker
         while (candidate < end)
         {
             _ = TryHandleWriteFault(candidate);
-            var nextPage = (candidate & ~0xFFFUL) + 0x1000UL;
+            var nextPage = (candidate & ~PageMask) + PageSize;
             if (nextPage <= candidate)
             {
                 break;
@@ -404,7 +413,7 @@ public static unsafe class GuestImageWriteTracker
                     Interlocked.Increment(ref _lifetimeTraceSequence);
                 range.FirstCpuWriteTimestampNanoseconds = GetMonotonicNanoseconds();
                 range.FirstCpuWriteAddress = faultAddress;
-                range.FirstCpuWritePage = faultAddress & ~0xFFFUL;
+                range.FirstCpuWritePage = faultAddress & ~PageMask;
                 Volatile.Write(ref range.PendingFirstCpuWrite, 1);
                 Volatile.Write(ref range.FirstCpuWriteSeen, 2);
             }
@@ -471,7 +480,6 @@ public static unsafe class GuestImageWriteTracker
         out ulong start,
         out ulong length)
     {
-        const ulong pageMask = 0xFFFUL;
         start = 0;
         length = 0;
         if (byteCount == 0 || address > ulong.MaxValue - byteCount)
@@ -480,13 +488,13 @@ public static unsafe class GuestImageWriteTracker
         }
 
         var end = address + byteCount;
-        if (end > ulong.MaxValue - pageMask)
+        if (end > ulong.MaxValue - PageMask)
         {
             return false;
         }
 
-        start = address & ~pageMask;
-        var alignedEnd = (end + pageMask) & ~pageMask;
+        start = address & ~PageMask;
+        var alignedEnd = (end + PageMask) & ~PageMask;
         length = alignedEnd - start;
         return length != 0;
     }

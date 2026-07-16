@@ -28,7 +28,7 @@ internal sealed unsafe class PosixHostMemory : IHostMemory
     private const uint PAGE_EXECUTE_READ = 0x20;
     private const uint PAGE_EXECUTE_READWRITE = 0x40;
 
-    private const ulong PageSize = 0x1000;
+    private static readonly ulong PageSize = checked((ulong)Environment.SystemPageSize);
 
     private struct BasicInfo
     {
