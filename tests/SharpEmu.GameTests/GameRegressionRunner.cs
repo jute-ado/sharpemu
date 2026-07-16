@@ -110,7 +110,11 @@ internal static class GameRegressionRunner
 
         var reportJson = await File.ReadAllTextAsync(reportPath);
         using var report = JsonDocument.Parse(reportJson);
-        ValidateReport(testCase, report.RootElement, reportPath);
+        ValidateReport(
+            testCase,
+            report.RootElement,
+            reportPath,
+            standardError);
         return new GameRegressionExecution(
             testCase.Name,
             testCase.Mode,
@@ -166,12 +170,19 @@ internal static class GameRegressionRunner
             throw new InvalidDataException(
                 $"Game regression '{testCase.Name}' requires allowedResults.");
         }
+        if (testCase.Expectations.MinimumObservedImportDispatches is < 0)
+        {
+            throw new InvalidDataException(
+                $"Game regression '{testCase.Name}' has a negative " +
+                "minimumObservedImportDispatches.");
+        }
     }
 
     internal static void ValidateReport(
         GameRegressionCase testCase,
         JsonElement report,
-        string reportPath)
+        string reportPath,
+        string standardError = "")
     {
         var failures = new StringBuilder();
         var resultName = GetRequiredString(
@@ -260,6 +271,20 @@ internal static class GameRegressionRunner
             }
         }
 
+        if (testCase.Expectations.MinimumObservedImportDispatches is
+            { } minimumImportDispatches)
+        {
+            var observedImportDispatches =
+                GetMaximumObservedImportDispatch(standardError);
+            if (observedImportDispatches < minimumImportDispatches)
+            {
+                failures.AppendLine(
+                    $"maximum observed import dispatch " +
+                    $"{observedImportDispatches} was below " +
+                    $"{minimumImportDispatches}.");
+            }
+        }
+
         if (failures.Length != 0)
         {
             throw new InvalidOperationException(
@@ -283,6 +308,43 @@ internal static class GameRegressionRunner
         }
 
         return false;
+    }
+
+    internal static long GetMaximumObservedImportDispatch(string output)
+    {
+        const string marker = "Import#";
+        var maximum = 0L;
+        var searchOffset = 0;
+        while (searchOffset < output.Length)
+        {
+            var relativeMarker = output.AsSpan(searchOffset)
+                .IndexOf(marker, StringComparison.Ordinal);
+            if (relativeMarker < 0)
+            {
+                break;
+            }
+
+            var digitStart = searchOffset + relativeMarker + marker.Length;
+            var digitEnd = digitStart;
+            while (digitEnd < output.Length &&
+                char.IsAsciiDigit(output[digitEnd]))
+            {
+                digitEnd++;
+            }
+
+            if (digitEnd > digitStart &&
+                long.TryParse(
+                    output.AsSpan(digitStart, digitEnd - digitStart),
+                    out var dispatch) &&
+                dispatch > maximum)
+            {
+                maximum = dispatch;
+            }
+
+            searchOffset = Math.Max(digitEnd, digitStart + 1);
+        }
+
+        return maximum;
     }
 
     private static string ResolvePath(string baseDirectory, string path) =>
