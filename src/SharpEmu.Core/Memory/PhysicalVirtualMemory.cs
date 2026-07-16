@@ -9,7 +9,7 @@ using SharpEmu.Logging;
 
 namespace SharpEmu.Core.Memory;
 
-public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryAllocator, IGuestStackMemory, IGuestVirtualMemoryQuery, IGuestAddressSpace, IDisposable
+public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryAllocator, IGuestStackMemory, IGuestVirtualMemoryQuery, IGuestAddressSpace, IGuestImageMemory, IDisposable
 {
     private static readonly SharpEmuLogger Log = SharpEmuLog.For("VMEM");
 
@@ -18,6 +18,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     private readonly object _allocationSearchHintGate = new();
     private readonly List<MemoryRegion> _regions = new();
     private readonly List<StackRange> _stackRanges = new();
+    private readonly GuestImageRegionRegistry _imageRegions = new();
     private readonly Dictionary<(ulong DesiredAddress, ulong Alignment, bool Executable), ulong> _allocationSearchHints = new();
     private readonly Dictionary<ulong, ProgramHeaderFlags> _pageProtections = new();
     private readonly GuestRangeAllocator _guestAllocator = new();
@@ -682,6 +683,7 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 }
                 _regions.Clear();
                 _stackRanges.Clear();
+                _imageRegions.Clear();
                 _pageProtections.Clear();
                 lock (_allocationSearchHintGate)
                 {
@@ -982,6 +984,36 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 ProgramHeaderFlags.Read | ProgramHeaderFlags.Write | ProgramHeaderFlags.Execute,
             _ => ProgramHeaderFlags.None,
         };
+    }
+
+    public void RegisterImage(IReadOnlyList<VirtualMemoryRegion> regions)
+    {
+        ThrowIfDisposed();
+        _gate.EnterWriteLock();
+        try
+        {
+            _imageRegions.Register(regions);
+        }
+        finally
+        {
+            _gate.ExitWriteLock();
+        }
+    }
+
+    public bool TryGetImageRegions(
+        ulong address,
+        out IReadOnlyList<VirtualMemoryRegion> regions)
+    {
+        ThrowIfDisposed();
+        _gate.EnterReadLock();
+        try
+        {
+            return _imageRegions.TryGet(address, out regions);
+        }
+        finally
+        {
+            _gate.ExitReadLock();
+        }
     }
 
     public bool TryQueryMemoryRegion(

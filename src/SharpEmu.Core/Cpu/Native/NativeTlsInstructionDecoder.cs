@@ -28,6 +28,30 @@ internal static class NativeTlsInstructionDecoder
 {
     private const int MaxInstructionLength = 15;
 
+    public static int GetInstructionLength(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.IsEmpty)
+        {
+            return 0;
+        }
+
+        var decodeBytes = bytes[..Math.Min(bytes.Length, MaxInstructionLength)].ToArray();
+        try
+        {
+            var decoder = Decoder.Create(64, new ByteArrayCodeReader(decodeBytes));
+            decoder.Decode(out var instruction);
+            return instruction.Code == Code.INVALID ||
+                instruction.Length <= 0 ||
+                instruction.Length > decodeBytes.Length
+                    ? 0
+                    : instruction.Length;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
     public static bool TryDecode(
         ReadOnlySpan<byte> bytes,
         out NativeTlsInstruction tlsInstruction)
