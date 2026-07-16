@@ -31,6 +31,11 @@ internal readonly record struct GuestImageWriteCaptureRequest(
         int matchingWrite) =>
         Matches(address, width, height) && matchingWrite == Write;
 
+    public override string ToString() =>
+        Address != 0
+            ? FormattableString.Invariant($"0x{Address:X}@{Write}")
+            : FormattableString.Invariant($"{Width}x{Height}@{Write}");
+
     public static bool TryParse(
         string? value,
         out GuestImageWriteCaptureRequest request)

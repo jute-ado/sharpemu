@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using SharpEmu.Libs.VideoOut;
 
 namespace SharpEmu.GameTests;
 
@@ -75,12 +76,15 @@ internal static class GameRegressionRunner
         startInfo.ArgumentList.Add(executablePath);
         startInfo.Environment.Remove("SHARPEMU_MITIGATED_CHILD");
         startInfo.Environment.Remove("SHARPEMU_DISABLE_MITIGATION_RELAUNCH");
-        ConfigureVideoOutEnvironment(
+        ConfigureCaptureEnvironment(
             startInfo,
             testCase.Expectations,
             Path.Combine(
                 artifactDirectory,
-                artifactStem + ".presented"));
+                artifactStem + ".presented"),
+            Path.Combine(
+                artifactDirectory,
+                artifactStem + ".guest-write"));
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException(
@@ -130,21 +134,28 @@ internal static class GameRegressionRunner
             standardErrorPath);
     }
 
-    internal static void ConfigureVideoOutEnvironment(
+    internal static void ConfigureCaptureEnvironment(
         ProcessStartInfo startInfo,
         GameRegressionExpectations expectations,
-        string presentedImageArtifactDirectory)
+        string presentedImageArtifactDirectory,
+        string guestImageWriteArtifactDirectory)
     {
         ArgumentNullException.ThrowIfNull(startInfo);
         ArgumentNullException.ThrowIfNull(expectations);
         ArgumentException.ThrowIfNullOrWhiteSpace(
             presentedImageArtifactDirectory);
+        ArgumentException.ThrowIfNullOrWhiteSpace(
+            guestImageWriteArtifactDirectory);
         startInfo.Environment.Remove("SHARPEMU_DUMP_VIDEOOUT");
         startInfo.Environment.Remove("SHARPEMU_LOG_VIDEOOUT");
+        startInfo.Environment.Remove("SHARPEMU_TRACE_GUEST_IMAGES");
+        startInfo.Environment.Remove("SHARPEMU_TRACE_GUEST_WRITES");
         startInfo.Environment.Remove(
             "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME");
         startInfo.Environment.Remove(
             "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR");
+        startInfo.Environment.Remove("SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE");
+        startInfo.Environment.Remove("SHARPEMU_GUEST_IMAGE_DUMP_DIR");
 
         if (expectations.RequiredVideoOutFrameFingerprints.Length != 0)
         {
@@ -160,6 +171,17 @@ internal static class GameRegressionRunner
             startInfo.Environment[
                 "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR"] =
                 Path.GetFullPath(presentedImageArtifactDirectory);
+        }
+        if (expectations.RequiredGuestImageWrite is { } guestImageWrite &&
+            GuestImageWriteCaptureRequest.TryParse(
+                guestImageWrite.Selector,
+                out var captureRequest) &&
+            captureRequest.IsEnabled)
+        {
+            startInfo.Environment["SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE"] =
+                captureRequest.ToString();
+            startInfo.Environment["SHARPEMU_GUEST_IMAGE_DUMP_DIR"] =
+                Path.GetFullPath(guestImageWriteArtifactDirectory);
         }
     }
 
@@ -277,6 +299,27 @@ internal static class GameRegressionRunner
                 throw new InvalidDataException(
                     $"Game regression '{testCase.Name}' has an invalid " +
                     "requiredPresentedGuestImage fingerprint.");
+            }
+        }
+        if (testCase.Expectations.RequiredGuestImageWrite is
+            { } guestImageWrite)
+        {
+            if (!GuestImageWriteCaptureRequest.TryParse(
+                    guestImageWrite.Selector,
+                    out var captureRequest) ||
+                !captureRequest.IsEnabled)
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' has an invalid " +
+                    "requiredGuestImageWrite selector.");
+            }
+            if (!TryNormalizeFrameFingerprint(
+                    guestImageWrite.Fingerprint,
+                    out _))
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' has an invalid " +
+                    "requiredGuestImageWrite fingerprint.");
             }
         }
     }
@@ -451,6 +494,28 @@ internal static class GameRegressionRunner
             {
                 failures.AppendLine(
                     $"required presented guest image frame {presentedImage.Frame} " +
+                    $"fingerprint was not observed: 0x{fingerprint}.");
+            }
+        }
+
+        if (testCase.Expectations.RequiredGuestImageWrite is
+            { } guestImageWrite)
+        {
+            _ = GuestImageWriteCaptureRequest.TryParse(
+                guestImageWrite.Selector,
+                out var captureRequest);
+            _ = TryNormalizeFrameFingerprint(
+                guestImageWrite.Fingerprint,
+                out var fingerprint);
+            var marker =
+                $"vk.guest_image_write_capture selector={captureRequest} " +
+                $"fingerprint=0x{fingerprint}";
+            if (!capturedOutput.Contains(
+                    marker,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                failures.AppendLine(
+                    $"required guest image write {captureRequest} " +
                     $"fingerprint was not observed: 0x{fingerprint}.");
             }
         }

@@ -83,11 +83,24 @@ internal sealed class GameRegressionExpectations
         get;
         init;
     }
+
+    public GuestImageWriteExpectation? RequiredGuestImageWrite
+    {
+        get;
+        init;
+    }
 }
 
 internal sealed class PresentedGuestImageExpectation
 {
     public long Frame { get; init; }
+
+    public string Fingerprint { get; init; } = string.Empty;
+}
+
+internal sealed class GuestImageWriteExpectation
+{
+    public string Selector { get; init; } = string.Empty;
 
     public string Fingerprint { get; init; } = string.Empty;
 }

@@ -35,6 +35,14 @@ in an isolated emulator process. Presented-frame checks also write ignored BMP
 and metadata files beside the JSON report so the exact tested output can be
 inspected without rerunning the game.
 
+`requiredGuestImageWrite` turns an intermediate capture into a repeatable local
+regression. Its `selector` uses the same canonical address-or-size syntax as the
+presenter (for example, `1280x720@105`), while `fingerprint` pins the exact GPU
+output at that write. The harness configures capture variables itself, requires
+a dedicated capture marker, and stores ignored RGBA/BMP artifacts per case.
+Keep one synchronous intermediate capture per case so failures identify one
+pipeline milestone precisely.
+
 ## Intermediate GPU captures
 
 When a presented frame is wrong but the game is rendering, capture one
