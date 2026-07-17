@@ -842,6 +842,110 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
+    public void ExecutionCanRequireIntermediateGuestImageContent()
+    {
+        var testCase = CreateExecutionCase(
+            requiredGuestImageWrite: new()
+            {
+                Selector = "1280x720@105",
+                MinimumNonBlackPixels = 1,
+            });
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        GameRegressionRunner.ValidateReport(
+            testCase,
+            report.RootElement,
+            "synthetic-report.json",
+            "vk.guest_image_write_capture selector=1280x720@105 " +
+            "fingerprint=0x1234567890ABCDEF nonblack_pixels=42");
+    }
+
+    [Theory]
+    [InlineData(
+        "fingerprint=0x1234567890ABCDEF nonblack_pixels=0",
+        "were below")]
+    [InlineData(
+        "fingerprint=0x1234567890ABCDEF",
+        "did not report non-black pixel coverage")]
+    public void ExecutionRejectsInsufficientIntermediateGuestImageContent(
+        string observation,
+        string expectedFailure)
+    {
+        var testCase = CreateExecutionCase(
+            requiredGuestImageWrite: new()
+            {
+                Selector = "1280x720@105",
+                MinimumNonBlackPixels = 1,
+            });
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                "vk.guest_image_write_capture selector=1280x720@105 " +
+                observation));
+
+        Assert.Contains(
+            expectedFailure,
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExecutionRejectsForbiddenIntermediateGuestImageWrite()
+    {
+        var testCase = CreateExecutionCase(
+            requiredGuestImageWrite: new()
+            {
+                Selector = "1280x720@105",
+                ForbiddenFingerprints = ["7F046B95716664F5"],
+            });
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                "vk.guest_image_write_capture selector=1280x720@105 " +
+                "fingerprint=0x7F046B95716664F5 nonblack_pixels=42"));
+
+        Assert.Contains(
+            "forbidden fingerprint was observed",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CaptureEnvironmentIsDerivedOnlyFromExpectations()
     {
         var startInfo = new ProcessStartInfo();
@@ -1074,6 +1178,48 @@ public sealed class GameRegressionHarnessTests
             {
                 Selector = selector,
                 Fingerprint = fingerprint,
+            });
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => GameRegressionRunner.ValidateCase(testCase));
+
+        Assert.Contains(
+            "requiredGuestImageWrite",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GameCaseAllowsRelationalGuestImageWriteMilestone()
+    {
+        var testCase = CreateExecutionCase(
+            requiredGuestImageWrite: new()
+            {
+                Selector = "1280x720@105",
+                MinimumNonBlackPixels = 1,
+                ForbiddenFingerprints = ["7F046B95716664F5"],
+            });
+
+        GameRegressionRunner.ValidateCase(testCase);
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData(0, null)]
+    [InlineData(1, "not-a-fingerprint")]
+    public void GameCaseRequiresValidRelationalGuestImageWriteMilestone(
+        int? minimumNonBlackPixels,
+        string? forbiddenFingerprint)
+    {
+        var forbiddenFingerprints = forbiddenFingerprint is null
+            ? Array.Empty<string>()
+            : new[] { forbiddenFingerprint };
+        var testCase = CreateExecutionCase(
+            requiredGuestImageWrite: new()
+            {
+                Selector = "1280x720@105",
+                MinimumNonBlackPixels = minimumNonBlackPixels,
+                ForbiddenFingerprints = forbiddenFingerprints,
             });
 
         var error = Assert.Throws<InvalidDataException>(
