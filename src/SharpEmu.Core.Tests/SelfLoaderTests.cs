@@ -191,6 +191,31 @@ public sealed class SelfLoaderTests
     }
 
     [Fact]
+    public void LoadsConsoleExecutableWhenOptionalSectionHeadersAreNotInTheRuntimeImage()
+    {
+        var payload = new byte[] { 0x48, 0x31, 0xC0, 0xC3 };
+        var elf = CreateElfWithLoadSegment(
+            fileOffset: ElfHeaderSize + ProgramHeaderSize,
+            virtualAddress: 0,
+            fileSize: (ulong)payload.Length,
+            memorySize: (ulong)payload.Length,
+            payload: payload);
+        elf[7] = 9;
+        BinaryPrimitives.WriteUInt16LittleEndian(elf.AsSpan(16), 0xFE10);
+        BinaryPrimitives.WriteUInt64LittleEndian(elf.AsSpan(40), 0x4000_0000);
+        BinaryPrimitives.WriteUInt16LittleEndian(elf.AsSpan(58), 64);
+        BinaryPrimitives.WriteUInt16LittleEndian(elf.AsSpan(60), 3);
+
+        var memory = new VirtualMemory();
+        var image = new SelfLoader().Load(elf, memory);
+
+        Assert.Equal(0x0000_0008_0000_0000UL, image.EntryPoint);
+        Span<byte> loadedPayload = stackalloc byte[payload.Length];
+        Assert.True(memory.TryRead(0x0000_0008_0000_0000UL, loadedPayload));
+        Assert.Equal(payload, loadedPayload.ToArray());
+    }
+
+    [Fact]
     public void RejectsSegmentsWhoseFileSizeExceedsMemorySize()
     {
         var elf = CreateElfWithLoadSegment(
