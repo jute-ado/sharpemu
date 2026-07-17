@@ -154,6 +154,7 @@ public static partial class KernelMemoryCompatExports
     {
         public required string Path { get; init; }
         public required string[] Entries { get; init; }
+        public bool IsVirtual { get; init; }
         public int NextIndex { get; set; }
     }
 
@@ -1936,14 +1937,42 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
+        var access = ResolveOpenAccess(flags);
+        var mode = ResolveOpenMode(flags, access);
+        var wantsDirectory = (flags & O_DIRECTORY) != 0;
+        if (IsGuestMountRootPath(guestPath))
+        {
+            if (access != FileAccess.Read ||
+                (flags & (O_CREAT | O_TRUNC | O_APPEND)) != 0)
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            }
+
+            int directoryFd;
+            lock (_fdGate)
+            {
+                directoryFd = AllocateGuestFileDescriptor();
+                _openDirectories[directoryFd] = new OpenDirectory
+                {
+                    Path = "/",
+                    Entries = GetGuestMountRootEntries(),
+                    IsVirtual = true,
+                    NextIndex = 0
+                };
+            }
+
+            LogOpenTrace(
+                $"_open guest-root path='{guestPath}' flags=0x{flags:X8} fd={directoryFd}");
+            ctx[CpuRegister.Rax] = unchecked((ulong)directoryFd);
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
         if (!TryResolveGuestPath(guestPath, out var hostPath))
         {
             LogOpenTrace($"_open rejected unsafe path='{guestPath}' flags=0x{flags:X8}");
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        var access = ResolveOpenAccess(flags);
-        var mode = ResolveOpenMode(flags, access);
         try
         {
             if (IsMutatingOpen(flags) && IsReadOnlyGuestMutationPath(guestPath))
@@ -1952,7 +1981,6 @@ public static partial class KernelMemoryCompatExports
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED;
             }
 
-            var wantsDirectory = (flags & O_DIRECTORY) != 0;
             if (wantsDirectory || Directory.Exists(hostPath))
             {
                 if (!Directory.Exists(hostPath))
@@ -7344,8 +7372,10 @@ public static partial class KernelMemoryCompatExports
 
         var entryBytes = Encoding.UTF8.GetBytes(entryName);
         var nameLength = Math.Min(entryBytes.Length, 255);
-        var entryPath = Path.Combine(directory.Path, entryName);
-        var entryType = Directory.Exists(entryPath) ? (byte)4 : (byte)8;
+        var entryType = directory.IsVirtual ||
+                        Directory.Exists(Path.Combine(directory.Path, entryName))
+            ? (byte)4
+            : (byte)8;
 
         var payload = new byte[512];
         BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(0, sizeof(uint)), ComputeDirectoryEntryHash(entryBytes.AsSpan(0, nameLength)));
@@ -7377,6 +7407,102 @@ public static partial class KernelMemoryCompatExports
             .Where(static name => !string.IsNullOrEmpty(name))
             .OrderBy(static name => name, StringComparer.OrdinalIgnoreCase)
             .ToArray()!;
+    }
+
+    private static bool IsGuestMountRootPath(string guestPath)
+    {
+        var normalized = guestPath.Replace('\\', '/').Trim('/');
+        if (normalized.Length == 0)
+        {
+            return true;
+        }
+
+        var segments = normalized.Split(
+            '/',
+            StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0 ||
+            !IsGuestMountRootName(segments[0]))
+        {
+            return false;
+        }
+
+        var depth = 1;
+        for (var index = 1; index < segments.Length; index++)
+        {
+            var segment = segments[index];
+            if (segment == ".")
+            {
+                continue;
+            }
+
+            if (segment != ".." || depth == 0)
+            {
+                return false;
+            }
+
+            depth--;
+        }
+
+        return depth == 0;
+    }
+
+    private static bool IsGuestMountRootName(string name)
+    {
+        if (name is "$" ||
+            string.Equals(name, "app0", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(name, "temp0", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(name, "download0", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(name, "hostapp", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(name, "devlog", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        lock (_guestMountGate)
+        {
+            foreach (var mountPoint in _guestMounts.Keys)
+            {
+                var trimmed = mountPoint.Trim('/');
+                var slash = trimmed.IndexOf('/');
+                var rootName = slash >= 0 ? trimmed[..slash] : trimmed;
+                if (string.Equals(name, rootName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static string[] GetGuestMountRootEntries()
+    {
+        var entries = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "app0",
+            "temp0",
+            "download0",
+            "hostapp",
+            "devlog",
+        };
+        lock (_guestMountGate)
+        {
+            foreach (var mountPoint in _guestMounts.Keys)
+            {
+                var trimmed = mountPoint.Trim('/');
+                var slash = trimmed.IndexOf('/');
+                var rootName = slash >= 0 ? trimmed[..slash] : trimmed;
+                if (rootName.Length != 0)
+                {
+                    entries.Add(rootName);
+                }
+            }
+        }
+
+        var result = new string[entries.Count];
+        entries.CopyTo(result);
+        Array.Sort(result, StringComparer.OrdinalIgnoreCase);
+        return result;
     }
 
     private static uint ComputeDirectoryEntryHash(ReadOnlySpan<byte> utf8Name)
