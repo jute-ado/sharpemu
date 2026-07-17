@@ -12,6 +12,7 @@ on:
 
 jobs:
   dispatch:
+    if: github.repository == 'par274/sharpemu'
     runs-on: ubuntu-latest
     steps:
       - name: Trigger sharpemu-site rebuild
