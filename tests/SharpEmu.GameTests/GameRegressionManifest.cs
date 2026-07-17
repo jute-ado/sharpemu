@@ -95,7 +95,9 @@ internal sealed class PresentedGuestImageExpectation
 {
     public long Frame { get; init; }
 
-    public string Fingerprint { get; init; } = string.Empty;
+    public string? Fingerprint { get; init; }
+
+    public string[] ForbiddenFingerprints { get; init; } = [];
 }
 
 internal sealed class GuestImageWriteExpectation
