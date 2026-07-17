@@ -35,6 +35,7 @@ public static partial class AgcExports
     private const uint ItDispatchIndirect = 0x16;
     private const uint ItWaitRegMem = 0x3C;
     private const uint ItIndirectBuffer = 0x3F;
+    private const uint ItCopyData = 0x40;
     private const uint ItEventWrite = 0x46;
     private const uint ItDmaData = 0x50;
     private const uint ItSetContextReg = 0x69;
@@ -1091,6 +1092,14 @@ public static partial class AgcExports
         DcbWriteData(ctx);
 
     [SysAbiExport(
+        Nid = "qzMN2XKGA4k",
+        ExportName = "sceAgcAcbCopyData",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int AcbCopyData(CpuContext ctx) =>
+        DcbCopyData(ctx);
+
+    [SysAbiExport(
         Nid = "j3EtxFkSIhQ",
         ExportName = "sceAgcAcbDispatchIndirect",
         Target = Generation.Gen5,
@@ -1582,6 +1591,60 @@ public static partial class AgcExports
                 $"agc.dcb_write_data buf=0x{commandBufferAddress:X16} cmd=0x{commandAddress:X16} " +
                 $"dst={destination} cache={cachePolicy} addr=0x{destinationAddress:X16} count={dwordCount} " +
                 $"increment={increment} confirm={writeConfirm}");
+        }
+
+        return ReturnPointer(ctx, commandAddress);
+    }
+
+    [SysAbiExport(
+        Nid = "1rZSWUv1IRc",
+        ExportName = "sceAgcDcbCopyData",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DcbCopyData(CpuContext ctx)
+    {
+        var commandBufferAddress = ctx[CpuRegister.Rdi];
+        var destination = (uint)(ctx[CpuRegister.Rsi] & 0xFF);
+        var destinationCachePolicy = (uint)(ctx[CpuRegister.Rdx] & 0xFF);
+        var destinationAddress = ctx[CpuRegister.Rcx];
+        var source = (uint)(ctx[CpuRegister.R8] & 0xFF);
+        var sourceCachePolicy = (uint)(ctx[CpuRegister.R9] & 0xFF);
+        var stackAddress = ctx[CpuRegister.Rsp];
+        if (!ctx.TryReadUInt64(stackAddress + sizeof(ulong), out var sourceAddressOrImmediate) ||
+            !ctx.TryReadUInt64(stackAddress + (2 * sizeof(ulong)), out var itemSizeRaw) ||
+            !ctx.TryReadUInt64(stackAddress + (3 * sizeof(ulong)), out var writeConfirmRaw))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        var itemSize = (uint)(itemSizeRaw & 0xFF);
+        var writeConfirm = (uint)(writeConfirmRaw & 0xFF);
+        if (commandBufferAddress == 0 ||
+            destination > 0x1F ||
+            source > 0x1F ||
+            destinationCachePolicy > 3 ||
+            sourceCachePolicy > 3 ||
+            itemSize > 1 ||
+            writeConfirm > 1 ||
+            !TryAllocateCommandDwords(ctx, commandBufferAddress, 6, out var commandAddress))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        var control =
+            ((source >> 1) & 0xFu) |
+            (((destination >> 1) & 0xFu) << 8) |
+            (sourceCachePolicy << 13) |
+            (itemSize << 16) |
+            (writeConfirm << 20) |
+            (destinationCachePolicy << 25) |
+            ((source & 1u) << 30);
+        if (!ctx.TryWriteUInt32(commandAddress, Pm4(6, ItCopyData, 0)) ||
+            !ctx.TryWriteUInt32(commandAddress + 4, control) ||
+            !ctx.TryWriteUInt64(commandAddress + 8, sourceAddressOrImmediate) ||
+            !ctx.TryWriteUInt64(commandAddress + 16, destinationAddress))
+        {
+            return ReturnPointer(ctx, 0);
         }
 
         return ReturnPointer(ctx, commandAddress);
@@ -2957,6 +3020,16 @@ public static partial class AgcExports
             if (op == ItDmaData && length >= 7)
             {
                 ApplySubmittedStandardDmaData(ctx, currentAddress);
+            }
+
+            if (op == ItCopyData &&
+                AgcCopyDataPacket.TryRead(
+                    ctx,
+                    currentAddress,
+                    length,
+                    out var copyData))
+            {
+                copyData.TryExecute(ctx);
             }
 
             if (op == ItIndexBase &&
