@@ -65,6 +65,12 @@ Capture directories and machine-specific environment values are local
 diagnostics. Do not add game binaries, captures, local paths, or local
 fingerprints to the repository.
 
+`maximumImportWarnings` limits unexpected import warnings. Put understood,
+game-expected non-success results in `knownImportWarnings` as exact `nid` and
+`result` pairs. Repeated known results do not consume the budget, while an
+unresolved import, a different result for the same NID, or any other new warning
+still fails a zero-warning contract.
+
 ## Selected draw vertex traces
 
 When an intermediate image identifies a suspicious shader pass, trace a bounded

@@ -349,7 +349,140 @@ public sealed class GameRegressionHarnessTests
                 """));
 
         Assert.Contains(
-            "import warnings 2 exceeded maximum 1",
+            "unexpected import warnings 2 exceeded maximum 1",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void KnownImportWarningSignaturesDoNotConsumeTheBudget()
+    {
+        var testCase = CreateExecutionCase(
+            maximumImportWarnings: 0,
+            knownImportWarnings:
+            [
+                new()
+                {
+                    Nid = "knownNid",
+                    Result = "ORBIS_GEN2_ERROR_PERMISSION_DENIED",
+                },
+            ]);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        GameRegressionRunner.ValidateReport(
+            testCase,
+            report.RootElement,
+            "synthetic-report.json",
+            """
+            [LOADER][WARN] Import#10 result: ORBIS_GEN2_ERROR_PERMISSION_DENIED (knownNid) rdi=0x1
+            [LOADER][WARN] Import#12 result: ORBIS_GEN2_ERROR_PERMISSION_DENIED (knownNid) rdi=0x2
+            """);
+    }
+
+    [Theory]
+    [InlineData(
+        "[LOADER][WARN] Import#10 result: ORBIS_GEN2_ERROR_NOT_FOUND (knownNid)",
+        "different result")]
+    [InlineData(
+        "[LOADER][WARN] Import#10 unresolved: nid=knownNid",
+        "unresolved warning")]
+    [InlineData(
+        "[LOADER][WARN] Import#10 result: ORBIS_GEN2_ERROR_PERMISSION_DENIED (otherNid)",
+        "different NID")]
+    public void KnownImportWarningMatchingRequiresTheExactResultAndNid(
+        string warning,
+        string scenario)
+    {
+        var testCase = CreateExecutionCase(
+            maximumImportWarnings: 0,
+            knownImportWarnings:
+            [
+                new()
+                {
+                    Nid = "knownNid",
+                    Result = "ORBIS_GEN2_ERROR_PERMISSION_DENIED",
+                },
+            ]);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                $"synthetic-{scenario}.json",
+                warning));
+
+        Assert.Contains(
+            "unexpected import warnings 1 exceeded maximum 0",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GameCaseRejectsDuplicateKnownImportWarningSignatures()
+    {
+        var warning = new ImportWarningExpectation
+        {
+            Nid = "knownNid",
+            Result = "ORBIS_GEN2_ERROR_NOT_FOUND",
+        };
+        var testCase = CreateExecutionCase(
+            maximumImportWarnings: 0,
+            knownImportWarnings:
+            [
+                warning,
+                new()
+                {
+                    Nid = warning.Nid,
+                    Result = warning.Result,
+                },
+            ]);
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => GameRegressionRunner.ValidateCase(testCase));
+
+        Assert.Contains(
+            "duplicate knownImportWarnings",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GameCaseRequiresBudgetForKnownImportWarningSignatures()
+    {
+        var testCase = CreateExecutionCase(
+            knownImportWarnings:
+            [
+                new()
+                {
+                    Nid = "knownNid",
+                    Result = "ORBIS_GEN2_ERROR_NOT_FOUND",
+                },
+            ]);
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => GameRegressionRunner.ValidateCase(testCase));
+
+        Assert.Contains(
+            "requires maximumImportWarnings",
             error.Message,
             StringComparison.Ordinal);
     }
@@ -857,6 +990,7 @@ public sealed class GameRegressionHarnessTests
     private static GameRegressionCase CreateExecutionCase(
         long? minimumObservedImportDispatches = null,
         int? maximumImportWarnings = null,
+        ImportWarningExpectation[]? knownImportWarnings = null,
         string[]? requiredOutputSubstrings = null,
         string[]? forbiddenOutputSubstrings = null,
         string[]? requiredVideoOutFrameFingerprints = null,
@@ -889,6 +1023,7 @@ public sealed class GameRegressionHarnessTests
             MinimumObservedImportDispatches =
                 minimumObservedImportDispatches,
             MaximumImportWarnings = maximumImportWarnings,
+            KnownImportWarnings = knownImportWarnings ?? [],
             RequiredOutputSubstrings =
                 requiredOutputSubstrings ?? [],
             ForbiddenOutputSubstrings =

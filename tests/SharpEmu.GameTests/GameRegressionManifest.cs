@@ -76,6 +76,8 @@ internal sealed class GameRegressionExpectations
 
     public int? MaximumImportWarnings { get; init; }
 
+    public ImportWarningExpectation[] KnownImportWarnings { get; init; } = [];
+
     public string[] RequiredOutputSubstrings { get; init; } = [];
 
     public string[] ForbiddenOutputSubstrings { get; init; } = [];
@@ -93,6 +95,13 @@ internal sealed class GameRegressionExpectations
         get;
         init;
     }
+}
+
+internal sealed class ImportWarningExpectation
+{
+    public string Nid { get; init; } = string.Empty;
+
+    public string Result { get; init; } = string.Empty;
 }
 
 internal sealed class PresentedGuestImageExpectation
