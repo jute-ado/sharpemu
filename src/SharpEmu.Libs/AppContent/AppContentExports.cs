@@ -108,18 +108,36 @@ public static class AppContentExports
         var mountPointAddress = ctx[CpuRegister.Rsi];
         if (mountPointAddress == 0)
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            return ctx.SetReturn(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        Directory.CreateDirectory(ResolveTemp0Root());
+        try
+        {
+            Directory.CreateDirectory(ResolveTemp0Root());
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return ctx.SetReturn(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED);
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or
+            IOException or
+            NotSupportedException)
+        {
+            return ctx.SetReturn(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
         var mountPointBytes = Encoding.ASCII.GetBytes($"{Temp0MountPoint}\0");
         if (!ctx.Memory.TryWrite(mountPointAddress, mountPointBytes))
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            return ctx.SetReturn(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
     private static bool TryReadUserDefinedParam(uint paramId, out int value)
@@ -198,7 +216,15 @@ public static class AppContentExports
         }
 
         var invalidChars = Path.GetInvalidFileNameChars();
-        appName = new string(appName.Select(ch => invalidChars.Contains(ch) ? '_' : ch).ToArray());
+        var sanitizedName = appName.ToCharArray();
+        for (var index = 0; index < sanitizedName.Length; index++)
+        {
+            if (Array.IndexOf(invalidChars, sanitizedName[index]) >= 0)
+            {
+                sanitizedName[index] = '_';
+            }
+        }
+        appName = new string(sanitizedName);
         var root = Path.Combine(Path.GetTempPath(), "SharpEmu", appName, "temp0");
         Environment.SetEnvironmentVariable(temp0VariableName, root);
         return root;
