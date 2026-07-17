@@ -82,6 +82,18 @@ public sealed class RenderTargetSamplingTests
                 CreateTranslatedPassthroughVertex(),
                 globalMemoryBuffers,
                 Rgba8TextureDataFormat);
+            // Cross the presenter's in-flight submission limit before the
+            // CPU-backed composition, exercising fence retirement and pooled
+            // vertex/index/global buffer reuse under sustained draw traffic.
+            for (var index = 0; index < 16; index++)
+            {
+                ComposeSourceTo(
+                    SecondDisplayAddress,
+                    fragment,
+                    CreateTranslatedPassthroughVertex(),
+                    globalMemoryBuffers,
+                    Rgba8TextureDataFormat);
+            }
             ComposeCpuTextureToRightHalf(
                 FirstDisplayAddress,
                 fragment,
@@ -276,8 +288,15 @@ public sealed class RenderTargetSamplingTests
             vertexCount: 6,
             primitiveType: 4,
             indexBuffer: new GuestIndexBuffer(
-                [0, 0, 1, 0, 2, 0, 1, 0, 2, 0, 3, 0],
-                Is32Bit: false),
+                [
+                    0, 0, 0, 0,
+                    1, 0, 0, 0,
+                    2, 0, 0, 0,
+                    1, 0, 0, 0,
+                    2, 0, 0, 0,
+                    3, 0, 0, 0,
+                ],
+                Is32Bit: true),
             vertexBuffers:
             [
                 CreateVertexBuffer(
@@ -650,10 +669,10 @@ public sealed class RenderTargetSamplingTests
     {
         var colors = new HashSet<(byte Red, byte Green, byte Blue)>
         {
-            ReadRgb(pixels, 60, 13),
-            ReadRgb(pixels, 84, 13),
-            ReadRgb(pixels, 60, 40),
-            ReadRgb(pixels, 84, 40),
+            ReadRgb(pixels, DestinationWidth * 5 / 8, DestinationHeight / 4),
+            ReadRgb(pixels, DestinationWidth * 7 / 8, DestinationHeight / 4),
+            ReadRgb(pixels, DestinationWidth * 5 / 8, DestinationHeight * 3 / 4),
+            ReadRgb(pixels, DestinationWidth * 7 / 8, DestinationHeight * 3 / 4),
         };
 
         Assert.Contains(((byte)255, (byte)0, (byte)0), colors);
