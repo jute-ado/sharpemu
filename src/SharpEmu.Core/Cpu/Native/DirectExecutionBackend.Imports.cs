@@ -765,6 +765,31 @@ public sealed partial class DirectExecutionBackend
 			return false;
 		}
 
+		if (!IsExpectedImportResult(nid, result))
+		{
+			return true;
+		}
+
+		if (!ShouldLogExpectedImportResults())
+		{
+			return false;
+		}
+
+		var key = nid + "\0" + resultValue;
+		int count;
+		lock (_importResultLogSampleGate)
+		{
+			_importResultLogSamples.TryGetValue(key, out count);
+			count++;
+			_importResultLogSamples[key] = count;
+		}
+
+		return count <= 8 || count % 10000 == 0;
+	}
+
+	internal static bool IsExpectedImportResult(string nid, OrbisGen2Result result)
+	{
+		var resultValue = unchecked((int)result);
 		var expectedFileProbeMiss =
 			result == OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND &&
 			IsExpectedFileProbeNotFoundNid(nid);
@@ -786,32 +811,17 @@ public sealed partial class DirectExecutionBackend
 		var expectedPrivacyInvalidParameter =
 			string.Equals(nid, "D-CzAxQL0XI", StringComparison.Ordinal) &&
 			resultValue == unchecked((int)0x80960009);
-		if (!expectedFileProbeMiss &&
-			!expectedTimedWaitTimeout &&
-			!expectedEqueueTimeout &&
-			!expectedEventFlagTimeout &&
-			!expectedMutexTrylockBusy &&
-			!expectedUserServiceNoEvent &&
-			!expectedPrivacyInvalidParameter)
-		{
-			return true;
-		}
-
-		if (!ShouldLogExpectedImportResults())
-		{
-			return false;
-		}
-
-		var key = nid + "\0" + resultValue;
-		int count;
-		lock (_importResultLogSampleGate)
-		{
-			_importResultLogSamples.TryGetValue(key, out count);
-			count++;
-			_importResultLogSamples[key] = count;
-		}
-
-		return count <= 8 || count % 10000 == 0;
+		var expectedPlayGoEnumerationEnd =
+			string.Equals(nid, "uWIYLFkkwqk", StringComparison.Ordinal) &&
+			resultValue == unchecked((int)0x80B2000C);
+		return expectedFileProbeMiss ||
+			expectedTimedWaitTimeout ||
+			expectedEqueueTimeout ||
+			expectedEventFlagTimeout ||
+			expectedMutexTrylockBusy ||
+			expectedUserServiceNoEvent ||
+			expectedPrivacyInvalidParameter ||
+			expectedPlayGoEnumerationEnd;
 	}
 
 	private static bool ShouldLogExpectedImportResults() =>
