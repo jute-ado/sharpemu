@@ -25,7 +25,8 @@ public sealed class SelfImage
         string? title = null,
         string? titleId = null,
         string? version = null,
-        string? contentId = null)
+        string? contentId = null,
+        IReadOnlyList<uint>? unsupportedRelocationTypes = null)
     {
         ArgumentNullException.ThrowIfNull(programHeaders);
         ArgumentNullException.ThrowIfNull(mappedRegions);
@@ -46,6 +47,19 @@ public sealed class SelfImage
         TitleId = titleId;
         Version = version;
         ContentId = contentId;
+        if (unsupportedRelocationTypes is null || unsupportedRelocationTypes.Count == 0)
+        {
+            UnsupportedRelocationTypes = Array.Empty<uint>();
+        }
+        else
+        {
+            var relocationTypes = new uint[unsupportedRelocationTypes.Count];
+            for (var index = 0; index < relocationTypes.Length; index++)
+            {
+                relocationTypes[index] = unsupportedRelocationTypes[index];
+            }
+            UnsupportedRelocationTypes = Array.AsReadOnly(relocationTypes);
+        }
     }
 
     public bool IsSelf { get; }
@@ -81,4 +95,6 @@ public sealed class SelfImage
     public string? Version { get; }
 
     public string? ContentId { get; }
+
+    public IReadOnlyList<uint> UnsupportedRelocationTypes { get; }
 }

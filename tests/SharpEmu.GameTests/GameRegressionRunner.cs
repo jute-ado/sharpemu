@@ -426,6 +426,50 @@ internal static class GameRegressionRunner
             }
         }
 
+        if (testCase.Expectations.RequireNoUnsupportedRelocations)
+        {
+            if (!report.TryGetProperty("image", out var image) ||
+                image.ValueKind != JsonValueKind.Object)
+            {
+                failures.AppendLine(
+                    "main image relocation status was not captured.");
+            }
+            else
+            {
+                AppendUnsupportedRelocationFailures(
+                    image,
+                    "main image",
+                    failures);
+            }
+
+            if (!report.TryGetProperty("modules", out var modules) ||
+                modules.ValueKind != JsonValueKind.Array)
+            {
+                failures.AppendLine(
+                    "module relocation status was not captured.");
+            }
+            else
+            {
+                foreach (var module in modules.EnumerateArray())
+                {
+                    var modulePath = GetOptionalString(module, "path") ??
+                        "(unknown module)";
+                    if (!module.TryGetProperty("image", out var moduleImage) ||
+                        moduleImage.ValueKind != JsonValueKind.Object)
+                    {
+                        failures.AppendLine(
+                            $"{modulePath} relocation status was not captured.");
+                        continue;
+                    }
+
+                    AppendUnsupportedRelocationFailures(
+                        moduleImage,
+                        modulePath,
+                        failures);
+                }
+            }
+        }
+
         if (testCase.Expectations.RequireSuccessfulModuleInitializers)
         {
             if (!report.TryGetProperty(
@@ -608,6 +652,39 @@ internal static class GameRegressionRunner
         }
 
         return false;
+    }
+
+    private static void AppendUnsupportedRelocationFailures(
+        JsonElement image,
+        string label,
+        StringBuilder failures)
+    {
+        if (!image.TryGetProperty(
+                "unsupportedRelocationTypes",
+                out var unsupportedTypes) ||
+            unsupportedTypes.ValueKind != JsonValueKind.Array)
+        {
+            failures.AppendLine(
+                $"{label} unsupported relocation status was not captured.");
+            return;
+        }
+
+        if (unsupportedTypes.GetArrayLength() == 0)
+        {
+            return;
+        }
+
+        var typeList = new StringBuilder();
+        foreach (var relocationType in unsupportedTypes.EnumerateArray())
+        {
+            if (typeList.Length != 0)
+            {
+                typeList.Append(", ");
+            }
+            typeList.Append(relocationType.GetRawText());
+        }
+        failures.AppendLine(
+            $"{label} uses unsupported relocation types: {typeList}.");
     }
 
     internal static long GetMaximumObservedImportDispatch(string output)

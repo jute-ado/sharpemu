@@ -18,6 +18,7 @@
         "applicationTitleId": "EXAMPLE000",
         "minimumModules": 0,
         "requireNoModuleLoadFailures": true,
+        "requireNoUnsupportedRelocations": true,
         "requireSuccessfulModuleInitializers": true
       }
     },
@@ -37,6 +38,7 @@
           "HOST_ERROR"
         ],
         "requireNoModuleLoadFailures": true,
+        "requireNoUnsupportedRelocations": true,
         "requireSuccessfulModuleInitializers": true,
         "minimumObservedImportDispatches": 1000,
         "requiredOutputSubstrings": [

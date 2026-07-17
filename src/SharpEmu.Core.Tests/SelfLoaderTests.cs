@@ -742,6 +742,20 @@ public sealed class SelfLoaderTests
         Assert.Equal(
             AddSignedForTest(image.EntryPoint, addend),
             ReadSyntheticRelocationTarget(memory, image));
+        Assert.Empty(image.UnsupportedRelocationTypes);
+    }
+
+    [Fact]
+    public void ReportsUnsupportedDynamicRelocationWithoutPatchingTarget()
+    {
+        const uint unsupportedRelocationType = 42;
+        var elf = CreateElfWithDynamicRelocation(unsupportedRelocationType, addend: 0x1234);
+        var memory = new VirtualMemory();
+
+        var image = new SelfLoader().Load(elf, memory);
+
+        Assert.Equal(new uint[] { unsupportedRelocationType }, image.UnsupportedRelocationTypes);
+        Assert.Equal(0UL, ReadSyntheticRelocationTarget(memory, image));
     }
 
     [Fact]

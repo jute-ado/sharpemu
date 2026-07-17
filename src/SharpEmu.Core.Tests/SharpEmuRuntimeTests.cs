@@ -410,6 +410,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("0x0000000800000000", image.GetProperty("entryPoint").GetString());
         Assert.Equal(1, image.GetProperty("programHeaderCount").GetInt32());
         Assert.Equal(1, image.GetProperty("mappedRegionCount").GetInt32());
+        Assert.Empty(image.GetProperty("unsupportedRelocationTypes").EnumerateArray());
         Assert.Empty(root.GetProperty("modules").EnumerateArray());
         Assert.Empty(root.GetProperty("moduleInitializers").EnumerateArray());
         Assert.Empty(root.GetProperty("skippedModules").EnumerateArray());
@@ -449,6 +450,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(1, image.GetProperty("programHeaderCount").GetInt32());
         Assert.Equal(1, image.GetProperty("mappedRegionCount").GetInt32());
         Assert.Equal(0, image.GetProperty("importStubCount").GetInt32());
+        Assert.Empty(image.GetProperty("unsupportedRelocationTypes").EnumerateArray());
         Assert.Equal("PPSA00001", root.GetProperty("application").GetProperty("titleId").GetString());
         var module = Assert.Single(root.GetProperty("modules").EnumerateArray());
         Assert.Equal("sce_module/synthetic.prx", module.GetProperty("path").GetString());

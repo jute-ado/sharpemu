@@ -1694,6 +1694,7 @@ internal static partial class Program
             ImportStubCount: image.ImportStubs.Count,
             RuntimeSymbolCount: image.RuntimeSymbols.Count,
             ImportedRelocationCount: image.ImportedRelocations.Count,
+            UnsupportedRelocationTypes: image.UnsupportedRelocationTypes,
             PreInitializerCount: image.PreInitializerFunctions.Count,
             InitializerCount: image.InitializerFunctions.Count,
             InitFunctionEntryPoint: image.InitFunctionEntryPoint == 0
@@ -2406,6 +2407,7 @@ internal static partial class Program
         int ImportStubCount,
         int RuntimeSymbolCount,
         int ImportedRelocationCount,
+        IReadOnlyList<uint> UnsupportedRelocationTypes,
         int PreInitializerCount,
         int InitializerCount,
         string? InitFunctionEntryPoint);

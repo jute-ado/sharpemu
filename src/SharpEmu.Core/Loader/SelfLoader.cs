@@ -236,7 +236,8 @@ public sealed class SelfLoader : ISelfLoader
             virtualMemory,
             imageBase,
             tlsModuleId,
-            out var importedRelocations);
+            out var importedRelocations,
+            out var unsupportedRelocationTypes);
         var effectiveImportStubs = importStubs.Count == 0
             ? new Dictionary<ulong, string>()
             : new Dictionary<ulong, string>(importStubs);
@@ -313,7 +314,8 @@ public sealed class SelfLoader : ISelfLoader
             applicationInfo.Title,
             applicationInfo.TitleId,
             applicationInfo.Version,
-            applicationInfo.ContentId);
+            applicationInfo.ContentId,
+            unsupportedRelocationTypes);
     }
 
     private static Ps5ApplicationMetadata TryLoadParamJson(
@@ -806,9 +808,11 @@ public sealed class SelfLoader : ISelfLoader
         IVirtualMemory virtualMemory,
         ulong imageBase,
         uint tlsModuleId,
-        out IReadOnlyList<ImportedSymbolRelocation> importedRelocations)
+        out IReadOnlyList<ImportedSymbolRelocation> importedRelocations,
+        out IReadOnlyList<uint> unsupportedRelocationTypes)
     {
         importedRelocations = Array.Empty<ImportedSymbolRelocation>();
+        unsupportedRelocationTypes = Array.Empty<uint>();
         if (!TryGetProgramHeader(programHeaders, ProgramHeaderType.Dynamic, out var dynamicHeader, out var dynamicHeaderIndex))
         {
             return EmptyImportStubs;
@@ -946,6 +950,7 @@ public sealed class SelfLoader : ISelfLoader
         var descriptors = new List<RelocationDescriptor>(256);
         var orderedImportNids = new List<string>(128);
         var seenImportNids = new HashSet<string>(StringComparer.Ordinal);
+        var unsupportedTypes = new HashSet<uint>();
         AppendRelocationDescriptors(
             relocations,
             symbolTable,
@@ -955,7 +960,8 @@ public sealed class SelfLoader : ISelfLoader
             tlsModuleId,
             descriptors,
             orderedImportNids,
-            seenImportNids);
+            seenImportNids,
+            unsupportedTypes);
 
         if (descriptors.Count == 0)
         {
@@ -968,12 +974,23 @@ public sealed class SelfLoader : ISelfLoader
                 tlsModuleId,
                 descriptors,
                 orderedImportNids,
-                seenImportNids);
+                seenImportNids,
+                unsupportedTypes);
             if (sectionFallbackRelocCount != 0)
             {
                 Console.WriteLine(
                     $"[LOADER] Section relocation fallback recovered {sectionFallbackRelocCount} relocation entries, {orderedImportNids.Count} unique NIDs, {descriptors.Count} descriptors");
             }
+        }
+
+        if (unsupportedTypes.Count != 0)
+        {
+            var sortedTypes = new uint[unsupportedTypes.Count];
+            unsupportedTypes.CopyTo(sortedTypes);
+            Array.Sort(sortedTypes);
+            unsupportedRelocationTypes = sortedTypes;
+            Log.Warning(
+                $"Skipped unsupported x86-64 relocation types: {string.Join(", ", sortedTypes)}");
         }
 
         Console.WriteLine($"[LOADER] Found {orderedImportNids.Count} unique NIDs, {descriptors.Count} descriptors");
@@ -1070,7 +1087,8 @@ public sealed class SelfLoader : ISelfLoader
         uint tlsModuleId,
         ICollection<RelocationDescriptor> descriptors,
         IList<string> orderedImportNids,
-        ISet<string> seenImportNids)
+        ISet<string> seenImportNids,
+        ISet<uint> unsupportedRelocationTypes)
     {
         if (elfHeader.SectionHeaderOffset == 0 ||
             elfHeader.SectionHeaderCount == 0 ||
@@ -1125,7 +1143,8 @@ public sealed class SelfLoader : ISelfLoader
                 tlsModuleId,
                 descriptors,
                 orderedImportNids,
-                seenImportNids);
+                seenImportNids,
+                unsupportedRelocationTypes);
             appendedRelocations += relocations.Count;
         }
 
@@ -1141,7 +1160,8 @@ public sealed class SelfLoader : ISelfLoader
         uint tlsModuleId,
         ICollection<RelocationDescriptor> descriptors,
         IList<string> orderedImportNids,
-        ISet<string> seenImportNids)
+        ISet<string> seenImportNids,
+        ISet<uint> unsupportedRelocationTypes)
     {
         foreach (var relocation in relocations)
         {
@@ -1153,6 +1173,7 @@ public sealed class SelfLoader : ISelfLoader
 
             if (!IsSupportedRelocationType(relocation.Type))
             {
+                unsupportedRelocationTypes.Add(relocation.Type);
                 if (IsFocusRelocationOffset(relocation.Offset, imageBase))
                 {
                     Log.Debug($"[FOCUS][SKIP] unsupported type={relocation.Type}");

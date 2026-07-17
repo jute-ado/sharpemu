@@ -90,6 +90,36 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
+    public void UnsupportedModuleRelocationFailsExplicitCompatibilityContract()
+    {
+        var testCase = CreateExecutionCase(requireNoUnsupportedRelocations: true);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": { "name": "ORBIS_GEN2_OK" },
+              "image": { "unsupportedRelocationTypes": [] },
+              "modules": [
+                {
+                  "path": "sce_module/synthetic.prx",
+                  "image": { "unsupportedRelocationTypes": [ 42 ] }
+                }
+              ],
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json"));
+
+        Assert.Contains("sce_module/synthetic.prx", error.Message, StringComparison.Ordinal);
+        Assert.Contains("42", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExecutionProgressUsesLargestObservedImportDispatch()
     {
         var testCase = CreateExecutionCase(
@@ -777,6 +807,7 @@ public sealed class GameRegressionHarnessTests
         string[]? requiredVideoOutFrameFingerprints = null,
         PresentedGuestImageExpectation? requiredPresentedGuestImage = null,
         GuestImageWriteExpectation? requiredGuestImageWrite = null,
+        bool requireNoUnsupportedRelocations = false,
         string? expectedBundleSha256 =
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") => new()
     {
@@ -798,6 +829,7 @@ public sealed class GameRegressionHarnessTests
                 "HOST_ERROR",
             ],
             RequireNoModuleLoadFailures = true,
+            RequireNoUnsupportedRelocations = requireNoUnsupportedRelocations,
             RequireSuccessfulModuleInitializers = true,
             MinimumObservedImportDispatches =
                 minimumObservedImportDispatches,
