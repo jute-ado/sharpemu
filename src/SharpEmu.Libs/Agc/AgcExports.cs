@@ -3252,10 +3252,37 @@ public static partial class AgcExports
                 var flipArg = unchecked((long)(((ulong)flipArgHi << 32) | flipArgLo));
                 var displayBufferIndex = unchecked((int)displayBufferIndexRaw);
                 var handle = unchecked((int)videoOutHandle);
-                if (VideoOutExports.TryGetDisplayBufferInfo(
+                var hasDisplayBuffer =
+                    VideoOutExports.TryGetDisplayBufferInfo(
                         handle,
                         displayBufferIndex,
-                        out var cachedDisplayBuffer) &&
+                        out var cachedDisplayBuffer);
+                if (hasDisplayBuffer &&
+                    state.RenderTargetWriters.TryGetValue(
+                        cachedDisplayBuffer.Address,
+                        out var flipWriter))
+                {
+                    TraceAgcShader(
+                        $"agc.flip_writer handle={handle} " +
+                        $"index={displayBufferIndex} " +
+                        $"target=0x{cachedDisplayBuffer.Address:X16} " +
+                        $"writer={flipWriter.Sequence} " +
+                        $"es=0x{flipWriter.ExportShaderAddress:X16} " +
+                        $"ps=0x{flipWriter.PixelShaderAddress:X16} " +
+                        $"vertices={flipWriter.VertexCount} " +
+                        $"prim=0x{flipWriter.PrimitiveType:X}");
+                }
+                else
+                {
+                    TraceAgcShader(
+                        $"agc.flip_writer handle={handle} " +
+                        $"index={displayBufferIndex} " +
+                        $"target=0x{(hasDisplayBuffer
+                            ? cachedDisplayBuffer.Address
+                            : 0):X16} writer=none");
+                }
+
+                if (hasDisplayBuffer &&
                     GuestGpu.Current.TrySubmitGuestImage(
                         cachedDisplayBuffer.Address,
                         cachedDisplayBuffer.Width,
@@ -3270,15 +3297,12 @@ public static partial class AgcExports
                 }
                 else if (state.SawIndexedDraw &&
                     state.TranslatedDraw is { } translatedDraw &&
-                    VideoOutExports.TryGetDisplayBufferInfo(
-                        handle,
-                        displayBufferIndex,
-                        out var translatedDisplayBuffer))
+                    hasDisplayBuffer)
                 {
                     TraceDisplayBuffer(
                         handle,
                         displayBufferIndex,
-                        translatedDisplayBuffer,
+                        cachedDisplayBuffer,
                         "draw-fallback");
                     var textures = CreateGuestDrawTextures(ctx, translatedDraw.Textures, out var fallbackTextureCount);
                     var globalMemoryBuffers =
@@ -3287,8 +3311,8 @@ public static partial class AgcExports
                         translatedDraw.PixelShader,
                         textures,
                         globalMemoryBuffers,
-                        translatedDisplayBuffer.Width,
-                        translatedDisplayBuffer.Height,
+                        cachedDisplayBuffer.Width,
+                        cachedDisplayBuffer.Height,
                         translatedDraw.AttributeCount,
                         shaderIdentity: new GuestShaderIdentity(
                             translatedDraw.ExportShaderAddress,
@@ -3297,7 +3321,7 @@ public static partial class AgcExports
                         $"agc.shader_present ps=0x{translatedDraw.PixelShaderAddress:X16} " +
                         $"spirv={translatedDraw.PixelShader.Payload.Length} textures={textures.Count} " +
                         $"global_buffers={globalMemoryBuffers.Count} " +
-                        $"fallback={fallbackTextureCount} {translatedDisplayBuffer.Width}x{translatedDisplayBuffer.Height}");
+                        $"fallback={fallbackTextureCount} {cachedDisplayBuffer.Width}x{cachedDisplayBuffer.Height}");
 
                     for (var i = 0; i < translatedDraw.Textures.Count; i++)
                     {
@@ -3325,15 +3349,12 @@ public static partial class AgcExports
                 }
                 else if (state.SawIndexedDraw &&
                          state.GuestDrawKind != GuestDrawKind.None &&
-                         VideoOutExports.TryGetDisplayBufferInfo(
-                             handle,
-                             displayBufferIndex,
-                             out var displayBuffer))
+                         hasDisplayBuffer)
                 {
                     GuestGpu.Current.SubmitGuestDraw(
                         state.GuestDrawKind,
-                        displayBuffer.Width,
-                        displayBuffer.Height);
+                        cachedDisplayBuffer.Width,
+                        cachedDisplayBuffer.Height);
                 }
 
                 _ = VideoOutExports.SubmitFlipFromAgc(ctx, handle, displayBufferIndex, unchecked((int)flipMode), flipArg);
