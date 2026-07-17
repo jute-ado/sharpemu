@@ -1329,15 +1329,49 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	{
 		Console.Error.WriteLine($"[LOADER][INFO] Setting up {importStubs.Count} import stubs...");
 		var previousEntries = _importEntries;
-		var expandedEntries = new ImportStubEntry[previousEntries.Length + importStubs.Count];
+		var existingEntries = new Dictionary<ulong, ImportStubEntry>(previousEntries.Length);
+		foreach (var entry in previousEntries)
+		{
+			existingEntries.TryAdd(entry.Address, entry);
+		}
+
+		var newImportCount = 0;
+		var reusedCount = 0;
+		foreach (var (stubAddress, nid) in importStubs)
+		{
+			if (!existingEntries.TryGetValue(stubAddress, out var existingEntry))
+			{
+				newImportCount++;
+				continue;
+			}
+
+			if (!string.Equals(existingEntry.Nid, nid, StringComparison.Ordinal))
+			{
+				checkpoint = new ImportSetupCheckpoint(
+					previousEntries,
+					new List<(ulong Address, byte[] OriginalBytes)>(),
+					_importHandlerTrampolines.Count);
+				LastError =
+					$"Import stub 0x{stubAddress:X16} is already registered for {existingEntry.Nid}, not {nid}";
+				return false;
+			}
+
+			reusedCount++;
+		}
+
+		var expandedEntries = new ImportStubEntry[previousEntries.Length + newImportCount];
 		previousEntries.CopyTo(expandedEntries, 0);
 		var attemptAllocationStart = _importHandlerTrampolines.Count;
 		var patchedStubs = new List<(ulong Address, byte[] OriginalBytes)>();
 		var setupCheckpoint = new ImportSetupCheckpoint(previousEntries, patchedStubs, attemptAllocationStart);
 		checkpoint = setupCheckpoint;
-		var importAddresses = new HashSet<ulong>(importStubs.Keys);
+		var importAddresses = new HashSet<ulong>(existingEntries.Keys);
+		foreach (var stubAddress in importStubs.Keys)
+		{
+			importAddresses.Add(stubAddress);
+		}
 		var localIndex = 0;
-		var patchedCount = 0;
+		var patchedCount = reusedCount;
 		var redirectCount = 0;
 
 		bool TryPatchTracked(ulong stubAddress, nint targetAddress)
@@ -1363,6 +1397,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		{
 			foreach (var (stubAddress, nid) in importStubs)
 			{
+				if (existingEntries.ContainsKey(stubAddress))
+				{
+					continue;
+				}
+
 				_ = _moduleManager.TryGetExport(nid, out var resolvedExport);
 				var entryIndex = previousEntries.Length + localIndex;
 				expandedEntries[entryIndex] = new ImportStubEntry(stubAddress, nid, resolvedExport);
@@ -1424,7 +1463,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 
 			_importEntries = expandedEntries;
-			Console.Error.WriteLine($"[LOADER][INFO] Setup {patchedCount}/{importStubs.Count} import stubs (direct bridge, lle_redirects={redirectCount})");
+			Console.Error.WriteLine(
+				$"[LOADER][INFO] Setup {patchedCount}/{importStubs.Count} import stubs " +
+				$"(reused={reusedCount}, direct bridge, lle_redirects={redirectCount})");
 			return patchedCount == importStubs.Count;
 		}
 		catch
