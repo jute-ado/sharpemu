@@ -27,11 +27,19 @@ also ignored.
 The harness launches the CLI in a child process so execution cases have a hard
 timeout and a crashed or stalled guest cannot take down the test runner. CI
 builds and validates the harness but skips local game execution when no manifest
-is configured. `requiredVideoOutFrameFingerprints` checks the guest's CPU-visible
-VideoOut buffer. `requiredPresentedGuestImage` captures one explicit presented
-frame and checks the image SharpEmu actually presents. Set `fingerprint` for a
-stable exact image, or use `forbiddenFingerprints` for a coarse progression gate
-that rejects known stale or broken frames while allowing rendering to improve.
+is configured. Each manifest case is discovered as a separate test, so one
+failure does not hide later compatibility results. A single case can be selected
+by its displayed name, for example:
+
+```text
+dotnet test tests/SharpEmu.GameTests/SharpEmu.GameTests.csproj -c Release --filter "DisplayName~Example game load"
+```
+
+`requiredVideoOutFrameFingerprints` checks the guest's CPU-visible VideoOut
+buffer. `requiredPresentedGuestImage` captures one explicit presented frame and
+checks the image SharpEmu actually presents. Set `fingerprint` for a stable exact
+image, or use `forbiddenFingerprints` for a coarse progression gate that rejects
+known stale or broken frames while allowing rendering to improve.
 Use `minimumNonBlackPixels` to reject empty output without pinning any exact
 pixels; this is the preferred first rendering milestone while output is evolving.
 Use `minimumDistinctColors` (from 2 through 65,536) to reject solid or
