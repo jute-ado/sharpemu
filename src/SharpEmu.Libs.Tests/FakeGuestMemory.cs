@@ -18,6 +18,8 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestAddressSpace, IGuestStac
 
     public int ReadCount { get; private set; }
 
+    public List<ulong> ReadAddresses { get; } = [];
+
     public int CompareCount { get; private set; }
 
     public int GuestAllocationCount => _guestAllocations.Count;
@@ -164,6 +166,7 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestAddressSpace, IGuestStac
     public bool TryRead(ulong virtualAddress, Span<byte> destination)
     {
         ReadCount++;
+        ReadAddresses.Add(virtualAddress);
         if (!TryFind(virtualAddress, destination.Length, out var data, out var offset))
         {
             return false;
@@ -171,6 +174,12 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestAddressSpace, IGuestStac
 
         data.AsSpan(offset, destination.Length).CopyTo(destination);
         return true;
+    }
+
+    public void ClearReadHistory()
+    {
+        ReadCount = 0;
+        ReadAddresses.Clear();
     }
 
     public bool TryCompare(ulong virtualAddress, ReadOnlySpan<byte> expected)
