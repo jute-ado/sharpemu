@@ -27,16 +27,18 @@ public sealed class RenderTargetSamplingTests
     private const ulong SourceAddress = 0x0010_0000;
     private const ulong FirstDisplayAddress = 0x0020_0000;
     private const ulong SecondDisplayAddress = 0x0030_0000;
+    private const ulong CpuTextureAddress = 0x0042_0000;
     private const ulong ShaderAddress = 0x0050_0000;
     private const ulong ConstantsAddress = 0x0060_0000;
 
     /// <summary>
-    /// Verifies that a render target rewritten after an earlier sample exposes
-    /// the new pixels when an indexed triangle strip composes it into a reused
-    /// presentation target.
+    /// Verifies both GPU render-target reuse and a large CPU-backed texture
+    /// upload. The final target preserves the translated triangle-strip result
+    /// on its left half and receives four distinct texture quadrants through an
+    /// indexed triangle list on its right half.
     /// </summary>
     [GpuConformanceFact]
-    public void RewrittenRenderTarget_IsSampledIntoReusedPresentationTarget()
+    public void RewrittenRenderTarget_AndCpuTexture_AreSampledIntoReusedPresentationTarget()
     {
         var captureDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -44,7 +46,7 @@ public sealed class RenderTargetSamplingTests
         Directory.CreateDirectory(captureDirectory);
         Environment.SetEnvironmentVariable(
             "SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE",
-            $"0x{FirstDisplayAddress:X}@3");
+            $"0x{FirstDisplayAddress:X}@4");
         Environment.SetEnvironmentVariable(
             "SHARPEMU_GUEST_IMAGE_DUMP_DIR",
             captureDirectory);
@@ -80,18 +82,26 @@ public sealed class RenderTargetSamplingTests
                 CreateTranslatedPassthroughVertex(),
                 globalMemoryBuffers,
                 Rgba8TextureDataFormat);
+            ComposeCpuTextureToRightHalf(
+                FirstDisplayAddress,
+                fragment,
+                CreateTranslatedPassthroughVertex(),
+                globalMemoryBuffers);
 
             var capturePath = WaitForCapture(captureDirectory);
             var pixels = File.ReadAllBytes(capturePath);
             Assert.Equal(
                 checked((int)(DestinationWidth * DestinationHeight * 4)),
                 pixels.Length);
-            AssertRgbaPixels(
+            AssertRgbaRegion(
                 pixels,
+                xStart: 0,
+                xEnd: DestinationWidth / 2,
                 expectedRed: 32,
                 expectedGreen: 128,
                 expectedBlue: 223,
                 expectedAlpha: 255);
+            AssertCpuTextureQuadrants(pixels);
         }
         finally
         {
@@ -212,6 +222,102 @@ public sealed class RenderTargetSamplingTests
                     1)));
     }
 
+    private static void ComposeCpuTextureToRightHalf(
+        ulong destinationAddress,
+        byte[] fragmentSpirv,
+        byte[] vertexSpirv,
+        IReadOnlyList<GuestMemoryBuffer> globalMemoryBuffers)
+    {
+        const uint textureWidth = 1280;
+        const uint textureHeight = 720;
+        var texturePixels = new byte[textureWidth * textureHeight * 4];
+        for (var y = 0; y < textureHeight; y++)
+        {
+            for (var x = 0; x < textureWidth; x++)
+            {
+                var offset = checked((int)((y * textureWidth + x) * 4));
+                var right = x >= textureWidth / 2;
+                var bottom = y >= textureHeight / 2;
+                texturePixels[offset + 0] = right == bottom ? (byte)255 : (byte)0;
+                texturePixels[offset + 1] = right ? (byte)255 : (byte)0;
+                texturePixels[offset + 2] = bottom && !right ? (byte)255 : (byte)0;
+                texturePixels[offset + 3] = 255;
+            }
+        }
+
+        VulkanVideoPresenter.SubmitOffscreenTranslatedDraw(
+            fragmentSpirv,
+            [
+                new GuestDrawTexture(
+                    CpuTextureAddress,
+                    textureWidth,
+                    textureHeight,
+                    Rgba8TextureDataFormat,
+                    UnormNumberType,
+                    texturePixels,
+                    IsFallback: false,
+                    IsStorage: false,
+                    Pitch: textureWidth,
+                    Sampler: new GuestSampler(
+                        Word0: 0,
+                        Word1: 0x00FF_F000,
+                        Word2: 0x0900_0000,
+                        Word3: 0)),
+            ],
+            globalMemoryBuffers,
+            attributeCount: 1,
+            new GuestRenderTarget(
+                destinationAddress,
+                DestinationWidth,
+                DestinationHeight,
+                Rgba8DataFormat,
+                UnormNumberType),
+            vertexSpirv,
+            vertexCount: 6,
+            primitiveType: 4,
+            indexBuffer: new GuestIndexBuffer(
+                [0, 0, 1, 0, 2, 0, 1, 0, 2, 0, 3, 0],
+                Is32Bit: false),
+            vertexBuffers:
+            [
+                CreateVertexBuffer(
+                    location: 0,
+                    baseAddress: 0x0043_0000,
+                    (0f, 1f),
+                    (1f, 1f),
+                    (0f, -1f),
+                    (1f, -1f)),
+                CreateVertexBuffer(
+                    location: 1,
+                    baseAddress: 0x0044_0000,
+                    (0f, 0f),
+                    (1f, 0f),
+                    (0f, 1f),
+                    (1f, 1f)),
+            ],
+            renderState: new GuestRenderState(
+                [
+                    new GuestBlendState(
+                        Enable: true,
+                        ColorSrcFactor: 4,
+                        ColorDstFactor: 5,
+                        ColorFunc: 0,
+                        AlphaSrcFactor: 4,
+                        AlphaDstFactor: 5,
+                        AlphaFunc: 0,
+                        SeparateAlphaBlend: true,
+                        WriteMask: 0xF),
+                ],
+                Scissor: null,
+                new GuestViewport(
+                    0,
+                    DestinationHeight,
+                    DestinationWidth,
+                    -DestinationHeight,
+                    0,
+                    1)));
+    }
+
     private static byte[] CreateTranslatedColorTransformFragment(
         out IReadOnlyList<GuestMemoryBuffer> globalMemoryBuffers)
     {
@@ -301,12 +407,14 @@ public sealed class RenderTargetSamplingTests
                 Gen5PixelOutputKind.Float,
                 out var shader,
                 out var compileError,
-                totalGlobalBufferCount: 3,
-                scalarRegisterBufferIndex: 1),
+                totalGlobalBufferCount: 5,
+                scalarRegisterBufferIndex: 3),
             compileError);
         globalMemoryBuffers =
         [
             new GuestMemoryBuffer(ConstantsAddress, constants),
+            new GuestMemoryBuffer(0, new byte[256 * sizeof(uint)]),
+            new GuestMemoryBuffer(0, new byte[256 * sizeof(uint)]),
             new GuestMemoryBuffer(0, CreateScalarRegisterSnapshot(
                 evaluation.InitialScalarRegisters)),
             new GuestMemoryBuffer(0, new byte[256 * sizeof(uint)]),
@@ -397,7 +505,10 @@ public sealed class RenderTargetSamplingTests
                 state,
                 evaluation,
                 out var shader,
-                out var compileError),
+                out var compileError,
+                globalBufferBase: 1,
+                totalGlobalBufferCount: 5,
+                scalarRegisterBufferIndex: 4),
             compileError);
         return shader.Spirv;
     }
@@ -513,20 +624,54 @@ public sealed class RenderTargetSamplingTests
             "within 30 seconds.");
     }
 
-    private static void AssertRgbaPixels(
+    private static void AssertRgbaRegion(
         byte[] pixels,
+        uint xStart,
+        uint xEnd,
         byte expectedRed,
         byte expectedGreen,
         byte expectedBlue,
         byte expectedAlpha)
     {
-        for (var offset = 0; offset < pixels.Length; offset += 4)
+        for (var y = 0u; y < DestinationHeight; y++)
         {
-            Assert.InRange(pixels[offset + 0], expectedRed - 1, expectedRed + 1);
-            Assert.InRange(pixels[offset + 1], expectedGreen - 1, expectedGreen + 1);
-            Assert.InRange(pixels[offset + 2], expectedBlue - 1, expectedBlue + 1);
-            Assert.InRange(pixels[offset + 3], expectedAlpha - 1, expectedAlpha);
+            for (var x = xStart; x < xEnd; x++)
+            {
+                var offset = checked((int)((y * DestinationWidth + x) * 4));
+                Assert.InRange(pixels[offset + 0], expectedRed - 1, expectedRed + 1);
+                Assert.InRange(pixels[offset + 1], expectedGreen - 1, expectedGreen + 1);
+                Assert.InRange(pixels[offset + 2], expectedBlue - 1, expectedBlue + 1);
+                Assert.InRange(pixels[offset + 3], expectedAlpha - 1, expectedAlpha);
+            }
         }
+    }
+
+    private static void AssertCpuTextureQuadrants(byte[] pixels)
+    {
+        var colors = new HashSet<(byte Red, byte Green, byte Blue)>
+        {
+            ReadRgb(pixels, 60, 13),
+            ReadRgb(pixels, 84, 13),
+            ReadRgb(pixels, 60, 40),
+            ReadRgb(pixels, 84, 40),
+        };
+
+        Assert.Contains(((byte)255, (byte)0, (byte)0), colors);
+        Assert.Contains(((byte)255, (byte)255, (byte)0), colors);
+        Assert.Contains(((byte)0, (byte)0, (byte)255), colors);
+        Assert.Contains(((byte)0, (byte)255, (byte)0), colors);
+    }
+
+    private static (byte Red, byte Green, byte Blue) ReadRgb(
+        byte[] pixels,
+        uint x,
+        uint y)
+    {
+        var offset = checked((int)((y * DestinationWidth + x) * 4));
+        return (
+            pixels[offset + 0],
+            pixels[offset + 1],
+            pixels[offset + 2]);
     }
 
     private sealed class ArrayCpuMemory(
