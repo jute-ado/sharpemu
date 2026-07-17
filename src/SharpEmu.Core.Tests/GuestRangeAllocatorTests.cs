@@ -52,6 +52,41 @@ public sealed class GuestRangeAllocatorTests
     }
 
     [Fact]
+    public void FreeingTopAllocationsReclaimsTheUnusedArenaTail()
+    {
+        var allocator = new GuestRangeAllocator();
+        Assert.True(allocator.TryAddArena(0x1000, 0x1000, 0x100));
+        Assert.True(allocator.TryAllocate(0x100, 0x10, out var first));
+        Assert.True(allocator.TryAllocate(0x100, 0x10, out var second));
+        Assert.True(allocator.TryAllocate(0x100, 0x10, out var third));
+
+        Assert.True(allocator.TryFree(first));
+        Assert.True(allocator.TryFree(third));
+        Assert.True(allocator.TryFree(second));
+
+        Assert.True(allocator.TryAllocate(0xF00, 0x100, out var wholeUsableArena));
+        Assert.Equal(first, wholeUsableArena);
+    }
+
+    [Fact]
+    public void RewindingCurrentArenaDoesNotAbsorbAnAdjacentRetiredArena()
+    {
+        var allocator = new GuestRangeAllocator();
+        Assert.True(allocator.TryAddArena(0x1000, 0x100, 0));
+        Assert.True(allocator.TryAllocate(0x100, 1, out var retired));
+        Assert.True(allocator.TryAddArena(0x1100, 0x100, 0));
+        Assert.True(allocator.TryAllocate(0x20, 1, out var current));
+
+        Assert.True(allocator.TryFree(retired));
+        Assert.True(allocator.TryFree(current));
+
+        Assert.True(allocator.TryAllocate(0x100, 1, out var reusedRetired));
+        Assert.Equal(retired, reusedRetired);
+        Assert.True(allocator.TryAllocate(0x100, 1, out var reusedCurrent));
+        Assert.Equal(current, reusedCurrent);
+    }
+
+    [Fact]
     public void ReclaimsAlignmentPaddingAndRetiredArenaTail()
     {
         var allocator = new GuestRangeAllocator();

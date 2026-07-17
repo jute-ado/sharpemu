@@ -105,6 +105,11 @@ internal sealed class GuestRangeAllocator
             return false;
         }
 
+        if (TryRewindCurrentArena(address, size))
+        {
+            return true;
+        }
+
         InsertFreeRange(address, size);
         return true;
     }
@@ -191,6 +196,56 @@ internal sealed class GuestRangeAllocator
         }
 
         _freeRanges.Insert(index, new FreeRange(start, end - start));
+    }
+
+    private bool TryRewindCurrentArena(ulong address, ulong size)
+    {
+        if (!_hasCurrentArena ||
+            address < _currentArenaBase ||
+            size > _currentArenaSize ||
+            address - _currentArenaBase > _currentArenaSize - size ||
+            address + size != _currentArenaBase + _currentArenaOffset)
+        {
+            return false;
+        }
+
+        var newCursor = address;
+        while (_freeRanges.Count != 0)
+        {
+            var precedingIndex = FindFreeRangeBefore(newCursor);
+            if (precedingIndex < 0 ||
+                _freeRanges[precedingIndex].Address < _currentArenaBase ||
+                _freeRanges[precedingIndex].End != newCursor)
+            {
+                break;
+            }
+
+            newCursor = _freeRanges[precedingIndex].Address;
+            _freeRanges.RemoveAt(precedingIndex);
+        }
+
+        _currentArenaOffset = newCursor - _currentArenaBase;
+        return true;
+    }
+
+    private int FindFreeRangeBefore(ulong address)
+    {
+        var low = 0;
+        var high = _freeRanges.Count;
+        while (low < high)
+        {
+            var middle = low + ((high - low) >> 1);
+            if (_freeRanges[middle].Address < address)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        return low - 1;
     }
 
     private static ulong AlignUp(ulong value, ulong alignment)
