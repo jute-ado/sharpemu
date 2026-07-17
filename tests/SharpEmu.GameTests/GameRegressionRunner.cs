@@ -244,6 +244,12 @@ internal static class GameRegressionRunner
                 $"Game regression '{testCase.Name}' has a negative " +
                 "minimumObservedImportDispatches.");
         }
+        if (testCase.Expectations.MaximumImportWarnings is < 0)
+        {
+            throw new InvalidDataException(
+                $"Game regression '{testCase.Name}' has a negative " +
+                "maximumImportWarnings.");
+        }
         for (var index = 0;
             index < testCase.Expectations.RequiredOutputSubstrings.Length;
             index++)
@@ -510,6 +516,18 @@ internal static class GameRegressionRunner
             }
         }
 
+        if (testCase.Expectations.MaximumImportWarnings is
+            { } maximumImportWarnings)
+        {
+            var importWarnings = CountImportWarnings(capturedOutput);
+            if (importWarnings > maximumImportWarnings)
+            {
+                failures.AppendLine(
+                    $"import warnings {importWarnings} exceeded maximum " +
+                    $"{maximumImportWarnings}.");
+            }
+        }
+
         for (var index = 0;
             index < testCase.Expectations.RequiredOutputSubstrings.Length;
             index++)
@@ -722,6 +740,27 @@ internal static class GameRegressionRunner
         }
 
         return maximum;
+    }
+
+    internal static int CountImportWarnings(string output)
+    {
+        const string marker = "[LOADER][WARN] Import#";
+        var count = 0;
+        var searchOffset = 0;
+        while (searchOffset < output.Length)
+        {
+            var relativeMarker = output.AsSpan(searchOffset)
+                .IndexOf(marker, StringComparison.Ordinal);
+            if (relativeMarker < 0)
+            {
+                break;
+            }
+
+            count++;
+            searchOffset += relativeMarker + marker.Length;
+        }
+
+        return count;
     }
 
     private static bool TryGetPresentedGuestImageFingerprint(

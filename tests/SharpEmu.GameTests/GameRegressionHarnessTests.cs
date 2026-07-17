@@ -301,6 +301,60 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
+    public void ExecutionPassesWithinImportWarningBudget()
+    {
+        var testCase = CreateExecutionCase(maximumImportWarnings: 1);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        GameRegressionRunner.ValidateReport(
+            testCase,
+            report.RootElement,
+            "synthetic-report.json",
+            "[LOADER][WARN] Import#10 unresolved: nid=missing");
+    }
+
+    [Fact]
+    public void ExecutionFailsWhenImportWarningBudgetIsExceeded()
+    {
+        var testCase = CreateExecutionCase(maximumImportWarnings: 1);
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                """
+                [LOADER][WARN] Import#10 result: -1 (first)
+                [LOADER][TRACE] Import#11: expected trace
+                [LOADER][WARN] Import#12 not implemented for generation Gen5
+                """));
+
+        Assert.Contains(
+            "import warnings 2 exceeded maximum 1",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExecutionCanRequireCapturedVideoOutFrameFingerprint()
     {
         var testCase = CreateExecutionCase(
@@ -802,6 +856,7 @@ public sealed class GameRegressionHarnessTests
 
     private static GameRegressionCase CreateExecutionCase(
         long? minimumObservedImportDispatches = null,
+        int? maximumImportWarnings = null,
         string[]? requiredOutputSubstrings = null,
         string[]? forbiddenOutputSubstrings = null,
         string[]? requiredVideoOutFrameFingerprints = null,
@@ -833,6 +888,7 @@ public sealed class GameRegressionHarnessTests
             RequireSuccessfulModuleInitializers = true,
             MinimumObservedImportDispatches =
                 minimumObservedImportDispatches,
+            MaximumImportWarnings = maximumImportWarnings,
             RequiredOutputSubstrings =
                 requiredOutputSubstrings ?? [],
             ForbiddenOutputSubstrings =

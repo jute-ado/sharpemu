@@ -814,6 +814,9 @@ public sealed partial class DirectExecutionBackend
 		var expectedPlayGoEnumerationEnd =
 			string.Equals(nid, "uWIYLFkkwqk", StringComparison.Ordinal) &&
 			resultValue == unchecked((int)0x80B2000C);
+		var expectedDirectMemoryProbeMiss =
+			string.Equals(nid, "B+vc2AO2Zrc", StringComparison.Ordinal) &&
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN;
 		return expectedFileProbeMiss ||
 			expectedTimedWaitTimeout ||
 			expectedEqueueTimeout ||
@@ -821,7 +824,8 @@ public sealed partial class DirectExecutionBackend
 			expectedMutexTrylockBusy ||
 			expectedUserServiceNoEvent ||
 			expectedPrivacyInvalidParameter ||
-			expectedPlayGoEnumerationEnd;
+			expectedPlayGoEnumerationEnd ||
+			expectedDirectMemoryProbeMiss;
 	}
 
 	private static bool ShouldLogExpectedImportResults() =>
@@ -832,6 +836,7 @@ public sealed partial class DirectExecutionBackend
 
 	private static bool IsExpectedFileProbeNotFoundNid(string nid) =>
 		nid is
+			"xeYO4u7uyJ0" or // fopen
 			"eV9wAD2riIA" or // sceKernelStat
 			"1G3lF1Gg1k8" or // sceKernelOpen
 			"gEpBkcwxUjw";   // sceKernelAprResolveFilepathsToIdsAndFileSizes

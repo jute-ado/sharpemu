@@ -41,6 +41,7 @@
         "requireNoUnsupportedRelocations": true,
         "requireSuccessfulModuleInitializers": true,
         "minimumObservedImportDispatches": 1000,
+        "maximumImportWarnings": 0,
         "requiredOutputSubstrings": [
           "Vulkan VideoOut presented guest frame"
         ],

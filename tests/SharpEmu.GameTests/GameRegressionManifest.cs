@@ -74,6 +74,8 @@ internal sealed class GameRegressionExpectations
 
     public long? MinimumObservedImportDispatches { get; init; }
 
+    public int? MaximumImportWarnings { get; init; }
+
     public string[] RequiredOutputSubstrings { get; init; } = [];
 
     public string[] ForbiddenOutputSubstrings { get; init; } = [];

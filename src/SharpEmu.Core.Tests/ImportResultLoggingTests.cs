@@ -32,4 +32,22 @@ public sealed class ImportResultLoggingTests
                 nid,
                 (OrbisGen2Result)result));
     }
+
+    [Fact]
+    public void FopenNotFoundIsExpectedFileProbeControlFlow()
+    {
+        Assert.True(
+            DirectExecutionBackend.IsExpectedImportResult(
+                "xeYO4u7uyJ0",
+                OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND));
+    }
+
+    [Fact]
+    public void DirectMemoryTryAgainIsExpectedAllocationProbeControlFlow()
+    {
+        Assert.True(
+            DirectExecutionBackend.IsExpectedImportResult(
+                "B+vc2AO2Zrc",
+                OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN));
+    }
 }
