@@ -1331,6 +1331,19 @@ internal static unsafe class VulkanVideoPresenter
         private const int MaxInFlightGuestSubmissions = 8;
         private const double PerformanceHudSampleSeconds = 0.5;
         private const uint ThreadQueryLimitedInformation = 0x0800;
+        // Process-level diagnostics configuration is immutable for an emulator
+        // run, so keep environment lookups out of Vulkan resource hot paths.
+        private static readonly bool _vulkanValidationEnabled =
+            string.Equals(
+                Environment.GetEnvironmentVariable("SHARPEMU_VK_VALIDATION"),
+                "1",
+                StringComparison.Ordinal);
+        private static readonly bool _vulkanDebugUtilsEnabled =
+            _vulkanValidationEnabled ||
+            string.Equals(
+                Environment.GetEnvironmentVariable("SHARPEMU_VK_DEBUG_LABELS"),
+                "1",
+                StringComparison.Ordinal);
         private static readonly bool _performanceHudEnabled =
             !string.Equals(
                 Environment.GetEnvironmentVariable("SHARPEMU_PERF_HUD"),
@@ -1702,6 +1715,11 @@ internal static unsafe class VulkanVideoPresenter
 
         private void LoadDebugUtilsCommands()
         {
+            if (!_vulkanDebugUtilsEnabled)
+            {
+                return;
+            }
+
             var setObjectName = _vk.GetDeviceProcAddr(_device, "vkSetDebugUtilsObjectNameEXT");
             var beginLabel = _vk.GetDeviceProcAddr(_device, "vkCmdBeginDebugUtilsLabelEXT");
             var endLabel = _vk.GetDeviceProcAddr(_device, "vkCmdEndDebugUtilsLabelEXT");
@@ -1807,7 +1825,6 @@ internal static unsafe class VulkanVideoPresenter
         private void CreateInstance()
         {
             var applicationName = (byte*)SilkMarshal.StringToPtr("SharpEmu");
-            var enableValidation = Environment.GetEnvironmentVariable("SHARPEMU_VK_VALIDATION") == "1";
             byte* validationLayerName = null;
 
             try
@@ -1833,7 +1850,8 @@ internal static unsafe class VulkanVideoPresenter
                     enabledExtensions[index] = extensions[index];
                 }
 
-                if (IsInstanceExtensionAvailable(DebugUtilsExtensionName))
+                if (_vulkanDebugUtilsEnabled &&
+                    IsInstanceExtensionAvailable(DebugUtilsExtensionName))
                 {
                     debugUtilsExtension = (byte*)SilkMarshal.StringToPtr(DebugUtilsExtensionName);
                     enabledExtensions[enabledExtensionCount++] = debugUtilsExtension;
@@ -1848,11 +1866,12 @@ internal static unsafe class VulkanVideoPresenter
                     instanceCreateFlags |= InstanceCreateFlags.EnumeratePortabilityBitKhr;
                 }
 
-                if (enableValidation && IsInstanceLayerAvailable("VK_LAYER_KHRONOS_validation"))
+                if (_vulkanValidationEnabled &&
+                    IsInstanceLayerAvailable("VK_LAYER_KHRONOS_validation"))
                 {
                     validationLayerName = (byte*)SilkMarshal.StringToPtr("VK_LAYER_KHRONOS_validation");
                 }
-                else if (enableValidation)
+                else if (_vulkanValidationEnabled)
                 {
                     Console.Error.WriteLine("[LOADER][WARN] SHARPEMU_VK_VALIDATION=1 but VK_LAYER_KHRONOS_validation not found (Vulkan SDK installed?).");
                 }

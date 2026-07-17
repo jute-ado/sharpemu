@@ -5259,49 +5259,36 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			BindActiveGuestStackRange(context);
 			BindTlsBase(context);
 			byte* ptr2 = (byte*)ptr;
-			int offset = 0;
+			var emitter = new NativeCodeEmitter(ptr2);
 
-			void Emit(byte value) => ptr2[offset++] = value;
-			void EmitU64(ulong value)
-			{
-				*(ulong*)(ptr2 + offset) = value;
-				offset += sizeof(ulong);
-			}
-			void EmitMovR64Imm(byte rex, byte opcode, ulong value)
-			{
-				Emit(rex);
-				Emit(opcode);
-				EmitU64(value);
-			}
-
-			Emit(0x53); // push rbx
-			Emit(0x55); // push rbp
-			Emit(0x57); // push rdi
-			Emit(0x56); // push rsi
-			Emit(0x41); Emit(0x54); // push r12
-			Emit(0x41); Emit(0x55); // push r13
-			Emit(0x41); Emit(0x56); // push r14
-			Emit(0x41); Emit(0x57); // push r15
-			EmitHostNonvolatileXmmSave(ptr2, ref offset);
-			EmitMovR64Imm(0x49, 0xBA, hostRspSlot); // mov r10, hostRspSlot
-			Emit(0x49); Emit(0x89); Emit(0x22); // mov [r10], rsp
-			EmitMovR64Imm(0x48, 0xB8, context[CpuRegister.Rsp]); // mov rax, guest rsp
-			Emit(0x48); Emit(0x89); Emit(0xC4); // mov rsp, rax
-			EmitMovR64Imm(0x48, 0xBB, context[CpuRegister.Rbx]); // mov rbx, imm64
-			EmitMovR64Imm(0x48, 0xBD, context[CpuRegister.Rbp]); // mov rbp, imm64
-			EmitMovR64Imm(0x48, 0xBF, context[CpuRegister.Rdi]); // mov rdi, imm64
-			EmitMovR64Imm(0x48, 0xBE, context[CpuRegister.Rsi]); // mov rsi, imm64
-			EmitMovR64Imm(0x48, 0xBA, context[CpuRegister.Rdx]); // mov rdx, imm64
-			EmitMovR64Imm(0x48, 0xB9, context[CpuRegister.Rcx]); // mov rcx, imm64
-			EmitMovR64Imm(0x49, 0xB8, context[CpuRegister.R8]); // mov r8, imm64
-			EmitMovR64Imm(0x49, 0xB9, context[CpuRegister.R9]); // mov r9, imm64
-			EmitMovR64Imm(0x49, 0xBC, context[CpuRegister.R12]); // mov r12, imm64
-			EmitMovR64Imm(0x49, 0xBD, context[CpuRegister.R13]); // mov r13, imm64
-			EmitMovR64Imm(0x49, 0xBE, context[CpuRegister.R14]); // mov r14, imm64
-			EmitMovR64Imm(0x49, 0xBF, context[CpuRegister.R15]); // mov r15, imm64
-			EmitMovR64Imm(0x48, 0xB8, context[CpuRegister.Rax]); // mov rax, imm64
-			EmitMovR64Imm(0x49, 0xBB, entryPoint); // mov r11, entryPoint
-			Emit(0x41); Emit(0xFF); Emit(0xE3); // jmp r11
+			emitter.Emit(0x53); // push rbx
+			emitter.Emit(0x55); // push rbp
+			emitter.Emit(0x57); // push rdi
+			emitter.Emit(0x56); // push rsi
+			emitter.Emit(0x41); emitter.Emit(0x54); // push r12
+			emitter.Emit(0x41); emitter.Emit(0x55); // push r13
+			emitter.Emit(0x41); emitter.Emit(0x56); // push r14
+			emitter.Emit(0x41); emitter.Emit(0x57); // push r15
+			EmitHostNonvolatileXmmSave(ptr2, ref emitter.Offset);
+			emitter.EmitMovR64Immediate(0x49, 0xBA, hostRspSlot); // mov r10, hostRspSlot
+			emitter.Emit(0x49); emitter.Emit(0x89); emitter.Emit(0x22); // mov [r10], rsp
+			emitter.EmitMovR64Immediate(0x48, 0xB8, context[CpuRegister.Rsp]); // mov rax, guest rsp
+			emitter.Emit(0x48); emitter.Emit(0x89); emitter.Emit(0xC4); // mov rsp, rax
+			emitter.EmitMovR64Immediate(0x48, 0xBB, context[CpuRegister.Rbx]); // mov rbx, imm64
+			emitter.EmitMovR64Immediate(0x48, 0xBD, context[CpuRegister.Rbp]); // mov rbp, imm64
+			emitter.EmitMovR64Immediate(0x48, 0xBF, context[CpuRegister.Rdi]); // mov rdi, imm64
+			emitter.EmitMovR64Immediate(0x48, 0xBE, context[CpuRegister.Rsi]); // mov rsi, imm64
+			emitter.EmitMovR64Immediate(0x48, 0xBA, context[CpuRegister.Rdx]); // mov rdx, imm64
+			emitter.EmitMovR64Immediate(0x48, 0xB9, context[CpuRegister.Rcx]); // mov rcx, imm64
+			emitter.EmitMovR64Immediate(0x49, 0xB8, context[CpuRegister.R8]); // mov r8, imm64
+			emitter.EmitMovR64Immediate(0x49, 0xB9, context[CpuRegister.R9]); // mov r9, imm64
+			emitter.EmitMovR64Immediate(0x49, 0xBC, context[CpuRegister.R12]); // mov r12, imm64
+			emitter.EmitMovR64Immediate(0x49, 0xBD, context[CpuRegister.R13]); // mov r13, imm64
+			emitter.EmitMovR64Immediate(0x49, 0xBE, context[CpuRegister.R14]); // mov r14, imm64
+			emitter.EmitMovR64Immediate(0x49, 0xBF, context[CpuRegister.R15]); // mov r15, imm64
+			emitter.EmitMovR64Immediate(0x48, 0xB8, context[CpuRegister.Rax]); // mov rax, imm64
+			emitter.EmitMovR64Immediate(0x49, 0xBB, entryPoint); // mov r11, entryPoint
+			emitter.Emit(0x41); emitter.Emit(0xFF); emitter.Emit(0xE3); // jmp r11
 			ActiveEntryReturnSentinelRip = (ulong)_guestReturnStub;
 			if (returnSlotAddress == 0 ||
 				!context.TryReadUInt64(returnSlotAddress, out originalReturnSlotValue) ||
@@ -5376,6 +5363,45 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			_activeGuestHardwareExceptionAccessAddress = previousHardwareExceptionAccessAddress;
 			_hostMemory.Free(hostRspSlot);
 			_hostMemory.Free((ulong)ptr);
+		}
+	}
+
+	// The continuation trampoline is rebuilt on every blocked-thread resume.
+	// Keep its tiny writer on the stack: capturing local emit functions create a
+	// managed display-class allocation on this extremely hot path.
+	private unsafe ref struct NativeCodeEmitter(byte* code)
+	{
+		private readonly byte* _code = code;
+		public int Offset;
+
+		public void Emit(byte value)
+		{
+			_code[Offset++] = value;
+		}
+
+		public void Emit(ushort value)
+		{
+			*(ushort*)(_code + Offset) = value;
+			Offset += sizeof(ushort);
+		}
+
+		public void Emit(uint value)
+		{
+			*(uint*)(_code + Offset) = value;
+			Offset += sizeof(uint);
+		}
+
+		private void Emit(ulong value)
+		{
+			*(ulong*)(_code + Offset) = value;
+			Offset += sizeof(ulong);
+		}
+
+		public void EmitMovR64Immediate(byte rex, byte opcode, ulong value)
+		{
+			Emit(rex);
+			Emit(opcode);
+			Emit(value);
 		}
 	}
 

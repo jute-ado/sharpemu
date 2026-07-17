@@ -46,6 +46,11 @@ public static class VideoOutExports
     private const ulong SceVideoOutPixelFormatA2R10G10B10 = 0x88060000;
     private const ulong SceVideoOutPixelFormatA2R10G10B10Srgb = 0x88000000;
     private const ulong SceVideoOutPixelFormatA2R10G10B10Bt2020Pq = 0x88740000;
+    // Gen5 uses the same layouts with full-width channel-order/transfer tags.
+    private const ulong SceVideoOutPixelFormat2R8G8B8A8Srgb = 0x8000000022000000;
+    private const ulong SceVideoOutPixelFormat2B8G8R8A8Srgb = 0x8000000000000000;
+    private const ulong SceVideoOutPixelFormat2R10G10B10A2 = 0x8100000622000000;
+    private const ulong SceVideoOutPixelFormat2R10G10B10A2Bt2100Pq = 0x8100070422000000;
     private const ulong SceVideoOutInternalEventVblank = 0x5;
     private const ulong SceVideoOutInternalEventFlip = 0x6;
     private const short OrbisKernelEventFilterVideoOut = -13;
@@ -1631,27 +1636,50 @@ public static class VideoOutExports
             SceVideoOutPixelFormatA8B8G8R8Srgb or
             SceVideoOutPixelFormatB8G8R8A8Unorm or
             SceVideoOutPixelFormatR8G8B8A8Unorm or
+            SceVideoOutPixelFormat2R8G8B8A8Srgb or
+            SceVideoOutPixelFormat2B8G8R8A8Srgb or
             SceVideoOutPixelFormatA2R10G10B10 or
             SceVideoOutPixelFormatA2R10G10B10Srgb or
-            SceVideoOutPixelFormatA2R10G10B10Bt2020Pq
+            SceVideoOutPixelFormatA2R10G10B10Bt2020Pq or
+            SceVideoOutPixelFormat2R10G10B10A2 or
+            SceVideoOutPixelFormat2R10G10B10A2Bt2100Pq
             ? 4u
             : 0u;
 
     // Maps the PS5 VideoOut pixel format space to the AGC "guest texture format" tags
     // the backend keys its guest-image registry on (see VulkanVideoPresenter.
     // GetGuestTextureFormat: format=10 => 56 for 8-bit RGBA variants, format=9 => 9 for 10-bit).
-    private static uint MapPixelFormatToGuestTextureFormat(ulong pixelFormat) =>
-        NormalizePixelFormat(pixelFormat) switch
+    // Unknown formats default to 56 (8-bit RGBA) with a logged warning so games
+    // display something rather than silently failing the flip pipeline.
+    private static uint MapPixelFormatToGuestTextureFormat(ulong pixelFormat)
+    {
+        var normalized = NormalizePixelFormat(pixelFormat);
+        var result = normalized switch
         {
             SceVideoOutPixelFormatA8R8G8B8Srgb or
             SceVideoOutPixelFormatA8B8G8R8Srgb or
             SceVideoOutPixelFormatB8G8R8A8Unorm or
-            SceVideoOutPixelFormatR8G8B8A8Unorm => 56u,
+            SceVideoOutPixelFormatR8G8B8A8Unorm or
+            SceVideoOutPixelFormat2R8G8B8A8Srgb or
+            SceVideoOutPixelFormat2B8G8R8A8Srgb => 56u,
             SceVideoOutPixelFormatA2R10G10B10 or
             SceVideoOutPixelFormatA2R10G10B10Srgb or
-            SceVideoOutPixelFormatA2R10G10B10Bt2020Pq => 9u,
+            SceVideoOutPixelFormatA2R10G10B10Bt2020Pq or
+            SceVideoOutPixelFormat2R10G10B10A2 or
+            SceVideoOutPixelFormat2R10G10B10A2Bt2100Pq => 9u,
             _ => 0u,
         };
+
+        if (result == 0u)
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][WARN] vk: unknown pixel format 0x{pixelFormat:X16} (normalized=0x{normalized:X16}) " +
+                "— falling back to format 56 (8-bit RGBA). Report this format to the project.");
+            result = 56u;
+        }
+
+        return result;
+    }
 
     private static ulong NormalizePixelFormat(ulong pixelFormat)
     {

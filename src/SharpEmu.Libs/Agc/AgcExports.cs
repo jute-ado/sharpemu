@@ -3878,37 +3878,39 @@ public static partial class AgcExports
             _graphicsShaderCache.TryAdd(shaderKey, compiled);
         }
 
-        var imageBindings = pixelEvaluation.ImageBindings
-            .Concat(exportEvaluation.ImageBindings);
         var textures = new List<TranslatedImageBinding>(
             pixelEvaluation.ImageBindings.Count +
             exportEvaluation.ImageBindings.Count);
-        foreach (var binding in imageBindings)
+        if (!TryAppendTranslatedImageBindings(
+                pixelEvaluation.ImageBindings,
+                textures,
+                pixelShaderAddress,
+                exportShaderAddress,
+                out error) ||
+            !TryAppendTranslatedImageBindings(
+                exportEvaluation.ImageBindings,
+                textures,
+                pixelShaderAddress,
+                exportShaderAddress,
+                out error))
         {
-            if (!TryDecodeTextureDescriptor(binding.ResourceDescriptor, out var texture))
-            {
-                error = $"invalid texture descriptor at pc=0x{binding.Pc:X}";
-                return false;
-            }
-
-            TraceAgcShader(
-                $"agc.texture_binding ps=0x{pixelShaderAddress:X16} es=0x{exportShaderAddress:X16} " +
-                $"pc=0x{binding.Pc:X} op={binding.Opcode} storage={(Gen5ShaderTranslator.IsStorageImageOperation(binding.Opcode) ? 1 : 0)} " +
-                $"decoded={FormatTextureDescriptor(texture)} " +
-                $"raw={FormatShaderDwords(binding.ResourceDescriptor)} sampler={FormatShaderDwords(binding.SamplerDescriptor)}");
-            textures.Add(
-                new TranslatedImageBinding(
-                    texture,
-                    Gen5ShaderTranslator.IsStorageImageOperation(binding.Opcode),
-                    binding.MipLevel ?? 0,
-                    binding.SamplerDescriptor));
+            return false;
         }
 
-        var globalMemoryBindings = pixelEvaluation.GlobalMemoryBindings
-            .Concat(exportEvaluation.GlobalMemoryBindings)
-            .Append(CreateScalarRegisterBinding(pixelEvaluation))
-            .Append(CreateScalarRegisterBinding(exportEvaluation))
-            .ToArray();
+        var globalMemoryBindings = new Gen5GlobalMemoryBinding[
+            pixelEvaluation.GlobalMemoryBindings.Count +
+            exportEvaluation.GlobalMemoryBindings.Count + 2];
+        var globalBindingIndex = 0;
+        foreach (var binding in pixelEvaluation.GlobalMemoryBindings)
+        {
+            globalMemoryBindings[globalBindingIndex++] = binding;
+        }
+        foreach (var binding in exportEvaluation.GlobalMemoryBindings)
+        {
+            globalMemoryBindings[globalBindingIndex++] = binding;
+        }
+        globalMemoryBindings[globalBindingIndex++] = CreateScalarRegisterBinding(pixelEvaluation);
+        globalMemoryBindings[globalBindingIndex] = CreateScalarRegisterBinding(exportEvaluation);
         IReadOnlyList<Gen5VertexInputBinding> vertexInputs =
             exportEvaluation.VertexInputs ?? [];
         state.UcRegisters.TryGetValue(VgtPrimitiveType, out var primitiveType);
@@ -3943,6 +3945,42 @@ public static partial class AgcExports
                 textures,
                 vertexInputs,
                 pixelEvaluation.InitialScalarRegisters));
+        return true;
+    }
+
+    private static bool TryAppendTranslatedImageBindings(
+        IReadOnlyList<Gen5ImageBinding> bindings,
+        List<TranslatedImageBinding> textures,
+        ulong pixelShaderAddress,
+        ulong exportShaderAddress,
+        out string error)
+    {
+        foreach (var binding in bindings)
+        {
+            if (!TryDecodeTextureDescriptor(binding.ResourceDescriptor, out var texture))
+            {
+                error = $"invalid texture descriptor at pc=0x{binding.Pc:X}";
+                return false;
+            }
+
+            var isStorage = Gen5ShaderTranslator.IsStorageImageOperation(binding.Opcode);
+            if (_traceAgcShader)
+            {
+                TraceAgcShader(
+                    $"agc.texture_binding ps=0x{pixelShaderAddress:X16} es=0x{exportShaderAddress:X16} " +
+                    $"pc=0x{binding.Pc:X} op={binding.Opcode} storage={(isStorage ? 1 : 0)} " +
+                    $"decoded={FormatTextureDescriptor(texture)} " +
+                    $"raw={FormatShaderDwords(binding.ResourceDescriptor)} sampler={FormatShaderDwords(binding.SamplerDescriptor)}");
+            }
+            textures.Add(
+                new TranslatedImageBinding(
+                    texture,
+                    isStorage,
+                    binding.MipLevel ?? 0,
+                    binding.SamplerDescriptor));
+        }
+
+        error = string.Empty;
         return true;
     }
 
@@ -4025,20 +4063,9 @@ public static partial class AgcExports
 
     private static uint GetPixelColorExportMask(Gen5ShaderState state, uint target)
     {
-        // Called per render target (twice per draw via CreateRenderState +
-        // HasPixelColorExport); a manual scan avoids the per-call LINQ iterator
-        // and closure allocations. Same result as the previous
-        // Select/OfType/Where/Aggregate chain.
-        var mask = 0u;
-        foreach (var instruction in state.Program.Instructions)
-        {
-            if (instruction.Control is Gen5ExportControl export && export.Target == target)
-            {
-                mask |= export.EnableMask & 0xFu;
-            }
-        }
-
-        return mask;
+        return target < 8
+            ? (state.Program.PixelColorExportMasks >> checked((int)(target * 4))) & 0xFu
+            : 0;
     }
 
     private static uint GetInterpolatedAttributeCount(Gen5ShaderState state)
@@ -4207,15 +4234,19 @@ public static partial class AgcExports
 
         var target = targets[0];
         var scissor = DecodeScissor(registers, target.Width, target.Height);
-        return new GuestRenderState(
-            targets.Select(target =>
+        var blends = new GuestBlendState[targets.Count];
+        for (var index = 0; index < targets.Count; index++)
+        {
+            var blend = DecodeBlendState(registers, targets[index].Slot);
+            blends[index] = blend with
             {
-                var blend = DecodeBlendState(registers, target.Slot);
-                return blend with
-                {
-                    WriteMask = blend.WriteMask & GetPixelColorExportMask(pixelState, target.Slot),
-                };
-            }).ToArray(),
+                WriteMask = blend.WriteMask &
+                    GetPixelColorExportMask(pixelState, targets[index].Slot),
+            };
+        }
+
+        return new GuestRenderState(
+            blends,
             scissor,
             DecodeViewport(registers, target.Width, target.Height, scissor));
     }
