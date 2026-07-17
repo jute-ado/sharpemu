@@ -78,10 +78,17 @@ public sealed class GuestDrawTraceFormatterTests
                         WriteMask: 0xF),
                 ],
                 new GuestRect(0, 0, 1280, 720),
-                new GuestViewport(0, 0, 1280, 720, 0, 1)));
+                new GuestViewport(0, 0, 1280, 720, 0, 1)),
+            firstVertex: 5,
+            vertexOffset: -3,
+            firstInstance: 7);
 
         Assert.Contains(
             "match=2 es=0x0000000005561D00 ps=0x0000000005662100",
+            trace,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "first_vertex=5 vertex_offset=-3 first_instance=7",
             trace,
             StringComparison.Ordinal);
         Assert.Contains(

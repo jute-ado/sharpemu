@@ -41,6 +41,9 @@ internal sealed record VulkanTranslatedGuestDraw(
     uint AttributeCount,
     uint VertexCount,
     uint InstanceCount,
+    uint FirstVertex,
+    int VertexOffset,
+    uint FirstInstance,
     uint PrimitiveType,
     GuestIndexBuffer? IndexBuffer,
     GuestRenderState RenderState,
@@ -385,7 +388,10 @@ internal static unsafe class VulkanVideoPresenter
         GuestIndexBuffer? indexBuffer = null,
         IReadOnlyList<GuestVertexBuffer>? vertexBuffers = null,
         GuestRenderState? renderState = null,
-        GuestShaderIdentity shaderIdentity = default)
+        GuestShaderIdentity shaderIdentity = default,
+        uint firstVertex = 0,
+        int vertexOffset = 0,
+        uint firstInstance = 0)
     {
         if (pixelSpirv.Length == 0 || width == 0 || height == 0)
         {
@@ -421,6 +427,9 @@ internal static unsafe class VulkanVideoPresenter
                     attributeCount,
                     vertexCount,
                     instanceCount,
+                    firstVertex,
+                    vertexOffset,
+                    firstInstance,
                     primitiveType,
                     indexBuffer,
                     renderState ?? GuestRenderState.Default,
@@ -452,7 +461,10 @@ internal static unsafe class VulkanVideoPresenter
         GuestIndexBuffer? indexBuffer = null,
         IReadOnlyList<GuestVertexBuffer>? vertexBuffers = null,
         GuestRenderState? renderState = null,
-        GuestShaderIdentity shaderIdentity = default)
+        GuestShaderIdentity shaderIdentity = default,
+        uint firstVertex = 0,
+        int vertexOffset = 0,
+        uint firstInstance = 0)
     {
         SubmitOffscreenTranslatedDraw(
             pixelSpirv,
@@ -467,7 +479,10 @@ internal static unsafe class VulkanVideoPresenter
             indexBuffer,
             vertexBuffers,
             renderState,
-            shaderIdentity);
+            shaderIdentity,
+            firstVertex,
+            vertexOffset,
+            firstInstance);
     }
 
     // Manual scans (targets are <= 8) so the per-draw validation does not
@@ -519,7 +534,10 @@ internal static unsafe class VulkanVideoPresenter
         GuestIndexBuffer? indexBuffer = null,
         IReadOnlyList<GuestVertexBuffer>? vertexBuffers = null,
         GuestRenderState? renderState = null,
-        GuestShaderIdentity shaderIdentity = default)
+        GuestShaderIdentity shaderIdentity = default,
+        uint firstVertex = 0,
+        int vertexOffset = 0,
+        uint firstInstance = 0)
     {
         if (pixelSpirv.Length == 0 ||
             targets.Count == 0 ||
@@ -585,6 +603,9 @@ internal static unsafe class VulkanVideoPresenter
                         attributeCount,
                         vertexCount,
                         instanceCount,
+                        firstVertex,
+                        vertexOffset,
+                        firstInstance,
                         primitiveType,
                         indexBuffer,
                         effectiveRenderState,
@@ -628,6 +649,9 @@ internal static unsafe class VulkanVideoPresenter
                         attributeCount,
                         3,
                         1,
+                        0,
+                        0,
+                        0,
                         4,
                         null,
                         GuestRenderState.Default,
@@ -1497,6 +1521,9 @@ internal static unsafe class VulkanVideoPresenter
             public bool Index32Bit;
             public uint VertexCount = 3;
             public uint InstanceCount = 1;
+            public uint FirstVertex;
+            public int VertexOffset;
+            public uint FirstInstance;
             public PrimitiveTopology Topology = PrimitiveTopology.TriangleList;
             public GuestBlendState[] Blends = [GuestBlendState.Default];
             public GuestRect? Scissor;
@@ -3066,6 +3093,9 @@ internal static unsafe class VulkanVideoPresenter
                 VertexBuffers = new VertexBufferResource[draw.VertexBuffers.Count],
                 VertexCount = GetDrawVertexCount(draw.PrimitiveType, draw.VertexCount, draw.IndexBuffer),
                 InstanceCount = Math.Max(draw.InstanceCount, 1),
+                FirstVertex = draw.FirstVertex,
+                VertexOffset = draw.VertexOffset,
+                FirstInstance = draw.FirstInstance,
                 Topology = GetPrimitiveTopology(draw.PrimitiveType),
                 Blends = draw.RenderState.Blends.ToArray(),
                 Scissor = draw.RenderState.Scissor,
@@ -7481,8 +7511,8 @@ internal static unsafe class VulkanVideoPresenter
                     resources.VertexCount,
                     resources.InstanceCount,
                     0,
-                    0,
-                    0);
+                    resources.VertexOffset,
+                    resources.FirstInstance);
             }
             else
             {
@@ -7490,8 +7520,8 @@ internal static unsafe class VulkanVideoPresenter
                     _commandBuffer,
                     resources.VertexCount,
                     resources.InstanceCount,
-                    0,
-                    0);
+                    resources.FirstVertex,
+                    resources.FirstInstance);
             }
             _vk.CmdEndRenderPass(_commandBuffer);
         }
