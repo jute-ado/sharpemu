@@ -93,7 +93,8 @@ internal static unsafe class VulkanVideoPresenter
     private static readonly HashSet<(ulong Address, uint Width, uint Height)>
         _tracedGuestImageSubmissions = [];
     private static Thread? _thread;
-    private static Presentation? _latestPresentation;
+    private static readonly CoalescingGuestFrameMailbox<Presentation>
+        _presentations = new();
     private static byte[]? _copyFragmentSpirv;
     private static uint _windowWidth;
     private static uint _windowHeight;
@@ -218,7 +219,13 @@ internal static unsafe class VulkanVideoPresenter
 
             _windowWidth = width;
             _windowHeight = height;
-            _latestPresentation ??= _splashHidden
+            if (LatestPresentation is not null)
+            {
+                StartPresenterLocked();
+                return;
+            }
+
+            var presentation = _splashHidden
                 ? new Presentation(
                     CreateBlackFrame(width, height),
                     width,
@@ -247,6 +254,7 @@ internal static unsafe class VulkanVideoPresenter
                     TranslatedDraw: null,
                     RequiredGuestWorkSequence: _guestWork.EnqueuedSequence,
                     IsSplash: false);
+            PublishPresentationLocked(presentation);
             StartPresenterLocked();
         }
     }
@@ -256,13 +264,13 @@ internal static unsafe class VulkanVideoPresenter
         lock (_gate)
         {
             _splashHidden = true;
-            if (_closed || _latestPresentation is not { IsSplash: true } latest)
+            if (_closed || LatestPresentation is not { IsSplash: true } latest)
             {
                 return;
             }
 
             var sequence = latest.Sequence + 1;
-            _latestPresentation = new Presentation(
+            PublishPresentationLocked(new Presentation(
                 CreateBlackFrame(latest.Width, latest.Height),
                 latest.Width,
                 latest.Height,
@@ -270,7 +278,8 @@ internal static unsafe class VulkanVideoPresenter
                 GuestDrawKind.None,
                 TranslatedDraw: null,
                 RequiredGuestWorkSequence: _guestWork.EnqueuedSequence,
-                IsSplash: false);
+                IsSplash: false),
+                replacePending: true);
             System.Threading.Monitor.PulseAll(_gate);
             Console.Error.WriteLine("[LOADER][INFO] Vulkan VideoOut hid splash");
         }
@@ -295,8 +304,8 @@ internal static unsafe class VulkanVideoPresenter
                 return;
             }
 
-            var sequence = (_latestPresentation?.Sequence ?? 0) + 1;
-            _latestPresentation = new Presentation(
+            var sequence = (LatestPresentation?.Sequence ?? 0) + 1;
+            PublishPresentationLocked(new Presentation(
                 bgraFrame,
                 width,
                 height,
@@ -304,7 +313,7 @@ internal static unsafe class VulkanVideoPresenter
                 GuestDrawKind.None,
                 TranslatedDraw: null,
                 RequiredGuestWorkSequence: _guestWork.EnqueuedSequence,
-                IsSplash: false);
+                IsSplash: false));
             System.Threading.Monitor.PulseAll(_gate);
             if (_thread is not null)
             {
@@ -332,7 +341,7 @@ internal static unsafe class VulkanVideoPresenter
         lock (_gate)
         {
             if (_closed ||
-                _latestPresentation is { Pixels: null } latest &&
+                LatestPresentation is { Pixels: null } latest &&
                 latest.DrawKind == drawKind &&
                 latest.Width == width &&
                 latest.Height == height)
@@ -340,8 +349,8 @@ internal static unsafe class VulkanVideoPresenter
                 return;
             }
 
-            var sequence = (_latestPresentation?.Sequence ?? 0) + 1;
-            _latestPresentation = new Presentation(
+            var sequence = (LatestPresentation?.Sequence ?? 0) + 1;
+            PublishPresentationLocked(new Presentation(
                 null,
                 width,
                 height,
@@ -349,7 +358,7 @@ internal static unsafe class VulkanVideoPresenter
                 drawKind,
                 TranslatedDraw: null,
                 RequiredGuestWorkSequence: _guestWork.EnqueuedSequence,
-                IsSplash: false);
+                IsSplash: false));
             System.Threading.Monitor.PulseAll(_gate);
             if (_thread is not null)
             {
@@ -396,8 +405,8 @@ internal static unsafe class VulkanVideoPresenter
                 return;
             }
 
-            var sequence = (_latestPresentation?.Sequence ?? 0) + 1;
-            _latestPresentation = new Presentation(
+            var sequence = (LatestPresentation?.Sequence ?? 0) + 1;
+            PublishPresentationLocked(new Presentation(
                 null,
                 width,
                 height,
@@ -417,7 +426,7 @@ internal static unsafe class VulkanVideoPresenter
                     renderState ?? GuestRenderState.Default,
                     shaderIdentity),
                 RequiredGuestWorkSequence: _guestWork.EnqueuedSequence,
-                IsSplash: false);
+                IsSplash: false));
             System.Threading.Monitor.PulseAll(_gate);
             if (_thread is not null)
             {
@@ -733,8 +742,8 @@ internal static unsafe class VulkanVideoPresenter
 
             traceSubmission =
                 _tracedGuestImageSubmissions.Add((address, width, height));
-            var sequence = (_latestPresentation?.Sequence ?? 0) + 1;
-            _latestPresentation = new Presentation(
+            var sequence = (LatestPresentation?.Sequence ?? 0) + 1;
+            PublishPresentationLocked(new Presentation(
                 null,
                 width,
                 height,
@@ -745,7 +754,7 @@ internal static unsafe class VulkanVideoPresenter
                 // for this frame.  Do not expose it until those draws finish.
                 RequiredGuestWorkSequence: requiredSequence,
                 IsSplash: false,
-                GuestImageAddress: address);
+                GuestImageAddress: address));
             System.Threading.Monitor.PulseAll(_gate);
             if (_thread is not null)
             {
@@ -1211,8 +1220,8 @@ internal static unsafe class VulkanVideoPresenter
         uint height;
         lock (_gate)
         {
-            width = _windowWidth == 0 ? _latestPresentation?.Width ?? 1280 : _windowWidth;
-            height = _windowHeight == 0 ? _latestPresentation?.Height ?? 720 : _windowHeight;
+            width = _windowWidth == 0 ? LatestPresentation?.Width ?? 1280 : _windowWidth;
+            height = _windowHeight == 0 ? LatestPresentation?.Height ?? 720 : _windowHeight;
         }
 
         InitializeMacVulkanLoader();
@@ -1242,18 +1251,26 @@ internal static unsafe class VulkanVideoPresenter
     {
         lock (_gate)
         {
-            if (_latestPresentation is not { } latest ||
-                latest.Sequence == presentedSequence ||
-                latest.RequiredGuestWorkSequence > _guestWork.CompletedSequence)
-            {
-                presentation = default;
-                return false;
-            }
-
-            presentation = latest;
-            return true;
+            return _presentations.TryTake(
+                presentedSequence,
+                _guestWork.CompletedSequence,
+                out presentation);
         }
     }
+
+    private static Presentation? LatestPresentation =>
+        _presentations.Latest is { } latest
+            ? latest.Value
+            : null;
+
+    private static void PublishPresentationLocked(
+        Presentation presentation,
+        bool replacePending = false) =>
+        _presentations.Publish(
+            presentation,
+            presentation.Sequence,
+            presentation.RequiredGuestWorkSequence,
+            replacePending);
 
     private static void EnqueueGuestWorkLocked(object work)
     {
@@ -6262,10 +6279,9 @@ internal static unsafe class VulkanVideoPresenter
             {
                 if (_closed ||
                     _pendingGuestWork.Count > 0 ||
-                    (_latestPresentation is { } latest &&
-                     latest.Sequence != _presentedSequence &&
-                     latest.RequiredGuestWorkSequence <=
-                     _guestWork.CompletedSequence))
+                    _presentations.HasReady(
+                        _presentedSequence,
+                        _guestWork.CompletedSequence))
                 {
                     return;
                 }
