@@ -91,6 +91,37 @@ public sealed class GuestTlsTemplateSafetyTests : IDisposable
     }
 
     [Fact]
+    public void SeedThreadBlockRejectsMissingStaticTlsMapping()
+    {
+        const ulong threadPointer = 0x20_000;
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(threadPointer, new byte[0x100]);
+        var context = new CpuContext(memory, Generation.Gen5) { FsBase = threadPointer };
+        GuestTlsTemplate.RegisterModule(1, [0xA5], 4, 4);
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => GuestTlsTemplate.SeedThreadBlock(context, threadPointer));
+
+        Assert.Contains("static TLS module 1", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ResolveAddressRequiresCanonicalThreadSeeding()
+    {
+        const ulong threadPointer = 0x20_000;
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(0x10_000, new byte[0x20_000]);
+        var context = new CpuContext(memory, Generation.Gen5) { FsBase = threadPointer };
+        var staticOffset = GuestTlsTemplate.RegisterModule(1, [0xA5], 4, 4);
+
+        Assert.Equal(0UL, GuestTlsTemplate.ResolveAddress(context, 1, 0));
+
+        GuestTlsTemplate.SeedThreadBlock(context, threadPointer);
+
+        Assert.Equal(threadPointer - staticOffset, GuestTlsTemplate.ResolveAddress(context, 1, 0));
+    }
+
+    [Fact]
     public void ModuleRegisteredAfterThreadSeedUsesInitializedDynamicEntry()
     {
         const ulong threadPointer = 0x20_000;
