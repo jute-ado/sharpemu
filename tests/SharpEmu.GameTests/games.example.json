@@ -60,6 +60,7 @@
         "requiredPresentedGuestImage": {
           "frame": 500,
           "minimumNonBlackPixels": 1,
+          "minimumDistinctColors": 16,
           "forbiddenFingerprints": [
             "FEDCBA9876543210"
           ]
@@ -67,6 +68,7 @@
         "requiredGuestImageWrite": {
           "selector": "1280x720@100",
           "minimumNonBlackPixels": 1,
+          "minimumDistinctColors": 16,
           "forbiddenFingerprints": [
             "0000000000000000"
           ]

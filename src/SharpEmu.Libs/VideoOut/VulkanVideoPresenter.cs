@@ -5641,7 +5641,8 @@ internal static unsafe class VulkanVideoPresenter
                                 "vk.guest_image_write_capture " +
                                 $"selector={_guestImageWriteCaptureRequest} " +
                                 $"fingerprint=0x{captured.Fingerprint:X16} " +
-                                $"nonblack_pixels={captured.NonBlackPixels}");
+                                $"nonblack_pixels={captured.NonBlackPixels} " +
+                                $"distinct_colors={captured.DistinctColors}");
                         }
                     }
                 }
@@ -6738,7 +6739,8 @@ internal static unsafe class VulkanVideoPresenter
 
         private readonly record struct GuestImageContentObservation(
             ulong Fingerprint,
-            long NonBlackPixels);
+            long NonBlackPixels,
+            int DistinctColors);
 
         private GuestImageContentObservation? TraceGuestImageContents(
             GuestImageResource image,
@@ -6866,7 +6868,12 @@ internal static unsafe class VulkanVideoPresenter
                         bytes,
                         image.Format,
                         bytesPerPixel);
-                    observation = new(hash, nonblackPixels);
+                    var distinctColors =
+                        GuestImageMetrics.CountDistinctPixelValues(
+                            bytes,
+                            checked((int)bytesPerPixel),
+                            GuestImageMetrics.MaximumDistinctPixelValues);
+                    observation = new(hash, nonblackPixels, distinctColors);
                     var centerOffset = checked(
                         ((int)(image.Height / 2) * (int)image.Width +
                          (int)(image.Width / 2)) *
@@ -6882,12 +6889,14 @@ internal static unsafe class VulkanVideoPresenter
                               $"size={image.Width}x{image.Height} format={image.Format} " +
                               $"nonzero_bytes={nonzeroBytes}/{byteCount} " +
                               $"nonblack_pixels={nonblackPixels}/{(ulong)image.Width * image.Height} " +
+                              $"distinct_colors={distinctColors} " +
                               $"center={center}"
                             : "[LOADER][TRACE] " +
                               $"vk.guest_image addr=0x{image.Address:X16} " +
                               $"size={image.Width}x{image.Height} format={image.Format} " +
                               $"nonzero_bytes={nonzeroBytes}/{byteCount} " +
                               $"nonblack_pixels={nonblackPixels}/{(ulong)image.Width * image.Height} " +
+                              $"distinct_colors={distinctColors} " +
                               $"center={center} hash=0x{hash:X16}");
                     DumpGuestImageBytes(
                         image,

@@ -779,6 +779,73 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
+    public void ExecutionCanRequirePresentedImageColorDiversity()
+    {
+        var testCase = CreateExecutionCase(
+            requiredPresentedGuestImage: new()
+            {
+                Frame = 500,
+                MinimumDistinctColors = 16,
+            });
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        GameRegressionRunner.ValidateReport(
+            testCase,
+            report.RootElement,
+            "synthetic-report.json",
+            "vk.presented_guest_image frame=500 " +
+            "fingerprint=0xFE9CE3C77AB8A325 distinct_colors=16");
+    }
+
+    [Theory]
+    [InlineData("distinct_colors=15", "15 were below 16")]
+    [InlineData("", "did not report color diversity")]
+    public void ExecutionRejectsInsufficientPresentedImageColorDiversity(
+        string observation,
+        string expectedFailure)
+    {
+        var testCase = CreateExecutionCase(
+            requiredPresentedGuestImage: new()
+            {
+                Frame = 500,
+                MinimumDistinctColors = 16,
+            });
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                "vk.presented_guest_image frame=500 " +
+                "fingerprint=0xFE9CE3C77AB8A325 " +
+                observation));
+
+        Assert.Contains(
+            expectedFailure,
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExecutionCanRequireIntermediateGuestImageWrite()
     {
         var testCase = CreateExecutionCase(
@@ -905,6 +972,57 @@ public sealed class GameRegressionHarnessTests
                 "vk.guest_image_write_capture selector=1280x720@105 " +
                 observation));
 
+        Assert.Contains(
+            expectedFailure,
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("distinct_colors=16", null)]
+    [InlineData("distinct_colors=15", "15 were below 16")]
+    [InlineData("", "did not report color diversity")]
+    public void ExecutionChecksIntermediateGuestImageColorDiversity(
+        string observation,
+        string? expectedFailure)
+    {
+        var testCase = CreateExecutionCase(
+            requiredGuestImageWrite: new()
+            {
+                Selector = "1280x720@105",
+                MinimumDistinctColors = 16,
+            });
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+        var output =
+            "vk.guest_image_write_capture selector=1280x720@105 " +
+            "fingerprint=0x1234567890ABCDEF " +
+            observation;
+
+        if (expectedFailure is null)
+        {
+            GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                output);
+            return;
+        }
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                output));
         Assert.Contains(
             expectedFailure,
             error.Message,
@@ -1140,6 +1258,27 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Theory]
+    [InlineData(1)]
+    [InlineData(65537)]
+    public void GameCaseRejectsInvalidPresentedImageColorDiversity(int minimum)
+    {
+        var testCase = CreateExecutionCase(
+            requiredPresentedGuestImage: new()
+            {
+                Frame = 500,
+                MinimumDistinctColors = minimum,
+            });
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => GameRegressionRunner.ValidateCase(testCase));
+
+        Assert.Contains(
+            "minimumDistinctColors",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("not-a-fingerprint")]
     public void GameCaseRequiresValidRelationalPresentedImageMilestone(
@@ -1201,6 +1340,27 @@ public sealed class GameRegressionHarnessTests
             });
 
         GameRegressionRunner.ValidateCase(testCase);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(65537)]
+    public void GameCaseRejectsInvalidGuestImageWriteColorDiversity(int minimum)
+    {
+        var testCase = CreateExecutionCase(
+            requiredGuestImageWrite: new()
+            {
+                Selector = "1280x720@105",
+                MinimumDistinctColors = minimum,
+            });
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => GameRegressionRunner.ValidateCase(testCase));
+
+        Assert.Contains(
+            "minimumDistinctColors",
+            error.Message,
+            StringComparison.Ordinal);
     }
 
     [Theory]
