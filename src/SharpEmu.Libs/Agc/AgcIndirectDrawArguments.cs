@@ -16,7 +16,7 @@ internal readonly record struct AgcIndirectDrawArguments(
     public static bool TryRead(
         CpuContext context,
         ulong argumentBufferAddress,
-        uint byteOffset,
+        ulong byteOffset,
         bool indexed,
         out AgcIndirectDrawArguments arguments)
     {
