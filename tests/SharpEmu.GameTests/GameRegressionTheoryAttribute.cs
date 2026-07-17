@@ -6,9 +6,9 @@ using Xunit;
 
 namespace SharpEmu.GameTests;
 
-internal sealed class GameRegressionFactAttribute : FactAttribute
+internal sealed class GameRegressionTheoryAttribute : TheoryAttribute
 {
-    public GameRegressionFactAttribute()
+    public GameRegressionTheoryAttribute()
     {
         if (RuntimeInformation.ProcessArchitecture != Architecture.X64)
         {
