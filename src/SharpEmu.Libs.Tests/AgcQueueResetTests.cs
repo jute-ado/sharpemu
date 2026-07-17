@@ -10,12 +10,16 @@ namespace SharpEmu.Libs.Tests;
 
 public sealed class AgcQueueResetTests
 {
+    private const uint DcbResetRegister = 0x05;
+    private const uint AcbResetRegister = 0x09;
     private const ulong FirstSubmitAddress = 0x1000;
     private const ulong SecondSubmitAddress = 0x1100;
     private const ulong ThirdSubmitAddress = 0x1200;
+    private const ulong FourthSubmitAddress = 0x1300;
     private const ulong FirstDcbAddress = 0x2000;
     private const ulong SecondDcbAddress = 0x3000;
     private const ulong ThirdDcbAddress = 0x4000;
+    private const ulong FourthDcbAddress = 0x4800;
     private const ulong IndirectArgumentsAddress = 0x5000;
 
     [Fact]
@@ -44,6 +48,34 @@ public sealed class AgcQueueResetTests
 
         context[CpuRegister.Rdi] = ThirdSubmitAddress;
         Assert.Equal(0, AgcExports.DriverSubmitDcb(context));
+
+        Assert.True(WasRead(memory, IndirectArgumentsAddress));
+    }
+
+    [Fact]
+    public void AcbQueueResetDiscardsStateFromEarlierSubmissionForSameOwner()
+    {
+        const uint owner = 7;
+        var memory = CreateAcbMemory();
+        var context = new CpuContext(memory, Generation.Gen5);
+        SubmitAcb(context, owner, FirstSubmitAddress);
+        memory.ClearReadHistory();
+
+        SubmitAcb(context, owner, SecondSubmitAddress);
+
+        Assert.False(WasRead(memory, IndirectArgumentsAddress));
+    }
+
+    [Fact]
+    public void AcbQueueResetDoesNotClearAnotherOwnersState()
+    {
+        var memory = CreateAcbMemory();
+        var context = new CpuContext(memory, Generation.Gen5);
+        SubmitAcb(context, owner: 7, FirstSubmitAddress);
+        SubmitAcb(context, owner: 8, ThirdSubmitAddress);
+        memory.ClearReadHistory();
+
+        SubmitAcb(context, owner: 7, FourthSubmitAddress);
 
         Assert.True(WasRead(memory, IndirectArgumentsAddress));
     }
@@ -78,6 +110,48 @@ public sealed class AgcQueueResetTests
         return memory;
     }
 
+    private static FakeGuestMemory CreateAcbMemory()
+    {
+        var resetAndDraw = new byte[7 * sizeof(uint)];
+        CreateResetPacket(AcbResetRegister).CopyTo(resetAndDraw, 0);
+        CreateDrawIndirectPacket().CopyTo(
+            resetAndDraw,
+            2 * sizeof(uint));
+        var arguments = new byte[4 * sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(arguments, 3);
+        BinaryPrimitives.WriteUInt32LittleEndian(arguments.AsSpan(4), 1);
+
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(
+            FirstSubmitAddress,
+            CreateSubmitPacket(FirstDcbAddress, 4));
+        memory.AddRegion(
+            SecondSubmitAddress,
+            CreateSubmitPacket(SecondDcbAddress, 7));
+        memory.AddRegion(
+            ThirdSubmitAddress,
+            CreateSubmitPacket(ThirdDcbAddress, 2));
+        memory.AddRegion(
+            FourthSubmitAddress,
+            CreateSubmitPacket(FourthDcbAddress, 5));
+        memory.AddRegion(FirstDcbAddress, CreateSetIndirectBasePacket());
+        memory.AddRegion(SecondDcbAddress, resetAndDraw);
+        memory.AddRegion(ThirdDcbAddress, CreateResetPacket(AcbResetRegister));
+        memory.AddRegion(FourthDcbAddress, CreateDrawIndirectPacket());
+        memory.AddRegion(IndirectArgumentsAddress, arguments);
+        return memory;
+    }
+
+    private static void SubmitAcb(
+        CpuContext context,
+        uint owner,
+        ulong submitAddress)
+    {
+        context[CpuRegister.Rdi] = owner;
+        context[CpuRegister.Rsi] = submitAddress;
+        Assert.Equal(0, AgcExports.DriverSubmitAcb(context));
+    }
+
     private static bool WasRead(FakeGuestMemory memory, ulong address)
     {
         foreach (var readAddress in memory.ReadAddresses)
@@ -99,10 +173,12 @@ public sealed class AgcQueueResetTests
         return packet;
     }
 
-    private static byte[] CreateResetPacket()
+    private static byte[] CreateResetPacket(uint register = DcbResetRegister)
     {
         var packet = new byte[2 * sizeof(uint)];
-        BinaryPrimitives.WriteUInt32LittleEndian(packet, Pm4(2, 0x10, 0x05));
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            packet,
+            Pm4(2, 0x10, register));
         return packet;
     }
 
