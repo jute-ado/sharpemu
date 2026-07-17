@@ -88,6 +88,102 @@ public sealed class GuestPathResolverTests
     }
 
     [Fact]
+    public void App0ResolutionFollowsCurrentRuntimeBinding()
+    {
+        var original = Environment.GetEnvironmentVariable("SHARPEMU_APP0_DIR");
+        var firstRoot = Path.Combine(Root, "first-app0");
+        var secondRoot = Path.Combine(Root, "second-app0");
+        try
+        {
+            Environment.SetEnvironmentVariable("SHARPEMU_APP0_DIR", firstRoot);
+            Assert.True(KernelMemoryCompatExports.TryResolveGuestPath(
+                "/app0/content.bin",
+                out var firstPath));
+
+            Environment.SetEnvironmentVariable("SHARPEMU_APP0_DIR", secondRoot);
+            Assert.True(KernelMemoryCompatExports.TryResolveGuestPath(
+                "/app0/content.bin",
+                out var secondPath));
+
+            Assert.Equal(
+                Path.Combine(Path.GetFullPath(firstRoot), "content.bin"),
+                firstPath);
+            Assert.Equal(
+                Path.Combine(Path.GetFullPath(secondRoot), "content.bin"),
+                secondPath);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SHARPEMU_APP0_DIR", original);
+        }
+    }
+
+    [Fact]
+    public void DefaultWritableMountsFollowCurrentRuntimeBinding()
+    {
+        var originalApp0 = Environment.GetEnvironmentVariable("SHARPEMU_APP0_DIR");
+        var originalTemp0 = Environment.GetEnvironmentVariable("SHARPEMU_TEMP0_DIR");
+        var originalDownload0 = Environment.GetEnvironmentVariable("SHARPEMU_DOWNLOAD0_DIR");
+        var suffix = Guid.NewGuid().ToString("N");
+        var firstName = $"first-app0-{suffix}";
+        var secondName = $"second-app0-{suffix}";
+        var firstRoot = Path.Combine(Root, firstName);
+        var secondRoot = Path.Combine(Root, secondName);
+        var writableRoots = new[]
+        {
+            Path.Combine(Path.GetTempPath(), "SharpEmu", firstName),
+            Path.Combine(Path.GetTempPath(), "SharpEmu", secondName),
+        };
+
+        try
+        {
+            Environment.SetEnvironmentVariable("SHARPEMU_TEMP0_DIR", null);
+            Environment.SetEnvironmentVariable("SHARPEMU_DOWNLOAD0_DIR", null);
+            Environment.SetEnvironmentVariable("SHARPEMU_APP0_DIR", firstRoot);
+            Assert.True(KernelMemoryCompatExports.TryResolveGuestPath(
+                "/temp0/cache.bin",
+                out var firstTempPath));
+            Assert.True(KernelMemoryCompatExports.TryResolveGuestPath(
+                "/download0/cache.bin",
+                out var firstDownloadPath));
+
+            Environment.SetEnvironmentVariable("SHARPEMU_APP0_DIR", secondRoot);
+            Assert.True(KernelMemoryCompatExports.TryResolveGuestPath(
+                "/temp0/cache.bin",
+                out var secondTempPath));
+            Assert.True(KernelMemoryCompatExports.TryResolveGuestPath(
+                "/download0/cache.bin",
+                out var secondDownloadPath));
+
+            Assert.Equal(
+                Path.Combine(writableRoots[0], "temp0", "cache.bin"),
+                firstTempPath);
+            Assert.Equal(
+                Path.Combine(writableRoots[0], "download0", "cache.bin"),
+                firstDownloadPath);
+            Assert.Equal(
+                Path.Combine(writableRoots[1], "temp0", "cache.bin"),
+                secondTempPath);
+            Assert.Equal(
+                Path.Combine(writableRoots[1], "download0", "cache.bin"),
+                secondDownloadPath);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SHARPEMU_APP0_DIR", originalApp0);
+            Environment.SetEnvironmentVariable("SHARPEMU_TEMP0_DIR", originalTemp0);
+            Environment.SetEnvironmentVariable("SHARPEMU_DOWNLOAD0_DIR", originalDownload0);
+            foreach (var writableRoot in writableRoots)
+            {
+                if (Directory.Exists(writableRoot))
+                {
+                    Directory.Delete(writableRoot, recursive: true);
+                }
+            }
+        }
+    }
+
+    [Fact]
     public void RejectsSymlinksBelowAMountRoot()
     {
         var tempRoot = Path.Combine(Root, "temp0");
