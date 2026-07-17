@@ -14,6 +14,9 @@ public sealed class KernelFilesystemContractTests : IDisposable
     private const ulong PathAddress = MemoryBase + 0x100;
     private const ulong StatAddress = MemoryBase + 0x1000;
     private const int OpenReadWriteCreate = 0x0202;
+    private const int OpenDirectory = 0x0002_0000;
+    private const int InvalidArgument =
+        (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
     private const int PermissionDenied =
         (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED;
 
@@ -101,6 +104,50 @@ public sealed class KernelFilesystemContractTests : IDisposable
             PermissionDenied,
             KernelMemoryCompatExports.KernelMkdir(_context));
         Assert.False(Directory.Exists(Path.Combine(_root, "..", "escape")));
+    }
+
+    [Fact]
+    public void App0ParentEnumeratesGuestMountRootWithoutHostTraversal()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "host-only-secret"));
+        WritePath("/app0/..");
+        _context[CpuRegister.Rsi] = OpenDirectory;
+        Assert.Equal(0, KernelExports.KernelOpen(_context));
+        var fd = unchecked((int)_context[CpuRegister.Rax]);
+        Assert.True(fd >= 3);
+
+        var entries = new List<string>();
+        while (true)
+        {
+            _context[CpuRegister.Rdi] = unchecked((ulong)fd);
+            _context[CpuRegister.Rsi] = StatAddress;
+            _context[CpuRegister.Rdx] = 512;
+            Assert.Equal(0, KernelMemoryCompatExports.KernelGetdents(_context));
+            var byteCount = unchecked((int)_context[CpuRegister.Rax]);
+            Assert.True(byteCount is 0 or 512);
+            if (byteCount == 0)
+            {
+                break;
+            }
+
+            Assert.True(_context.TryReadByte(StatAddress + 6, out var entryType));
+            Assert.Equal(4, entryType);
+            Assert.True(_context.TryReadByte(StatAddress + 7, out var nameLength));
+            var nameBytes = new byte[nameLength];
+            Assert.True(_context.Memory.TryRead(StatAddress + 8, nameBytes));
+            entries.Add(Encoding.UTF8.GetString(nameBytes));
+        }
+
+        Assert.Contains("app0", entries);
+        Assert.Contains(_mount.TrimStart('/'), entries);
+        Assert.DoesNotContain("host-only-secret", entries);
+
+        _context[CpuRegister.Rdi] = unchecked((ulong)fd);
+        Assert.Equal(0, KernelMemoryCompatExports.KernelClose(_context));
+
+        WritePath("/app0/../../escape");
+        _context[CpuRegister.Rsi] = OpenDirectory;
+        Assert.Equal(InvalidArgument, KernelExports.KernelOpen(_context));
     }
 
     public void Dispose()
