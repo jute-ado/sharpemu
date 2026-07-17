@@ -1258,6 +1258,29 @@ internal static unsafe class VulkanVideoPresenter
         }
     }
 
+    private static bool HasReadyPresentation(long presentedSequence)
+    {
+        lock (_gate)
+        {
+            return _presentations.HasReady(
+                presentedSequence,
+                _guestWork.CompletedSequence);
+        }
+    }
+
+    internal static bool ShouldProcessGuestWorkBeforePresentation(
+        bool hasReadyPresentation,
+        int completedWork)
+    {
+        if (completedWork < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(completedWork));
+        }
+
+        return !hasReadyPresentation &&
+            completedWork < MaxGuestWorkPerRender;
+    }
+
     private static Presentation? LatestPresentation =>
         _presentations.Latest is { } latest
             ? latest.Value
@@ -6361,7 +6384,9 @@ internal static unsafe class VulkanVideoPresenter
             }
 
             var completedWork = 0;
-            while (completedWork < MaxGuestWorkPerRender &&
+            while (ShouldProcessGuestWorkBeforePresentation(
+                       HasReadyPresentation(_presentedSequence),
+                       completedWork) &&
                    TryTakeGuestWork(out var work))
             {
                 try
