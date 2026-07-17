@@ -350,6 +350,9 @@ public static partial class AgcExports
         uint AttributeCount,
         uint VertexCount,
         uint InstanceCount,
+        uint FirstVertex,
+        int VertexOffset,
+        uint FirstInstance,
         GuestIndexBuffer? IndexBuffer,
         IReadOnlyList<TranslatedImageBinding> Textures,
         IReadOnlyList<Gen5GlobalMemoryBinding> GlobalMemoryBindings,
@@ -397,8 +400,12 @@ public static partial class AgcExports
         public ulong IndexBufferAddress { get; set; }
         public uint IndexBufferCount { get; set; }
         public uint IndexSize { get; set; }
+        public uint ConfiguredInstanceCount { get; set; } = 1;
         public uint InstanceCount { get; set; } = 1;
         public uint DrawIndexOffset { get; set; }
+        public uint FirstVertex { get; set; }
+        public int VertexOffset { get; set; }
+        public uint FirstInstance { get; set; }
     }
 
     private sealed class SubmittedDcbParseBudget
@@ -2977,7 +2984,8 @@ public static partial class AgcExports
                 length >= 2 &&
                 ctx.TryReadUInt32(currentAddress + 4, out var instanceCount))
             {
-                state.InstanceCount = Math.Max(instanceCount, 1);
+                state.ConfiguredInstanceCount = Math.Max(instanceCount, 1);
+                state.InstanceCount = state.ConfiguredInstanceCount;
             }
 
             // WAIT_REG_MEM (AGC NOP-encapsulated 32/64-bit variants): when the condition is
@@ -3509,16 +3517,20 @@ public static partial class AgcExports
         switch (op)
         {
             case ItDrawIndexAuto when packetLength >= 3:
+                ResetSubmittedDrawArguments(state);
                 return ctx.TryReadUInt32(packetAddress + 4, out drawCount);
             case ItDrawIndex2 when packetLength >= 6:
+                ResetSubmittedDrawArguments(state);
                 state.DrawIndexOffset = 0;
                 return ctx.TryReadUInt32(packetAddress + 16, out drawCount);
             // 5-dword form emitted by DcbDrawIndex (count at +4, ItIndexBase/
             // ItIndexBufferSize carried by separate preceding packets).
             case ItDrawIndex2 when packetLength >= 5:
+                ResetSubmittedDrawArguments(state);
                 state.DrawIndexOffset = 0;
                 return ctx.TryReadUInt32(packetAddress + 4, out drawCount);
             case ItDrawIndexOffset2 when packetLength >= 5:
+                ResetSubmittedDrawArguments(state);
                 if (!ctx.TryReadUInt32(packetAddress + 8, out var indexOffset))
                 {
                     return false;
@@ -3527,6 +3539,7 @@ public static partial class AgcExports
                 state.DrawIndexOffset = indexOffset;
                 return ctx.TryReadUInt32(packetAddress + 12, out drawCount);
             case ItDrawIndexMultiAuto when packetLength >= 4:
+                ResetSubmittedDrawArguments(state);
                 if (!ctx.TryReadUInt32(packetAddress + 12, out var control))
                 {
                     return false;
@@ -3541,12 +3554,38 @@ public static partial class AgcExports
                     return false;
                 }
 
-                return ctx.TryReadUInt32(
-                    state.IndirectArgsAddress + dataOffset,
-                    out drawCount);
+                var indexed = op == ItDrawIndexIndirect;
+                if (!AgcIndirectDrawArguments.TryRead(
+                        ctx,
+                        state.IndirectArgsAddress,
+                        dataOffset,
+                        indexed,
+                        out var arguments))
+                {
+                    return false;
+                }
+
+                state.InstanceCount = arguments.InstanceCount;
+                state.FirstVertex = arguments.FirstVertex;
+                state.DrawIndexOffset = arguments.FirstIndex;
+                state.VertexOffset = arguments.VertexOffset;
+                state.FirstInstance = arguments.FirstInstance;
+                drawCount = arguments.InstanceCount == 0
+                    ? 0
+                    : arguments.VertexCount;
+                return true;
             default:
                 return false;
         }
+    }
+
+    private static void ResetSubmittedDrawArguments(SubmittedDcbState state)
+    {
+        state.InstanceCount = state.ConfiguredInstanceCount;
+        state.FirstVertex = 0;
+        state.DrawIndexOffset = 0;
+        state.VertexOffset = 0;
+        state.FirstInstance = 0;
     }
 
     private static void TryTranslateGuestDraw(
@@ -3643,7 +3682,10 @@ public static partial class AgcExports
                         translatedDraw.RenderState,
                         new GuestShaderIdentity(
                             translatedDraw.ExportShaderAddress,
-                            translatedDraw.PixelShaderAddress));
+                            translatedDraw.PixelShaderAddress),
+                        firstVertex: translatedDraw.FirstVertex,
+                        vertexOffset: translatedDraw.VertexOffset,
+                        firstInstance: translatedDraw.FirstInstance);
             }
             else
             {
@@ -3947,6 +3989,9 @@ public static partial class AgcExports
             attributeCount,
             vertexCount,
             state.InstanceCount,
+            state.FirstVertex,
+            state.VertexOffset,
+            state.FirstInstance,
             indexed ? CreateGuestIndexBuffer(ctx, state, vertexCount) : null,
             textures,
             globalMemoryBindings,
@@ -4993,7 +5038,10 @@ public static partial class AgcExports
                 globalMemoryBuffers,
                 vertexBuffers,
                 draw.GuestTargets,
-                draw.RenderState));
+                draw.RenderState,
+                draw.FirstVertex,
+                draw.VertexOffset,
+                draw.FirstInstance));
     }
 
     private static int _textureDumpCount;

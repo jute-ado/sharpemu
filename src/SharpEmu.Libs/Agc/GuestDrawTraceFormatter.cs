@@ -25,7 +25,10 @@ internal static class GuestDrawTraceFormatter
         IReadOnlyList<GuestMemoryBuffer> globalMemoryBuffers,
         IReadOnlyList<GuestVertexBuffer> vertexBuffers,
         IReadOnlyList<GuestRenderTarget> renderTargets,
-        GuestRenderState renderState)
+        GuestRenderState renderState,
+        uint firstVertex = 0,
+        int vertexOffset = 0,
+        uint firstInstance = 0)
     {
         var text = new StringBuilder();
         text.Append(
@@ -34,6 +37,8 @@ internal static class GuestDrawTraceFormatter
             $"es=0x{exportShaderAddress:X16} ps=0x{pixelShaderAddress:X16} " +
             $"prim=0x{primitiveType:X} vertices={vertexCount} " +
             $"instances={instanceCount} indexed={indexBuffer is not null} " +
+            $"first_vertex={firstVertex} vertex_offset={vertexOffset} " +
+            $"first_instance={firstInstance} " +
             $"buffers={vertexBuffers.Count} targets={renderTargets.Count}");
 
         for (var targetIndex = 0;
