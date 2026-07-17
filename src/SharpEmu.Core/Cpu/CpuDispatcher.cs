@@ -52,6 +52,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
     private ulong _cachedMemoryResetVersion;
     private ulong _cachedStackBaseAddress;
     private ulong _cachedTlsBaseAddress;
+    private bool _cachedTlsInitialized;
     private ulong _cachedBootstrapStubAddress;
     private ulong _cachedBootstrapPayloadAddress;
     private ulong _cachedDynlibFallbackStubAddress;
@@ -201,7 +202,9 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         }
 
         var tlsBase = TryMapTlsRegion();
-        if (tlsBase == 0 || !TryZeroRegion(tlsBase - TlsPrefixSize, TlsSize + TlsPrefixSize))
+        var initializeTls = !_cachedTlsInitialized;
+        if (tlsBase == 0 ||
+            (initializeTls && !TryZeroRegion(tlsBase - TlsPrefixSize, TlsSize + TlsPrefixSize)))
         {
             return FailEarly(
                 OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
@@ -244,13 +247,14 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                 stage: "initialize-frame-chain");
         }
 
-        if (!InitializeTls(context, tlsBase))
+        if (initializeTls && !InitializeTls(context, tlsBase))
         {
             return FailEarly(
                 OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
                 CpuExitReason.MemoryFault,
                 stage: "initialize-tls");
         }
+        _cachedTlsInitialized = true;
 
         var effectiveImportStubs = importStubs is null
             ? new Dictionary<ulong, string>()
@@ -788,6 +792,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         _cachedMemoryResetVersion = resetVersion;
         _cachedStackBaseAddress = 0;
         _cachedTlsBaseAddress = 0;
+        _cachedTlsInitialized = false;
         _cachedBootstrapStubAddress = 0;
         _cachedBootstrapPayloadAddress = 0;
         _cachedDynlibFallbackStubAddress = 0;

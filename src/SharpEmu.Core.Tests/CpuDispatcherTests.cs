@@ -304,7 +304,32 @@ public sealed class CpuDispatcherTests
     }
 
     [Fact]
-    public void ReusedDispatcherRegionsAreZeroedBetweenEntries()
+    public void MainThreadTlsIsFreshAfterGuestMemoryReset()
+    {
+        var memory = new VirtualMemory();
+        var backend = new TlsPersistenceBackend();
+        using var dispatcher = new CpuDispatcher(memory, new ModuleManager(), backend);
+
+        Assert.Equal(
+            OrbisGen2Result.ORBIS_GEN2_OK,
+            dispatcher.DispatchModuleInitializer(
+                0x0000_0008_0000_0000,
+                Generation.Gen5,
+                moduleName: "before-reset"));
+
+        memory.Clear();
+
+        Assert.Equal(
+            OrbisGen2Result.ORBIS_GEN2_OK,
+            dispatcher.DispatchModuleInitializer(
+                0x0000_0008_0000_0000,
+                Generation.Gen5,
+                moduleName: "after-reset"));
+        Assert.Equal(new byte[] { 0, 0 }, backend.ObservedValues);
+    }
+
+    [Fact]
+    public void ReusedDispatcherStacksAreZeroedBetweenEntries()
     {
         var memory = new VirtualMemory();
         var backend = new CleanInfrastructureBackend();
@@ -321,6 +346,32 @@ public sealed class CpuDispatcherTests
         }
 
         Assert.Equal(2, backend.ExecutionCount);
+    }
+
+    [Fact]
+    public void MainThreadTlsPersistsFromInitializerIntoProcessEntry()
+    {
+        var backend = new TlsPersistenceBackend();
+        using var dispatcher = new CpuDispatcher(
+            new VirtualMemory(),
+            new ModuleManager(),
+            backend);
+
+        Assert.Equal(
+            OrbisGen2Result.ORBIS_GEN2_OK,
+            dispatcher.DispatchModuleInitializer(
+                0x0000_0008_0000_0000,
+                Generation.Gen5,
+                moduleName: "tls-writer"));
+        Assert.Equal(
+            OrbisGen2Result.ORBIS_GEN2_OK,
+            dispatcher.DispatchEntry(
+                0x0000_0008_0000_1000,
+                Generation.Gen5,
+                processImageName: "eboot.bin"));
+
+        Assert.Equal(2, backend.ExecutionCount);
+        Assert.Equal(new byte[] { 0, 0xA5 }, backend.ObservedValues);
     }
 
     [Fact]
@@ -425,23 +476,20 @@ public sealed class CpuDispatcherTests
             out OrbisGen2Result executionResult)
         {
             var stackProbe = context[CpuRegister.Rsp] - 0x100;
-            var tlsProbe = context.FsBase + 0x200;
-            Span<byte> values = stackalloc byte[2];
-            if (!context.Memory.TryRead(stackProbe, values[..1]) ||
-                !context.Memory.TryRead(tlsProbe, values[1..]))
+            Span<byte> value = stackalloc byte[1];
+            if (!context.Memory.TryRead(stackProbe, value))
             {
                 executionResult = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
                 return true;
             }
 
-            if (values[0] != 0 || values[1] != 0)
+            if (value[0] != 0)
             {
                 executionResult = OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
                 return true;
             }
 
-            if (!context.Memory.TryWrite(stackProbe, [0xA5]) ||
-                !context.Memory.TryWrite(tlsProbe, [0x5A]))
+            if (!context.Memory.TryWrite(stackProbe, [0xA5]))
             {
                 executionResult = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
                 return true;
@@ -483,6 +531,43 @@ public sealed class CpuDispatcherTests
             executionResult = readTemplate && readDtv
                 ? OrbisGen2Result.ORBIS_GEN2_OK
                 : OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            return true;
+        }
+    }
+
+    private sealed class TlsPersistenceBackend : INativeCpuBackend
+    {
+        public string BackendName => "tls-persistence-backend";
+
+        public string? LastError => null;
+
+        public int ExecutionCount { get; private set; }
+
+        public List<byte> ObservedValues { get; } = [];
+
+        public bool TryExecute(
+            CpuContext context,
+            ulong entryPoint,
+            Generation generation,
+            IReadOnlyDictionary<ulong, string> importStubs,
+            IReadOnlyDictionary<string, ulong> runtimeSymbols,
+            CpuExecutionOptions executionOptions,
+            NativeEntryReturnContract returnContract,
+            out OrbisGen2Result executionResult)
+        {
+            var tlsProbe = context.FsBase + 0x200;
+            Span<byte> value = stackalloc byte[1];
+            if (!context.Memory.TryRead(tlsProbe, value))
+            {
+                executionResult = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                return true;
+            }
+
+            ObservedValues.Add(value[0]);
+            executionResult = context.Memory.TryWrite(tlsProbe, [0xA5])
+                ? OrbisGen2Result.ORBIS_GEN2_OK
+                : OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            ExecutionCount++;
             return true;
         }
     }
