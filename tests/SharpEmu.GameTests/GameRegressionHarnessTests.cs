@@ -1005,7 +1005,7 @@ public sealed class GameRegressionHarnessTests
                 },
                 RequiredGuestImageWrite = new()
                 {
-                    Selector = " 0xC490000 @ 3 ",
+                    Selector = " 0xC490000 , PS = 55D4300 @ 3 ",
                     Fingerprint = "FEDCBA9876543210",
                 },
             },
@@ -1023,7 +1023,7 @@ public sealed class GameRegressionHarnessTests
             startInfo.Environment[
                 "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR"]);
         Assert.Equal(
-            "0xC490000@3",
+            "0xC490000,ps=0x55D4300@3",
             startInfo.Environment["SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE"]);
         Assert.Equal(
             Path.GetFullPath(guestWriteArtifactDirectory),

@@ -9,6 +9,7 @@ internal readonly record struct GuestImageWriteCaptureRequest(
     ulong Address,
     uint Width,
     uint Height,
+    ulong PixelShaderAddress,
     int Write)
 {
     public bool IsEnabled =>
@@ -18,23 +19,38 @@ internal readonly record struct GuestImageWriteCaptureRequest(
     public bool Matches(
         ulong address,
         uint width,
-        uint height) =>
+        uint height,
+        ulong pixelShaderAddress) =>
         IsEnabled &&
         (Address != 0
             ? address == Address
-            : width == Width && height == Height);
+            : width == Width && height == Height) &&
+        (PixelShaderAddress == 0 ||
+         pixelShaderAddress == PixelShaderAddress);
 
     public bool ShouldCapture(
         ulong address,
         uint width,
         uint height,
+        ulong pixelShaderAddress,
         int matchingWrite) =>
-        Matches(address, width, height) && matchingWrite == Write;
+        Matches(address, width, height, pixelShaderAddress) &&
+        matchingWrite == Write;
 
-    public override string ToString() =>
-        Address != 0
+    public override string ToString()
+    {
+        var target = Address != 0
             ? FormattableString.Invariant($"0x{Address:X}@{Write}")
             : FormattableString.Invariant($"{Width}x{Height}@{Write}");
+        if (PixelShaderAddress == 0)
+        {
+            return target;
+        }
+
+        var occurrenceSeparator = target.LastIndexOf('@');
+        return FormattableString.Invariant(
+            $"{target[..occurrenceSeparator]},ps=0x{PixelShaderAddress:X}{target[occurrenceSeparator..]}");
+    }
 
     public static bool TryParse(
         string? value,
@@ -55,6 +71,44 @@ internal readonly record struct GuestImageWriteCaptureRequest(
         }
 
         var selectorSpan = span[..separator].Trim();
+        ulong pixelShaderAddress = 0;
+        var qualifierSeparator = selectorSpan.IndexOf(',');
+        if (qualifierSeparator >= 0)
+        {
+            var qualifierSpan =
+                selectorSpan[(qualifierSeparator + 1)..].Trim();
+            selectorSpan = selectorSpan[..qualifierSeparator].Trim();
+            var assignmentSeparator = qualifierSpan.IndexOf('=');
+            if (assignmentSeparator <= 0 ||
+                !qualifierSpan[..assignmentSeparator].Trim().Equals(
+                    "ps",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                request = default;
+                return false;
+            }
+
+            var shaderSpan =
+                qualifierSpan[(assignmentSeparator + 1)..].Trim();
+            if (shaderSpan.StartsWith(
+                    "0x",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                shaderSpan = shaderSpan[2..];
+            }
+
+            if (!ulong.TryParse(
+                    shaderSpan,
+                    NumberStyles.HexNumber,
+                    CultureInfo.InvariantCulture,
+                    out pixelShaderAddress) ||
+                pixelShaderAddress == 0)
+            {
+                request = default;
+                return false;
+            }
+        }
+
         ulong address = 0;
         uint width = 0;
         uint height = 0;
@@ -97,6 +151,7 @@ internal readonly record struct GuestImageWriteCaptureRequest(
             address,
             width,
             height,
+            pixelShaderAddress,
             write);
         return true;
     }
