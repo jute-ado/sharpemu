@@ -402,6 +402,68 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
+    public void ExecutionCanRequirePresentedImageToMovePastKnownBadFrames()
+    {
+        var testCase = CreateExecutionCase(
+            requiredPresentedGuestImage: new()
+            {
+                Frame = 500,
+                ForbiddenFingerprints = ["0x7f046b95716664f5"],
+            });
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        GameRegressionRunner.ValidateReport(
+            testCase,
+            report.RootElement,
+            "synthetic-report.json",
+            "vk.presented_guest_image frame=500 " +
+            "fingerprint=0xFE9CE3C77AB8A325");
+    }
+
+    [Fact]
+    public void ExecutionRejectsKnownBadPresentedImageFingerprint()
+    {
+        var testCase = CreateExecutionCase(
+            requiredPresentedGuestImage: new()
+            {
+                Frame = 500,
+                ForbiddenFingerprints = ["7F046B95716664F5"],
+            });
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                "vk.presented_guest_image frame=500 " +
+                "fingerprint=0x7F046B95716664F5"));
+
+        Assert.Contains(
+            "forbidden fingerprint was observed",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExecutionCanRequireIntermediateGuestImageWrite()
     {
         var testCase = CreateExecutionCase(
@@ -634,6 +696,44 @@ public sealed class GameRegressionHarnessTests
             {
                 Frame = frame,
                 Fingerprint = fingerprint,
+            });
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => GameRegressionRunner.ValidateCase(testCase));
+
+        Assert.Contains(
+            "requiredPresentedGuestImage",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GameCaseAllowsRelationalPresentedImageMilestone()
+    {
+        var testCase = CreateExecutionCase(
+            requiredPresentedGuestImage: new()
+            {
+                Frame = 500,
+                ForbiddenFingerprints = ["7F046B95716664F5"],
+            });
+
+        GameRegressionRunner.ValidateCase(testCase);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("not-a-fingerprint")]
+    public void GameCaseRequiresValidRelationalPresentedImageMilestone(
+        string? forbiddenFingerprint)
+    {
+        var forbiddenFingerprints = forbiddenFingerprint is null
+            ? Array.Empty<string>()
+            : new[] { forbiddenFingerprint };
+        var testCase = CreateExecutionCase(
+            requiredPresentedGuestImage: new()
+            {
+                Frame = 500,
+                ForbiddenFingerprints = forbiddenFingerprints,
             });
 
         var error = Assert.Throws<InvalidDataException>(

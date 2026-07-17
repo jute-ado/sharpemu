@@ -292,13 +292,48 @@ internal static class GameRegressionRunner
                     $"Game regression '{testCase.Name}' has an invalid " +
                     "requiredPresentedGuestImage frame.");
             }
-            if (!TryNormalizeFrameFingerprint(
-                    presentedImage.Fingerprint,
-                    out _))
+            var hasRequiredFingerprint = TryNormalizeFrameFingerprint(
+                presentedImage.Fingerprint,
+                out var requiredFingerprint);
+            if (!string.IsNullOrWhiteSpace(presentedImage.Fingerprint) &&
+                !hasRequiredFingerprint)
             {
                 throw new InvalidDataException(
                     $"Game regression '{testCase.Name}' has an invalid " +
                     "requiredPresentedGuestImage fingerprint.");
+            }
+            if (!hasRequiredFingerprint &&
+                presentedImage.ForbiddenFingerprints.Length == 0)
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' requires " +
+                    "requiredPresentedGuestImage fingerprint or " +
+                    "forbiddenFingerprints.");
+            }
+            for (var index = 0;
+                index < presentedImage.ForbiddenFingerprints.Length;
+                index++)
+            {
+                if (!TryNormalizeFrameFingerprint(
+                        presentedImage.ForbiddenFingerprints[index],
+                        out var forbiddenFingerprint))
+                {
+                    throw new InvalidDataException(
+                        $"Game regression '{testCase.Name}' has an invalid " +
+                        "requiredPresentedGuestImage forbiddenFingerprints " +
+                        "entry.");
+                }
+                if (hasRequiredFingerprint &&
+                    string.Equals(
+                        requiredFingerprint,
+                        forbiddenFingerprint,
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException(
+                        $"Game regression '{testCase.Name}' has a " +
+                        "requiredPresentedGuestImage fingerprint that is " +
+                        "also forbidden.");
+                }
             }
         }
         if (testCase.Expectations.RequiredGuestImageWrite is
@@ -482,19 +517,49 @@ internal static class GameRegressionRunner
         if (testCase.Expectations.RequiredPresentedGuestImage is
             { } presentedImage)
         {
-            _ = TryNormalizeFrameFingerprint(
-                presentedImage.Fingerprint,
-                out var fingerprint);
-            var marker =
-                $"vk.presented_guest_image frame={presentedImage.Frame} " +
-                $"fingerprint=0x{fingerprint}";
-            if (!capturedOutput.Contains(
-                    marker,
-                    StringComparison.OrdinalIgnoreCase))
+            if (!TryGetPresentedGuestImageFingerprint(
+                    capturedOutput,
+                    presentedImage.Frame,
+                    out var actualFingerprint))
             {
                 failures.AppendLine(
                     $"required presented guest image frame {presentedImage.Frame} " +
-                    $"fingerprint was not observed: 0x{fingerprint}.");
+                    "was not observed.");
+            }
+            else
+            {
+                if (TryNormalizeFrameFingerprint(
+                        presentedImage.Fingerprint,
+                        out var requiredFingerprint) &&
+                    !string.Equals(
+                        actualFingerprint,
+                        requiredFingerprint,
+                        StringComparison.Ordinal))
+                {
+                    failures.AppendLine(
+                        $"required presented guest image frame " +
+                        $"{presentedImage.Frame} fingerprint was not observed: " +
+                        $"0x{requiredFingerprint} (actual " +
+                        $"0x{actualFingerprint}).");
+                }
+                for (var index = 0;
+                    index < presentedImage.ForbiddenFingerprints.Length;
+                    index++)
+                {
+                    _ = TryNormalizeFrameFingerprint(
+                        presentedImage.ForbiddenFingerprints[index],
+                        out var forbiddenFingerprint);
+                    if (string.Equals(
+                            actualFingerprint,
+                            forbiddenFingerprint,
+                            StringComparison.Ordinal))
+                    {
+                        failures.AppendLine(
+                            $"presented guest image frame " +
+                            $"{presentedImage.Frame} forbidden fingerprint " +
+                            $"was observed: 0x{forbiddenFingerprint}.");
+                    }
+                }
             }
         }
 
@@ -582,8 +647,36 @@ internal static class GameRegressionRunner
         return maximum;
     }
 
+    private static bool TryGetPresentedGuestImageFingerprint(
+        string output,
+        long frame,
+        out string fingerprint)
+    {
+        fingerprint = string.Empty;
+        var marker =
+            $"vk.presented_guest_image frame={frame} fingerprint=0x";
+        var markerOffset = output.IndexOf(
+            marker,
+            StringComparison.OrdinalIgnoreCase);
+        if (markerOffset < 0)
+        {
+            return false;
+        }
+
+        var fingerprintOffset = markerOffset + marker.Length;
+        const int fingerprintLength = 16;
+        if (fingerprintOffset + fingerprintLength > output.Length)
+        {
+            return false;
+        }
+
+        return TryNormalizeFrameFingerprint(
+            output.Substring(fingerprintOffset, fingerprintLength),
+            out fingerprint);
+    }
+
     internal static bool TryNormalizeFrameFingerprint(
-        string value,
+        string? value,
         out string fingerprint)
     {
         fingerprint = string.Empty;

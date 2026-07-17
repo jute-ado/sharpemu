@@ -49,8 +49,10 @@
           "0123456789ABCDEF"
         ],
         "requiredPresentedGuestImage": {
-          "frame": 1,
-          "fingerprint": "FEDCBA9876543210"
+          "frame": 500,
+          "forbiddenFingerprints": [
+            "FEDCBA9876543210"
+          ]
         },
         "requiredGuestImageWrite": {
           "selector": "1280x720@100",
