@@ -32,6 +32,8 @@ VideoOut buffer. `requiredPresentedGuestImage` captures one explicit presented
 frame and checks the image SharpEmu actually presents. Set `fingerprint` for a
 stable exact image, or use `forbiddenFingerprints` for a coarse progression gate
 that rejects known stale or broken frames while allowing rendering to improve.
+Use `minimumNonBlackPixels` to reject empty output without pinning any exact
+pixels; this is the preferred first rendering milestone while output is evolving.
 Use separate cases for separate milestones so each synchronous Vulkan readback
 runs in an isolated emulator process. Presented-frame checks also write ignored
 BMP and metadata files beside the JSON report so the tested output can be
