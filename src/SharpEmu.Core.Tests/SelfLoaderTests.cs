@@ -30,6 +30,8 @@ public sealed class SelfLoaderTests
     private const uint Absolute64RelocationType = 1;
     private const uint RelativeRelocationType = 8;
     private const uint TlsModuleIdRelocationType = 16;
+    private const uint TlsDtpOffsetRelocationType = 17;
+    private const uint TlsTpOffsetRelocationType = 18;
     private const int SyntheticRelocationTargetVirtualAddress = 0x80;
     private const ulong SyntheticImportStubBaseAddress = 0x0000_7000_0000_0000UL;
     private const ulong SyntheticImportStubAddressStride = 0x0100_0000UL;
@@ -777,7 +779,10 @@ public sealed class SelfLoaderTests
     [Fact]
     public void AppliesDistinctTlsModuleIdsAcrossAdditionalImages()
     {
-        var elf = CreateElfWithDynamicRelocation(TlsModuleIdRelocationType, addend: 0);
+        var elf = CreateElfWithDynamicRelocation(
+            TlsModuleIdRelocationType,
+            addend: 0,
+            includeTlsSegment: true);
         var memory = new VirtualMemory();
         var moduleManager = new ModuleManager();
         var loader = new SelfLoader();
@@ -792,12 +797,16 @@ public sealed class SelfLoaderTests
 
         Assert.Equal(1UL, ReadSyntheticRelocationTarget(memory, mainImage));
         Assert.Equal(2UL, ReadSyntheticRelocationTarget(memory, additionalImage));
+        Assert.Equal(new byte[] { 0xA5, 0x5A }, GuestTlsTemplate.InitImage);
     }
 
     [Fact]
     public void ResetsTlsModuleIdsWhenLoaderStartsNewPrimaryImage()
     {
-        var elf = CreateElfWithDynamicRelocation(TlsModuleIdRelocationType, addend: 0);
+        var elf = CreateElfWithDynamicRelocation(
+            TlsModuleIdRelocationType,
+            addend: 0,
+            includeTlsSegment: true);
         var memory = new VirtualMemory();
         var moduleManager = new ModuleManager();
         var loader = new SelfLoader();
@@ -819,6 +828,59 @@ public sealed class SelfLoaderTests
 
         Assert.Equal(1UL, ReadSyntheticRelocationTarget(memory, replacementMain));
         Assert.Equal(2UL, ReadSyntheticRelocationTarget(memory, replacementAdditional));
+    }
+
+    [Fact]
+    public void RejectsTlsModuleRelocationWithoutTlsSegment()
+    {
+        var elf = CreateElfWithDynamicRelocation(TlsModuleIdRelocationType, addend: 0);
+
+        var exception = Assert.Throws<InvalidDataException>(
+            () => new SelfLoader().Load(elf, new VirtualMemory()));
+
+        Assert.Contains("without PT_TLS", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(TlsDtpOffsetRelocationType)]
+    [InlineData(TlsTpOffsetRelocationType)]
+    public void AppliesTlsOffsetRelocationsAgainstRegisteredTemplate(uint relocationType)
+    {
+        const ulong symbolOffset = 3;
+        const long addend = 2;
+        var elf = CreateElfWithSymbolRelocation(
+            originalTargetValue: 0,
+            symbolBinding: 0,
+            symbolType: 0,
+            symbolValue: symbolOffset,
+            symbolName: string.Empty,
+            addend: addend,
+            relocationType: relocationType,
+            includeTlsSegment: true);
+        var memory = new VirtualMemory();
+
+        var image = new SelfLoader().Load(elf, memory);
+
+        Assert.True(GuestTlsTemplate.TryGetStaticOffset(1, out var staticOffset));
+        var moduleRelativeOffset = symbolOffset + (ulong)addend;
+        var expected = relocationType == TlsTpOffsetRelocationType
+            ? unchecked(moduleRelativeOffset - staticOffset)
+            : moduleRelativeOffset;
+        Assert.Equal(expected, ReadSyntheticRelocationTarget(memory, image));
+    }
+
+    [Fact]
+    public void RegistersTlsTemplateFromFileBackingWhenLoadSegmentIsNotReadable()
+    {
+        var elf = CreateElfWithDynamicRelocation(
+            TlsModuleIdRelocationType,
+            addend: 0,
+            includeTlsSegment: true,
+            loadProtection: ProgramHeaderFlags.Write);
+
+        _ = new SelfLoader().Load(elf, new VirtualMemory());
+
+        Assert.Equal(new byte[] { 0xA5, 0x5A }, GuestTlsTemplate.InitImage);
     }
 
     [Theory]
@@ -1307,22 +1369,26 @@ public sealed class SelfLoaderTests
 
     private static byte[] CreateElfWithDynamicRelocation(
         uint relocationType,
-        long addend)
+        long addend,
+        bool includeTlsSegment = false,
+        ProgramHeaderFlags loadProtection = ProgramHeaderFlags.Read | ProgramHeaderFlags.Write)
     {
         const int payloadSize = 0x100;
         const int dynamicVirtualAddress = 0x20;
         const int relocationVirtualAddress = 0x60;
-        var payloadOffset = ElfHeaderSize + (2 * ProgramHeaderSize);
+        const int tlsVirtualAddress = 0xC0;
+        var programHeaderCount = includeTlsSegment ? 3 : 2;
+        var payloadOffset = ElfHeaderSize + (programHeaderCount * ProgramHeaderSize);
         var elf = CreateElf(
             programHeaderOffset: ElfHeaderSize,
-            programHeaderCount: 2);
+            programHeaderCount: checked((ushort)programHeaderCount));
         Array.Resize(ref elf, payloadOffset + payloadSize);
 
         var loadHeader = elf.AsSpan(ElfHeaderSize, ProgramHeaderSize);
         BinaryPrimitives.WriteUInt32LittleEndian(loadHeader, (uint)ProgramHeaderType.Load);
         BinaryPrimitives.WriteUInt32LittleEndian(
             loadHeader[4..],
-            (uint)(ProgramHeaderFlags.Read | ProgramHeaderFlags.Write));
+            (uint)loadProtection);
         BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[8..], (ulong)payloadOffset);
         BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[32..], payloadSize);
         BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[40..], payloadSize);
@@ -1340,6 +1406,11 @@ public sealed class SelfLoaderTests
         BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[32..], 3 * DynamicEntrySize);
         BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[40..], 3 * DynamicEntrySize);
         BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[48..], 8);
+
+        if (includeTlsSegment)
+        {
+            WriteTlsHeader(elf, payloadOffset, tlsVirtualAddress);
+        }
 
         var dynamicTable = elf.AsSpan(
             payloadOffset + dynamicVirtualAddress,
@@ -1376,19 +1447,23 @@ public sealed class SelfLoaderTests
         byte symbolType,
         ulong symbolValue,
         string symbolName,
-        long addend)
+        long addend,
+        uint relocationType = Absolute64RelocationType,
+        bool includeTlsSegment = false)
     {
         const int payloadSize = 0x180;
         const int dynamicVirtualAddress = 0x20;
         const int relocationVirtualAddress = 0x90;
         const int symbolTableVirtualAddress = 0xB0;
         const int stringTableVirtualAddress = 0xE0;
+        const int tlsVirtualAddress = 0x160;
         const int dynamicEntryCount = 6;
         var symbolNameBytes = System.Text.Encoding.ASCII.GetBytes(symbolName);
-        var payloadOffset = ElfHeaderSize + (2 * ProgramHeaderSize);
+        var programHeaderCount = includeTlsSegment ? 3 : 2;
+        var payloadOffset = ElfHeaderSize + (programHeaderCount * ProgramHeaderSize);
         var elf = CreateElf(
             programHeaderOffset: ElfHeaderSize,
-            programHeaderCount: 2);
+            programHeaderCount: checked((ushort)programHeaderCount));
         Array.Resize(ref elf, payloadOffset + payloadSize);
 
         var loadHeader = elf.AsSpan(ElfHeaderSize, ProgramHeaderSize);
@@ -1418,6 +1493,11 @@ public sealed class SelfLoaderTests
             dynamicEntryCount * DynamicEntrySize);
         BinaryPrimitives.WriteUInt64LittleEndian(dynamicHeader[48..], 8);
 
+        if (includeTlsSegment)
+        {
+            WriteTlsHeader(elf, payloadOffset, tlsVirtualAddress);
+        }
+
         var dynamicTable = elf.AsSpan(
             payloadOffset + dynamicVirtualAddress,
             dynamicEntryCount * DynamicEntrySize);
@@ -1439,7 +1519,7 @@ public sealed class SelfLoaderTests
             SyntheticRelocationTargetVirtualAddress);
         BinaryPrimitives.WriteUInt64LittleEndian(
             relocation[sizeof(ulong)..],
-            ((ulong)1 << 32) | Absolute64RelocationType);
+            ((ulong)1 << 32) | relocationType);
         BinaryPrimitives.WriteInt64LittleEndian(
             relocation[(2 * sizeof(ulong))..],
             addend);
@@ -1464,6 +1544,24 @@ public sealed class SelfLoaderTests
                 sizeof(ulong)),
             originalTargetValue);
         return elf;
+    }
+
+    private static void WriteTlsHeader(byte[] elf, int payloadOffset, int tlsVirtualAddress)
+    {
+        var tlsHeader = elf.AsSpan(
+            ElfHeaderSize + (2 * ProgramHeaderSize),
+            ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(tlsHeader, (uint)ProgramHeaderType.Tls);
+        BinaryPrimitives.WriteUInt32LittleEndian(tlsHeader[4..], (uint)ProgramHeaderFlags.Read);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            tlsHeader[8..],
+            checked((ulong)(payloadOffset + tlsVirtualAddress)));
+        BinaryPrimitives.WriteUInt64LittleEndian(tlsHeader[16..], checked((ulong)tlsVirtualAddress));
+        BinaryPrimitives.WriteUInt64LittleEndian(tlsHeader[32..], 2);
+        BinaryPrimitives.WriteUInt64LittleEndian(tlsHeader[40..], 8);
+        BinaryPrimitives.WriteUInt64LittleEndian(tlsHeader[48..], 8);
+        elf[payloadOffset + tlsVirtualAddress] = 0xA5;
+        elf[payloadOffset + tlsVirtualAddress + 1] = 0x5A;
     }
 
     private static void WriteDynamicEntry(

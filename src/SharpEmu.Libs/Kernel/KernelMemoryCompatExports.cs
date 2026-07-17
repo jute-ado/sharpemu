@@ -22,7 +22,6 @@ public static partial class KernelMemoryCompatExports
 
     // Shared all-zero scratch for chunked zero-fill loops; never written to.
     private static readonly byte[] _zeroChunk = new byte[MemsetChunkSize];
-    private const int TlsModuleBlockSize = 0x10000;
     private const int O_WRONLY = 0x1;
     private const int O_RDWR = 0x2;
     private const int O_APPEND = 0x8;
@@ -100,7 +99,6 @@ public static partial class KernelMemoryCompatExports
     private static readonly Dictionary<int, OpenDirectory> _openDirectories = new();
     private static readonly object _libcAllocGate = new();
     private static readonly object _memoryGate = new();
-    private static readonly object _tlsGate = new();
     private static readonly object _ioTraceGate = new();
     private static readonly object _statCacheGate = new();
     private static readonly object _guestMountGate = new();
@@ -112,7 +110,6 @@ public static partial class KernelMemoryCompatExports
     // and the mmap sites), so Values enumerate in ascending address order.
     private static readonly SortedList<ulong, MappedRegion> _mappedRegions = new();
     private static readonly Dictionary<ulong, string> _mappedRegionNames = new();
-    private static readonly Dictionary<ulong, ulong> _tlsModuleBlocks = new();
     private static readonly Dictionary<string, string> _guestMounts = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> _tracedStatResults = new(StringComparer.Ordinal);
     private static readonly HashSet<string> _negativeStatCache = new(StringComparer.OrdinalIgnoreCase);
@@ -2959,37 +2956,8 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        ctx[CpuRegister.Rax] = ResolveTlsAddress(ctx, moduleId, offset);
+        ctx[CpuRegister.Rax] = GuestTlsTemplate.ResolveAddress(ctx, moduleId, offset);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-    }
-
-    private static ulong ResolveTlsAddress(CpuContext ctx, ulong moduleId, ulong offset)
-    {
-        if (ctx.FsBase == 0)
-        {
-            return 0;
-        }
-
-        if (moduleId <= 1)
-        {
-            return unchecked(ctx.FsBase + offset);
-        }
-
-        var key = (ctx.FsBase << 16) ^ (moduleId & 0xFFFFUL);
-        ulong moduleBase;
-        lock (_tlsGate)
-        {
-            if (!_tlsModuleBlocks.TryGetValue(key, out moduleBase))
-            {
-                var block = Marshal.AllocHGlobal(TlsModuleBlockSize);
-                Marshal.Copy(new byte[TlsModuleBlockSize], 0, block, TlsModuleBlockSize);
-
-                moduleBase = unchecked((ulong)block);
-                _tlsModuleBlocks[key] = moduleBase;
-            }
-        }
-
-        return unchecked(moduleBase + offset);
     }
 
     [SysAbiExport(

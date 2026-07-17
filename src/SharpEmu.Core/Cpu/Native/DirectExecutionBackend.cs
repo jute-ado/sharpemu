@@ -193,9 +193,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private const ulong GuestThreadTlsSize = 0x0001_0000UL;
 
-	// Matches CpuDispatcher.TlsPrefixSize: static TLS blocks sit below the
-	// TCB, and libc.prx already reaches beyond -0x1700 on POSIX.
-	private static readonly ulong GuestThreadTlsPrefixSize = OperatingSystem.IsWindows() ? 0x0000_1000UL : 0x0001_0000UL;
+	// Matches CpuDispatcher: static TLS blocks use Variant II below the TCB.
+	private const ulong GuestThreadTlsPrefixSize = GuestTlsTemplate.StartupStaticTlsReservation;
 
 	private const ulong GuestThreadRegionStride = 0x0100_0000UL;
 
@@ -4744,11 +4743,17 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private static bool InitializeGuestThreadTls(CpuContext context, ulong tlsBase, ulong threadHandle)
 	{
-		return context.TryWriteUInt64(tlsBase - 0xF0, 0) &&
-			context.TryWriteUInt64(tlsBase + 0x00, tlsBase) &&
-			context.TryWriteUInt64(tlsBase + 0x10, threadHandle) &&
-			context.TryWriteUInt64(tlsBase + 0x28, 0xC0DEC0DECAFEBABEUL) &&
-			context.TryWriteUInt64(tlsBase + 0x60, tlsBase);
+		if (!context.TryWriteUInt64(tlsBase - 0xF0, 0) ||
+			!context.TryWriteUInt64(tlsBase + 0x00, tlsBase) ||
+			!context.TryWriteUInt64(tlsBase + 0x10, threadHandle) ||
+			!context.TryWriteUInt64(tlsBase + 0x28, 0xC0DEC0DECAFEBABEUL) ||
+			!context.TryWriteUInt64(tlsBase + 0x60, tlsBase))
+		{
+			return false;
+		}
+
+		GuestTlsTemplate.SeedThreadBlock(context, tlsBase);
+		return true;
 	}
 
 	private static ThreadPriority MapGuestThreadPriority(int priority)

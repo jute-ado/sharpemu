@@ -372,7 +372,11 @@ public static class GuestTlsTemplate
 
     private static void RebuildGuestDtv(CpuContext context, ulong threadPointer, ThreadDtv dtv)
     {
-        var maximumModuleId = _modules.Count == 0 ? 0UL : _modules.Keys.Max();
+        ulong maximumModuleId = 0;
+        foreach (var moduleId in _modules.Keys)
+        {
+            maximumModuleId = moduleId;
+        }
         var byteSize = checked(2UL * sizeof(ulong) + maximumModuleId * sizeof(ulong));
         if (byteSize > int.MaxValue)
         {

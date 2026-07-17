@@ -66,6 +66,8 @@ public sealed class SelfLoader : ISelfLoader
     private const uint RelocationTypeJumpSlot = 7;
     private const uint RelocationTypeRelative = 8;
     private const uint RelocationTypeTlsModuleId = 16;
+    private const uint RelocationTypeTlsDtpOff64 = 17;
+    private const uint RelocationTypeTlsTpOff64 = 18;
     private const ulong Ps5MainImageBase = 0x0000000800000000UL;
     private const ulong Ps4MainImageBase = 0x0000000000400000UL;
     private const ulong Ps5ModuleSearchStart = 0x0000000804000000UL;
@@ -154,16 +156,16 @@ public sealed class SelfLoader : ISelfLoader
             ? TryLoadParamJson(fs, mountRoot)
             : new Ps5ApplicationMetadata(null, null, null, null);
 
-        var tlsModuleId = clearVirtualMemory
-            ? 1u
-            : _nextTlsModuleId == 0 ? 1u : _nextTlsModuleId;
-        Log.Debug($"TLS load_start clear={clearVirtualMemory} next={_nextTlsModuleId} assigned={tlsModuleId}");
-
         var loadContext = ParseLayout(imageData);
         var elfHeader = ReadUnmanaged<ElfHeader>(imageData, loadContext.ElfOffset);
         ValidateElfHeader(elfHeader);
 
         var programHeaders = ParseProgramHeaders(imageData, loadContext, elfHeader);
+        var hasTlsSegment = TryGetProgramHeader(
+            programHeaders,
+            ProgramHeaderType.Tls,
+            out var processTlsHeader,
+            out _) && processTlsHeader.MemorySize != 0;
         ValidateSectionHeaderTable(imageData, loadContext, elfHeader);
 
         var totalImageSize = CalculateTotalImageSize(programHeaders);
@@ -177,7 +179,15 @@ public sealed class SelfLoader : ISelfLoader
         {
             virtualMemory.Clear();
             _nextTlsModuleId = 1;
+            GuestTlsTemplate.Reset();
         }
+
+        var tlsModuleId = hasTlsSegment
+            ? (_nextTlsModuleId == 0 ? 1u : _nextTlsModuleId)
+            : 0u;
+        Log.Debug(
+            $"TLS load_start clear={clearVirtualMemory} next={_nextTlsModuleId} " +
+            $"assigned={tlsModuleId} has_pt_tls={hasTlsSegment}");
 
         if (virtualMemory is PhysicalVirtualMemory physicalVm)
         {
@@ -211,6 +221,13 @@ public sealed class SelfLoader : ISelfLoader
             programHeaders,
             virtualMemory,
             imageBase);
+        RegisterModuleTlsTemplate(
+            imageData,
+            loadContext,
+            programHeaders,
+            virtualMemory,
+            imageBase,
+            tlsModuleId);
         var importStubs = ResolveAndPatchImportStubs(
             imageData,
             loadContext,
@@ -267,7 +284,9 @@ public sealed class SelfLoader : ISelfLoader
             Console.WriteLine($"[LOADER] PH[{i}]: type={ph.HeaderType}, vaddr=0x{ph.VirtualAddress:X16} -> 0x{ph.VirtualAddress + imageBase:X16}, memsz=0x{ph.MemorySize:X}");
         }
 
-        if (_nextTlsModuleId == tlsModuleId && _nextTlsModuleId < uint.MaxValue)
+        if (tlsModuleId != 0 &&
+            _nextTlsModuleId == tlsModuleId &&
+            _nextTlsModuleId < uint.MaxValue)
         {
             _nextTlsModuleId++;
         }
@@ -727,6 +746,58 @@ public sealed class SelfLoader : ISelfLoader
         return 0;
     }
 
+    private static void RegisterModuleTlsTemplate(
+        ReadOnlySpan<byte> imageData,
+        LoadContext loadContext,
+        IReadOnlyList<ProgramHeader> programHeaders,
+        IVirtualMemory virtualMemory,
+        ulong imageBase,
+        uint tlsModuleId)
+    {
+        if (tlsModuleId == 0 ||
+            !TryGetProgramHeader(programHeaders, ProgramHeaderType.Tls, out var tlsHeader, out _) ||
+            tlsHeader.MemorySize == 0)
+        {
+            return;
+        }
+
+        if (tlsHeader.MemorySize > int.MaxValue || tlsHeader.FileSize > int.MaxValue)
+        {
+            throw new NotSupportedException("TLS segments larger than 2 GB are not currently supported.");
+        }
+
+        var initializedSize = Math.Min(tlsHeader.FileSize, tlsHeader.MemorySize);
+        byte[] initImage;
+        if (initializedSize == 0)
+        {
+            initImage = [];
+        }
+        else if (!TryLoadTableBytes(
+                     imageData,
+                     loadContext,
+                     programHeaders,
+                     virtualMemory,
+                     imageBase,
+                     tlsHeader.VirtualAddress,
+                     initializedSize,
+                     out initImage))
+        {
+            throw new InvalidDataException(
+                $"TLS initialization image at 0x{tlsHeader.VirtualAddress:X} is not file-backed or readable.");
+        }
+
+        var staticOffset = GuestTlsTemplate.RegisterModule(
+            tlsModuleId,
+            initImage,
+            tlsHeader.MemorySize,
+            tlsHeader.Alignment,
+            tlsHeader.VirtualAddress);
+        Log.Debug(
+            $"Registered TLS module {tlsModuleId}: memsz=0x{tlsHeader.MemorySize:X} " +
+            $"filesz=0x{tlsHeader.FileSize:X} align=0x{tlsHeader.Alignment:X} " +
+            $"static_offset=0x{staticOffset:X}");
+    }
+
     private static IReadOnlyDictionary<ulong, string> ResolveAndPatchImportStubs(
         ReadOnlySpan<byte> imageData,
         LoadContext loadContext,
@@ -962,10 +1033,10 @@ public sealed class SelfLoader : ISelfLoader
 
             if (targetValue < 0x1000)
             {
-                if (descriptor.ValueKind == RelocationValueKind.TlsModuleId)
+                if (descriptor.ValueKind is RelocationValueKind.TlsModuleId or RelocationValueKind.TlsOffset)
                 {
                     Log.Debug(
-                        $"Patching DTPMOD64 at 0x{descriptor.TargetAddress:X} with module id 0x{targetValue:X}");
+                        $"Patching TLS relocation at 0x{descriptor.TargetAddress:X} with 0x{targetValue:X}");
                 }
                 else
                 {
@@ -1112,12 +1183,17 @@ public sealed class SelfLoader : ISelfLoader
 
             if (relocation.Type == RelocationTypeTlsModuleId)
             {
-                var dtpmodValue = tlsModuleId == 0 ? 1u : tlsModuleId;
+                if (tlsModuleId == 0)
+                {
+                    throw new InvalidDataException(
+                        $"R_X86_64_DTPMOD64 at 0x{targetAddress:X16} references an image without PT_TLS.");
+                }
+
                 descriptors.Add(new RelocationDescriptor(
                     targetAddress,
                     0,
                     null,
-                    dtpmodValue,
+                    tlsModuleId,
                     RelocationValueKind.TlsModuleId,
                     IsDataImport: false));
                 continue;
@@ -1135,6 +1211,29 @@ public sealed class SelfLoader : ISelfLoader
                 {
                     Log.Debug($"[FOCUS][SKIP] symbol read failed index={symbolIndex}");
                 }
+                continue;
+            }
+
+            if (relocation.Type is RelocationTypeTlsDtpOff64 or RelocationTypeTlsTpOff64)
+            {
+                if (tlsModuleId == 0 ||
+                    !GuestTlsTemplate.TryGetStaticOffset(tlsModuleId, out var moduleStaticOffset))
+                {
+                    throw new InvalidDataException(
+                        $"TLS relocation {relocation.Type} at 0x{targetAddress:X16} references an image without PT_TLS.");
+                }
+
+                var moduleRelativeOffset = AddSigned(symbol.Value, relocation.Addend);
+                var tlsValue = relocation.Type == RelocationTypeTlsTpOff64
+                    ? unchecked(moduleRelativeOffset - moduleStaticOffset)
+                    : moduleRelativeOffset;
+                descriptors.Add(new RelocationDescriptor(
+                    targetAddress,
+                    0,
+                    null,
+                    tlsValue,
+                    RelocationValueKind.TlsOffset,
+                    IsDataImport: false));
                 continue;
             }
 
@@ -2034,7 +2133,9 @@ public sealed class SelfLoader : ISelfLoader
             RelocationTypeGlobalData or
             RelocationTypeJumpSlot or
             RelocationTypeRelative or
-            RelocationTypeTlsModuleId;
+            RelocationTypeTlsModuleId or
+            RelocationTypeTlsDtpOff64 or
+            RelocationTypeTlsTpOff64;
     }
 
     private static ulong DetermineRequestedImageBase(
@@ -2795,7 +2896,8 @@ public sealed class SelfLoader : ISelfLoader
     private enum RelocationValueKind : byte
     {
         Pointer = 0,
-        TlsModuleId = 1
+        TlsModuleId = 1,
+        TlsOffset = 2
     }
 
     private readonly record struct RelocationDescriptor(

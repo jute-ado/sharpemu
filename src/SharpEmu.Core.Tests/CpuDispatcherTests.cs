@@ -135,6 +135,34 @@ public sealed class CpuDispatcherTests
     }
 
     [Fact]
+    public void SeedsRegisteredTlsTemplateBeforeBackendExecution()
+    {
+        GuestTlsTemplate.Reset();
+        try
+        {
+            var staticOffset = GuestTlsTemplate.RegisterModule(1, [0xA5, 0x5A], 8, 8);
+            var backend = new TlsInspectingNativeBackend(staticOffset);
+            using var dispatcher = new CpuDispatcher(
+                new VirtualMemory(),
+                new ModuleManager(),
+                backend);
+
+            var result = dispatcher.DispatchModuleInitializer(
+                0x0000_0008_0000_0000,
+                Generation.Gen5,
+                moduleName: "tls-template-test");
+
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, result);
+            Assert.Equal(new byte[] { 0xA5, 0x5A }, backend.InitializedBytes);
+            Assert.NotEqual(0UL, backend.DtvAddress);
+        }
+        finally
+        {
+            GuestTlsTemplate.Reset();
+        }
+    }
+
+    [Fact]
     public void NativeBackendTrapPreservesStructuredExceptionInfo()
     {
         const ulong entryPoint = 0x0000_0008_0000_0000;
@@ -421,6 +449,40 @@ public sealed class CpuDispatcherTests
 
             ExecutionCount++;
             executionResult = OrbisGen2Result.ORBIS_GEN2_OK;
+            return true;
+        }
+    }
+
+    private sealed class TlsInspectingNativeBackend(ulong staticOffset) : INativeCpuBackend
+    {
+        public string BackendName => "tls-inspecting-backend";
+
+        public string? LastError => null;
+
+        public byte[] InitializedBytes { get; private set; } = [];
+
+        public ulong DtvAddress { get; private set; }
+
+        public bool TryExecute(
+            CpuContext context,
+            ulong entryPoint,
+            Generation generation,
+            IReadOnlyDictionary<ulong, string> importStubs,
+            IReadOnlyDictionary<string, ulong> runtimeSymbols,
+            CpuExecutionOptions executionOptions,
+            NativeEntryReturnContract returnContract,
+            out OrbisGen2Result executionResult)
+        {
+            var initializedBytes = new byte[2];
+            var readTemplate = context.Memory.TryRead(
+                context.FsBase - staticOffset,
+                initializedBytes);
+            var readDtv = context.TryReadUInt64(context.FsBase + sizeof(ulong), out var dtvAddress);
+            InitializedBytes = readTemplate ? initializedBytes : [];
+            DtvAddress = readDtv ? dtvAddress : 0;
+            executionResult = readTemplate && readDtv
+                ? OrbisGen2Result.ORBIS_GEN2_OK
+                : OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
             return true;
         }
     }
