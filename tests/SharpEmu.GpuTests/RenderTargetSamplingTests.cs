@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Diagnostics;
+using SharpEmu.HLE;
 using SharpEmu.Libs.Gpu;
 using SharpEmu.Libs.VideoOut;
+using SharpEmu.ShaderCompiler;
 using SharpEmu.ShaderCompiler.Vulkan;
 using Xunit;
 
@@ -20,10 +22,13 @@ public sealed class RenderTargetSamplingTests
     private const uint DestinationWidth = 96;
     private const uint DestinationHeight = 54;
     private const uint Rgba8DataFormat = 10;
+    private const uint Rgba8TextureDataFormat = 56;
     private const uint UnormNumberType = 0;
     private const ulong SourceAddress = 0x0010_0000;
     private const ulong FirstDisplayAddress = 0x0020_0000;
     private const ulong SecondDisplayAddress = 0x0030_0000;
+    private const ulong ShaderAddress = 0x0050_0000;
+    private const ulong ConstantsAddress = 0x0060_0000;
 
     /// <summary>
     /// Verifies that a render target rewritten after an earlier sample exposes
@@ -39,7 +44,7 @@ public sealed class RenderTargetSamplingTests
         Directory.CreateDirectory(captureDirectory);
         Environment.SetEnvironmentVariable(
             "SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE",
-            $"0x{FirstDisplayAddress:X}@2");
+            $"0x{FirstDisplayAddress:X}@3");
         Environment.SetEnvironmentVariable(
             "SHARPEMU_GUEST_IMAGE_DUMP_DIR",
             captureDirectory);
@@ -62,6 +67,19 @@ public sealed class RenderTargetSamplingTests
             // ordering, and failures when composition changes dimensions.
             SubmitSolid(SourceAddress, red: 0.125f, green: 0.5f, blue: 0.875f);
             Assert.True(CopySourceTo(FirstDisplayAddress));
+
+            // Finish through generated vertex and fragment shaders. The
+            // fragment uses global buffers and an aliased sampled image, which
+            // protects their distinct descriptor bindings as part of the same
+            // render-to-sample regression.
+            var fragment = CreateTranslatedColorTransformFragment(
+                out var globalMemoryBuffers);
+            ComposeSourceTo(
+                FirstDisplayAddress,
+                fragment,
+                CreateTranslatedPassthroughVertex(),
+                globalMemoryBuffers,
+                Rgba8TextureDataFormat);
 
             var capturePath = WaitForCapture(captureDirectory);
             var pixels = File.ReadAllBytes(capturePath);
@@ -119,21 +137,39 @@ public sealed class RenderTargetSamplingTests
             Rgba8DataFormat);
 
     private static void ComposeSourceTo(ulong destinationAddress)
+        => ComposeSourceTo(
+            destinationAddress,
+            SpirvFixedShaders.CreateCopyFragment());
+
+    private static void ComposeSourceTo(
+        ulong destinationAddress,
+        byte[] fragmentSpirv)
+        => ComposeSourceTo(
+            destinationAddress,
+            fragmentSpirv,
+            CreatePassthroughVertex());
+
+    private static void ComposeSourceTo(
+        ulong destinationAddress,
+        byte[] fragmentSpirv,
+        byte[] vertexSpirv,
+        IReadOnlyList<GuestMemoryBuffer>? globalMemoryBuffers = null,
+        uint textureDataFormat = Rgba8DataFormat)
     {
         VulkanVideoPresenter.SubmitOffscreenTranslatedDraw(
-            SpirvFixedShaders.CreateCopyFragment(),
+            fragmentSpirv,
             [
                 new GuestDrawTexture(
                     SourceAddress,
                     SourceWidth,
                     SourceHeight,
-                    Rgba8DataFormat,
+                    textureDataFormat,
                     UnormNumberType,
                     [],
                     IsFallback: false,
                     IsStorage: false),
             ],
-            [],
+            globalMemoryBuffers ?? [],
             attributeCount: 1,
             new GuestRenderTarget(
                 destinationAddress,
@@ -141,7 +177,7 @@ public sealed class RenderTargetSamplingTests
                 DestinationHeight,
                 Rgba8DataFormat,
                 UnormNumberType),
-            vertexSpirv: CreatePassthroughVertex(),
+            vertexSpirv,
             vertexCount: 4,
             primitiveType: 6,
             indexBuffer: new GuestIndexBuffer(
@@ -174,6 +210,196 @@ public sealed class RenderTargetSamplingTests
                     -DestinationHeight,
                     0,
                     1)));
+    }
+
+    private static byte[] CreateTranslatedColorTransformFragment(
+        out IReadOnlyList<GuestMemoryBuffer> globalMemoryBuffers)
+    {
+        uint[] words =
+        [
+            0xF42C0406, 0xFA000000, // s_buffer_load_dwordx8 s[16:23], s[12:15], 0
+            0xC8100000,             // v_interp_p1_f32 v4, v0, attr0.x
+            0xC8140100,             // v_interp_p1_f32 v5, v0, attr0.y
+            0xC8110001,             // v_interp_p2_f32 v4, v1, attr0.x
+            0xC8150101,             // v_interp_p2_f32 v5, v1, attr0.y
+            0xF0800F08, 0x00400004, // image_sample v[0:3], v[4:5], s[0:7], s[8:11]
+            0xBF8C0070,             // s_waitcnt
+            0xD5410000, 0x00520010, // v_mad_f32 v0, s16, v0, s20
+            0xD5410001, 0x00542301, // v_mad_f32 v1, v1, s17, s21
+            0xD5410003, 0x005C2703, // v_mad_f32 v3, v3, s19, s23
+            0xD5410002, 0x00582502, // v_mad_f32 v2, v2, s18, s22
+            0x5E000300,             // v_cvt_pkrtz_f16_f32 v0, v0, v1
+            0x5E020702,             // v_cvt_pkrtz_f16_f32 v1, v2, v3
+            0xF8001C0F, 0x00000100, // exp mrt0 v0, v1 compr done vm
+            0xBF810000,             // s_endpgm
+        ];
+        var bytes = new byte[words.Length * sizeof(uint)];
+        for (var index = 0; index < words.Length; index++)
+        {
+            BitConverter.TryWriteBytes(
+                bytes.AsSpan(index * sizeof(uint)),
+                words[index]);
+        }
+
+        var context = new CpuContext(
+            new ArrayCpuMemory(ShaderAddress, bytes),
+            Generation.Gen5);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                context,
+                ShaderAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        Gen5ShaderInstruction? imageInstruction = null;
+        foreach (var instruction in program.Instructions)
+        {
+            if (instruction.Control is Gen5ImageControl)
+            {
+                imageInstruction = instruction;
+                break;
+            }
+        }
+
+        Assert.NotNull(imageInstruction);
+        var imageControl = Assert.IsType<Gen5ImageControl>(
+            imageInstruction.Control);
+        var constants = new byte[8 * sizeof(float)];
+        for (var index = 0; index < 4; index++)
+        {
+            BitConverter.TryWriteBytes(
+                constants.AsSpan(index * sizeof(float)),
+                1f);
+        }
+
+        var scalarRegisters = new uint[256];
+        var binding = new Gen5GlobalMemoryBinding(
+            ScalarAddress: 12,
+            ConstantsAddress,
+            InstructionPcs: [0],
+            constants);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [
+                new Gen5ImageBinding(
+                    imageInstruction.Pc,
+                    imageInstruction.Opcode,
+                    imageControl,
+                    new uint[8],
+                    new uint[4],
+                    MipLevel: null),
+            ],
+            [binding]);
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompilePixelShader(
+                state,
+                evaluation,
+                Gen5PixelOutputKind.Float,
+                out var shader,
+                out var compileError,
+                totalGlobalBufferCount: 3,
+                scalarRegisterBufferIndex: 1),
+            compileError);
+        globalMemoryBuffers =
+        [
+            new GuestMemoryBuffer(ConstantsAddress, constants),
+            new GuestMemoryBuffer(0, CreateScalarRegisterSnapshot(
+                evaluation.InitialScalarRegisters)),
+            new GuestMemoryBuffer(0, new byte[256 * sizeof(uint)]),
+        ];
+        return shader.Spirv;
+    }
+
+    private static byte[] CreateScalarRegisterSnapshot(
+        IReadOnlyList<uint> registers)
+    {
+        var data = new byte[256 * sizeof(uint)];
+        var count = Math.Min(registers.Count, 256);
+        for (var index = 0; index < count; index++)
+        {
+            BitConverter.TryWriteBytes(
+                data.AsSpan(index * sizeof(uint)),
+                registers[index]);
+        }
+
+        return data;
+    }
+
+    private static byte[] CreateTranslatedPassthroughVertex()
+    {
+        uint[] words =
+        [
+            0xE0042000, 0x0A000000, // buffer_load_format_xy v[0:1], v0, s[0:3]
+            0xE0042000, 0x0E000202, // buffer_load_format_xy v[2:3], v2, s[0:3]
+            0x7E080280,             // v_mov_b32 v4, 0
+            0x7E0C02F2,             // v_mov_b32 v6, 1.0
+            0xF80008CF, 0x06040100, // exp pos0 v0, v1, v4, v6 done
+            0x7E0E0280,             // v_mov_b32 v7, 0
+            0xF800020F, 0x07070302, // exp param0 v2, v3, v7, v7
+            0xBF810000,             // s_endpgm
+        ];
+        var bytes = new byte[words.Length * sizeof(uint)];
+        for (var index = 0; index < words.Length; index++)
+        {
+            BitConverter.TryWriteBytes(
+                bytes.AsSpan(index * sizeof(uint)),
+                words[index]);
+        }
+
+        var context = new CpuContext(
+            new ArrayCpuMemory(ShaderAddress, bytes),
+            Generation.Gen5);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                context,
+                ShaderAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[256];
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [],
+            VertexInputs:
+            [
+                new Gen5VertexInputBinding(
+                    Pc: 0,
+                    Location: 0,
+                    ComponentCount: 2,
+                    DataFormat: 11,
+                    NumberFormat: 7,
+                    BaseAddress: 0,
+                    Stride: 16,
+                    OffsetBytes: 0,
+                    Data: []),
+                new Gen5VertexInputBinding(
+                    Pc: 8,
+                    Location: 1,
+                    ComponentCount: 2,
+                    DataFormat: 11,
+                    NumberFormat: 7,
+                    BaseAddress: 0,
+                    Stride: 16,
+                    OffsetBytes: 0,
+                    Data: []),
+            ]);
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileVertexShader(
+                state,
+                evaluation,
+                out var shader,
+                out var compileError),
+            compileError);
+        return shader.Spirv;
     }
 
     private static GuestVertexBuffer CreateVertexBuffer(
@@ -301,5 +527,34 @@ public sealed class RenderTargetSamplingTests
             Assert.InRange(pixels[offset + 2], expectedBlue - 1, expectedBlue + 1);
             Assert.InRange(pixels[offset + 3], expectedAlpha - 1, expectedAlpha);
         }
+    }
+
+    private sealed class ArrayCpuMemory(
+        ulong baseAddress,
+        byte[] data) : ICpuMemory
+    {
+        public bool TryRead(
+            ulong virtualAddress,
+            Span<byte> destination)
+        {
+            if (virtualAddress < baseAddress)
+            {
+                return false;
+            }
+
+            var offset = virtualAddress - baseAddress;
+            if (offset > (ulong)data.Length ||
+                (ulong)destination.Length > (ulong)data.Length - offset)
+            {
+                return false;
+            }
+
+            data.AsSpan((int)offset, destination.Length).CopyTo(destination);
+            return true;
+        }
+
+        public bool TryWrite(
+            ulong virtualAddress,
+            ReadOnlySpan<byte> source) => false;
     }
 }
