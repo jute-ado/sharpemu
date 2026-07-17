@@ -10,7 +10,7 @@ namespace SharpEmu.Libs.Tests.Json;
 // These NIDs came back "unresolved" in the Quake (PPSA01880) import log right before its
 // access violation. This asserts they now resolve to the Json handlers and dispatch cleanly,
 // which is the plumbing the direct-call tests cannot cover.
-[Collection("JsonObjectHeap")]
+[Collection("JsonState")]
 public sealed class JsonExportRegistrationTests
 {
     private static readonly (string Nid, string Name)[] ExpectedExports =
@@ -50,7 +50,7 @@ public sealed class JsonExportRegistrationTests
     [Fact]
     public void SetGlobalNullAccessCallback_StoresHookAndReturnsOk()
     {
-        JsonObjectHeap.ResetForTests();
+        JsonExports.ResetForTests();
         var manager = CreateRegisteredManager();
         var ctx = new CpuContext(new FakeCpuMemory(0x1_0000_0000, 0x1000), Generation.Gen5);
         ctx[CpuRegister.Rdi] = 0x1_0000_0000; // Initializer instance
@@ -60,14 +60,18 @@ public sealed class JsonExportRegistrationTests
         Assert.True(manager.TryDispatch("+drDFyAS6u4", ctx, out var result));
         Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, result);
         Assert.Equal(0UL, ctx[CpuRegister.Rax]);
-        Assert.Equal(0x8_0012_3456UL, JsonObjectHeap.GlobalNullAccessCallback);
-        Assert.Equal(0x1_0000_0800UL, JsonObjectHeap.GlobalNullAccessCallbackContext);
+        Assert.Equal(
+            0x8_0012_3456UL,
+            JsonExports.GlobalNullAccessCallbackForTests);
+        Assert.Equal(
+            0x1_0000_0800UL,
+            JsonExports.GlobalNullAccessCallbackContextForTests);
     }
 
     [Fact]
     public void DispatchValueConstructor_RunsHandlerAndReturnsThis()
     {
-        JsonObjectHeap.ResetForTests();
+        JsonExports.ResetForTests();
         var manager = CreateRegisteredManager();
         var ctx = new CpuContext(new FakeCpuMemory(0x1_0000_0000, 0x1000), Generation.Gen5);
         ctx[CpuRegister.Rdi] = 0x1_0000_0000;
@@ -75,6 +79,8 @@ public sealed class JsonExportRegistrationTests
         Assert.True(manager.TryDispatch("qBMjqyBn3OM", ctx, out var result));
         Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, result);
         Assert.Equal(0x1_0000_0000UL, ctx[CpuRegister.Rax]);
-        Assert.Equal(JsonValueKind.Null, JsonObjectHeap.Values[0x1_0000_0000].Kind);
+        Assert.Equal(
+            System.Text.Json.JsonValueKind.Null,
+            JsonExports.GetValueForTests(0x1_0000_0000).ValueKind);
     }
 }

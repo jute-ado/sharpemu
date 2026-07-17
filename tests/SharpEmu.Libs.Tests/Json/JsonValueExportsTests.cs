@@ -3,13 +3,15 @@
 
 using SharpEmu.HLE;
 using SharpEmu.Libs.Json;
+using System.Buffers.Binary;
+using System.Text;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests.Json;
 
-// JsonObjectHeap is shared static state; both Json test classes join one collection so xUnit
+// Canonical JSON state is shared; both JSON test classes join one collection so xUnit
 // does not run them in parallel against it.
-[Collection("JsonObjectHeap")]
+[Collection("JsonState")]
 public sealed class JsonValueExportsTests
 {
     private const ulong ThisAddress = 0x1_0000_0000;
@@ -21,7 +23,7 @@ public sealed class JsonValueExportsTests
 
     public JsonValueExportsTests()
     {
-        JsonObjectHeap.ResetForTests();
+        JsonExports.ResetForTests();
         _ctx = new CpuContext(_memory, Generation.Gen5);
     }
 
@@ -33,7 +35,9 @@ public sealed class JsonValueExportsTests
         JsonValueExports.ValueDefaultConstructor(_ctx);
 
         Assert.Equal(ThisAddress, _ctx[CpuRegister.Rax]);
-        Assert.Equal(JsonValueKind.Null, JsonObjectHeap.Values[ThisAddress].Kind);
+        Assert.Equal(
+            System.Text.Json.JsonValueKind.Null,
+            JsonExports.GetValueForTests(ThisAddress).ValueKind);
     }
 
     [Theory]
@@ -47,9 +51,13 @@ public sealed class JsonValueExportsTests
 
         JsonValueExports.ValueSetBoolean(_ctx);
 
-        var state = JsonObjectHeap.Values[ThisAddress];
-        Assert.Equal(JsonValueKind.Boolean, state.Kind);
-        Assert.Equal(expected, state.Boolean);
+        var state = JsonExports.GetValueForTests(ThisAddress);
+        Assert.Equal(
+            expected
+                ? System.Text.Json.JsonValueKind.True
+                : System.Text.Json.JsonValueKind.False,
+            state.ValueKind);
+        Assert.Equal(expected, state.GetBoolean());
         Assert.Equal(ThisAddress, _ctx[CpuRegister.Rax]);
     }
 
@@ -61,9 +69,8 @@ public sealed class JsonValueExportsTests
 
         JsonValueExports.ValueSetInteger(_ctx);
 
-        var state = JsonObjectHeap.Values[ThisAddress];
-        Assert.Equal(JsonValueKind.Integer, state.Kind);
-        Assert.Equal(-42L, state.Integer);
+        var state = JsonExports.GetValueForTests(ThisAddress);
+        Assert.Equal(-42L, state.GetInt64());
     }
 
     [Fact]
@@ -74,9 +81,8 @@ public sealed class JsonValueExportsTests
 
         JsonValueExports.ValueSetUnsigned(_ctx);
 
-        var state = JsonObjectHeap.Values[ThisAddress];
-        Assert.Equal(JsonValueKind.UInteger, state.Kind);
-        Assert.Equal(ulong.MaxValue, state.UnsignedInteger);
+        var state = JsonExports.GetValueForTests(ThisAddress);
+        Assert.Equal(ulong.MaxValue, state.GetUInt64());
     }
 
     [Fact]
@@ -87,9 +93,8 @@ public sealed class JsonValueExportsTests
 
         JsonValueExports.ValueSetReal(_ctx);
 
-        var state = JsonObjectHeap.Values[ThisAddress];
-        Assert.Equal(JsonValueKind.Real, state.Kind);
-        Assert.Equal(3.14159, state.Real, precision: 10);
+        var state = JsonExports.GetValueForTests(ThisAddress);
+        Assert.Equal(3.14159, state.GetDouble(), precision: 10);
     }
 
     [Fact]
@@ -101,9 +106,8 @@ public sealed class JsonValueExportsTests
 
         JsonValueExports.ValueSetCString(_ctx);
 
-        var state = JsonObjectHeap.Values[ThisAddress];
-        Assert.Equal(JsonValueKind.String, state.Kind);
-        Assert.Equal("hello json", state.Text);
+        var state = JsonExports.GetValueForTests(ThisAddress);
+        Assert.Equal("hello json", state.GetString());
     }
 
     [Fact]
@@ -114,9 +118,7 @@ public sealed class JsonValueExportsTests
 
         JsonValueExports.ValueSetType(_ctx);
 
-        var state = JsonObjectHeap.Values[ThisAddress];
-        Assert.Equal(JsonValueKind.ExplicitType, state.Kind);
-        Assert.Equal(7u, state.ExplicitType);
+        Assert.Equal(7, JsonExports.GetValueTypeForTests(ThisAddress));
     }
 
     [Fact]
@@ -127,16 +129,17 @@ public sealed class JsonValueExportsTests
         _ctx[CpuRegister.Rsi] = TextAddress;
         JsonValueExports.StringCStringConstructor(_ctx);
 
-        Assert.Equal("from string object", JsonObjectHeap.Strings[StringAddress]);
+        Assert.Equal(
+            "from string object",
+            JsonExports.GetStringForTests(StringAddress));
         Assert.Equal(StringAddress, _ctx[CpuRegister.Rax]);
 
         _ctx[CpuRegister.Rdi] = ThisAddress;
         _ctx[CpuRegister.Rsi] = StringAddress;
         JsonValueExports.ValueSetString(_ctx);
 
-        var state = JsonObjectHeap.Values[ThisAddress];
-        Assert.Equal(JsonValueKind.String, state.Kind);
-        Assert.Equal("from string object", state.Text);
+        var state = JsonExports.GetValueForTests(ThisAddress);
+        Assert.Equal("from string object", state.GetString());
     }
 
     [Fact]
@@ -147,29 +150,33 @@ public sealed class JsonValueExportsTests
 
         JsonValueExports.ValueSetString(_ctx);
 
-        var state = JsonObjectHeap.Values[ThisAddress];
-        Assert.Equal(JsonValueKind.String, state.Kind);
-        Assert.Equal(string.Empty, state.Text);
+        var state = JsonExports.GetValueForTests(ThisAddress);
+        Assert.Equal(string.Empty, state.GetString());
     }
 
     [Fact]
     public void Destructors_RemoveShadowState()
     {
         _ctx[CpuRegister.Rdi] = ThisAddress;
-        JsonValueExports.ValueDefaultConstructor(_ctx);
+        _ctx[CpuRegister.Rsi] = 42;
+        JsonValueExports.ValueIntegerConstructor(_ctx);
+        _memory.WriteCString(TextAddress, "temporary");
         _ctx[CpuRegister.Rdi] = StringAddress;
-        JsonValueExports.StringDefaultConstructor(_ctx);
+        _ctx[CpuRegister.Rsi] = TextAddress;
+        JsonValueExports.StringCStringConstructor(_ctx);
 
-        Assert.True(JsonObjectHeap.Values.ContainsKey(ThisAddress));
-        Assert.True(JsonObjectHeap.Strings.ContainsKey(StringAddress));
+        Assert.Equal(2, JsonExports.GetValueTypeForTests(ThisAddress));
+        Assert.Equal(
+            "temporary",
+            JsonExports.GetStringForTests(StringAddress));
 
         _ctx[CpuRegister.Rdi] = ThisAddress;
         JsonValueExports.ValueDestructor(_ctx);
         _ctx[CpuRegister.Rdi] = StringAddress;
         JsonValueExports.StringDestructor(_ctx);
 
-        Assert.False(JsonObjectHeap.Values.ContainsKey(ThisAddress));
-        Assert.False(JsonObjectHeap.Strings.ContainsKey(StringAddress));
+        Assert.Equal(0, JsonExports.GetValueTypeForTests(ThisAddress));
+        Assert.Equal(string.Empty, JsonExports.GetStringForTests(StringAddress));
         Assert.Equal(0UL, _ctx[CpuRegister.Rax]);
     }
 
@@ -181,8 +188,43 @@ public sealed class JsonValueExportsTests
 
         JsonValueExports.ValueSetCString(_ctx);
 
-        var state = JsonObjectHeap.Values[ThisAddress];
-        Assert.Equal(JsonValueKind.String, state.Kind);
-        Assert.Equal(string.Empty, state.Text);
+        var state = JsonExports.GetValueForTests(ThisAddress);
+        Assert.Equal(string.Empty, state.GetString());
+    }
+
+    [Fact]
+    public void PrimitiveSetterIsVisibleToCanonicalGetterAndGuestMirror()
+    {
+        _ctx[CpuRegister.Rdi] = ThisAddress;
+        _ctx[CpuRegister.Rsi] = unchecked((ulong)-42L);
+        JsonValueExports.ValueSetInteger(_ctx);
+
+        _ctx[CpuRegister.Rdi] = ThisAddress;
+        JsonExports.ValueGetType(_ctx);
+
+        Assert.Equal(2UL, _ctx[CpuRegister.Rax]);
+        Span<byte> storage = stackalloc byte[sizeof(long)];
+        Assert.True(_memory.TryRead(ThisAddress + 0x10, storage));
+        Assert.Equal(-42L, BinaryPrimitives.ReadInt64LittleEndian(storage));
+    }
+
+    [Fact]
+    public void PrimitiveSetterReplacesValueParsedByCanonicalParser()
+    {
+        var json = Encoding.UTF8.GetBytes("""{"stale":true}""");
+        Assert.True(_memory.TryWrite(TextAddress, json));
+        _memory.WriteCString(StringAddress, "replacement");
+        _ctx[CpuRegister.Rdi] = ThisAddress;
+        _ctx[CpuRegister.Rsi] = TextAddress;
+        _ctx[CpuRegister.Rdx] = (ulong)json.Length;
+        Assert.Equal(0, JsonExports.ParserParseBuffer(_ctx));
+
+        _ctx[CpuRegister.Rdi] = ThisAddress;
+        _ctx[CpuRegister.Rsi] = StringAddress;
+        JsonValueExports.ValueSetCString(_ctx);
+        _ctx[CpuRegister.Rdi] = ThisAddress;
+        JsonExports.ValueGetType(_ctx);
+
+        Assert.Equal(5UL, _ctx[CpuRegister.Rax]);
     }
 }

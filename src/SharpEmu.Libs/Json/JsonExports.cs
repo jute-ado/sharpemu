@@ -4,7 +4,6 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
 using SharpEmu.HLE;
@@ -19,7 +18,9 @@ public static class JsonExports
     private const int SceJsonParserErrorInvalidToken = unchecked((int)0x80920101);
     private const int SceJsonParserErrorEmptyBuffer = unchecked((int)0x80920105);
 
-    private sealed record JsonValueState(JsonElement Element);
+    private sealed record JsonValueState(
+        JsonElement Element,
+        int? ExplicitType = null);
 
     private sealed record JsonStringState(
         string Value,
@@ -29,6 +30,8 @@ public static class JsonExports
     private static readonly ConcurrentDictionary<ulong, JsonValueState> _values = new();
     private static readonly ConcurrentDictionary<ulong, JsonStringState> _strings = new();
     private static readonly JsonElement _nullElement = CreateNullElement();
+    private static ulong _globalNullAccessCallback;
+    private static ulong _globalNullAccessCallbackContext;
 
     [SysAbiExport(
         Nid = "-hJRce8wn1U",
@@ -113,8 +116,8 @@ public static class JsonExports
             return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        JsonObjectHeap.GlobalNullAccessCallback = ctx[CpuRegister.Rsi];
-        JsonObjectHeap.GlobalNullAccessCallbackContext = ctx[CpuRegister.Rdx];
+        _globalNullAccessCallback = ctx[CpuRegister.Rsi];
+        _globalNullAccessCallbackContext = ctx[CpuRegister.Rdx];
         TraceJson("Initializer.setGlobalNullAccessCallback", thisAddress, ctx[CpuRegister.Rsi]);
         return SetReturn(ctx, 0);
     }
@@ -206,10 +209,7 @@ public static class JsonExports
         return SetReturn(ctx, 0);
     }
     public static int ValueConstructor(CpuContext ctx)
-    {
-        _ = ConstructValue(ctx);
-        return JsonValueExports.ValueDefaultConstructor(ctx);
-    }
+        => ConstructValue(ctx);
 
     [SysAbiExport(
         Nid = "-wa17B7TGnw",
@@ -218,10 +218,7 @@ public static class JsonExports
         LibraryName = "libSceJson")]
     public static int ValueBaseConstructor(CpuContext ctx) => ConstructValue(ctx);
     public static int ValueDestructor(CpuContext ctx)
-    {
-        _ = DestroyValue(ctx);
-        return JsonValueExports.ValueDestructor(ctx);
-    }
+        => DestroyValue(ctx);
 
     [SysAbiExport(
         Nid = "0eUrW9JAxM0",
@@ -278,8 +275,7 @@ public static class JsonExports
     public static int ValueGetType(CpuContext ctx)
     {
         var valueAddress = ctx[CpuRegister.Rdi];
-        var element = GetValue(valueAddress);
-        ctx[CpuRegister.Rax] = (ulong)GetValueType(element);
+        ctx[CpuRegister.Rax] = (ulong)GetStoredValueType(valueAddress);
         return 0;
     }
 
@@ -294,7 +290,8 @@ public static class JsonExports
         ctx[CpuRegister.Rax] = element.ValueKind switch
         {
             System.Text.Json.JsonValueKind.Array => (ulong)element.GetArrayLength(),
-            System.Text.Json.JsonValueKind.Object => (ulong)element.EnumerateObject().Count(),
+            System.Text.Json.JsonValueKind.Object =>
+                CountObjectProperties(element),
             _ => 0,
         };
         return 0;
@@ -387,10 +384,7 @@ public static class JsonExports
         return 0;
     }
     public static int StringConstructor(CpuContext ctx)
-    {
-        _ = ConstructString(ctx);
-        return JsonValueExports.StringDefaultConstructor(ctx);
-    }
+        => ConstructString(ctx);
 
     [SysAbiExport(
         Nid = "eG9E9M6XvTM",
@@ -399,10 +393,7 @@ public static class JsonExports
         LibraryName = "libSceJson")]
     public static int StringBaseConstructor(CpuContext ctx) => ConstructString(ctx);
     public static int StringDestructor(CpuContext ctx)
-    {
-        _ = DestroyString(ctx);
-        return JsonValueExports.StringDestructor(ctx);
-    }
+        => DestroyString(ctx);
 
     [SysAbiExport(
         Nid = "Ui7YFnSTCBw",
@@ -471,6 +462,115 @@ public static class JsonExports
         ctx.TryWriteUInt64(stringAddress, guestBufferAddress);
         ctx[CpuRegister.Rax] = guestBufferAddress;
         TraceJsonText("String.c_str", stringAddress, state.Value);
+        return 0;
+    }
+
+    internal static int SetNullValue(CpuContext ctx) =>
+        SetValueAndReturnThis(ctx, _nullElement);
+
+    internal static int SetBooleanValue(CpuContext ctx, bool value) =>
+        SetValueAndReturnThis(
+            ctx,
+            JsonSerializer.SerializeToElement(value));
+
+    internal static int SetIntegerValue(CpuContext ctx, long value) =>
+        SetValueAndReturnThis(
+            ctx,
+            JsonSerializer.SerializeToElement(value));
+
+    internal static int SetUnsignedIntegerValue(
+        CpuContext ctx,
+        ulong value) =>
+        SetValueAndReturnThis(
+            ctx,
+            JsonSerializer.SerializeToElement(value));
+
+    internal static int SetRealValue(CpuContext ctx, double value) =>
+        SetValueAndReturnThis(
+            ctx,
+            JsonSerializer.SerializeToElement(value));
+
+    internal static int SetStringValue(CpuContext ctx, string value) =>
+        SetValueAndReturnThis(
+            ctx,
+            JsonSerializer.SerializeToElement(value));
+
+    internal static int SetExplicitType(CpuContext ctx, uint type)
+    {
+        var thisAddress = ctx[CpuRegister.Rdi];
+        if (thisAddress != 0)
+        {
+            _values[thisAddress] = new JsonValueState(
+                _nullElement,
+                unchecked((int)type));
+            Span<byte> mirror = stackalloc byte[ValueObjectSize];
+            mirror.Clear();
+            BinaryPrimitives.WriteUInt32LittleEndian(
+                mirror[0x1C..],
+                type);
+            ctx.Memory.TryWrite(thisAddress, mirror);
+        }
+
+        ctx[CpuRegister.Rax] = thisAddress;
+        return 0;
+    }
+
+    internal static int SetStringObject(
+        CpuContext ctx,
+        string value)
+    {
+        var thisAddress = ctx[CpuRegister.Rdi];
+        if (thisAddress != 0)
+        {
+            _strings[thisAddress] = new JsonStringState(value);
+            ctx.TryWriteUInt64(thisAddress, 0);
+        }
+
+        ctx[CpuRegister.Rax] = thisAddress;
+        return 0;
+    }
+
+    internal static string GetStringObject(ulong address) =>
+        address != 0 && _strings.TryGetValue(address, out var state)
+            ? state.Value
+            : string.Empty;
+
+    internal static int DestroyCanonicalValue(CpuContext ctx) =>
+        DestroyValue(ctx);
+
+    internal static int DestroyCanonicalString(CpuContext ctx) =>
+        DestroyString(ctx);
+
+    internal static JsonElement GetValueForTests(ulong address) =>
+        GetValue(address);
+
+    internal static int GetValueTypeForTests(ulong address) =>
+        GetStoredValueType(address);
+
+    internal static string GetStringForTests(ulong address) =>
+        GetStringObject(address);
+
+    internal static ulong GlobalNullAccessCallbackForTests =>
+        _globalNullAccessCallback;
+
+    internal static ulong GlobalNullAccessCallbackContextForTests =>
+        _globalNullAccessCallbackContext;
+
+    internal static void ResetForTests()
+    {
+        _values.Clear();
+        _strings.Clear();
+        _globalNullAccessCallback = 0;
+        _globalNullAccessCallbackContext = 0;
+    }
+
+    private static int SetValueAndReturnThis(
+        CpuContext ctx,
+        JsonElement element)
+    {
+        var thisAddress = ctx[CpuRegister.Rdi];
+        StoreValue(ctx, thisAddress, element);
+        ctx[CpuRegister.Rax] = thisAddress;
         return 0;
     }
 
@@ -567,6 +667,11 @@ public static class JsonExports
             ? state.Element
             : _nullElement;
 
+    private static int GetStoredValueType(ulong address) =>
+        address != 0 && _values.TryGetValue(address, out var state)
+            ? state.ExplicitType ?? GetValueType(state.Element)
+            : 0;
+
     private static void StoreValue(CpuContext ctx, ulong address, JsonElement element)
     {
         if (address == 0)
@@ -613,6 +718,18 @@ public static class JsonExports
         System.Text.Json.JsonValueKind.Object => 7,
         _ => 0,
     };
+
+    private static ulong CountObjectProperties(JsonElement element)
+    {
+        var count = 0UL;
+        foreach (var property in element.EnumerateObject())
+        {
+            _ = property;
+            count++;
+        }
+
+        return count;
+    }
 
     private static bool TryAllocateGuestObject(CpuContext ctx, int size, out ulong address)
     {
