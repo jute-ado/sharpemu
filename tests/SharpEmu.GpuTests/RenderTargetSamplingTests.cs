@@ -27,7 +27,8 @@ public sealed class RenderTargetSamplingTests
 
     /// <summary>
     /// Verifies that a render target rewritten after an earlier sample exposes
-    /// the new pixels when composing into a reused presentation target.
+    /// the new pixels when an indexed triangle strip composes it into a reused
+    /// presentation target.
     /// </summary>
     [GpuConformanceFact]
     public void RewrittenRenderTarget_IsSampledIntoReusedPresentationTarget()
@@ -51,7 +52,7 @@ public sealed class RenderTargetSamplingTests
             VulkanVideoPresenter.HideSplashScreen();
 
             SubmitSolid(SourceAddress, red: 1f, green: 0f, blue: 0f);
-            Assert.True(CopySourceTo(FirstDisplayAddress));
+            ComposeSourceTo(FirstDisplayAddress);
 
             SubmitSolid(SourceAddress, red: 0f, green: 1f, blue: 0f);
             Assert.True(CopySourceTo(SecondDisplayAddress));
@@ -116,6 +117,153 @@ public sealed class RenderTargetSamplingTests
             DestinationWidth,
             DestinationHeight,
             Rgba8DataFormat);
+
+    private static void ComposeSourceTo(ulong destinationAddress)
+    {
+        VulkanVideoPresenter.SubmitOffscreenTranslatedDraw(
+            SpirvFixedShaders.CreateCopyFragment(),
+            [
+                new GuestDrawTexture(
+                    SourceAddress,
+                    SourceWidth,
+                    SourceHeight,
+                    Rgba8DataFormat,
+                    UnormNumberType,
+                    [],
+                    IsFallback: false,
+                    IsStorage: false),
+            ],
+            [],
+            attributeCount: 1,
+            new GuestRenderTarget(
+                destinationAddress,
+                DestinationWidth,
+                DestinationHeight,
+                Rgba8DataFormat,
+                UnormNumberType),
+            vertexSpirv: CreatePassthroughVertex(),
+            vertexCount: 4,
+            primitiveType: 6,
+            indexBuffer: new GuestIndexBuffer(
+                [0, 0, 1, 0, 2, 0, 3, 0],
+                Is32Bit: false),
+            vertexBuffers:
+            [
+                CreateVertexBuffer(
+                    location: 0,
+                    baseAddress: 0x0040_0000,
+                    (-1f, 1f),
+                    (1f, 1f),
+                    (-1f, -1f),
+                    (1f, -1f)),
+                CreateVertexBuffer(
+                    location: 1,
+                    baseAddress: 0x0041_0000,
+                    (0f, 0f),
+                    (1f, 0f),
+                    (0f, 1f),
+                    (1f, 1f)),
+            ],
+            renderState: new GuestRenderState(
+                [GuestBlendState.Default],
+                Scissor: null,
+                new GuestViewport(
+                    0,
+                    DestinationHeight,
+                    DestinationWidth,
+                    -DestinationHeight,
+                    0,
+                    1)));
+    }
+
+    private static GuestVertexBuffer CreateVertexBuffer(
+        uint location,
+        ulong baseAddress,
+        params (float X, float Y)[] vertices)
+    {
+        const int stride = 16;
+        var data = new byte[vertices.Length * stride];
+        for (var index = 0; index < vertices.Length; index++)
+        {
+            var offset = index * stride;
+            BitConverter.TryWriteBytes(data.AsSpan(offset), vertices[index].X);
+            BitConverter.TryWriteBytes(data.AsSpan(offset + sizeof(float)), vertices[index].Y);
+        }
+
+        return new GuestVertexBuffer(
+            location,
+            ComponentCount: 2,
+            DataFormat: 11,
+            NumberFormat: 7,
+            baseAddress,
+            Stride: stride,
+            OffsetBytes: 0,
+            data);
+    }
+
+    private static byte[] CreatePassthroughVertex()
+    {
+        var module = new SpirvModuleBuilder();
+        module.AddCapability(SpirvCapability.Shader);
+
+        var voidType = module.TypeVoid();
+        var floatType = module.TypeFloat(32);
+        var vec2Type = module.TypeVector(floatType, 2);
+        var vec4Type = module.TypeVector(floatType, 4);
+        var inputPointer = module.TypePointer(SpirvStorageClass.Input, vec2Type);
+        var outputPointer = module.TypePointer(SpirvStorageClass.Output, vec4Type);
+
+        var positionInput = module.AddGlobalVariable(inputPointer, SpirvStorageClass.Input);
+        module.AddDecoration(positionInput, SpirvDecoration.Location, 0);
+        var textureInput = module.AddGlobalVariable(inputPointer, SpirvStorageClass.Input);
+        module.AddDecoration(textureInput, SpirvDecoration.Location, 1);
+        var positionOutput = module.AddGlobalVariable(outputPointer, SpirvStorageClass.Output);
+        module.AddDecoration(
+            positionOutput,
+            SpirvDecoration.BuiltIn,
+            (uint)SpirvBuiltIn.Position);
+        var textureOutput = module.AddGlobalVariable(outputPointer, SpirvStorageClass.Output);
+        module.AddDecoration(textureOutput, SpirvDecoration.Location, 0);
+        module.AddDecoration(textureOutput, SpirvDecoration.NoPerspective);
+
+        var functionType = module.TypeFunction(voidType);
+        var main = module.BeginFunction(voidType, functionType);
+        module.AddName(main, "main");
+        module.AddLabel();
+
+        var position = module.AddInstruction(SpirvOp.Load, vec2Type, positionInput);
+        var texture = module.AddInstruction(SpirvOp.Load, vec2Type, textureInput);
+        var positionX = module.AddInstruction(SpirvOp.CompositeExtract, floatType, position, 0);
+        var positionY = module.AddInstruction(SpirvOp.CompositeExtract, floatType, position, 1);
+        var textureX = module.AddInstruction(SpirvOp.CompositeExtract, floatType, texture, 0);
+        var textureY = module.AddInstruction(SpirvOp.CompositeExtract, floatType, texture, 1);
+        var zero = module.ConstantFloat(floatType, 0);
+        var one = module.ConstantFloat(floatType, 1);
+        var clipPosition = module.AddInstruction(
+            SpirvOp.CompositeConstruct,
+            vec4Type,
+            positionX,
+            positionY,
+            zero,
+            one);
+        var coordinates = module.AddInstruction(
+            SpirvOp.CompositeConstruct,
+            vec4Type,
+            textureX,
+            textureY,
+            zero,
+            one);
+        module.AddStatement(SpirvOp.Store, positionOutput, clipPosition);
+        module.AddStatement(SpirvOp.Store, textureOutput, coordinates);
+        module.AddStatement(SpirvOp.Return);
+        module.EndFunction();
+        module.AddEntryPoint(
+            SpirvExecutionModel.Vertex,
+            main,
+            "main",
+            [positionInput, textureInput, positionOutput, textureOutput]);
+        return module.Build();
+    }
 
     private static string WaitForCapture(string captureDirectory)
     {
