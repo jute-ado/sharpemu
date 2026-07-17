@@ -5594,7 +5594,8 @@ internal static unsafe class VulkanVideoPresenter
                         _guestImageWriteCaptureRequest.Matches(
                             target.Address,
                             target.Width,
-                            target.Height);
+                            target.Height,
+                            work.Draw.ShaderIdentity.PixelShaderAddress);
                     var captureMatchCount = captureConfiguredWrite
                         ? ++_guestImageCaptureMatchCount
                         : 0;
@@ -5614,6 +5615,7 @@ internal static unsafe class VulkanVideoPresenter
                             target.Address,
                             target.Width,
                             target.Height,
+                            work.Draw.ShaderIdentity.PixelShaderAddress,
                             captureMatchCount);
                     if ((traceConfiguredWrites &&
                          tracedWriteCount <= (traceSmallWrites ? 48 : 3)) ||
