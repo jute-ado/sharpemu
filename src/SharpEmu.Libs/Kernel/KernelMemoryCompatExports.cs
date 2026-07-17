@@ -2124,6 +2124,18 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
+        if (IsGuestMountRootPath(guestPath))
+        {
+            if (!TryWriteGuestMountRootStat(ctx, statAddress))
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+
+            LogIoTrace("stat", "/", "virtual=1 found=1");
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
         if (!TryResolveGuestPath(guestPath, out var hostPath))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
@@ -7176,17 +7188,25 @@ public static partial class KernelMemoryCompatExports
 
         string? hostPath = null;
         bool isDirectory = false;
+        bool isVirtualDirectory = false;
         lock (_fdGate)
         {
             if (_openDirectories.TryGetValue(fd, out var directory))
             {
                 hostPath = directory.Path;
                 isDirectory = true;
+                isVirtualDirectory = directory.IsVirtual;
             }
             else if (_openFiles.TryGetValue(fd, out var stream))
             {
                 hostPath = stream.Name;
             }
+        }
+
+        if (isVirtualDirectory)
+        {
+            LogIoTrace("fstat", "/", $"fd={fd} size=65536 dir=1 virtual=1");
+            return TryWriteGuestMountRootStat(ctx, statAddress);
         }
 
         if (!string.IsNullOrWhiteSpace(hostPath))
@@ -7208,6 +7228,21 @@ public static partial class KernelMemoryCompatExports
         }
 
         return !string.IsNullOrWhiteSpace(hostPath) && TryWriteHostPathStat(ctx, statAddress, hostPath!, isDirectory);
+    }
+
+    private static bool TryWriteGuestMountRootStat(
+        CpuContext ctx,
+        ulong statAddress)
+    {
+        return TryWriteKernelStat(
+            ctx,
+            statAddress,
+            isDirectory: true,
+            size: 65536,
+            DateTime.UnixEpoch,
+            DateTime.UnixEpoch,
+            DateTime.UnixEpoch,
+            "guest-mount-root");
     }
 
     private static bool TryWriteHostPathStat(CpuContext ctx, ulong statAddress, string hostPath)
