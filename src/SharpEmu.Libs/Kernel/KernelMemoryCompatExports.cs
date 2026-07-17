@@ -145,8 +145,6 @@ public static partial class KernelMemoryCompatExports
     private static int _hostMemoryReadFallbackCount;
     private static int _nullWcscpyRecoveryCount;
     private static int _nullStrcasecmpRecoveryCount;
-    private static string? _cachedApp0Root;
-    private static string? _cachedDownload0Root;
 
     // Property (not a cached field) so merely touching this type never resolves
     // the platform backend; non-Windows hosts only throw if a call is reached.
@@ -5388,20 +5386,13 @@ public static partial class KernelMemoryCompatExports
 
     private static string? ResolveApp0Root()
     {
-        var cached = Volatile.Read(ref _cachedApp0Root);
-        if (!string.IsNullOrWhiteSpace(cached))
-        {
-            return cached;
-        }
-
         var configured = Environment.GetEnvironmentVariable("SHARPEMU_APP0_DIR");
         if (string.IsNullOrWhiteSpace(configured))
         {
             return null;
         }
 
-        Interlocked.CompareExchange(ref _cachedApp0Root, configured, null);
-        return _cachedApp0Root;
+        return configured;
     }
 
     private static string NormalizeMountRelativePath(string relativePath)
@@ -5449,19 +5440,11 @@ public static partial class KernelMemoryCompatExports
 
         var invalidChars = Path.GetInvalidFileNameChars();
         appName = new string(appName.Select(ch => invalidChars.Contains(ch) ? '_' : ch).ToArray());
-        var root = Path.Combine(Path.GetTempPath(), "SharpEmu", appName, "temp0");
-        Environment.SetEnvironmentVariable(temp0VariableName, root);
-        return root;
+        return Path.Combine(Path.GetTempPath(), "SharpEmu", appName, "temp0");
     }
 
     private static string ResolveDownload0Root()
     {
-        var cached = Volatile.Read(ref _cachedDownload0Root);
-        if (!string.IsNullOrWhiteSpace(cached))
-        {
-            return cached;
-        }
-
         const string download0VariableName = "SHARPEMU_DOWNLOAD0_DIR";
         var configuredRoot = Environment.GetEnvironmentVariable(download0VariableName);
         string root;
@@ -5472,12 +5455,10 @@ public static partial class KernelMemoryCompatExports
         else
         {
             root = Path.Combine(GetPerAppWritableRoot(), "download0");
-            Environment.SetEnvironmentVariable(download0VariableName, root);
         }
 
         Directory.CreateDirectory(root);
-        Interlocked.CompareExchange(ref _cachedDownload0Root, root, null);
-        return _cachedDownload0Root;
+        return root;
     }
 
     private static string ResolveHostappRoot()
