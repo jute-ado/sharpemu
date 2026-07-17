@@ -402,13 +402,54 @@ internal static class GameRegressionRunner
                     $"Game regression '{testCase.Name}' has an invalid " +
                     "requiredGuestImageWrite selector.");
             }
-            if (!TryNormalizeFrameFingerprint(
-                    guestImageWrite.Fingerprint,
-                    out _))
+            var hasRequiredFingerprint = TryNormalizeFrameFingerprint(
+                guestImageWrite.Fingerprint,
+                out var requiredFingerprint);
+            if (!string.IsNullOrWhiteSpace(guestImageWrite.Fingerprint) &&
+                !hasRequiredFingerprint)
             {
                 throw new InvalidDataException(
                     $"Game regression '{testCase.Name}' has an invalid " +
                     "requiredGuestImageWrite fingerprint.");
+            }
+            if (guestImageWrite.MinimumNonBlackPixels is <= 0)
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' has an invalid " +
+                    "requiredGuestImageWrite minimumNonBlackPixels.");
+            }
+            if (!hasRequiredFingerprint &&
+                guestImageWrite.ForbiddenFingerprints.Length == 0 &&
+                guestImageWrite.MinimumNonBlackPixels is null)
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' requires " +
+                    "requiredGuestImageWrite fingerprint or " +
+                    "forbiddenFingerprints or minimumNonBlackPixels.");
+            }
+            for (var index = 0;
+                index < guestImageWrite.ForbiddenFingerprints.Length;
+                index++)
+            {
+                if (!TryNormalizeFrameFingerprint(
+                        guestImageWrite.ForbiddenFingerprints[index],
+                        out var forbiddenFingerprint))
+                {
+                    throw new InvalidDataException(
+                        $"Game regression '{testCase.Name}' has an invalid " +
+                        "requiredGuestImageWrite forbiddenFingerprints entry.");
+                }
+                if (hasRequiredFingerprint &&
+                    string.Equals(
+                        requiredFingerprint,
+                        forbiddenFingerprint,
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException(
+                        $"Game regression '{testCase.Name}' has a " +
+                        "requiredGuestImageWrite fingerprint that is also " +
+                        "forbidden.");
+                }
             }
         }
     }
@@ -704,19 +745,70 @@ internal static class GameRegressionRunner
             _ = GuestImageWriteCaptureRequest.TryParse(
                 guestImageWrite.Selector,
                 out var captureRequest);
-            _ = TryNormalizeFrameFingerprint(
-                guestImageWrite.Fingerprint,
-                out var fingerprint);
             var marker =
                 $"vk.guest_image_write_capture selector={captureRequest} " +
-                $"fingerprint=0x{fingerprint}";
-            if (!capturedOutput.Contains(
+                "fingerprint=0x";
+            if (!TryGetCapturedImageObservation(
+                    capturedOutput,
                     marker,
-                    StringComparison.OrdinalIgnoreCase))
+                    out var actualFingerprint,
+                    out var nonBlackPixels))
             {
                 failures.AppendLine(
                     $"required guest image write {captureRequest} " +
-                    $"fingerprint was not observed: 0x{fingerprint}.");
+                    "was not observed.");
+            }
+            else
+            {
+                if (TryNormalizeFrameFingerprint(
+                        guestImageWrite.Fingerprint,
+                        out var requiredFingerprint) &&
+                    !string.Equals(
+                        actualFingerprint,
+                        requiredFingerprint,
+                        StringComparison.Ordinal))
+                {
+                    failures.AppendLine(
+                        $"required guest image write {captureRequest} " +
+                        $"fingerprint was not observed: " +
+                        $"0x{requiredFingerprint} (actual " +
+                        $"0x{actualFingerprint}).");
+                }
+                for (var index = 0;
+                    index < guestImageWrite.ForbiddenFingerprints.Length;
+                    index++)
+                {
+                    _ = TryNormalizeFrameFingerprint(
+                        guestImageWrite.ForbiddenFingerprints[index],
+                        out var forbiddenFingerprint);
+                    if (string.Equals(
+                            actualFingerprint,
+                            forbiddenFingerprint,
+                            StringComparison.Ordinal))
+                    {
+                        failures.AppendLine(
+                            $"guest image write {captureRequest} forbidden " +
+                            $"fingerprint was observed: " +
+                            $"0x{forbiddenFingerprint}.");
+                    }
+                }
+                if (guestImageWrite.MinimumNonBlackPixels is
+                    { } minimumNonBlackPixels)
+                {
+                    if (nonBlackPixels is null)
+                    {
+                        failures.AppendLine(
+                            $"guest image write {captureRequest} did not " +
+                            "report non-black pixel coverage.");
+                    }
+                    else if (nonBlackPixels < minimumNonBlackPixels)
+                    {
+                        failures.AppendLine(
+                            $"guest image write {captureRequest} non-black " +
+                            $"pixels {nonBlackPixels} were below " +
+                            $"{minimumNonBlackPixels}.");
+                    }
+                }
             }
         }
 
@@ -908,10 +1000,23 @@ internal static class GameRegressionRunner
         out string fingerprint,
         out long? nonBlackPixels)
     {
-        fingerprint = string.Empty;
-        nonBlackPixels = null;
         var marker =
             $"vk.presented_guest_image frame={frame} fingerprint=0x";
+        return TryGetCapturedImageObservation(
+            output,
+            marker,
+            out fingerprint,
+            out nonBlackPixels);
+    }
+
+    private static bool TryGetCapturedImageObservation(
+        string output,
+        string marker,
+        out string fingerprint,
+        out long? nonBlackPixels)
+    {
+        fingerprint = string.Empty;
+        nonBlackPixels = null;
         var markerOffset = output.IndexOf(
             marker,
             StringComparison.OrdinalIgnoreCase);

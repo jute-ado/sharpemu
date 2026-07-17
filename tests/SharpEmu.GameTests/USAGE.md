@@ -41,9 +41,11 @@ inspected without rerunning the game.
 
 `requiredGuestImageWrite` turns an intermediate capture into a repeatable local
 regression. Its `selector` uses the same canonical address-or-size syntax as the
-presenter (for example, `1280x720@105`), while `fingerprint` pins the exact GPU
-output at that write. The harness configures capture variables itself, requires
-a dedicated capture marker, and stores ignored RGBA/BMP artifacts per case.
+presenter (for example, `1280x720@105`). Use `minimumNonBlackPixels` for a coarse
+content milestone and `forbiddenFingerprints` for known-bad output; reserve
+`fingerprint` for output that is intentionally exact and stable. The harness
+configures capture variables itself, requires a dedicated capture marker, and
+stores ignored RGBA/BMP artifacts per case.
 Keep one synchronous intermediate capture per case so failures identify one
 pipeline milestone precisely.
 

@@ -119,5 +119,9 @@ internal sealed class GuestImageWriteExpectation
 {
     public string Selector { get; init; } = string.Empty;
 
-    public string Fingerprint { get; init; } = string.Empty;
+    public string? Fingerprint { get; init; }
+
+    public string[] ForbiddenFingerprints { get; init; } = [];
+
+    public long? MinimumNonBlackPixels { get; init; }
 }

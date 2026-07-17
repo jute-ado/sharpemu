@@ -5601,14 +5601,15 @@ internal static unsafe class VulkanVideoPresenter
                             $"addr=0x{target.Address:X16} write={displayedWriteCount} " +
                             $"ps=0x{work.Draw.ShaderIdentity.PixelShaderAddress:X16} " +
                             $"ps_bytes={work.Draw.PixelSpirv.Length}");
-                        var fingerprint = TraceGuestImageContents(target);
-                        if (captureThisWrite && fingerprint is { } capturedHash)
+                        var observation = TraceGuestImageContents(target);
+                        if (captureThisWrite && observation is { } captured)
                         {
                             Console.Error.WriteLine(
                                 "[LOADER][TRACE] " +
                                 "vk.guest_image_write_capture " +
                                 $"selector={_guestImageWriteCaptureRequest} " +
-                                $"fingerprint=0x{capturedHash:X16}");
+                                $"fingerprint=0x{captured.Fingerprint:X16} " +
+                                $"nonblack_pixels={captured.NonBlackPixels}");
                         }
                     }
                 }
@@ -6703,7 +6704,11 @@ internal static unsafe class VulkanVideoPresenter
             }
         }
 
-        private ulong? TraceGuestImageContents(
+        private readonly record struct GuestImageContentObservation(
+            ulong Fingerprint,
+            long NonBlackPixels);
+
+        private GuestImageContentObservation? TraceGuestImageContents(
             GuestImageResource image,
             bool isPresentedImage = false,
             long presentedFrame = 0)
@@ -6718,7 +6723,7 @@ internal static unsafe class VulkanVideoPresenter
                 return null;
             }
 
-            ulong? fingerprint = null;
+            GuestImageContentObservation? observation = null;
             var byteCount = checked((ulong)image.Width * image.Height * bytesPerPixel);
             var buffer = CreateBuffer(
                 byteCount,
@@ -6825,12 +6830,11 @@ internal static unsafe class VulkanVideoPresenter
                         nonzeroBytes += value == 0 ? 0 : 1;
                         hash = (hash ^ value) * 1099511628211UL;
                     }
-                    fingerprint = hash;
-
                     var nonblackPixels = CountNonblackPixels(
                         bytes,
                         image.Format,
                         bytesPerPixel);
+                    observation = new(hash, nonblackPixels);
                     var centerOffset = checked(
                         ((int)(image.Height / 2) * (int)image.Width +
                          (int)(image.Width / 2)) *
@@ -6881,7 +6885,7 @@ internal static unsafe class VulkanVideoPresenter
                 _vk.FreeMemory(_device, memory, null);
             }
 
-            return fingerprint;
+            return observation;
         }
 
         private static void DumpGuestImageBytes(

@@ -66,7 +66,10 @@
         },
         "requiredGuestImageWrite": {
           "selector": "1280x720@100",
-          "fingerprint": "0123456789ABCDEF"
+          "minimumNonBlackPixels": 1,
+          "forbiddenFingerprints": [
+            "0000000000000000"
+          ]
         }
       }
     }
