@@ -24,11 +24,13 @@ public static partial class AgcExports
     private const uint ItDrawIndexIndirect = 0x25;
     private const uint ItDrawIndex2 = 0x27;
     private const uint ItIndexType = 0x2A;
+    private const uint ItDrawIndirectMulti = 0x2C;
     private const uint ItDrawIndexAuto = 0x2D;
     private const uint ItNumInstances = 0x2F;
     private const uint ItDrawIndexMultiAuto = 0x30;
     private const uint ItDrawIndexOffset2 = 0x35;
     private const uint ItWriteData = 0x37;
+    private const uint ItDrawIndexIndirectMulti = 0x38;
     private const uint ItDispatchDirect = 0x15;
     private const uint ItDispatchIndirect = 0x16;
     private const uint ItWaitRegMem = 0x3C;
@@ -3081,6 +3083,18 @@ public static partial class AgcExports
                 }
             }
 
+            if (op is ItDrawIndirectMulti or ItDrawIndexIndirectMulti)
+            {
+                SubmitIndirectMultiDraws(
+                    ctx,
+                    gpuState,
+                    state,
+                    currentAddress,
+                    length,
+                    op,
+                    tracePackets);
+            }
+
             if (TryReadSubmittedDrawCount(
                     ctx,
                     state,
@@ -3105,6 +3119,10 @@ public static partial class AgcExports
                     ItDrawIndexIndirect;
                 state.SawIndexedDraw |= indexed;
                 TryTranslateGuestDraw(ctx, gpuState, state, indexCount, indexed);
+                if (op is ItDrawIndirect or ItDrawIndexIndirect)
+                {
+                    ResetSubmittedDrawArguments(state);
+                }
             }
 
             if (op == ItNop &&
@@ -3577,6 +3595,62 @@ public static partial class AgcExports
             default:
                 return false;
         }
+    }
+
+    private static void SubmitIndirectMultiDraws(
+        CpuContext ctx,
+        SubmittedGpuState gpuState,
+        SubmittedDcbState state,
+        ulong packetAddress,
+        uint packetLength,
+        uint op,
+        bool tracePackets)
+    {
+        var indexed = op == ItDrawIndexIndirectMulti;
+        if (!AgcIndirectMultiDrawPacket.TryRead(
+                ctx,
+                packetAddress,
+                packetLength,
+                state.IndirectArgsAddress,
+                indexed,
+                out var packet))
+        {
+            return;
+        }
+
+        if (tracePackets)
+        {
+            TraceAgc(
+                $"agc.draw_indirect_multi indexed={indexed} " +
+                $"count={packet.DrawCount} stride={packet.Stride} " +
+                $"args=0x{packet.ArgumentAddress:X16}");
+        }
+
+        for (uint drawIndex = 0; drawIndex < packet.DrawCount; drawIndex++)
+        {
+            if (!packet.TryReadArguments(ctx, drawIndex, out var arguments))
+            {
+                break;
+            }
+
+            state.InstanceCount = arguments.InstanceCount;
+            state.FirstVertex = arguments.FirstVertex;
+            state.DrawIndexOffset = arguments.FirstIndex;
+            state.VertexOffset = arguments.VertexOffset;
+            state.FirstInstance = arguments.FirstInstance;
+            if (arguments.VertexCount != 0 && arguments.InstanceCount != 0)
+            {
+                state.SawIndexedDraw |= indexed;
+                TryTranslateGuestDraw(
+                    ctx,
+                    gpuState,
+                    state,
+                    arguments.VertexCount,
+                    indexed);
+            }
+        }
+
+        ResetSubmittedDrawArguments(state);
     }
 
     private static void ResetSubmittedDrawArguments(SubmittedDcbState state)
