@@ -139,6 +139,8 @@
   "Options.About" : "Erről",
   "About.Github.Label": "GitHub",
   "About.Github.Desc": "Forrás kód, hibajelentések és a projekt fejlesztése.",
+  "About.Github.LatestCommitLabel": "Legutóbbi commit",
+  "About.Github.LatestCommitDescription": "A main ág legutóbbi commitja",
   "About.Discord.Label": "Discord",
   "About.Discord.Desc": "Csatlakozz a közösséghe, kérj segítéget és kövesd nyomon a fejlesztést.",
   "About.GithubButton": "Járulj hozzá GitHubon!",
