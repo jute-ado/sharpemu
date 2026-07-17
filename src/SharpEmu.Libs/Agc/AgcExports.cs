@@ -2936,13 +2936,16 @@ public static partial class AgcExports
             ApplySubmittedRegisters(ctx, state, currentAddress, length, op, register);
 
             if (op == ItNop &&
-                register == RDrawReset &&
+                register is RDrawReset or RAcbReset &&
                 length >= 2)
             {
                 ResetSubmittedQueueState(state);
                 if (tracePackets)
                 {
-                    TraceAgc("agc.dcb.queue_reset");
+                    TraceAgc(
+                        register == RAcbReset
+                            ? "agc.acb.queue_reset"
+                            : "agc.dcb.queue_reset");
                 }
             }
 
