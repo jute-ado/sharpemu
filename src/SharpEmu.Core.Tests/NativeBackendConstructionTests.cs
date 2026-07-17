@@ -823,6 +823,53 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public unsafe void RepeatedImportSetupReusesExistingPatchAndTrampoline()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(failedAllocation: int.MaxValue);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        var stub = memory.Allocate(0, 16, HostPageProtection.ReadWriteExecute);
+        Enumerable.Repeat((byte)0xA5, 16).ToArray()
+            .CopyTo(new Span<byte>((void*)stub, 16));
+
+        try
+        {
+            var imports = new Dictionary<ulong, string>
+            {
+                [stub] = "unknown-import",
+            };
+            Assert.True(backend.SetupImportStubs(imports));
+            var firstPatch = new ReadOnlySpan<byte>((void*)stub, 16).ToArray();
+            var activeAllocations = memory.ActiveAllocations.Count;
+
+            Assert.True(backend.SetupImportStubs(imports));
+
+            Assert.Equal(activeAllocations, memory.ActiveAllocations.Count);
+            Assert.Equal(firstPatch, new ReadOnlySpan<byte>((void*)stub, 16).ToArray());
+
+            Assert.False(backend.SetupImportStubs(new Dictionary<ulong, string>
+            {
+                [stub] = "different-import",
+            }));
+            Assert.Contains("already registered", backend.LastError, StringComparison.Ordinal);
+            Assert.Equal(activeAllocations, memory.ActiveAllocations.Count);
+            Assert.Equal(firstPatch, new ReadOnlySpan<byte>((void*)stub, 16).ToArray());
+        }
+        finally
+        {
+            backend.Dispose();
+            memory.Free(stub);
+        }
+    }
+
+    [Fact]
     public unsafe void FailedTlsPreparationRollsBackCompletedImportSetup()
     {
         var threading = new RecordingHostThreading([17u, 23u]);
