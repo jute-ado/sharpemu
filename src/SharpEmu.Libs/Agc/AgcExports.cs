@@ -2935,6 +2935,17 @@ public static partial class AgcExports
 
             ApplySubmittedRegisters(ctx, state, currentAddress, length, op, register);
 
+            if (op == ItNop &&
+                register == RDrawReset &&
+                length >= 2)
+            {
+                ResetSubmittedQueueState(state);
+                if (tracePackets)
+                {
+                    TraceAgc("agc.dcb.queue_reset");
+                }
+            }
+
             if (op == ItSetBase &&
                 length >= 4 &&
                 ctx.TryReadUInt32(currentAddress + 4, out var baseSelector) &&
@@ -3733,6 +3744,23 @@ public static partial class AgcExports
         state.DrawIndexOffset = 0;
         state.VertexOffset = 0;
         state.FirstInstance = 0;
+    }
+
+    private static void ResetSubmittedQueueState(SubmittedDcbState state)
+    {
+        state.CxRegisters.Clear();
+        state.ShRegisters.Clear();
+        state.UcRegisters.Clear();
+        state.PresenterTexture = null;
+        state.GuestDrawKind = GuestDrawKind.None;
+        state.TranslatedDraw = null;
+        state.IndirectArgsAddress = 0;
+        state.SawIndexedDraw = false;
+        state.IndexBufferAddress = 0;
+        state.IndexBufferCount = 0;
+        state.IndexSize = 0;
+        state.ConfiguredInstanceCount = 1;
+        ResetSubmittedDrawArguments(state);
     }
 
     private static void TryTranslateGuestDraw(
