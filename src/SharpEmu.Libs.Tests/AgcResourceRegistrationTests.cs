@@ -52,6 +52,58 @@ public sealed class AgcResourceRegistrationTests
     }
 
     [Fact]
+    public void AgcInitializationBootstrapsOptionalResourceRegistration()
+    {
+        var fixture = CreateFixture(
+            includeSizeOutput: false,
+            includeHandleOutput: true);
+        fixture.Memory.AddRegion(
+            OwnerOutputAddress,
+            new byte[sizeof(uint)]);
+
+        Assert.Equal(0, InitializeAgc(fixture.Context));
+
+        fixture.Context[CpuRegister.Rdi] = OwnerOutputAddress;
+        fixture.Context[CpuRegister.Rsi] = NameAddress;
+        Assert.Equal(0, AgcExports.DriverRegisterOwner(fixture.Context));
+        Assert.True(fixture.Memory.TryRead(
+            OwnerOutputAddress,
+            fixture.Scratch.AsSpan(0, sizeof(uint))));
+        var owner = BinaryPrimitives.ReadUInt32LittleEndian(fixture.Scratch);
+        Assert.NotEqual(0U, owner);
+
+        Assert.Equal(
+            0,
+            RegisterResource(
+                fixture.Context,
+                resourceAddress: ResourceAddress,
+                owner: owner));
+    }
+
+    [Fact]
+    public void RejectedAgcInitializationDoesNotBootstrapRegistration()
+    {
+        var fixture = CreateFixture(
+            includeSizeOutput: false,
+            includeHandleOutput: true);
+        fixture.Memory.AddRegion(
+            OwnerOutputAddress,
+            new byte[sizeof(uint)]);
+
+        fixture.Context[CpuRegister.Rdi] = 0;
+        fixture.Context[CpuRegister.Rsi] = 10;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+            AgcExports.Init(fixture.Context));
+
+        fixture.Context[CpuRegister.Rdi] = OwnerOutputAddress;
+        fixture.Context[CpuRegister.Rsi] = NameAddress;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+            AgcExports.DriverRegisterOwner(fixture.Context));
+    }
+
+    [Fact]
     public void RegistrationMemoryLimitsLiveResourcesAndUnregisterReclaimsCapacity()
     {
         var fixture = CreateFixture(includeSizeOutput: false, includeHandleOutput: true);
@@ -98,6 +150,7 @@ public sealed class AgcResourceRegistrationTests
     {
         var fixture = CreateFixture(includeSizeOutput: false, includeHandleOutput: true);
         fixture.Memory.AddRegion(OwnerOutputAddress, new byte[sizeof(uint)]);
+        Assert.Equal(0, InitializeAgc(fixture.Context));
         Assert.Equal(0, Initialize(fixture.Context, BytesPerOwner, ownerCount: 1));
 
         fixture.Context[CpuRegister.Rdi] = OwnerOutputAddress;
@@ -116,10 +169,20 @@ public sealed class AgcResourceRegistrationTests
         return AgcExports.DriverInitResourceRegistration(context);
     }
 
-    private static int RegisterResource(CpuContext context, ulong resourceAddress)
+    private static int InitializeAgc(CpuContext context)
+    {
+        context[CpuRegister.Rdi] = RegistrationMemoryAddress;
+        context[CpuRegister.Rsi] = 10;
+        return AgcExports.Init(context);
+    }
+
+    private static int RegisterResource(
+        CpuContext context,
+        ulong resourceAddress,
+        uint owner = 1)
     {
         context[CpuRegister.Rdi] = HandleOutputAddress;
-        context[CpuRegister.Rsi] = 1;
+        context[CpuRegister.Rsi] = owner;
         context[CpuRegister.Rdx] = resourceAddress;
         context[CpuRegister.Rcx] = 0x100;
         context[CpuRegister.R8] = NameAddress;

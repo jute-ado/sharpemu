@@ -464,6 +464,19 @@ public static partial class AgcExports
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
+        var state = _submittedGpuStates.GetValue(
+            ctx.Memory,
+            static _ => new SubmittedGpuState());
+        lock (state.Gate)
+        {
+            if (!state.ResourceRegistrationInitialized)
+            {
+                state.ResourceRegistrationInitialized = true;
+                state.ResourceRegistrationMaxOwners = uint.MaxValue;
+                state.ResourceRegistrationMaxResources = uint.MaxValue;
+            }
+        }
+
         TraceAgc($"agc.init state=0x{stateAddress:X16} version={version}");
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
