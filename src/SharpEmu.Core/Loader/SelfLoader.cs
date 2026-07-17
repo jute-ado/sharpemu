@@ -19,6 +19,7 @@ public sealed class SelfLoader : ISelfLoader
     private static readonly SharpEmuLogger Log = SharpEmuLog.For("Loader");
     private const uint ElfMagic = 0x7F454C46;
     private const byte CurrentElfVersion = 1;
+    private const byte ConsoleElfAbi = 9;
     private const ushort Amd64Machine = 0x3E;
     private const uint Ps4SelfMagic  = 0x4F153D1D;
     private const uint Ps5SelfMagic  = 0x5414F5EE;
@@ -444,6 +445,15 @@ public sealed class SelfLoader : ISelfLoader
         if (tableOffset > (ulong)imageData.Length ||
             tableSize > (ulong)imageData.Length - tableOffset)
         {
+            // Runtime console dumps commonly retain the original link-time section
+            // metadata after omitting its payload. Program loading is defined by the
+            // program headers, and all optional section consumers use bounded reads.
+            if (elfHeader.Abi == ConsoleElfAbi &&
+                elfHeader.SectionHeaderOffset <= ulong.MaxValue - tableSize)
+            {
+                return;
+            }
+
             throw new InvalidDataException(
                 "ELF section header table extends beyond the image bounds.");
         }
