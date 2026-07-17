@@ -17,6 +17,9 @@ namespace SharpEmu.Core.Cpu.Native;
 
 public sealed partial class DirectExecutionBackend
 {
+	internal static bool IsImportSetupTracingEnabled(string? value) =>
+		string.Equals(value, "1", StringComparison.Ordinal);
+
 	private const int ImportSavedRaxOffset = -176;
 	private const int ImportSavedR10Offset = -168;
 	private const int ImportSavedR11Offset = -160;

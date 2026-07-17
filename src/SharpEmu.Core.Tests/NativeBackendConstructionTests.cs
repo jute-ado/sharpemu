@@ -13,6 +13,17 @@ namespace SharpEmu.Core.Tests;
 
 public sealed class NativeBackendConstructionTests
 {
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("0", false)]
+    [InlineData("true", false)]
+    [InlineData("1", true)]
+    public void ImportSetupTracingIsExplicitlyOptIn(string? value, bool expected)
+    {
+        Assert.Equal(expected, DirectExecutionBackend.IsImportSetupTracingEnabled(value));
+    }
+
     [Fact]
     public void ConstructorReleasesFirstTlsSlotWhenSecondAllocationFails()
     {

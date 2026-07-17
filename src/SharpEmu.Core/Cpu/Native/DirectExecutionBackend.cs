@@ -408,6 +408,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private bool _logAllImports;
 
+	private bool _logImportSetup;
+
 	private bool _logImportFrames;
 
 	private bool _logImportRecent;
@@ -1146,6 +1148,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_logFiber = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_FIBER"), "1", StringComparison.Ordinal);
 		_logBootstrap = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_BOOTSTRAP"), "1", StringComparison.Ordinal);
 		_logAllImports = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_ALL_IMPORTS"), "1", StringComparison.Ordinal);
+		_logImportSetup = IsImportSetupTracingEnabled(
+			Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_SETUP"));
 		_logImportFrames = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_FRAMES"), "1", StringComparison.Ordinal);
 		_logImportRecent = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_RECENT"), "1", StringComparison.Ordinal);
 		_logStackCheck = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_STACK_CHK"), "1", StringComparison.Ordinal);
@@ -1421,7 +1425,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				if (TryResolveDirectImportTarget(nid, out var targetAddress, out var resolvedSymbol) &&
 					!importAddresses.Contains(targetAddress))
 				{
-					Console.Error.WriteLine($"[LOADER][DEBUG] SetupImportStubs: Direct bridge for {nid} -> 0x{targetAddress:X16}");
+					if (_logImportSetup)
+					{
+						Console.Error.WriteLine($"[LOADER][DEBUG] SetupImportStubs: Direct bridge for {nid} -> 0x{targetAddress:X16}");
+					}
 					if (!TryPatchTracked(stubAddress, (nint)targetAddress))
 					{
 						return FailAttempt($"Failed to patch direct import stub at 0x{stubAddress:X16}");
@@ -1453,7 +1460,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				{
 					return FailAttempt("Failed to create import trampoline for NID " + nid);
 				}
-				Console.Error.WriteLine($"[LOADER][DEBUG] SetupImportStubs: Trampoline for {nid} -> 0x{trampoline:X16}");
+				if (_logImportSetup)
+				{
+					Console.Error.WriteLine($"[LOADER][DEBUG] SetupImportStubs: Trampoline for {nid} -> 0x{trampoline:X16}");
+				}
 				if (!TryPatchTracked(stubAddress, trampoline))
 				{
 					return FailAttempt($"Failed to patch import stub at 0x{stubAddress:X16}");
@@ -1809,7 +1819,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		{
 			if (IsKernelLibrary(export.LibraryName))
 			{
-				Console.Error.WriteLine($"[LOADER][DEBUG] TryResolveDirectImportTarget: {nid} ({export.LibraryName}:{export.Name}) -> HLE (kernel library)");
+				if (_logImportSetup)
+				{
+					Console.Error.WriteLine($"[LOADER][DEBUG] TryResolveDirectImportTarget: {nid} ({export.LibraryName}:{export.Name}) -> HLE (kernel library)");
+				}
 				return false;
 			}
 			if (!IsLibcLibrary(export.LibraryName) || !PreferLleForLibcExport(export.Name))
@@ -1834,13 +1847,19 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			return false;
 		}
 
-		Console.Error.WriteLine($"[LOADER][DEBUG] TryResolveDirectImportTarget: {nid} not in HLE table, checking runtime symbols...");
+		if (_logImportSetup)
+		{
+			Console.Error.WriteLine($"[LOADER][DEBUG] TryResolveDirectImportTarget: {nid} not in HLE table, checking runtime symbols...");
+		}
 
 		if (TryResolveRuntimeSymbolAddress(nid, out var directValue) && IsDirectImportTargetUsable(directValue))
 		{
 			targetAddress = directValue;
 			resolvedSymbol = nid;
-			Console.Error.WriteLine($"[LOADER][DEBUG] TryResolveDirectImportTarget: {nid} -> runtime symbol 0x{targetAddress:X16}");
+			if (_logImportSetup)
+			{
+				Console.Error.WriteLine($"[LOADER][DEBUG] TryResolveDirectImportTarget: {nid} -> runtime symbol 0x{targetAddress:X16}");
+			}
 			return true;
 		}
 
