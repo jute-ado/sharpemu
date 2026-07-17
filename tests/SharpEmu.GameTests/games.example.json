@@ -42,6 +42,12 @@
         "requireSuccessfulModuleInitializers": true,
         "minimumObservedImportDispatches": 1000,
         "maximumImportWarnings": 0,
+        "knownImportWarnings": [
+          {
+            "nid": "exampleNid",
+            "result": "ORBIS_GEN2_ERROR_NOT_FOUND"
+          }
+        ],
         "requiredOutputSubstrings": [
           "Vulkan VideoOut presented guest frame"
         ],

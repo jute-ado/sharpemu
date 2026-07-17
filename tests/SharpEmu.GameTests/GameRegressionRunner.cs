@@ -250,6 +250,47 @@ internal static class GameRegressionRunner
                 $"Game regression '{testCase.Name}' has a negative " +
                 "maximumImportWarnings.");
         }
+        if (testCase.Expectations.KnownImportWarnings.Length != 0 &&
+            testCase.Expectations.MaximumImportWarnings is null)
+        {
+            throw new InvalidDataException(
+                $"Game regression '{testCase.Name}' requires " +
+                "maximumImportWarnings when knownImportWarnings are configured.");
+        }
+        for (var index = 0;
+            index < testCase.Expectations.KnownImportWarnings.Length;
+            index++)
+        {
+            var warning = testCase.Expectations.KnownImportWarnings[index];
+            if (string.IsNullOrWhiteSpace(warning.Nid) ||
+                string.IsNullOrWhiteSpace(warning.Result))
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' has an invalid " +
+                    "knownImportWarnings entry.");
+            }
+
+            for (var previousIndex = 0;
+                previousIndex < index;
+                previousIndex++)
+            {
+                var previous =
+                    testCase.Expectations.KnownImportWarnings[previousIndex];
+                if (string.Equals(
+                        warning.Nid,
+                        previous.Nid,
+                        StringComparison.Ordinal) &&
+                    string.Equals(
+                        warning.Result,
+                        previous.Result,
+                        StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException(
+                        $"Game regression '{testCase.Name}' has a duplicate " +
+                        "knownImportWarnings entry.");
+                }
+            }
+        }
         for (var index = 0;
             index < testCase.Expectations.RequiredOutputSubstrings.Length;
             index++)
@@ -519,12 +560,17 @@ internal static class GameRegressionRunner
         if (testCase.Expectations.MaximumImportWarnings is
             { } maximumImportWarnings)
         {
-            var importWarnings = CountImportWarnings(capturedOutput);
-            if (importWarnings > maximumImportWarnings)
+            var importWarnings = AnalyzeImportWarnings(
+                capturedOutput,
+                testCase.Expectations.KnownImportWarnings);
+            if (importWarnings.Unexpected > maximumImportWarnings)
             {
                 failures.AppendLine(
-                    $"import warnings {importWarnings} exceeded maximum " +
-                    $"{maximumImportWarnings}.");
+                    $"unexpected import warnings " +
+                    $"{importWarnings.Unexpected} exceeded maximum " +
+                    $"{maximumImportWarnings} " +
+                    $"(known {importWarnings.Known}, " +
+                    $"total {importWarnings.Total}).");
             }
         }
 
@@ -742,10 +788,13 @@ internal static class GameRegressionRunner
         return maximum;
     }
 
-    internal static int CountImportWarnings(string output)
+    private static (int Total, int Known, int Unexpected) AnalyzeImportWarnings(
+        string output,
+        ImportWarningExpectation[] knownWarnings)
     {
         const string marker = "[LOADER][WARN] Import#";
-        var count = 0;
+        var total = 0;
+        var known = 0;
         var searchOffset = 0;
         while (searchOffset < output.Length)
         {
@@ -756,11 +805,74 @@ internal static class GameRegressionRunner
                 break;
             }
 
-            count++;
-            searchOffset += relativeMarker + marker.Length;
+            total++;
+            var warningStart = searchOffset + relativeMarker;
+            var lineEnd = output.IndexOfAny(
+                ['\r', '\n'],
+                warningStart);
+            if (lineEnd < 0)
+            {
+                lineEnd = output.Length;
+            }
+            if (MatchesKnownImportWarning(
+                    output.AsSpan(warningStart, lineEnd - warningStart),
+                    knownWarnings))
+            {
+                known++;
+            }
+
+            searchOffset = Math.Max(lineEnd, warningStart + marker.Length);
         }
 
-        return count;
+        return (total, known, total - known);
+    }
+
+    private static bool MatchesKnownImportWarning(
+        ReadOnlySpan<char> warningLine,
+        ImportWarningExpectation[] knownWarnings)
+    {
+        const string resultMarker = " result: ";
+        var resultOffset = warningLine.IndexOf(
+            resultMarker,
+            StringComparison.Ordinal);
+        if (resultOffset < 0)
+        {
+            return false;
+        }
+
+        var resultStart = resultOffset + resultMarker.Length;
+        var nidMarkerOffset = warningLine[resultStart..].IndexOf(
+            " (",
+            StringComparison.Ordinal);
+        if (nidMarkerOffset < 0)
+        {
+            return false;
+        }
+
+        var nidStart = resultStart + nidMarkerOffset + 2;
+        var nidEndOffset = warningLine[nidStart..].IndexOf(')');
+        if (nidEndOffset < 0)
+        {
+            return false;
+        }
+
+        var result = warningLine[resultStart..(resultStart + nidMarkerOffset)];
+        var nid = warningLine[nidStart..(nidStart + nidEndOffset)];
+        for (var index = 0; index < knownWarnings.Length; index++)
+        {
+            var knownWarning = knownWarnings[index];
+            if (nid.Equals(
+                    knownWarning.Nid,
+                    StringComparison.Ordinal) &&
+                result.Equals(
+                    knownWarning.Result,
+                    StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool TryGetPresentedGuestImageFingerprint(
