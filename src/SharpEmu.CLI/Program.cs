@@ -39,6 +39,9 @@ internal static partial class Program
     private const int STARTF_USESTDHANDLES = 0x00000100;
     private const uint HANDLE_FLAG_INHERIT = 0x00000001;
     private const string MitigatedChildEnvironment = "SHARPEMU_MITIGATED_CHILD";
+    private const string SupervisorReadyFileEnvironment = "SHARPEMU_SUPERVISOR_READY_FILE";
+    private const string SupervisorReadyFilePrefix = "sharpemu-execution-ready-";
+    private const string SupervisorReadyFileSuffix = ".signal";
     private const ulong PROCESS_CREATION_MITIGATION_POLICY_CONTROL_FLOW_GUARD_ALWAYS_OFF = 0x00000002UL << 40;
     private const ulong PROCESS_CREATION_MITIGATION_POLICY2_CET_USER_SHADOW_STACKS_ALWAYS_OFF = 0x00000002UL << 28;
     private const ulong PROCESS_CREATION_MITIGATION_POLICY2_USER_CET_SET_CONTEXT_IP_VALIDATION_ALWAYS_OFF = 0x00000002UL << 32;
@@ -362,33 +365,34 @@ internal static partial class Program
             Console.Error.WriteLine($"[DEBUG] Running: {ebootPath}");
             result = runtime.Run(
                 ebootPath,
-                () => TryWriteExecutionReport(
-                    reportJsonPath,
-                    ebootPath,
-                    result: null,
-                    runtime,
-                    hostError: null,
-                    invocationStartedTimestamp: invocationStartedTimestamp,
-                    incompleteResultName: "EXECUTION_RUNNING"),
+                onExecutionStarting: null,
                 preparedApplication =>
                 {
-                    if (expectedBundleSha256 is null)
+                    if (expectedBundleSha256 is not null)
                     {
-                        return;
-                    }
-
-                    var fingerprint = BuildReportFingerprint(
-                        ebootPath,
-                        preparedApplication);
-                    if (!string.Equals(
+                        var fingerprint = BuildReportFingerprint(
+                            ebootPath,
+                            preparedApplication);
+                        if (!string.Equals(
                             expectedBundleSha256,
                             fingerprint.Bundle.Sha256,
                             StringComparison.OrdinalIgnoreCase))
-                    {
-                        throw new BundleFingerprintMismatchException(
-                            expectedBundleSha256,
-                            fingerprint);
+                        {
+                            throw new BundleFingerprintMismatchException(
+                                expectedBundleSha256,
+                                fingerprint);
+                        }
                     }
+
+                    _ = TryWriteExecutionReport(
+                        reportJsonPath,
+                        ebootPath,
+                        result: null,
+                        runtime,
+                        hostError: null,
+                        invocationStartedTimestamp: invocationStartedTimestamp,
+                        incompleteResultName: "EXECUTION_RUNNING");
+                    SignalSupervisedExecutionReady();
                 });
             Console.Error.WriteLine($"[DEBUG] Result: {result}");
         }
@@ -644,6 +648,12 @@ internal static partial class Program
             childArgs[i + hostArgumentCount + 1] = args[i];
         }
 
+        var executionReadyPath = executionTimeoutSeconds is null
+            ? null
+            : Path.Combine(
+                Path.GetTempPath(),
+                $"{SupervisorReadyFilePrefix}{Guid.NewGuid():N}{SupervisorReadyFileSuffix}");
+
         if (!OperatingSystem.IsWindows())
         {
             return RunPortableSupervisedChild(
@@ -652,6 +662,7 @@ internal static partial class Program
                 ebootPath,
                 reportJsonPath,
                 executionTimeoutSeconds,
+                executionReadyPath,
                 invocationStartedTimestamp,
                 out childExitCode);
         }
@@ -664,6 +675,7 @@ internal static partial class Program
         nint attributeList = 0;
         nint mitigationPolicies = 0;
         var previousChildEnvironment = Environment.GetEnvironmentVariable(MitigatedChildEnvironment);
+        var previousReadyFileEnvironment = Environment.GetEnvironmentVariable(SupervisorReadyFileEnvironment);
         try
         {
             nuint attributeListSize = 0;
@@ -704,6 +716,7 @@ internal static partial class Program
             var cmdLineBuilder = new StringBuilder(commandLine);
             nint jobHandle = 0;
             Environment.SetEnvironmentVariable(MitigatedChildEnvironment, "1");
+            Environment.SetEnvironmentVariable(SupervisorReadyFileEnvironment, executionReadyPath);
             var created = CreateProcessW(
                 processPath,
                 cmdLineBuilder,
@@ -716,6 +729,7 @@ internal static partial class Program
                 ref startupInfoEx,
                 out var processInfo);
             Environment.SetEnvironmentVariable(MitigatedChildEnvironment, previousChildEnvironment);
+            Environment.SetEnvironmentVariable(SupervisorReadyFileEnvironment, previousReadyFileEnvironment);
             if (!created)
             {
                 childExitCode = 5;
@@ -748,10 +762,10 @@ internal static partial class Program
                 Console.CancelKeyPress += cancelHandler;
                 AppDomain.CurrentDomain.ProcessExit += processExitHandler;
 
-                var waitMilliseconds = executionTimeoutSeconds is { } timeoutSeconds
-                    ? (uint)timeoutSeconds * 1000u
-                    : INFINITE;
-                var waitResult = WaitForSingleObject(processInfo.hProcess, waitMilliseconds);
+                var waitResult = WaitForSupervisedChild(
+                    processInfo.hProcess,
+                    executionTimeoutSeconds,
+                    executionReadyPath);
                 Console.CancelKeyPress -= cancelHandler;
                 AppDomain.CurrentDomain.ProcessExit -= processExitHandler;
 
@@ -796,6 +810,8 @@ internal static partial class Program
         finally
         {
             Environment.SetEnvironmentVariable(MitigatedChildEnvironment, previousChildEnvironment);
+            Environment.SetEnvironmentVariable(SupervisorReadyFileEnvironment, previousReadyFileEnvironment);
+            TryDeleteSupervisorReadyFile(executionReadyPath);
 
             if (attributeList != 0)
             {
@@ -816,6 +832,7 @@ internal static partial class Program
         string ebootPath,
         string? reportJsonPath,
         int? executionTimeoutSeconds,
+        string? executionReadyPath,
         long invocationStartedTimestamp,
         out int childExitCode)
     {
@@ -829,6 +846,10 @@ internal static partial class Program
             startInfo.ArgumentList.Add(argument);
         }
         startInfo.Environment[MitigatedChildEnvironment] = "1";
+        if (executionReadyPath is not null)
+        {
+            startInfo.Environment[SupervisorReadyFileEnvironment] = executionReadyPath;
+        }
 
         using var process = Process.Start(startInfo);
         if (process is null)
@@ -846,16 +867,10 @@ internal static partial class Program
         AppDomain.CurrentDomain.ProcessExit += processExitHandler;
         try
         {
-            bool exited;
-            if (executionTimeoutSeconds is { } timeoutSeconds)
-            {
-                exited = process.WaitForExit(checked(timeoutSeconds * 1000));
-            }
-            else
-            {
-                process.WaitForExit();
-                exited = true;
-            }
+            var exited = WaitForPortableSupervisedChild(
+                process,
+                executionTimeoutSeconds,
+                executionReadyPath);
             if (!exited)
             {
                 TryKillPortableChild(process);
@@ -881,6 +896,137 @@ internal static partial class Program
         {
             Console.CancelKeyPress -= cancelHandler;
             AppDomain.CurrentDomain.ProcessExit -= processExitHandler;
+            TryDeleteSupervisorReadyFile(executionReadyPath);
+        }
+    }
+
+    private static uint WaitForSupervisedChild(
+        nint processHandle,
+        int? executionTimeoutSeconds,
+        string? executionReadyPath)
+    {
+        if (executionTimeoutSeconds is not { } timeoutSeconds)
+        {
+            return WaitForSingleObject(processHandle, INFINITE);
+        }
+
+        while (!IsSupervisedExecutionReady(executionReadyPath))
+        {
+            var waitResult = WaitForSingleObject(processHandle, 100);
+            if (waitResult != WAIT_TIMEOUT)
+            {
+                return waitResult;
+            }
+        }
+
+        return WaitForSingleObject(processHandle, checked((uint)timeoutSeconds * 1000u));
+    }
+
+    private static bool WaitForPortableSupervisedChild(
+        Process process,
+        int? executionTimeoutSeconds,
+        string? executionReadyPath)
+    {
+        if (executionTimeoutSeconds is not { } timeoutSeconds)
+        {
+            process.WaitForExit();
+            return true;
+        }
+
+        while (!IsSupervisedExecutionReady(executionReadyPath))
+        {
+            if (process.WaitForExit(100))
+            {
+                return true;
+            }
+        }
+
+        return process.WaitForExit(checked(timeoutSeconds * 1000));
+    }
+
+    private static bool IsSupervisedExecutionReady(string? executionReadyPath) =>
+        executionReadyPath is not null && File.Exists(executionReadyPath);
+
+    private static void SignalSupervisedExecutionReady()
+    {
+        var executionReadyPath = Environment.GetEnvironmentVariable(SupervisorReadyFileEnvironment);
+        if (string.IsNullOrWhiteSpace(executionReadyPath))
+        {
+            return;
+        }
+
+        if (!TryValidateSupervisorReadyPath(executionReadyPath, out var validatedPath))
+        {
+            throw new InvalidOperationException("The supervisor readiness path is invalid.");
+        }
+
+        try
+        {
+            using var marker = new FileStream(
+                validatedPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.Read);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                "Could not signal supervised execution readiness.",
+                ex);
+        }
+    }
+
+    private static bool TryValidateSupervisorReadyPath(
+        string executionReadyPath,
+        out string validatedPath)
+    {
+        validatedPath = string.Empty;
+        try
+        {
+            var fullPath = Path.GetFullPath(executionReadyPath);
+            var tempPath = Path.GetFullPath(Path.GetTempPath())
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var comparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+            var fileName = Path.GetFileName(fullPath);
+            if (!string.Equals(Path.GetDirectoryName(fullPath), tempPath, comparison) ||
+                !fileName.StartsWith(SupervisorReadyFilePrefix, StringComparison.Ordinal) ||
+                !fileName.EndsWith(SupervisorReadyFileSuffix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            var token = fileName[
+                SupervisorReadyFilePrefix.Length..
+                ^SupervisorReadyFileSuffix.Length];
+            if (!Guid.TryParseExact(token, "N", out _))
+            {
+                return false;
+            }
+
+            validatedPath = fullPath;
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static void TryDeleteSupervisorReadyFile(string? executionReadyPath)
+    {
+        if (executionReadyPath is null)
+        {
+            return;
+        }
+
+        try
+        {
+            File.Delete(executionReadyPath);
+        }
+        catch (Exception)
+        {
         }
     }
 

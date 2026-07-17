@@ -724,6 +724,43 @@ public sealed class SharpEmuRuntimeTests
         Assert.Empty(root.GetProperty("moduleLoadFailures").EnumerateArray());
     }
 
+    [HostX64Fact]
+    public async Task CliExecutionTimeoutCoversInitializersAndPreservesPreparedReport()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0xC3], // main entry must not be reached
+            requestReport: true,
+            executionTimeoutSeconds: 1,
+            paramJson: SyntheticParamJson,
+            adjacentModuleImage: SyntheticElfImage.CreateModuleWithInitializer(
+                [0xEB, 0xFE])); // DT_INIT: jmp $
+
+        Assert.Equal(7, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var document = JsonDocument.Parse(execution.ReportJson);
+        var root = document.RootElement;
+        Assert.Equal("EXECUTION_TIMED_OUT", root.GetProperty("result").GetProperty("name").GetString());
+        Assert.Equal("PPSA00001", root.GetProperty("application").GetProperty("titleId").GetString());
+        Assert.Equal("ELF", root.GetProperty("image").GetProperty("format").GetString());
+        Assert.Single(root.GetProperty("modules").EnumerateArray());
+        Assert.Empty(root.GetProperty("moduleInitializers").EnumerateArray());
+    }
+
+    [HostX64Fact]
+    public async Task CliExecutionTimeoutDoesNotDependOnJsonReporting()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [0xEB, 0xFE], // jmp $
+            executionTimeoutSeconds: 1);
+
+        Assert.Equal(7, execution.ExitCode);
+        Assert.Null(execution.ReportJson);
+        Assert.Contains(
+            "timed out after 1 second",
+            execution.StandardError,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task CliRejectsZeroExecutionTimeout()
     {
