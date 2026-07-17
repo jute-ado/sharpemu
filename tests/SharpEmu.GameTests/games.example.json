@@ -59,6 +59,7 @@
         ],
         "requiredPresentedGuestImage": {
           "frame": 500,
+          "minimumNonBlackPixels": 1,
           "forbiddenFingerprints": [
             "FEDCBA9876543210"
           ]

@@ -681,6 +681,104 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
+    public void ExecutionCanRequirePresentedImageContentWithoutExactPixels()
+    {
+        var testCase = CreateExecutionCase(
+            requiredPresentedGuestImage: new()
+            {
+                Frame = 500,
+                MinimumNonBlackPixels = 1,
+            });
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        GameRegressionRunner.ValidateReport(
+            testCase,
+            report.RootElement,
+            "synthetic-report.json",
+            "vk.presented_guest_image frame=500 " +
+            "fingerprint=0xFE9CE3C77AB8A325 " +
+            "nonblack_pixels=42/8294400");
+    }
+
+    [Fact]
+    public void ExecutionRejectsBlackPresentedImage()
+    {
+        var testCase = CreateExecutionCase(
+            requiredPresentedGuestImage: new()
+            {
+                Frame = 500,
+                MinimumNonBlackPixels = 1,
+            });
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                "vk.presented_guest_image frame=500 " +
+                "fingerprint=0xFE9CE3C77AB8A325 " +
+                "nonblack_pixels=0/8294400"));
+
+        Assert.Contains(
+            "non-black pixels 0 were below 1",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExecutionRequiresPresentedImageCoverageMetric()
+    {
+        var testCase = CreateExecutionCase(
+            requiredPresentedGuestImage: new()
+            {
+                Frame = 500,
+                MinimumNonBlackPixels = 1,
+            });
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                "vk.presented_guest_image frame=500 " +
+                "fingerprint=0xFE9CE3C77AB8A325"));
+
+        Assert.Contains(
+            "did not report non-black pixel coverage",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExecutionCanRequireIntermediateGuestImageWrite()
     {
         var testCase = CreateExecutionCase(

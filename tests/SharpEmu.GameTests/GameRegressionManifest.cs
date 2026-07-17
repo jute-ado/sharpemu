@@ -111,6 +111,8 @@ internal sealed class PresentedGuestImageExpectation
     public string? Fingerprint { get; init; }
 
     public string[] ForbiddenFingerprints { get; init; } = [];
+
+    public long? MinimumNonBlackPixels { get; init; }
 }
 
 internal sealed class GuestImageWriteExpectation
