@@ -113,6 +113,8 @@ internal sealed class PresentedGuestImageExpectation
     public string[] ForbiddenFingerprints { get; init; } = [];
 
     public long? MinimumNonBlackPixels { get; init; }
+
+    public int? MinimumDistinctColors { get; init; }
 }
 
 internal sealed class GuestImageWriteExpectation
@@ -124,4 +126,6 @@ internal sealed class GuestImageWriteExpectation
     public string[] ForbiddenFingerprints { get; init; } = [];
 
     public long? MinimumNonBlackPixels { get; init; }
+
+    public int? MinimumDistinctColors { get; init; }
 }

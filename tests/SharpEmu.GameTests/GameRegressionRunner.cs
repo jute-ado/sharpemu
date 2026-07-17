@@ -355,14 +355,23 @@ internal static class GameRegressionRunner
                     $"Game regression '{testCase.Name}' has an invalid " +
                     "requiredPresentedGuestImage minimumNonBlackPixels.");
             }
+            if (presentedImage.MinimumDistinctColors is
+                < 2 or > GuestImageMetrics.MaximumDistinctPixelValues)
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' has an invalid " +
+                    "requiredPresentedGuestImage minimumDistinctColors.");
+            }
             if (!hasRequiredFingerprint &&
                 presentedImage.ForbiddenFingerprints.Length == 0 &&
-                presentedImage.MinimumNonBlackPixels is null)
+                presentedImage.MinimumNonBlackPixels is null &&
+                presentedImage.MinimumDistinctColors is null)
             {
                 throw new InvalidDataException(
                     $"Game regression '{testCase.Name}' requires " +
                     "requiredPresentedGuestImage fingerprint or " +
-                    "forbiddenFingerprints or minimumNonBlackPixels.");
+                    "forbiddenFingerprints, minimumNonBlackPixels, or " +
+                    "minimumDistinctColors.");
             }
             for (var index = 0;
                 index < presentedImage.ForbiddenFingerprints.Length;
@@ -418,14 +427,23 @@ internal static class GameRegressionRunner
                     $"Game regression '{testCase.Name}' has an invalid " +
                     "requiredGuestImageWrite minimumNonBlackPixels.");
             }
+            if (guestImageWrite.MinimumDistinctColors is
+                < 2 or > GuestImageMetrics.MaximumDistinctPixelValues)
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' has an invalid " +
+                    "requiredGuestImageWrite minimumDistinctColors.");
+            }
             if (!hasRequiredFingerprint &&
                 guestImageWrite.ForbiddenFingerprints.Length == 0 &&
-                guestImageWrite.MinimumNonBlackPixels is null)
+                guestImageWrite.MinimumNonBlackPixels is null &&
+                guestImageWrite.MinimumDistinctColors is null)
             {
                 throw new InvalidDataException(
                     $"Game regression '{testCase.Name}' requires " +
                     "requiredGuestImageWrite fingerprint or " +
-                    "forbiddenFingerprints or minimumNonBlackPixels.");
+                    "forbiddenFingerprints, minimumNonBlackPixels, or " +
+                    "minimumDistinctColors.");
             }
             for (var index = 0;
                 index < guestImageWrite.ForbiddenFingerprints.Length;
@@ -677,7 +695,8 @@ internal static class GameRegressionRunner
                     capturedOutput,
                     presentedImage.Frame,
                     out var actualFingerprint,
-                    out var nonBlackPixels))
+                    out var nonBlackPixels,
+                    out var distinctColors))
             {
                 failures.AppendLine(
                     $"required presented guest image frame {presentedImage.Frame} " +
@@ -736,6 +755,25 @@ internal static class GameRegressionRunner
                             $"{minimumNonBlackPixels}.");
                     }
                 }
+                if (presentedImage.MinimumDistinctColors is
+                    { } minimumDistinctColors)
+                {
+                    if (distinctColors is null)
+                    {
+                        failures.AppendLine(
+                            $"presented guest image frame " +
+                            $"{presentedImage.Frame} did not report " +
+                            "color diversity.");
+                    }
+                    else if (distinctColors < minimumDistinctColors)
+                    {
+                        failures.AppendLine(
+                            $"presented guest image frame " +
+                            $"{presentedImage.Frame} distinct colors " +
+                            $"{distinctColors} were below " +
+                            $"{minimumDistinctColors}.");
+                    }
+                }
             }
         }
 
@@ -752,7 +790,8 @@ internal static class GameRegressionRunner
                     capturedOutput,
                     marker,
                     out var actualFingerprint,
-                    out var nonBlackPixels))
+                    out var nonBlackPixels,
+                    out var distinctColors))
             {
                 failures.AppendLine(
                     $"required guest image write {captureRequest} " +
@@ -807,6 +846,23 @@ internal static class GameRegressionRunner
                             $"guest image write {captureRequest} non-black " +
                             $"pixels {nonBlackPixels} were below " +
                             $"{minimumNonBlackPixels}.");
+                    }
+                }
+                if (guestImageWrite.MinimumDistinctColors is
+                    { } minimumDistinctColors)
+                {
+                    if (distinctColors is null)
+                    {
+                        failures.AppendLine(
+                            $"guest image write {captureRequest} did not " +
+                            "report color diversity.");
+                    }
+                    else if (distinctColors < minimumDistinctColors)
+                    {
+                        failures.AppendLine(
+                            $"guest image write {captureRequest} distinct " +
+                            $"colors {distinctColors} were below " +
+                            $"{minimumDistinctColors}.");
                     }
                 }
             }
@@ -998,7 +1054,8 @@ internal static class GameRegressionRunner
         string output,
         long frame,
         out string fingerprint,
-        out long? nonBlackPixels)
+        out long? nonBlackPixels,
+        out int? distinctColors)
     {
         var marker =
             $"vk.presented_guest_image frame={frame} fingerprint=0x";
@@ -1006,17 +1063,20 @@ internal static class GameRegressionRunner
             output,
             marker,
             out fingerprint,
-            out nonBlackPixels);
+            out nonBlackPixels,
+            out distinctColors);
     }
 
     private static bool TryGetCapturedImageObservation(
         string output,
         string marker,
         out string fingerprint,
-        out long? nonBlackPixels)
+        out long? nonBlackPixels,
+        out int? distinctColors)
     {
         fingerprint = string.Empty;
         nonBlackPixels = null;
+        distinctColors = null;
         var markerOffset = output.IndexOf(
             marker,
             StringComparison.OrdinalIgnoreCase);
@@ -1047,33 +1107,58 @@ internal static class GameRegressionRunner
             lineEnd = output.Length;
         }
 
-        const string coverageMarker = "nonblack_pixels=";
-        var coverageOffset = output.IndexOf(
-            coverageMarker,
-            fingerprintOffset + fingerprintLength,
-            lineEnd - (fingerprintOffset + fingerprintLength),
-            StringComparison.OrdinalIgnoreCase);
-        if (coverageOffset < 0)
+        if (TryGetImageMetric(
+                output,
+                "nonblack_pixels=",
+                fingerprintOffset + fingerprintLength,
+                lineEnd,
+                out var parsedNonBlackPixels))
         {
-            return true;
+            nonBlackPixels = parsedNonBlackPixels;
         }
-
-        var valueStart = coverageOffset + coverageMarker.Length;
-        var valueEnd = valueStart;
-        while (valueEnd < lineEnd &&
-            char.IsAsciiDigit(output[valueEnd]))
+        if (TryGetImageMetric(
+                output,
+                "distinct_colors=",
+                fingerprintOffset + fingerprintLength,
+                lineEnd,
+                out var parsedDistinctColors) &&
+            parsedDistinctColors <= int.MaxValue)
         {
-            valueEnd++;
-        }
-        if (valueEnd > valueStart &&
-            long.TryParse(
-                output.AsSpan(valueStart, valueEnd - valueStart),
-                out var parsed))
-        {
-            nonBlackPixels = parsed;
+            distinctColors = (int)parsedDistinctColors;
         }
 
         return true;
+    }
+
+    private static bool TryGetImageMetric(
+        string output,
+        string marker,
+        int searchStart,
+        int lineEnd,
+        out long value)
+    {
+        value = 0;
+        var markerOffset = output.IndexOf(
+            marker,
+            searchStart,
+            lineEnd - searchStart,
+            StringComparison.OrdinalIgnoreCase);
+        if (markerOffset < 0)
+        {
+            return false;
+        }
+
+        var valueStart = markerOffset + marker.Length;
+        var valueEnd = valueStart;
+        while (valueEnd < lineEnd && char.IsAsciiDigit(output[valueEnd]))
+        {
+            valueEnd++;
+        }
+
+        return valueEnd > valueStart &&
+            long.TryParse(
+                output.AsSpan(valueStart, valueEnd - valueStart),
+                out value);
     }
 
     internal static bool TryNormalizeFrameFingerprint(

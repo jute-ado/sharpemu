@@ -34,6 +34,10 @@ stable exact image, or use `forbiddenFingerprints` for a coarse progression gate
 that rejects known stale or broken frames while allowing rendering to improve.
 Use `minimumNonBlackPixels` to reject empty output without pinning any exact
 pixels; this is the preferred first rendering milestone while output is evolving.
+Use `minimumDistinctColors` (from 2 through 65,536) to reject solid or
+near-solid captures while still allowing individual pixels, lighting, and shader
+output to improve. A small threshold such as 16 is a useful coarse milestone;
+the diagnostic count intentionally stops at the configured maximum.
 Use separate cases for separate milestones so each synchronous Vulkan readback
 runs in an isolated emulator process. Presented-frame checks also write ignored
 BMP and metadata files beside the JSON report so the tested output can be
@@ -45,10 +49,11 @@ presenter (for example, `1280x720@105`). Add a pixel-shader qualifier when
 several passes share that target, such as
 `3840x2160,ps=0x55D4300@1`. The occurrence then counts only writes matching both
 the image and shader. Use `minimumNonBlackPixels` for a coarse content milestone
-and `forbiddenFingerprints` for known-bad output; reserve `fingerprint` for
-output that is intentionally exact and stable. The harness configures capture
-variables itself, requires a dedicated capture marker, and stores ignored
-RGBA/BMP artifacts per case.
+and `minimumDistinctColors` to reject blank or flat output without fixing exact
+pixels. Use `forbiddenFingerprints` for known-bad output; reserve `fingerprint`
+for output that is intentionally exact and stable. The harness configures
+capture variables itself, requires a dedicated capture marker, and stores
+ignored RGBA/BMP artifacts per case.
 Keep one synchronous intermediate capture per case so failures identify one
 pipeline milestone precisely.
 
