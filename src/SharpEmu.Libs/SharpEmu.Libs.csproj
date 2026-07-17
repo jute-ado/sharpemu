@@ -40,7 +40,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
       by the upstream analyzer. Keep the generator active for every export,
       but do not turn those known catalog differences into build failures.
     -->
-    <NoWarn>$(NoWarn);1591;SHEM004;SHEM006</NoWarn>
+    <NoWarn>$(NoWarn);SHEM004;SHEM006</NoWarn>
   </PropertyGroup>
 
   <PropertyGroup>

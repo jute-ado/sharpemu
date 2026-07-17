@@ -9,6 +9,9 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Public APIs are intentionally documented incrementally. Keep XML
+         output for authored comments without flooding every build with CS1591. -->
+    <NoWarn>$(NoWarn);1591</NoWarn>
     <SharpEmuVersion>0.0.2-beta.2</SharpEmuVersion>
     <Version>$(SharpEmuVersion)</Version>
 

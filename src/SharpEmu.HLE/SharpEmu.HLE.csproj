@@ -8,10 +8,6 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
-  <PropertyGroup>
-    <NoWarn>$(NoWarn);1591</NoWarn>
-  </PropertyGroup>
-
   <ItemGroup>
     <InternalsVisibleTo Include="SharpEmu.Core" />
     <InternalsVisibleTo Include="SharpEmu.Libs.Tests" />
