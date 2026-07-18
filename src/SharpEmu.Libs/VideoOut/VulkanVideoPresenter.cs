@@ -13000,6 +13000,14 @@ internal static unsafe class VulkanVideoPresenter
                     $"{sequence:D4}-0x{image.Address:X16}-" +
                     $"{image.Width}x{image.Height}-{image.Format}.rgba");
                 File.WriteAllBytes(path, bytes.ToArray());
+                if (TryConvertGuestImageToRgb(image, bytes, out var rawRgb))
+                {
+                    RgbBitmapWriter.Write(
+                        Path.ChangeExtension(path, ".bmp"),
+                        image.Width,
+                        image.Height,
+                        rawRgb);
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(presentedDirectory) &&
