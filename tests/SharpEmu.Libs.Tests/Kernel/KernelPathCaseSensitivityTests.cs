@@ -26,17 +26,20 @@ public sealed class KernelPathCaseSensitivityTests : IDisposable
     private const ulong SizesAddress = MemoryBase + 0xB40;
 
     private readonly string _tempRoot;
+    private readonly string _guestMount;
 
     public KernelPathCaseSensitivityTests()
     {
         _tempRoot = Path.Combine(
             Path.GetTempPath(),
             $"sharpemu-kernel-case-{Guid.NewGuid():N}");
+        _guestMount = $"/sharpemu_kernel_case_{Guid.NewGuid():N}";
         Directory.CreateDirectory(_tempRoot);
     }
 
     public void Dispose()
     {
+        KernelMemoryCompatExports.TryUnregisterGuestPathMount(_guestMount);
         Directory.Delete(_tempRoot, recursive: true);
     }
 
@@ -47,12 +50,12 @@ public sealed class KernelPathCaseSensitivityTests : IDisposable
         var unique = $"case_{Guid.NewGuid():N}";
         Directory.CreateDirectory(Path.Combine(app0Root, unique));
         File.WriteAllBytes(Path.Combine(app0Root, unique, "Data.bin"), [1, 2, 3]);
-        KernelMemoryCompatExports.RegisterGuestPathMount("/app0", app0Root);
+        KernelMemoryCompatExports.RegisterGuestPathMount(_guestMount, app0Root);
 
         // Prime the negative-stat cache with the wrongly-cased sibling. On a
         // case-sensitive host the probe fails and the miss is cached; on a
         // case-insensitive host the probe finds Data.bin and nothing is cached.
-        var missResult = PosixStat($"/app0/{unique}/DATA.BIN");
+        var missResult = PosixStat($"{_guestMount}/{unique}/DATA.BIN");
         if (HostFsIsCaseSensitive())
         {
             Assert.Equal(-1, missResult);
@@ -60,7 +63,7 @@ public sealed class KernelPathCaseSensitivityTests : IDisposable
 
         // The correctly-cased path exists; the cached miss above must not be
         // served for it.
-        Assert.Equal(0, PosixStat($"/app0/{unique}/Data.bin"));
+        Assert.Equal(0, PosixStat($"{_guestMount}/{unique}/Data.bin"));
     }
 
     [Fact]
@@ -77,12 +80,12 @@ public sealed class KernelPathCaseSensitivityTests : IDisposable
         Directory.CreateDirectory(assetDir);
         File.WriteAllBytes(Path.Combine(assetDir, "asset.bin"), new byte[3]);
         File.WriteAllBytes(Path.Combine(assetDir, "ASSET.BIN"), new byte[7]);
-        KernelMemoryCompatExports.RegisterGuestPathMount("/app0", app0Root);
+        KernelMemoryCompatExports.RegisterGuestPathMount(_guestMount, app0Root);
 
         // Whichever casing resolves first lands in the size cache; the other
         // casing is a different host file and must not inherit its size.
-        Assert.Equal(3UL, AprResolveSize($"/app0/{unique}/asset.bin"));
-        Assert.Equal(7UL, AprResolveSize($"/app0/{unique}/ASSET.BIN"));
+        Assert.Equal(3UL, AprResolveSize($"{_guestMount}/{unique}/asset.bin"));
+        Assert.Equal(7UL, AprResolveSize($"{_guestMount}/{unique}/ASSET.BIN"));
     }
 
     [Fact]
@@ -98,14 +101,13 @@ public sealed class KernelPathCaseSensitivityTests : IDisposable
         Directory.CreateDirectory(mountRoot);
         Directory.CreateDirectory(sibling);
         File.WriteAllBytes(Path.Combine(sibling, "secret.bin"), [1]);
-        KernelMemoryCompatExports.RegisterGuestPathMount("/sharpemu_case_mnt", mountRoot);
+        KernelMemoryCompatExports.RegisterGuestPathMount(_guestMount, mountRoot);
 
         // "../save/..." leaves the mount root; only a case-insensitive
         // containment check lets it pass by matching the "Save" prefix.
-        var resolved = KernelMemoryCompatExports.ResolveGuestPath(
-            "/sharpemu_case_mnt/../save/secret.bin");
-
-        Assert.False(File.Exists(resolved));
+        Assert.Throws<UnauthorizedAccessException>(
+            () => KernelMemoryCompatExports.ResolveGuestPath(
+                $"{_guestMount}/../save/secret.bin"));
     }
 
     private bool HostFsIsCaseSensitive()
