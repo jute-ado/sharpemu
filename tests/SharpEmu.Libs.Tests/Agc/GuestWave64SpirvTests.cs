@@ -31,6 +31,10 @@ public sealed class GuestWave64SpirvTests
     {
         var shader = CompileLaneProgram(32, 32, 1, 1);
 
+        Assert.True(
+            ContainsCapability(
+                shader,
+                SpirvCapability.GroupNonUniformBallot));
         Assert.True(ContainsOpcode(shader, SpirvOp.GroupNonUniformBallot));
         Assert.True(ContainsOpcode(shader, SpirvOp.GroupNonUniformShuffle));
         Assert.False(ContainsOpcode(shader, SpirvOp.ControlBarrier));
@@ -46,6 +50,10 @@ public sealed class GuestWave64SpirvTests
         Assert.True(ContainsOpcode(shader, SpirvOp.AtomicOr));
         Assert.True(ContainsBuiltIn(shader, SpirvBuiltIn.LocalInvocationIndex));
         Assert.True(ContainsWorkgroupVariable(shader));
+        Assert.False(
+            ContainsCapability(
+                shader,
+                SpirvCapability.GroupNonUniformBallot));
         Assert.False(ContainsOpcode(shader, SpirvOp.GroupNonUniformShuffle));
     }
 
@@ -295,6 +303,23 @@ public sealed class GuestWave64SpirvTests
         foreach (var instruction in EnumerateInstructions(spirv))
         {
             if (instruction.Opcode == expected)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ContainsCapability(
+        byte[] spirv,
+        SpirvCapability expected)
+    {
+        foreach (var instruction in EnumerateInstructions(spirv))
+        {
+            if (instruction.Opcode == SpirvOp.Capability &&
+                instruction.Operands.Length >= 1 &&
+                instruction.Operands[0] == (uint)expected)
             {
                 return true;
             }

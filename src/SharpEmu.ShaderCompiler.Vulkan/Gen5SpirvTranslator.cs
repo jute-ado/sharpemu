@@ -487,13 +487,12 @@ public static partial class Gen5SpirvTranslator
                 _module.AddCapability(SpirvCapability.ImageGatherExtended);
             }
 
-            if (UsesSubgroupOperations())
+            if (UsesSubgroupOperations() && !_emulateWave64)
             {
                 _module.AddCapability(SpirvCapability.GroupNonUniform);
-                if (UsesSubgroupBallot())
-                {
-                    _module.AddCapability(SpirvCapability.GroupNonUniformBallot);
-                }
+                // Native wave32 initializes EXEC/VCC from a subgroup ballot,
+                // even when the guest instruction itself only shuffles lanes.
+                _module.AddCapability(SpirvCapability.GroupNonUniformBallot);
 
                 if (UsesSubgroupShuffle())
                 {
@@ -6061,10 +6060,6 @@ public static partial class Gen5SpirvTranslator
             _state.Program.Instructions.Any(instruction =>
                 instruction.Opcode is
                     "VReadfirstlaneB32" or "VReadlaneB32" or "VWritelaneB32");
-
-        private bool UsesSubgroupBallot() =>
-            _state.Program.Instructions.Any(instruction =>
-                instruction.Opcode == "VReadfirstlaneB32");
 
         private bool UsesDsAddTid() =>
             _state.Program.Instructions.Any(instruction =>
