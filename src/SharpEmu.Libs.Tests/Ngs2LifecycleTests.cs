@@ -16,6 +16,63 @@ public sealed class Ngs2LifecycleTests
     private const ulong SystemOutAddress = 0x1000;
     private const ulong RackOutAddress = 0x2000;
     private const ulong VoiceOutAddress = 0x3000;
+    private const ulong SystemContextAddress = 0x4000;
+    private const ulong RackContextAddress = 0x5000;
+    private const ulong DirectSystemHandle = 0xA001;
+    private const ulong DirectRackHandle = 0xB001;
+
+    [Fact]
+    public void CallerAllocatedLifecycleUsesValidatedContextBufferHandles()
+    {
+        var fixture = CreateFixture();
+        try
+        {
+            fixture.Context[CpuRegister.Rsi] = SystemContextAddress;
+            fixture.Context[CpuRegister.Rdx] = SystemOutAddress;
+            AssertCall(0, fixture.Context, Ngs2Exports.Ngs2SystemCreate);
+            Assert.True(
+                fixture.Context.TryReadUInt64(
+                    SystemOutAddress,
+                    out var systemHandle));
+            Assert.Equal(DirectSystemHandle, systemHandle);
+            fixture.SystemHandle = systemHandle;
+
+            fixture.Context[CpuRegister.Rdi] = systemHandle;
+            fixture.Context[CpuRegister.Rsi] = 4;
+            fixture.Context[CpuRegister.Rcx] = RackContextAddress;
+            fixture.Context[CpuRegister.R8] = RackOutAddress;
+            AssertCall(0, fixture.Context, Ngs2Exports.Ngs2RackCreate);
+            Assert.True(
+                fixture.Context.TryReadUInt64(
+                    RackOutAddress,
+                    out var rackHandle));
+            Assert.Equal(DirectRackHandle, rackHandle);
+
+            Assert.NotEqual(0UL, GetVoice(fixture, rackHandle, voiceIndex: 2));
+        }
+        finally
+        {
+            DestroySystemIfPresent(fixture);
+        }
+    }
+
+    [Fact]
+    public void CallerAllocatedLifecycleRejectsMissingOrNullContextBuffers()
+    {
+        var fixture = CreateFixture();
+        fixture.Context[CpuRegister.Rsi] = 0;
+        fixture.Context[CpuRegister.Rdx] = SystemOutAddress;
+        AssertCall(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+            fixture.Context,
+            Ngs2Exports.Ngs2SystemCreate);
+
+        fixture.Context[CpuRegister.Rsi] = 0xDEAD;
+        AssertCall(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+            fixture.Context,
+            Ngs2Exports.Ngs2SystemCreate);
+    }
 
     [Fact]
     public void SystemDestructionInvalidatesOwnedRacksAndVoices()
@@ -140,8 +197,16 @@ public sealed class Ngs2LifecycleTests
 
         AssertExport(
             exports,
+            "koBbCMvOKWw",
+            "sceNgs2SystemCreate");
+        AssertExport(
+            exports,
             "mPYgU4oYpuY",
             "sceNgs2SystemCreateWithAllocator");
+        AssertExport(
+            exports,
+            "cLV4aiT9JpA",
+            "sceNgs2RackCreate");
         AssertExport(
             exports,
             "U546k6orxQo",
@@ -158,6 +223,12 @@ public sealed class Ngs2LifecycleTests
         memory.AddRegion(SystemOutAddress, new byte[sizeof(ulong)]);
         memory.AddRegion(RackOutAddress, new byte[sizeof(ulong)]);
         memory.AddRegion(VoiceOutAddress, new byte[sizeof(ulong)]);
+        memory.AddRegion(
+            SystemContextAddress,
+            BitConverter.GetBytes(DirectSystemHandle));
+        memory.AddRegion(
+            RackContextAddress,
+            BitConverter.GetBytes(DirectRackHandle));
         return new Fixture(new CpuContext(memory, Generation.Gen5));
     }
 
