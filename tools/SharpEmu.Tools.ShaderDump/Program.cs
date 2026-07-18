@@ -625,6 +625,25 @@ const ulong ProgramAddress = 0x100000;
         0xE0701000, 0x80020607, // buffer_store_dword v6, v7, s[8:11], 0 offen
         0xBF810000,             // s_endpgm
     ]),
+    // One complete guest wave exercises the host-subgroup-independent wave64
+    // lane bridge. Lane 63 is overwritten, then read into an SGPR and copied
+    // back from every invocation. With EXEC_LO disabled, readfirstlane must
+    // independently select lane 32. The observable buffer proves both halves
+    // communicate and the high EXEC mask is real on a wave32 host.
+    ("exec-wave64-lanes", true, [
+        0x340E0083,             // v_lshlrev_b32 v7, 3, v0
+        0xBEFE0380,             // s_mov_b32 exec_lo, 0
+        0xBEFF03C1,             // s_mov_b32 exec_hi, -1
+        0x7E080500,             // v_readfirstlane_b32 s4, v0 (lane 32)
+        0xBEFE03C1,             // s_mov_b32 exec_lo, -1
+        0xD7610000, 0x00000401, // v_writelane_b32 v0, s1, s2
+        0xD7600000, 0x00000500, // v_readlane_b32 s0, v0, s2
+        0x7E0A0200,             // v_mov_b32 v5, s0
+        0x7E0C0204,             // v_mov_b32 v6, s4
+        0xE0701000, 0x80020507, // buffer_store_dword v5, v7, s[8:11], 0 offen
+        0xE0701004, 0x80020607, // buffer_store_dword v6, v7, s[8:11], 0 offen offset:4
+        0xBF810000,             // s_endpgm
+    ]),
 ];
 
 // LDS and workgroup barriers are compute-stage concepts. Keep these programs
@@ -635,6 +654,7 @@ HashSet<string> computeOnlyPrograms = new(StringComparer.Ordinal)
     "exec-format-buffer",
     "exec-lds-atomic",
     "exec-lds-barrier",
+    "exec-wave64-lanes",
 };
 var outputDirectory = args.Length > 0
     ? args[0]
@@ -772,7 +792,8 @@ foreach (var (name, expectTranslate, words) in testPrograms)
             conformanceCase?.LocalSizeY ?? 1u,
             conformanceCase?.LocalSizeZ ?? 1u,
             out var computeShader,
-            out var computeError))
+            out var computeError,
+            conformanceCase?.WaveLaneCount ?? 32u))
     {
         var path = Path.Combine(outputDirectory, $"{name}-cs.spv");
         File.WriteAllBytes(path, computeShader.Spirv);
@@ -803,6 +824,7 @@ foreach (var (name, expectTranslate, words) in testPrograms)
                 conformanceCase.LocalSizeX,
                 conformanceCase.LocalSizeY,
                 conformanceCase.LocalSizeZ,
+                conformanceCase.WaveLaneCount,
                 conformanceCase.GroupCountX,
                 conformanceCase.GroupCountY,
                 conformanceCase.GroupCountZ,
@@ -1434,6 +1456,33 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
             labels[1] = "GLC atomic add returns its pre-operation value";
             labels[2] = "GLC atomic sub returns its pre-operation value";
             break;
+        case "exec-wave64-lanes":
+        {
+            var waveInitial = new uint[128];
+            var waveExpected = new uint[128];
+            var waveLabels = new string[128];
+            for (var lane = 0; lane < 64; lane++)
+            {
+                waveExpected[lane * 2] = 0xDEADBEEF;
+                waveExpected[(lane * 2) + 1] = 32;
+                waveLabels[lane * 2] =
+                    $"lane {lane} observes the value written to guest lane 63";
+                waveLabels[(lane * 2) + 1] =
+                    $"lane {lane} observes guest lane 32 as the first active high lane";
+            }
+
+            return new SyntheticConformanceCase(
+                waveInitial,
+                waveExpected,
+                waveLabels,
+                LocalSizeX: 64,
+                WaveLaneCount: 64,
+                InitialScalarRegisters: new Dictionary<uint, uint>
+                {
+                    [1] = 0xDEADBEEF,
+                    [2] = 63,
+                });
+        }
         case "exec-buffer-cmpswap":
             initialWords[0] = 10;
             expectedWords[0] = 99;
@@ -1494,6 +1543,7 @@ internal sealed record SyntheticConformanceCase(
     uint LocalSizeX = 1,
     uint LocalSizeY = 1,
     uint LocalSizeZ = 1,
+    uint WaveLaneCount = 32,
     uint GroupCountX = 1,
     uint GroupCountY = 1,
     uint GroupCountZ = 1,
