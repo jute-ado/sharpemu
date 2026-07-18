@@ -59,14 +59,20 @@ public static class NpUniversalDataSystemExports
         LibraryName = "libSceNpUniversalDataSystem")]
     public static int NpUniversalDataSystemCreateHandle(CpuContext ctx)
     {
-        var handle = Interlocked.Increment(ref _nextHandle);
-        if (ctx.TryWriteInt32(ctx[CpuRegister.Rdi], handle, checkNil: true) ||
-            ctx.TryWriteInt32(ctx[CpuRegister.Rsi], handle, checkNil: true))
+        var outputAddress = ctx[CpuRegister.Rdi];
+        if (outputAddress == 0)
         {
-            return ctx.SetReturn(0, typeof(long));
+            return ctx.SetReturn(
+                NpUniversalDataSystemErrorInvalidArgument,
+                typeof(long));
         }
 
-        return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, typeof(long));
+        var handle = Interlocked.Increment(ref _nextHandle);
+        return ctx.TryWriteInt32(outputAddress, handle)
+            ? ctx.SetReturn(0, typeof(long))
+            : ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                typeof(long));
     }
 
     [SysAbiExport(

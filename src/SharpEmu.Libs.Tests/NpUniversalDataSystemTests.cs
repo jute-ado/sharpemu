@@ -81,6 +81,29 @@ public sealed class NpUniversalDataSystemTests
     }
 
     [Fact]
+    public void CreateHandleUsesOnlyItsDocumentedOutputPointer()
+    {
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(EventOutAddress, new byte[sizeof(int)]);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = EventOutAddress;
+
+        Assert.Equal(
+            0,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemCreateHandle(context));
+        Assert.True(context.TryReadInt32(EventOutAddress, out var handle));
+        Assert.True(handle > 0);
+
+        context[CpuRegister.Rdi] = 0;
+        context[CpuRegister.Rsi] = EventOutAddress;
+        Assert.Equal(
+            InvalidArgument,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemCreateHandle(context));
+    }
+
+    [Fact]
     public void ObjectSetArrayCreatesAUsableArrayWhenValueIsNull()
     {
         var memory = new FakeGuestMemory();
