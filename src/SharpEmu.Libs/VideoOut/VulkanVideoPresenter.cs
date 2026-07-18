@@ -8604,8 +8604,11 @@ internal static unsafe class VulkanVideoPresenter
             if (contentsChanged)
             {
                 if (!guestBuffer.Writable &&
-                    (allocation.LastUseTimeline > _completedTimeline ||
-                     IsGuestBufferAllocationReferencedByOpenBatch(allocation)))
+                    GuestBufferRangeSet.MustVersionReadOnlyMutation(
+                        contentsChanged,
+                        allocation.LastUseTimeline,
+                        _completedTimeline,
+                        IsGuestBufferAllocationReferencedByOpenBatch(allocation)))
                 {
                     return CreateVersionedReadOnlyGlobalBufferResource(
                         guestBuffer,
@@ -8790,22 +8793,7 @@ internal static unsafe class VulkanVideoPresenter
                 return;
             }
 
-            ranges.Sort(static (left, right) =>
-                left.Start.CompareTo(right.Start));
-            var merged = new List<GuestBufferRange>(ranges.Count);
-            foreach (var range in ranges)
-            {
-                if (merged.Count == 0 || range.Start > merged[^1].End)
-                {
-                    merged.Add(range);
-                    continue;
-                }
-
-                var previous = merged[^1];
-                merged[^1] = new GuestBufferRange(
-                    previous.Start,
-                    checked(Math.Max(previous.End, range.End) - previous.Start));
-            }
+            var merged = GuestBufferRangeSet.Merge(ranges);
 
             foreach (var range in merged)
             {

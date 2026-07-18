@@ -70,6 +70,39 @@ internal static class GuestBufferRangeSet
         left.Start < right.End &&
         right.Start < left.End;
 
+    public static List<GuestBufferRange> Merge(
+        IReadOnlyList<GuestBufferRange> ranges)
+    {
+        var ordered = new List<GuestBufferRange>(ranges.Count);
+        foreach (var range in ranges)
+        {
+            if (range.Length != 0)
+            {
+                ordered.Add(range);
+            }
+        }
+
+        ordered.Sort(static (left, right) =>
+            left.Start.CompareTo(right.Start));
+        var merged = new List<GuestBufferRange>(ordered.Count);
+        foreach (var range in ordered)
+        {
+            if (merged.Count == 0 || range.Start > merged[^1].End)
+            {
+                merged.Add(range);
+                continue;
+            }
+
+            var previous = merged[^1];
+            var end = Math.Max(previous.End, range.End);
+            merged[^1] = new GuestBufferRange(
+                previous.Start,
+                end - previous.Start);
+        }
+
+        return merged;
+    }
+
     public static GuestBufferRange ExpandToOverlapClosure(
         GuestBufferRange requested,
         IReadOnlyList<GuestBufferRange> allocations)
@@ -104,6 +137,15 @@ internal static class GuestBufferRangeSet
 
         return new GuestBufferRange(start, end - start);
     }
+
+    public static bool MustVersionReadOnlyMutation(
+        bool contentsChanged,
+        ulong lastUseSequence,
+        ulong completedSequence,
+        bool referencedByOpenSubmission) =>
+        contentsChanged &&
+        (lastUseSequence > completedSequence ||
+         referencedByOpenSubmission);
 
     public static List<int> SelectEvictions(
         IReadOnlyList<GuestBufferCacheEntry> entries,
