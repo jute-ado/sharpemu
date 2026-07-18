@@ -36,6 +36,14 @@ public sealed class RenderTargetSamplingTests
     private const ulong DepthAddress = 0x0080_0000;
     private const ulong InitialDepthAddress = 0x0081_0000;
     private const ulong Depth16Address = 0x0082_0000;
+    private const ulong StencilDepthAddress = 0x0083_0000;
+    private const ulong StencilPlaneAddress = 0x0084_0000;
+    private const ulong StencilColorAddress = 0x0085_0000;
+    private const ulong StencilUploadDepthAddress = 0x0086_0000;
+    private const ulong StencilUploadPlaneAddress =
+        StencilUploadDepthAddress +
+        SourceWidth * SourceHeight * sizeof(ushort);
+    private const ulong StencilUploadColorAddress = 0x0087_0000;
     private const ulong SeededTargetAddress = 0x0090_0000;
     private const ulong VersionedOriginalAddress = 0x00A0_0000;
     private const ulong VersionedMutationAddress = 0x00B0_0000;
@@ -55,7 +63,7 @@ public sealed class RenderTargetSamplingTests
         Directory.CreateDirectory(captureDirectory);
         Environment.SetEnvironmentVariable(
             "SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE",
-            $"0x{FirstDisplayAddress:X}@12");
+            $"0x{FirstDisplayAddress:X}@14");
         Environment.SetEnvironmentVariable(
             "SHARPEMU_GUEST_IMAGE_DUMP_DIR",
             captureDirectory);
@@ -121,6 +129,7 @@ public sealed class RenderTargetSamplingTests
             ComposeSeededTargetToLeftQuarter(FirstDisplayAddress);
             ComposeDepthToSecondSixteenth(FirstDisplayAddress);
             ComposeDepth16ToThirdSixteenth(FirstDisplayAddress);
+            AssertStencilClearTestAndWrite(FirstDisplayAddress);
             ComposeVersionedBuffersToSecondQuarter(
                 FirstDisplayAddress);
             ComposeCpuTextureToRightHalf(
@@ -161,10 +170,26 @@ public sealed class RenderTargetSamplingTests
             AssertRgbaRegion(
                 pixels,
                 xStart: DestinationWidth * 3 / 16,
-                xEnd: DestinationWidth / 4,
+                xEnd: 20,
                 expectedRed: 0,
                 expectedGreen: 0,
                 expectedBlue: 255,
+                expectedAlpha: 255);
+            AssertRgbaRegion(
+                pixels,
+                xStart: 20,
+                xEnd: 22,
+                expectedRed: 255,
+                expectedGreen: 0,
+                expectedBlue: 0,
+                expectedAlpha: 255);
+            AssertRgbaRegion(
+                pixels,
+                xStart: 22,
+                xEnd: DestinationWidth / 4,
+                expectedRed: 0,
+                expectedGreen: 255,
+                expectedBlue: 0,
                 expectedAlpha: 255);
             AssertRgbaRegion(
                 pixels,
@@ -443,6 +468,106 @@ public sealed class RenderTargetSamplingTests
         return new ArrayCpuMemory(address, pixels);
     }
 
+    private static void AssertStencilClearTestAndWrite(
+        ulong destinationAddress)
+    {
+        var incrementOnPass = GuestStencilFaceState.Default with
+        {
+            PassOp = 5,
+            CompareOp = 2,
+            CompareMask = byte.MaxValue,
+            WriteMask = byte.MaxValue,
+            Reference = 1,
+            OperationValue = 1,
+        };
+        SubmitSolidWithDepth(
+            StencilColorAddress,
+            red: 0f,
+            green: 0f,
+            blue: 1f,
+            clearDepth: true,
+            depthAddress: StencilDepthAddress,
+            compareOp: 7,
+            stencilAddress: StencilPlaneAddress,
+            stencilTest: true,
+            clearStencil: true,
+            stencilClearValue: 1,
+            stencilFace: incrementOnPass);
+
+        var requireIncrementedValue = GuestStencilFaceState.Default with
+        {
+            CompareOp = 2,
+            CompareMask = byte.MaxValue,
+            WriteMask = 0,
+            Reference = 2,
+            OperationValue = 2,
+        };
+        SubmitSolidWithDepth(
+            StencilColorAddress,
+            red: 1f,
+            green: 0f,
+            blue: 0f,
+            clearDepth: false,
+            depthAddress: StencilDepthAddress,
+            compareOp: 7,
+            stencilAddress: StencilPlaneAddress,
+            stencilTest: true,
+            stencilFace: requireIncrementedValue);
+
+        ComposeTextureTo(
+            StencilColorAddress,
+            SourceWidth,
+            SourceHeight,
+            destinationAddress,
+            SpirvFixedShaders.CreateCopyFragment(),
+            CreatePassthroughVertex(),
+            destinationRegion: new GuestRect(
+                X: 20,
+                Y: 0,
+                Width: 2,
+                Height: DestinationHeight));
+
+        var initialPixels = new byte[
+            SourceWidth * SourceHeight * (sizeof(ushort) + sizeof(byte))];
+        initialPixels.AsSpan(
+            checked((int)(SourceWidth * SourceHeight * sizeof(ushort)))).Fill(1);
+        var requireInitialValue = GuestStencilFaceState.Default with
+        {
+            CompareOp = 2,
+            CompareMask = byte.MaxValue,
+            WriteMask = 0,
+            Reference = 1,
+            OperationValue = 1,
+        };
+        SubmitSolidWithDepth(
+            StencilUploadColorAddress,
+            red: 0f,
+            green: 1f,
+            blue: 0f,
+            clearDepth: false,
+            depthAddress: StencilUploadDepthAddress,
+            guestMemory: new ArrayCpuMemory(
+                StencilUploadDepthAddress,
+                initialPixels),
+            compareOp: 7,
+            guestFormat: 1,
+            stencilAddress: StencilUploadPlaneAddress,
+            stencilTest: true,
+            stencilFace: requireInitialValue);
+        ComposeTextureTo(
+            StencilUploadColorAddress,
+            SourceWidth,
+            SourceHeight,
+            destinationAddress,
+            SpirvFixedShaders.CreateCopyFragment(),
+            CreatePassthroughVertex(),
+            destinationRegion: new GuestRect(
+                X: 22,
+                Y: 0,
+                Width: 2,
+                Height: DestinationHeight));
+    }
+
     private static void SubmitSolid(
         ulong address,
         float red,
@@ -613,8 +738,14 @@ public sealed class RenderTargetSamplingTests
         ICpuMemory? guestMemory = null,
         float depthClearValue = 1f,
         uint compareOp = 1,
-        uint guestFormat = 3)
+        uint guestFormat = 3,
+        ulong stencilAddress = 0,
+        bool stencilTest = false,
+        bool clearStencil = false,
+        uint stencilClearValue = 0,
+        GuestStencilFaceState? stencilFace = null)
     {
+        var face = stencilFace ?? GuestStencilFaceState.Default;
         VulkanVideoPresenter.SubmitOffscreenTranslatedDraw(
             SpirvFixedShaders.CreateSolidFragment(red, green, blue, alpha: 1f),
             [],
@@ -635,7 +766,15 @@ public sealed class RenderTargetSamplingTests
                     TestEnable: true,
                     WriteEnable: true,
                     CompareOp: compareOp,
-                    ClearEnable: clearDepth),
+                    ClearEnable: clearDepth)
+                {
+                    Stencil = new GuestStencilState(
+                        TestEnable: stencilTest,
+                        ClearEnable: clearStencil,
+                        ClearValue: stencilClearValue,
+                        face,
+                        face),
+                },
             },
             depthTarget: new GuestDepthTarget(
                 ReadAddress: depthAddress,
@@ -646,7 +785,12 @@ public sealed class RenderTargetSamplingTests
                 SwizzleMode: 0,
                 ClearDepth: depthClearValue,
                 ReadOnly: false,
-                guestMemory));
+                guestMemory,
+                StencilReadAddress: stencilAddress,
+                StencilWriteAddress: stencilAddress,
+                StencilFormat: stencilAddress == 0 ? 0u : 1u,
+                StencilSwizzleMode: 0,
+                ClearStencil: stencilClearValue));
     }
 
     private static bool CopySourceTo(ulong destinationAddress) =>

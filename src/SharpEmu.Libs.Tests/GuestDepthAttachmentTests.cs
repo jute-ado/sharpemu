@@ -44,6 +44,25 @@ public sealed class GuestDepthAttachmentTests
             new GuestDepthState(true, false, CompareOp: 3)));
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void DepthAttachmentIsRequiredForStencilWork(
+        bool test,
+        bool clear)
+    {
+        var state = GuestDepthState.Default with
+        {
+            Stencil = GuestStencilState.Default with
+            {
+                TestEnable = test,
+                ClearEnable = clear,
+            },
+        };
+
+        Assert.True(VulkanVideoPresenter.ShouldAttachGuestDepth(Target, state));
+    }
+
     [Fact]
     public void StaleOneByOneExtentExpandsToColorTarget()
     {

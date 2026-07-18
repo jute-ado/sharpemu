@@ -117,7 +117,47 @@ internal readonly record struct GuestDepthState(
     uint CompareOp,
     bool ClearEnable = false)
 {
+    public GuestStencilState Stencil { get; init; } = GuestStencilState.Default;
+
     public static GuestDepthState Default { get; } = new(false, false, 7, false);
+}
+
+internal readonly record struct GuestStencilFaceState(
+    uint FailOp,
+    uint PassOp,
+    uint DepthFailOp,
+    uint CompareOp,
+    uint CompareMask,
+    uint WriteMask,
+    uint Reference,
+    uint OperationValue)
+{
+    public static GuestStencilFaceState Default { get; } = new(
+        FailOp: 0,
+        PassOp: 0,
+        DepthFailOp: 0,
+        CompareOp: 7,
+        CompareMask: byte.MaxValue,
+        WriteMask: byte.MaxValue,
+        Reference: 0,
+        OperationValue: 0);
+}
+
+internal readonly record struct GuestStencilState(
+    bool TestEnable,
+    bool ClearEnable,
+    uint ClearValue,
+    GuestStencilFaceState Front,
+    GuestStencilFaceState Back)
+{
+    public bool IsActive => TestEnable || ClearEnable;
+
+    public static GuestStencilState Default { get; } = new(
+        TestEnable: false,
+        ClearEnable: false,
+        ClearValue: 0,
+        GuestStencilFaceState.Default,
+        GuestStencilFaceState.Default);
 }
 
 /// <summary>Factors/funcs are raw guest CB_BLEND*_CONTROL register bitfields; the
@@ -180,7 +220,16 @@ internal sealed record GuestDepthTarget(
     uint SwizzleMode,
     float ClearDepth,
     bool ReadOnly,
-    ICpuMemory? GuestMemory = null)
+    ICpuMemory? GuestMemory = null,
+    ulong StencilReadAddress = 0,
+    ulong StencilWriteAddress = 0,
+    uint StencilFormat = 0,
+    uint StencilSwizzleMode = 0,
+    uint ClearStencil = 0)
 {
     public ulong Address => WriteAddress != 0 ? WriteAddress : ReadAddress;
+
+    public bool HasStencil =>
+        StencilFormat == 1 &&
+        (StencilReadAddress != 0 || StencilWriteAddress != 0);
 }
