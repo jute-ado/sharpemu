@@ -95,6 +95,139 @@ public sealed class PthreadMutexOwnershipTests
         }
     }
 
+    [Fact]
+    public void DestroyRejectsLockedMutexAndPreservesItForOwnerUnlock()
+    {
+        var context = CreateInitializedMutex(mutexType: 3);
+        try
+        {
+            context[CpuRegister.Rdi] = MutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadMutexLock(context));
+
+            context[CpuRegister.Rdi] = MutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY,
+                KernelPthreadCompatExports.PosixPthreadMutexDestroy(context));
+
+            context[CpuRegister.Rdi] = MutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadMutexUnlock(context));
+
+            context[CpuRegister.Rdi] = MutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadMutexDestroy(context));
+        }
+        finally
+        {
+            DestroyMutex(context);
+        }
+    }
+
+    [Fact]
+    public void ContendedMutexGrantsHostWaitersInFifoOrder()
+    {
+        var context = CreateInitializedMutex(mutexType: 3);
+        var acquisitionOrder = new List<int>();
+        var firstResult = int.MinValue;
+        var secondResult = int.MinValue;
+
+        try
+        {
+            context[CpuRegister.Rdi] = MutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadMutexLock(context));
+
+            var first = CreateQueuedLocker(
+                context.Memory,
+                marker: 1,
+                acquisitionOrder,
+                result => firstResult = result);
+            first.Start();
+            Assert.True(WaitForQueuedWaiters(expected: 1));
+
+            var second = CreateQueuedLocker(
+                context.Memory,
+                marker: 2,
+                acquisitionOrder,
+                result => secondResult = result);
+            second.Start();
+            Assert.True(WaitForQueuedWaiters(expected: 2));
+
+            context[CpuRegister.Rdi] = MutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY,
+                KernelPthreadCompatExports.PosixPthreadMutexDestroy(context));
+
+            context[CpuRegister.Rdi] = MutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadMutexUnlock(context));
+
+            Assert.True(first.Join(TimeSpan.FromSeconds(5)));
+            Assert.True(second.Join(TimeSpan.FromSeconds(5)));
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                firstResult);
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                secondResult);
+            Assert.Equal([1, 2], acquisitionOrder);
+        }
+        finally
+        {
+            DestroyMutex(context);
+        }
+    }
+
+    private static Thread CreateQueuedLocker(
+        ICpuMemory memory,
+        int marker,
+        List<int> acquisitionOrder,
+        Action<int> setResult)
+    {
+        return new Thread(
+            () =>
+            {
+                var waiterContext = new CpuContext(memory, Generation.Gen5);
+                waiterContext[CpuRegister.Rdi] = MutexAddress;
+                var result =
+                    KernelPthreadCompatExports.PosixPthreadMutexLock(
+                        waiterContext);
+                if (result != (int)OrbisGen2Result.ORBIS_GEN2_OK)
+                {
+                    setResult(result);
+                    return;
+                }
+
+                acquisitionOrder.Add(marker);
+                waiterContext[CpuRegister.Rdi] = MutexAddress;
+                setResult(
+                    KernelPthreadCompatExports.PosixPthreadMutexUnlock(
+                        waiterContext));
+            })
+        {
+            IsBackground = true,
+        };
+    }
+
+    private static bool WaitForQueuedWaiters(int expected)
+    {
+        return SpinWait.SpinUntil(
+            () =>
+                KernelPthreadCompatExports.TryGetMutexStateSnapshot(
+                    MutexAddress,
+                    out _,
+                    out _,
+                    out var waiterCount) &&
+                waiterCount == expected,
+            TimeSpan.FromSeconds(5));
+    }
+
     private static CpuContext CreateInitializedMutex(int mutexType)
     {
         var memory = new FakeGuestMemory();
