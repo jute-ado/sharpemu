@@ -31,6 +31,7 @@ public sealed class RenderTargetSamplingTests
     private const ulong ShaderAddress = 0x0050_0000;
     private const ulong ConstantsAddress = 0x0060_0000;
     private const ulong ComputeBufferAddress = 0x0070_0000;
+    private const ulong DepthAddress = 0x0080_0000;
 
     /// <summary>
     /// Verifies both GPU render-target reuse and a large CPU-backed texture
@@ -47,7 +48,7 @@ public sealed class RenderTargetSamplingTests
         Directory.CreateDirectory(captureDirectory);
         Environment.SetEnvironmentVariable(
             "SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE",
-            $"0x{FirstDisplayAddress:X}@4");
+            $"0x{FirstDisplayAddress:X}@6");
         Environment.SetEnvironmentVariable(
             "SHARPEMU_GUEST_IMAGE_DUMP_DIR",
             captureDirectory);
@@ -96,6 +97,7 @@ public sealed class RenderTargetSamplingTests
                     globalMemoryBuffers,
                     Rgba8TextureDataFormat);
             }
+            AssertDepthCompareAndClear(FirstDisplayAddress);
             ComposeCpuTextureToRightHalf(
                 FirstDisplayAddress,
                 fragment,
@@ -110,6 +112,14 @@ public sealed class RenderTargetSamplingTests
             AssertRgbaRegion(
                 pixels,
                 xStart: 0,
+                xEnd: DestinationWidth / 8,
+                expectedRed: 255,
+                expectedGreen: 0,
+                expectedBlue: 0,
+                expectedAlpha: 255);
+            AssertRgbaRegion(
+                pixels,
+                xStart: DestinationWidth / 8,
                 xEnd: DestinationWidth / 2,
                 expectedRed: 32,
                 expectedGreen: 128,
@@ -235,6 +245,55 @@ public sealed class RenderTargetSamplingTests
         Assert.Equal(3u, BitConverter.ToUInt32(output, 12));
     }
 
+    private static void AssertDepthCompareAndClear(ulong destinationAddress)
+    {
+        SubmitSolidWithDepth(
+            SourceAddress,
+            red: 1f,
+            green: 0f,
+            blue: 0f,
+            clearDepth: true);
+        SubmitSolidWithDepth(
+            SourceAddress,
+            red: 0f,
+            green: 1f,
+            blue: 0f,
+            clearDepth: false);
+        Assert.True(CopySourceTo(SecondDisplayAddress));
+
+        SubmitSolidWithDepth(
+            SourceAddress,
+            red: 0.125f,
+            green: 0.5f,
+            blue: 0.875f,
+            clearDepth: true);
+
+        ComposeTextureTo(
+            SecondDisplayAddress,
+            DestinationWidth,
+            DestinationHeight,
+            destinationAddress,
+            SpirvFixedShaders.CreateCopyFragment(),
+            CreatePassthroughVertex(),
+            destinationRegion: new GuestRect(
+                X: 0,
+                Y: 0,
+                Width: DestinationWidth / 8,
+                Height: DestinationHeight));
+        ComposeTextureTo(
+            SourceAddress,
+            SourceWidth,
+            SourceHeight,
+            destinationAddress,
+            SpirvFixedShaders.CreateCopyFragment(),
+            CreatePassthroughVertex(),
+            destinationRegion: new GuestRect(
+                X: checked((int)(DestinationWidth / 8)),
+                Y: 0,
+                Width: DestinationWidth / 8,
+                Height: DestinationHeight));
+    }
+
     private static void SubmitSolid(
         ulong address,
         float red,
@@ -252,6 +311,46 @@ public sealed class RenderTargetSamplingTests
                 SourceHeight,
                 Rgba8DataFormat,
                 UnormNumberType));
+    }
+
+    private static void SubmitSolidWithDepth(
+        ulong address,
+        float red,
+        float green,
+        float blue,
+        bool clearDepth)
+    {
+        VulkanVideoPresenter.SubmitOffscreenTranslatedDraw(
+            SpirvFixedShaders.CreateSolidFragment(red, green, blue, alpha: 1f),
+            [],
+            [],
+            attributeCount: 0,
+            new GuestRenderTarget(
+                address,
+                SourceWidth,
+                SourceHeight,
+                Rgba8DataFormat,
+                UnormNumberType),
+            renderState: new GuestRenderState(
+                [GuestBlendState.Default],
+                Scissor: null,
+                Viewport: null)
+            {
+                Depth = new GuestDepthState(
+                    TestEnable: true,
+                    WriteEnable: true,
+                    CompareOp: 1,
+                    ClearEnable: clearDepth),
+            },
+            depthTarget: new GuestDepthTarget(
+                ReadAddress: DepthAddress,
+                WriteAddress: DepthAddress,
+                Width: SourceWidth,
+                Height: SourceHeight,
+                GuestFormat: 3,
+                SwizzleMode: 0,
+                ClearDepth: 1f,
+                ReadOnly: false));
     }
 
     private static bool CopySourceTo(ulong destinationAddress) =>
@@ -284,14 +383,39 @@ public sealed class RenderTargetSamplingTests
         byte[] vertexSpirv,
         IReadOnlyList<GuestMemoryBuffer>? globalMemoryBuffers = null,
         uint textureDataFormat = Rgba8DataFormat)
+        => ComposeTextureTo(
+            SourceAddress,
+            SourceWidth,
+            SourceHeight,
+            destinationAddress,
+            fragmentSpirv,
+            vertexSpirv,
+            globalMemoryBuffers,
+            textureDataFormat);
+
+    private static void ComposeTextureTo(
+        ulong sourceAddress,
+        uint sourceWidth,
+        uint sourceHeight,
+        ulong destinationAddress,
+        byte[] fragmentSpirv,
+        byte[] vertexSpirv,
+        IReadOnlyList<GuestMemoryBuffer>? globalMemoryBuffers = null,
+        uint textureDataFormat = Rgba8DataFormat,
+        GuestRect? destinationRegion = null)
     {
+        var region = destinationRegion ?? new GuestRect(
+            X: 0,
+            Y: 0,
+            Width: DestinationWidth,
+            Height: DestinationHeight);
         VulkanVideoPresenter.SubmitOffscreenTranslatedDraw(
             fragmentSpirv,
             [
                 new GuestDrawTexture(
-                    SourceAddress,
-                    SourceWidth,
-                    SourceHeight,
+                    sourceAddress,
+                    sourceWidth,
+                    sourceHeight,
                     textureDataFormat,
                     UnormNumberType,
                     [],
@@ -331,12 +455,12 @@ public sealed class RenderTargetSamplingTests
             ],
             renderState: new GuestRenderState(
                 [GuestBlendState.Default],
-                Scissor: null,
+                Scissor: region,
                 new GuestViewport(
-                    0,
-                    DestinationHeight,
-                    DestinationWidth,
-                    -DestinationHeight,
+                    region.X,
+                    region.Y + region.Height,
+                    region.Width,
+                    -region.Height,
                     0,
                     1)));
     }
