@@ -14,6 +14,56 @@ public static partial class Gen5SpirvTranslator
     private const uint ScratchDwordCount = 4096;
     private const uint RdnaWaveLaneCount = 32;
 
+    public static SpirvImageFormat DecodeStorageImageFormat(
+        uint dataFormat,
+        uint numberType) =>
+        (dataFormat, numberType) switch
+        {
+            (1, 0 or 9) => SpirvImageFormat.R8,
+            (1, 1) => SpirvImageFormat.R8Snorm,
+            (1, 4) => SpirvImageFormat.R8ui,
+            (1, 5) => SpirvImageFormat.R8i,
+            (2, 0) => SpirvImageFormat.R16,
+            (2, 1) => SpirvImageFormat.R16Snorm,
+            (2, 4) => SpirvImageFormat.R16ui,
+            (2, 5) => SpirvImageFormat.R16i,
+            (2, 7) => SpirvImageFormat.R16f,
+            (3, 0 or 9) => SpirvImageFormat.Rg8,
+            (3, 1) => SpirvImageFormat.Rg8Snorm,
+            (3, 4) => SpirvImageFormat.Rg8ui,
+            (3, 5) => SpirvImageFormat.Rg8i,
+            (4, 4) => SpirvImageFormat.R32ui,
+            (4, 5) => SpirvImageFormat.R32i,
+            (4, 7) => SpirvImageFormat.R32f,
+            (5, 0) => SpirvImageFormat.Rg16,
+            (5, 1) => SpirvImageFormat.Rg16Snorm,
+            (5, 4) => SpirvImageFormat.Rg16ui,
+            (5, 5) => SpirvImageFormat.Rg16i,
+            (5, 7) => SpirvImageFormat.Rg16f,
+            (6 or 7, 7) => SpirvImageFormat.R11fG11fB10f,
+            (8 or 9, 0) => SpirvImageFormat.Rgb10A2,
+            (8 or 9, 4) => SpirvImageFormat.Rgb10A2ui,
+            (10, 0 or 9) => SpirvImageFormat.Rgba8,
+            (10, 1) => SpirvImageFormat.Rgba8Snorm,
+            (10, 4) => SpirvImageFormat.Rgba8ui,
+            (10, 5) => SpirvImageFormat.Rgba8i,
+            (11, 4) => SpirvImageFormat.Rg32ui,
+            (11, 5) => SpirvImageFormat.Rg32i,
+            (11, 7) => SpirvImageFormat.Rg32f,
+            (12, 0) => SpirvImageFormat.Rgba16,
+            (12, 1) => SpirvImageFormat.Rgba16Snorm,
+            (12, 4) => SpirvImageFormat.Rgba16ui,
+            (12, 5) => SpirvImageFormat.Rgba16i,
+            (12, 7) => SpirvImageFormat.Rgba16f,
+            (13 or 14, 4) => SpirvImageFormat.Rgba32ui,
+            (13 or 14, 5) => SpirvImageFormat.Rgba32i,
+            (13 or 14, 7) => SpirvImageFormat.Rgba32f,
+            (20, _) => SpirvImageFormat.R32ui,
+            (21, _) => SpirvImageFormat.R32i,
+            (22, _) => SpirvImageFormat.Rgba16f,
+            _ => SpirvImageFormat.Unknown,
+        };
+
     public static bool TryCompilePixelShader(
         Gen5ShaderState state,
         Gen5ShaderEvaluation evaluation,
@@ -681,53 +731,13 @@ public static partial class Gen5SpirvTranslator
                     ImageComponentKind.Float);
             }
 
-            return (dataFormat, numberType) switch
+            var kind = numberType switch
             {
-                (1, _) => (SpirvImageFormat.R8, ImageComponentKind.Float),
-                (2, _) => (SpirvImageFormat.R16f, ImageComponentKind.Float),
-                (3, _) => (SpirvImageFormat.Rg8, ImageComponentKind.Float),
-                (4, 4) => (SpirvImageFormat.R32ui, ImageComponentKind.Uint),
-                (4, 5) => (SpirvImageFormat.R32i, ImageComponentKind.Sint),
-                (4, _) => (SpirvImageFormat.R32f, ImageComponentKind.Float),
-                (5, 4) => (SpirvImageFormat.Rg16ui, ImageComponentKind.Uint),
-                (5, 5) => (SpirvImageFormat.Rg16i, ImageComponentKind.Sint),
-                (5, 0) => (SpirvImageFormat.Rg16, ImageComponentKind.Float),
-                (5, _) => (SpirvImageFormat.Rg16f, ImageComponentKind.Float),
-                (6 or 7, _) => (
-                    SpirvImageFormat.R11fG11fB10f,
-                    ImageComponentKind.Float),
-                (8 or 9, 4) => (
-                    SpirvImageFormat.Rgb10A2ui,
-                    ImageComponentKind.Uint),
-                (8 or 9, _) => (
-                    SpirvImageFormat.Rgb10A2,
-                    ImageComponentKind.Float),
-                (10, 4) => (SpirvImageFormat.Rgba8ui, ImageComponentKind.Uint),
-                (10, 5) => (SpirvImageFormat.Rgba8i, ImageComponentKind.Sint),
-                (10, _) => (SpirvImageFormat.Rgba8, ImageComponentKind.Float),
-                (11, 4) => (SpirvImageFormat.Rg32ui, ImageComponentKind.Uint),
-                (11, 5) => (SpirvImageFormat.Rg32i, ImageComponentKind.Sint),
-                (11, _) => (SpirvImageFormat.Rg32f, ImageComponentKind.Float),
-                (12, 4) => (SpirvImageFormat.Rgba16ui, ImageComponentKind.Uint),
-                (12, 5) => (SpirvImageFormat.Rgba16i, ImageComponentKind.Sint),
-                (12, 0) => (SpirvImageFormat.Rgba16, ImageComponentKind.Float),
-                (12, _) => (SpirvImageFormat.Rgba16f, ImageComponentKind.Float),
-                (13 or 14, 4) => (
-                    SpirvImageFormat.Rgba32ui,
-                    ImageComponentKind.Uint),
-                (13 or 14, 5) => (
-                    SpirvImageFormat.Rgba32i,
-                    ImageComponentKind.Sint),
-                (13 or 14, _) => (
-                    SpirvImageFormat.Rgba32f,
-                    ImageComponentKind.Float),
-                (20, _) => (SpirvImageFormat.R32ui, ImageComponentKind.Uint),
-                (21, _) => (SpirvImageFormat.R32i, ImageComponentKind.Sint),
-                (22, _) => (SpirvImageFormat.Rgba16f, ImageComponentKind.Float),
-                (_, 4) => (SpirvImageFormat.Unknown, ImageComponentKind.Uint),
-                (_, 5) => (SpirvImageFormat.Unknown, ImageComponentKind.Sint),
-                _ => (SpirvImageFormat.Unknown, ImageComponentKind.Float),
+                4 => ImageComponentKind.Uint,
+                5 => ImageComponentKind.Sint,
+                _ => ImageComponentKind.Float,
             };
+            return (DecodeStorageImageFormat(dataFormat, numberType), kind);
         }
 
         private void DeclareStageInterface()
