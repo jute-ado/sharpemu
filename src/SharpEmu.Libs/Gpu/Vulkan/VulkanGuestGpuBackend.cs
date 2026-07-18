@@ -81,7 +81,9 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
         uint localSizeZ,
         out IGuestCompiledShader? shader,
         out string error,
-        uint waveLaneCount = 32)
+        uint waveLaneCount = 32,
+        int totalGlobalBufferCount = -1,
+        int scalarRegisterBufferIndex = -1)
     {
         shader = null;
         if (!Gen5SpirvTranslator.TryCompileComputeShader(
@@ -92,7 +94,9 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
                 localSizeZ,
                 out var compiled,
                 out error,
-                waveLaneCount))
+                waveLaneCount,
+                totalGlobalBufferCount,
+                scalarRegisterBufferIndex))
         {
             return false;
         }

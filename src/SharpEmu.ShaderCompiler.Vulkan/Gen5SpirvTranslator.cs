@@ -169,7 +169,9 @@ public static partial class Gen5SpirvTranslator
         uint localSizeZ,
         out Gen5SpirvShader shader,
         out string error,
-        uint waveLaneCount = 32)
+        uint waveLaneCount = 32,
+        int totalGlobalBufferCount = -1,
+        int scalarRegisterBufferIndex = -1)
     {
         if (waveLaneCount is not (32 or 64))
         {
@@ -187,9 +189,9 @@ public static partial class Gen5SpirvTranslator
             Math.Max(localSizeY, 1),
             Math.Max(localSizeZ, 1),
             0,
-            -1,
+            totalGlobalBufferCount,
             0,
-            -1,
+            scalarRegisterBufferIndex,
             waveLaneCount);
         return context.TryCompile(out shader, out error);
     }
@@ -5697,14 +5699,19 @@ public static partial class Gen5SpirvTranslator
             Store(pointer, value);
         }
 
-        private uint BufferWordPointer(int binding, uint dwordAddress) =>
-            _module.AddInstruction(
+        private uint BufferWordPointer(int binding, uint dwordAddress)
+        {
+            var addressedDword = ApplyGuestBufferWordBias(
+                binding,
+                dwordAddress);
+            return _module.AddInstruction(
                 SpirvOp.AccessChain,
                 _storageUintPointer,
                 _globalBuffers,
                 UInt((uint)binding),
                 UInt(0),
-                dwordAddress);
+                addressedDword);
+        }
 
         private uint IsBufferWordInRange(int binding, uint dwordAddress)
         {
@@ -5721,8 +5728,54 @@ public static partial class Gen5SpirvTranslator
             return _module.AddInstruction(
                 SpirvOp.ULessThan,
                 _boolType,
-                dwordAddress,
+                ApplyGuestBufferWordBias(binding, dwordAddress),
                 length);
+        }
+
+        private uint ApplyGuestBufferWordBias(
+            int binding,
+            uint dwordAddress)
+        {
+            var guestBindingIndex = binding - _globalBufferBase;
+            if ((uint)guestBindingIndex >=
+                (uint)_evaluation.GlobalMemoryBindings.Count)
+            {
+                return dwordAddress;
+            }
+
+            var byteBias =
+                _evaluation.GlobalMemoryBindings[guestBindingIndex]
+                    .BaseAddress &
+                (Gen5GlobalMemoryBinding
+                    .PortableDescriptorOffsetAlignment - 1);
+            if ((byteBias & (sizeof(uint) - 1)) != 0)
+            {
+                throw new InvalidOperationException(
+                    $"guest storage-buffer address " +
+                    $"0x{_evaluation.GlobalMemoryBindings[guestBindingIndex].BaseAddress:X16} " +
+                    $"is not dword aligned");
+            }
+
+            if (_scalarRegisterBufferIndex >= 0)
+            {
+                var scalarAddress =
+                    _evaluation.GlobalMemoryBindings[guestBindingIndex]
+                        .ScalarAddress;
+                var runtimeBaseAddress = LoadS(scalarAddress);
+                var runtimeDwordBias = ShiftRightLogical(
+                    BitwiseAnd(
+                        runtimeBaseAddress,
+                        UInt(checked((uint)(
+                            Gen5GlobalMemoryBinding
+                                .PortableDescriptorOffsetAlignment - 1)))),
+                    UInt(2));
+                return IAdd(dwordAddress, runtimeDwordBias);
+            }
+
+            var dwordBias = checked((uint)(byteBias / sizeof(uint)));
+            return dwordBias == 0
+                ? dwordAddress
+                : IAdd(dwordAddress, UInt(dwordBias));
         }
 
         private uint ScalarPointer(uint register) => ScalarPointerAt(UInt(register));
