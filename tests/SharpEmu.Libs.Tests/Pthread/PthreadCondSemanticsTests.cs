@@ -1,7 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using System.Reflection;
+using System.Buffers.Binary;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
 using Xunit;
@@ -15,68 +15,63 @@ namespace SharpEmu.Libs.Tests.Pthread;
 public sealed class PthreadCondSemanticsTests
 {
     [Fact]
-    public void PthreadCondState_DoesNotHavePendingSignals()
-    {
-        // Verify that PthreadCondState no longer has the PendingSignals property.
-        // This is a regression test to ensure the POSIX-correct behavior is maintained.
-        var stateType = typeof(KernelPthreadCompatExports).GetNestedType("PthreadCondState", BindingFlags.NonPublic);
-        Assert.NotNull(stateType);
-
-        var pendingSignalsProp = stateType.GetProperty("PendingSignals");
-        Assert.Null(pendingSignalsProp);
-
-        var tryConsumeMethod = stateType.GetMethod("TryConsumePendingSignal");
-        Assert.Null(tryConsumeMethod);
-    }
-
-    [Fact]
     public void PthreadCondSignal_WithNoWaiter_DoesNotPersist()
     {
-        // This test verifies the semantic contract: signal without waiter is a no-op.
-        // We can't easily test the full pthread flow without the scheduler, but we can
-        // verify the code path by checking that SignalEpoch advances but no state persists.
-        var stateType = typeof(KernelPthreadCompatExports).GetNestedType("PthreadCondState", BindingFlags.NonPublic);
-        Assert.NotNull(stateType);
+        const ulong condAddress = 0x1_0000;
+        const ulong mutexAddress = 0x2_0000;
+        const ulong deadlineAddress = 0x3_0000;
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(condAddress, new byte[sizeof(ulong)]);
+        memory.AddRegion(mutexAddress, new byte[sizeof(ulong)]);
+        var deadline = new byte[2 * sizeof(ulong)];
+        BinaryPrimitives.WriteInt64LittleEndian(deadline, -1);
+        memory.AddRegion(deadlineAddress, deadline);
+        var context = new CpuContext(memory, Generation.Gen5);
 
-        // Create an instance via reflection
-        var state = Activator.CreateInstance(stateType);
-        Assert.NotNull(state);
+        context[CpuRegister.Rdi] = condAddress;
+        context[CpuRegister.Rsi] = 0;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            KernelPthreadCompatExports.PosixPthreadCondInit(context));
+        context[CpuRegister.Rdi] = mutexAddress;
+        context[CpuRegister.Rsi] = 0;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            KernelPthreadCompatExports.PosixPthreadMutexInit(context));
 
-        var syncRootProp = stateType.GetProperty("SyncRoot");
-        var signalEpochProp = stateType.GetProperty("SignalEpoch");
-        var waitersProp = stateType.GetProperty("Waiters");
-
-        Assert.NotNull(syncRootProp);
-        Assert.NotNull(signalEpochProp);
-        Assert.NotNull(waitersProp);
-
-        var syncRoot = syncRootProp.GetValue(state);
-        Assert.NotNull(syncRoot);
-
-        // Initial state
-        Assert.Equal(0UL, (ulong)signalEpochProp.GetValue(state)!);
-        Assert.Equal(0, (int)waitersProp.GetValue(state)!);
-
-        // Simulate signal with no waiter (this would have incremented PendingSignals before)
-        lock (syncRoot)
+        try
         {
-            signalEpochProp.SetValue(state, (ulong)signalEpochProp.GetValue(state)! + 1);
-            // Note: we don't increment PendingSignals because it doesn't exist
+            context[CpuRegister.Rdi] = condAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadCondSignal(
+                    context));
+
+            context[CpuRegister.Rdi] = mutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadMutexLock(
+                    context));
+            context[CpuRegister.Rdi] = condAddress;
+            context[CpuRegister.Rsi] = mutexAddress;
+            context[CpuRegister.Rdx] = deadlineAddress;
+            Assert.Equal(
+                60,
+                KernelPthreadCompatExports.PosixPthreadCondTimedwait(
+                    context));
+            context[CpuRegister.Rdi] = mutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadMutexUnlock(
+                    context));
         }
-
-        // Verify epoch advanced but no persistent signal state
-        Assert.Equal(1UL, (ulong)signalEpochProp.GetValue(state)!);
-
-        // A new waiter arriving should see the new epoch but not consume any "pending" signal
-        // (because there's no such concept anymore)
-        lock (syncRoot)
+        finally
         {
-            var observedEpoch = (ulong)signalEpochProp.GetValue(state)!;
-            waitersProp.SetValue(state, (int)waitersProp.GetValue(state)! + 1);
-
-            // Waiter sees epoch=1, will block until epoch changes again
-            Assert.Equal(1UL, observedEpoch);
-            Assert.Equal(1, (int)waitersProp.GetValue(state)!);
+            context[CpuRegister.Rdi] = condAddress;
+            _ = KernelPthreadCompatExports.PthreadCondDestroy(context);
+            context[CpuRegister.Rdi] = mutexAddress;
+            _ = KernelPthreadCompatExports.PosixPthreadMutexDestroy(
+                context);
         }
     }
 }

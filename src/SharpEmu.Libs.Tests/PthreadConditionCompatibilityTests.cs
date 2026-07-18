@@ -220,6 +220,134 @@ public sealed class PthreadConditionCompatibilityTests
         }
     }
 
+    [Fact]
+    public void SignaledWaiterReacquiresMutexBeforeReturning()
+    {
+        var context = CreateContext();
+        InitializeConditionAndMutex(context);
+        using var waiterStarted = new ManualResetEventSlim();
+        using var waiterReturned = new ManualResetEventSlim();
+        var waitResult = int.MinValue;
+        var unlockResult = int.MinValue;
+        var waiterThread = new Thread(
+            () =>
+            {
+                var waiterContext = new CpuContext(
+                    context.Memory,
+                    Generation.Gen5);
+                waiterContext[CpuRegister.Rdi] = MutexAddress;
+                var lockResult =
+                    KernelPthreadCompatExports.PosixPthreadMutexLock(
+                        waiterContext);
+                if (lockResult != (int)OrbisGen2Result.ORBIS_GEN2_OK)
+                {
+                    waitResult = lockResult;
+                    waiterReturned.Set();
+                    return;
+                }
+
+                waiterStarted.Set();
+                waiterContext[CpuRegister.Rdi] = CondAddress;
+                waiterContext[CpuRegister.Rsi] = MutexAddress;
+                waitResult =
+                    KernelPthreadCompatExports.PosixPthreadCondWait(
+                        waiterContext);
+                waiterReturned.Set();
+
+                waiterContext[CpuRegister.Rdi] = MutexAddress;
+                unlockResult =
+                    KernelPthreadCompatExports.PosixPthreadMutexUnlock(
+                        waiterContext);
+            })
+        {
+            IsBackground = true,
+        };
+
+        try
+        {
+            waiterThread.Start();
+            Assert.True(waiterStarted.Wait(TimeSpan.FromSeconds(5)));
+            Assert.True(
+                SpinWait.SpinUntil(
+                    () =>
+                        KernelPthreadCompatExports
+                            .TryGetConditionStateSnapshot(
+                                CondAddress,
+                                out var waiterCount) &&
+                        waiterCount == 1,
+                    TimeSpan.FromSeconds(5)));
+
+            context[CpuRegister.Rdi] = CondAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY,
+                KernelPthreadCompatExports.PthreadCondDestroy(context));
+            context[CpuRegister.Rdi] = MutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY,
+                KernelPthreadCompatExports.PosixPthreadMutexDestroy(
+                    context));
+
+            LockMutex(context);
+            context[CpuRegister.Rdi] = CondAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadCondSignal(
+                    context));
+
+            Assert.False(
+                waiterReturned.Wait(TimeSpan.FromMilliseconds(100)));
+            UnlockMutex(context);
+
+            Assert.True(waiterThread.Join(TimeSpan.FromSeconds(5)));
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                waitResult);
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                unlockResult);
+        }
+        finally
+        {
+            DestroyConditionAndMutex(context);
+        }
+    }
+
+    [Fact]
+    public void ConditionWaitRestoresRecursiveMutexDepth()
+    {
+        var context = CreateContext();
+        InitializeConditionAndMutex(context, mutexType: 2);
+
+        try
+        {
+            context[CpuRegister.Rdi] = CondAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PthreadCondSignal(context));
+
+            LockMutex(context);
+            LockMutex(context);
+
+            context[CpuRegister.Rdi] = CondAddress;
+            context[CpuRegister.Rsi] = MutexAddress;
+            context[CpuRegister.Rdx] = 1;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PthreadCondTimedwait(context));
+
+            UnlockMutex(context);
+            UnlockMutex(context);
+            context[CpuRegister.Rdi] = MutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+                KernelPthreadCompatExports.PosixPthreadMutexUnlock(context));
+        }
+        finally
+        {
+            DestroyConditionAndMutex(context);
+        }
+    }
+
     private static CpuContext CreateContext(
         long deadlineSeconds = 0,
         long deadlineNanoseconds = 0)
@@ -227,6 +355,7 @@ public sealed class PthreadConditionCompatibilityTests
         var memory = new FakeGuestMemory();
         memory.AddRegion(CondAddress, new byte[sizeof(ulong)]);
         memory.AddRegion(MutexAddress, new byte[sizeof(ulong)]);
+        memory.AddRegion(MutexAttrAddress, new byte[sizeof(ulong)]);
         var deadline = new byte[2 * sizeof(ulong)];
         BinaryPrimitives.WriteInt64LittleEndian(deadline, deadlineSeconds);
         BinaryPrimitives.WriteInt64LittleEndian(deadline.AsSpan(sizeof(ulong)), deadlineNanoseconds);
@@ -234,7 +363,9 @@ public sealed class PthreadConditionCompatibilityTests
         return new CpuContext(memory, Generation.Gen5);
     }
 
-    private static void InitializeConditionAndMutex(CpuContext context)
+    private static void InitializeConditionAndMutex(
+        CpuContext context,
+        int? mutexType = null)
     {
         context[CpuRegister.Rdi] = CondAddress;
         context[CpuRegister.Rsi] = 0;
@@ -242,8 +373,25 @@ public sealed class PthreadConditionCompatibilityTests
             (int)OrbisGen2Result.ORBIS_GEN2_OK,
             KernelPthreadCompatExports.PosixPthreadCondInit(context));
 
+        var attrAddress = 0UL;
+        if (mutexType.HasValue)
+        {
+            context[CpuRegister.Rdi] = MutexAttrAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadMutexattrInit(
+                    context));
+            context[CpuRegister.Rdi] = MutexAttrAddress;
+            context[CpuRegister.Rsi] = unchecked((ulong)mutexType.Value);
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadMutexattrSettype(
+                    context));
+            attrAddress = MutexAttrAddress;
+        }
+
         context[CpuRegister.Rdi] = MutexAddress;
-        context[CpuRegister.Rsi] = 0;
+        context[CpuRegister.Rsi] = attrAddress;
         Assert.Equal(
             (int)OrbisGen2Result.ORBIS_GEN2_OK,
             KernelPthreadCompatExports.PosixPthreadMutexInit(context));
@@ -271,5 +419,7 @@ public sealed class PthreadConditionCompatibilityTests
         _ = KernelPthreadCompatExports.PthreadCondDestroy(context);
         context[CpuRegister.Rdi] = MutexAddress;
         _ = KernelPthreadCompatExports.PosixPthreadMutexDestroy(context);
+        context[CpuRegister.Rdi] = MutexAttrAddress;
+        _ = KernelPthreadCompatExports.PosixPthreadMutexattrDestroy(context);
     }
 }
