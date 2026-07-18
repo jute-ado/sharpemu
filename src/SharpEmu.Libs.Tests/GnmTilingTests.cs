@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.Libs.Agc;
+using System.Buffers.Binary;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests;
@@ -70,6 +71,40 @@ public sealed class GnmTilingTests
         Assert.Equal(0x13, linear[65]);
     }
 
+    [Fact]
+    public void TryDetile_Standard64K16BitMode_MatchesKnownSdkMapping()
+    {
+        const int width = 256;
+        const int height = 128;
+        const int bytesPerElement = 2;
+        var tiled = new byte[64 * 1024];
+        for (var index = 0; index < tiled.Length / bytesPerElement; index++)
+        {
+            BinaryPrimitives.WriteUInt16LittleEndian(
+                tiled.AsSpan(index * bytesPerElement, bytesPerElement),
+                checked((ushort)index));
+        }
+
+        var linear = new byte[tiled.Length];
+
+        Assert.True(GnmTiling.TryDetile(
+            tiled,
+            linear,
+            swizzleMode: 9,
+            elementsWide: width,
+            elementsHigh: height,
+            bytesPerElement));
+
+        Assert.Equal((ushort)0, ReadElement(linear, width, 0, 0));
+        Assert.Equal((ushort)1, ReadElement(linear, width, 1, 0));
+        Assert.Equal((ushort)2, ReadElement(linear, width, 2, 0));
+        Assert.Equal((ushort)4, ReadElement(linear, width, 4, 0));
+        Assert.Equal((ushort)64, ReadElement(linear, width, 8, 0));
+        Assert.Equal((ushort)8, ReadElement(linear, width, 0, 1));
+        Assert.Equal((ushort)16, ReadElement(linear, width, 0, 2));
+        Assert.Equal((ushort)32, ReadElement(linear, width, 0, 4));
+    }
+
     [Theory]
     [InlineData(0u)]
     [InlineData(12u)]
@@ -82,5 +117,13 @@ public sealed class GnmTilingTests
 
         Assert.False(GnmTiling.TryDetile(tiled, linear, swizzleMode, 4, 4, 1));
         Assert.Equal(original, linear);
+    }
+
+    private static ushort ReadElement(byte[] linear, int width, int x, int y)
+    {
+        const int bytesPerElement = 2;
+        var offset = checked((y * width + x) * bytesPerElement);
+        return BinaryPrimitives.ReadUInt16LittleEndian(
+            linear.AsSpan(offset, bytesPerElement));
     }
 }
