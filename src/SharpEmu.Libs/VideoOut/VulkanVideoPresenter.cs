@@ -100,6 +100,8 @@ internal static unsafe class VulkanVideoPresenter
     // unnecessarily throttled the producer behind the bounded work queue.
     private const int MaxGuestWorkPerRender = 128;
     private const ulong MaximumCachedHostBufferBytes = 128UL * 1024 * 1024;
+    private const ulong MaximumPersistentGuestBufferBytes =
+        256UL * 1024 * 1024;
     private const uint GuestPrimitiveRectList = 0x11;
     private const uint GuestFormatR32Uint = 0x10004;
     private const uint GuestFormatR32Sint = 0x20004;
@@ -5693,6 +5695,86 @@ internal static unsafe class VulkanVideoPresenter
             foreach (var range in merged)
             {
                 EnsureGuestBufferAllocation(range);
+            }
+
+            TrimGuestBufferAllocations(merged);
+        }
+
+        private void TrimGuestBufferAllocations(
+            IReadOnlyList<GuestBufferRange> protectedRanges)
+        {
+            if (_guestBufferAllocations.Count == 0)
+            {
+                return;
+            }
+
+            var cachedBytes = 0UL;
+            foreach (var allocation in _guestBufferAllocations)
+            {
+                if (allocation.Range.Length >
+                    MaximumPersistentGuestBufferBytes - cachedBytes)
+                {
+                    cachedBytes =
+                        MaximumPersistentGuestBufferBytes + 1;
+                    break;
+                }
+
+                cachedBytes += allocation.Range.Length;
+            }
+
+            if (cachedBytes <= MaximumPersistentGuestBufferBytes)
+            {
+                return;
+            }
+
+            var entries =
+                new GuestBufferCacheEntry[
+                    _guestBufferAllocations.Count];
+            for (var index = 0;
+                 index < _guestBufferAllocations.Count;
+                 index++)
+            {
+                var allocation = _guestBufferAllocations[index];
+                entries[index] = new GuestBufferCacheEntry(
+                    allocation.Range,
+                    allocation.LastUseSequence,
+                    allocation.LastWriteSequence);
+            }
+
+            var evictionIndices =
+                GuestBufferRangeSet.SelectEvictions(
+                    entries,
+                    protectedRanges,
+                    _completedGuestSequence,
+                    MaximumPersistentGuestBufferBytes);
+            if (evictionIndices.Count == 0)
+            {
+                return;
+            }
+
+            var evictions =
+                new List<GuestBufferAllocation>(
+                    evictionIndices.Count);
+            var reclaimedBytes = 0UL;
+            foreach (var index in evictionIndices)
+            {
+                var allocation = _guestBufferAllocations[index];
+                evictions.Add(allocation);
+                reclaimedBytes += allocation.Range.Length;
+            }
+
+            foreach (var allocation in evictions)
+            {
+                _guestBufferAllocations.Remove(allocation);
+                DestroyGuestBufferAllocation(allocation);
+            }
+
+            if (ShouldTraceVulkanResources())
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][TRACE] vk.global_buffer_cache_trim " +
+                    $"allocations={evictions.Count} " +
+                    $"bytes={reclaimedBytes}");
             }
         }
 
