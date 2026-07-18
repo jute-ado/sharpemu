@@ -2620,31 +2620,34 @@ internal static unsafe class VulkanVideoPresenter
 
     private static void RecordGuestImageWritersLocked(object work, long sequence)
     {
-        static IEnumerable<ulong> StorageAddresses(
-            IReadOnlyList<GuestDrawTexture> textures) =>
-            textures
-                .Where(static texture => texture.IsStorage && texture.Address != 0)
-                .Select(static texture => texture.Address);
+        switch (work)
+        {
+            case VulkanOffscreenGuestDraw draw:
+                if (draw.PublishTarget)
+                {
+                    GuestImageWriterTracker.RecordRenderTargets(
+                        draw.Targets,
+                        _guestImageWorkSequences,
+                        sequence);
+                }
 
-        IEnumerable<ulong> addresses = work switch
-        {
-            VulkanOffscreenGuestDraw draw =>
-                (draw.PublishTarget
-                    ? draw.Targets
-                        .Where(static target => target.Address != 0)
-                        .Select(static target => target.Address)
-                    : Enumerable.Empty<ulong>())
-                .Concat(StorageAddresses(draw.Draw.Textures)),
-            VulkanComputeGuestDispatch compute => StorageAddresses(compute.Textures),
-            VulkanGuestImageWrite imageWrite when imageWrite.Address != 0 =>
-                new[] { imageWrite.Address },
-            VulkanGuestImageCopy imageCopy when imageCopy.DestinationAddress != 0 =>
-                new[] { imageCopy.DestinationAddress },
-            _ => Array.Empty<ulong>(),
-        };
-        foreach (var address in addresses.Distinct())
-        {
-            _guestImageWorkSequences[address] = sequence;
+                GuestImageWriterTracker.RecordStorageTextures(
+                    draw.Draw.Textures,
+                    _guestImageWorkSequences,
+                    sequence);
+                break;
+            case VulkanComputeGuestDispatch compute:
+                GuestImageWriterTracker.RecordStorageTextures(
+                    compute.Textures,
+                    _guestImageWorkSequences,
+                    sequence);
+                break;
+            case VulkanGuestImageWrite imageWrite when imageWrite.Address != 0:
+                _guestImageWorkSequences[imageWrite.Address] = sequence;
+                break;
+            case VulkanGuestImageCopy imageCopy when imageCopy.DestinationAddress != 0:
+                _guestImageWorkSequences[imageCopy.DestinationAddress] = sequence;
+                break;
         }
     }
 
