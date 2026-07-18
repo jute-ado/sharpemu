@@ -2677,6 +2677,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		int num3 = 0;
 		int num4 = 0;
 		int num9 = 0;
+		int sse4aPatchCount = 0;
 		int failedPatchCount = 0;
 		var recognizedPatches = new List<(nint Address, byte[] OriginalBytes)>();
 		var scanSucceeded = false;
@@ -2718,6 +2719,43 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 						byte* ptr = (byte*)num5;
 						int scanBytes = checked((int)(scanReadEnd - num5));
 						int ownedStartBytes = checked((int)(nextScanAddress - num5));
+						for (var i = 0;
+							i <= ownedStartBytes -
+								Sse4aExtrqBlendPatch.SequenceLength;
+							i++)
+						{
+							var source = new ReadOnlySpan<byte>(
+								ptr + i,
+								Sse4aExtrqBlendPatch.SequenceLength);
+							if (!Sse4aExtrqBlendPatch.TryMatch(
+								source,
+								out _,
+								out _))
+							{
+								continue;
+							}
+
+							var address = (nint)(ptr + i);
+							recognizedPatches.Add((
+								address,
+								source.ToArray()));
+							if (TryPatchSse4aExtrqBlend(
+								address,
+								ptr + i))
+							{
+								sse4aPatchCount++;
+								i +=
+									Sse4aExtrqBlendPatch.SequenceLength -
+									1;
+							}
+							else
+							{
+								failedPatchCount++;
+								Console.Error.WriteLine(
+									$"[LOADER][ERROR] Failed to patch recognized SSE4a EXTRQ blend at 0x{address:X16}");
+							}
+						}
+
 						var candidates = GetTlsPatchCandidates(
 							new ReadOnlySpan<byte>(ptr, scanBytes),
 							ownedStartBytes,
@@ -2771,7 +2809,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				}
 			}
 			Console.Error.WriteLine(
-				$"[LOADER][INFO] Patched {num3} TLS loads, {num9} TLS stores, {num4} stack-canary accesses; failures={failedPatchCount}");
+				$"[LOADER][INFO] Patched {num3} TLS loads, {num9} TLS stores, " +
+				$"{num4} stack-canary accesses, {sse4aPatchCount} SSE4a " +
+				$"EXTRQ blends; failures={failedPatchCount}");
 			scanSucceeded = failedPatchCount == 0;
 			return scanSucceeded;
 		}
@@ -2782,6 +2822,63 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				RollbackTlsInstructionPatches(recognizedPatches);
 			}
 		}
+	}
+
+	private unsafe bool TryPatchSse4aExtrqBlend(
+		nint address,
+		byte* source)
+	{
+		var window = new ReadOnlySpan<byte>(
+			source,
+			Sse4aExtrqBlendPatch.SequenceLength);
+		if (!Sse4aExtrqBlendPatch.TryMatch(
+			window,
+			out var destinationRegister,
+			out var sourceRegister))
+		{
+			return false;
+		}
+
+		Span<byte> replacement =
+			stackalloc byte[Sse4aExtrqBlendPatch.SequenceLength];
+		if (!Sse4aExtrqBlendPatch.TryEncode(
+			destinationRegister,
+			sourceRegister,
+			replacement))
+		{
+			return false;
+		}
+
+		var originalBytes = window.ToArray();
+		if (!_hostMemory.Protect(
+			(ulong)(void*)address,
+			(nuint)replacement.Length,
+			HostPageProtection.ReadWrite,
+			out var originalProtection))
+		{
+			return false;
+		}
+
+		var patchComplete = false;
+		var patchCommitted = false;
+		try
+		{
+			replacement.CopyTo(
+				new Span<byte>(
+					(void*)address,
+					replacement.Length));
+			patchComplete = true;
+		}
+		finally
+		{
+			patchCommitted = FinalizeInstructionPatch(
+				address,
+				originalBytes,
+				originalProtection,
+				patchComplete);
+		}
+
+		return patchCommitted;
 	}
 
 	internal static ulong GetTlsScanChunkEnd(ulong regionStart, ulong regionEnd)

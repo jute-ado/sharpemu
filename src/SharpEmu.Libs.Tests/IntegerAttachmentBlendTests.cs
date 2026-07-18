@@ -18,7 +18,7 @@ public sealed class IntegerAttachmentBlendTests
             WriteMask = 0x5,
         };
 
-        var normalized = VulkanVideoPresenter.NormalizeIntegerAttachmentBlends(
+        var normalized = GuestBlendStateNormalizer.NormalizeIntegerAttachments(
             [enabled, enabled],
             [true, false],
             out var normalizedCount);
@@ -33,7 +33,7 @@ public sealed class IntegerAttachmentBlendTests
     public void AttachmentAndBlendCountsMustMatch()
     {
         Assert.Throws<ArgumentException>(() =>
-            VulkanVideoPresenter.NormalizeIntegerAttachmentBlends(
+            GuestBlendStateNormalizer.NormalizeIntegerAttachments(
                 [GuestBlendState.Default],
                 [],
                 out _));

@@ -49,6 +49,7 @@ public sealed class SaveDataMemoryExportsTests : IDisposable
         SaveDataExports.ConfigureApplicationInfo(TitleId);
     }
 
+    // Save-memory files use the same user/title isolation as mounted saves.
     private string MemoryPath =>
         Path.Combine(_root, UserId.ToString(), TitleId, "sce_sdmemory", "memory.dat");
 

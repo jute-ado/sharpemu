@@ -220,7 +220,7 @@ public sealed class Gen5SpirvAtomicTranslationTests
                 out error,
                 totalGlobalBufferCount:
                     evaluation.GlobalMemoryBindings.Count + 1,
-                scalarRegisterBufferIndex:
+                initialScalarBufferIndex:
                     evaluation.GlobalMemoryBindings.Count),
             error);
         return shader.Spirv;

@@ -78,7 +78,9 @@ public sealed class GuestDrawTraceFormatterTests
                         WriteMask: 0xF),
                 ],
                 new GuestRect(0, 0, 1280, 720),
-                new GuestViewport(0, 0, 1280, 720, 0, 1)),
+                new GuestViewport(0, 0, 1280, 720, 0, 1),
+                GuestRasterState.Default,
+                GuestDepthState.Default),
             firstVertex: 5,
             vertexOffset: -3,
             firstInstance: 7);

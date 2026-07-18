@@ -14,6 +14,8 @@ path = [
     "tests/SharpEmu.GameTests/games.example.json",
     "src/SharpEmu.Libs.Tests/Corpus/**",
     "src/SharpEmu.GUI/Languages/**",
+    "src/SharpEmu.ShaderCompiler.Metal/Templates/**",
+    "tests/SharpEmu.ShaderCompiler.Metal.Tests/Goldens/**",
     "_logs/**",
     ".github/images/**",
     "assets/images/**"

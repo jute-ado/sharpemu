@@ -74,7 +74,7 @@ public static partial class Gen5SpirvTranslator
         int globalBufferBase = 0,
         int totalGlobalBufferCount = -1,
         int imageBindingBase = 0,
-        int scalarRegisterBufferIndex = -1) =>
+        int initialScalarBufferIndex = -1) =>
         TryCompilePixelShader(
             state,
             evaluation,
@@ -84,7 +84,7 @@ public static partial class Gen5SpirvTranslator
             globalBufferBase,
             totalGlobalBufferCount,
             imageBindingBase,
-            scalarRegisterBufferIndex);
+            initialScalarBufferIndex);
 
     public static bool TryCompilePixelShader(
         Gen5ShaderState state,
@@ -95,7 +95,11 @@ public static partial class Gen5SpirvTranslator
         int globalBufferBase = 0,
         int totalGlobalBufferCount = -1,
         int imageBindingBase = 0,
-        int scalarRegisterBufferIndex = -1)
+        int initialScalarBufferIndex = -1,
+        uint pixelInputEnable = 0x300,
+        uint pixelInputAddress = 0x300,
+        ulong storageBufferOffsetAlignment =
+            Gen5GlobalMemoryBinding.PortableDescriptorOffsetAlignment)
     {
         if (outputs.Count > 8 || outputs.Any(output => output.GuestSlot > 7))
         {
@@ -133,8 +137,11 @@ public static partial class Gen5SpirvTranslator
             globalBufferBase,
             totalGlobalBufferCount,
             imageBindingBase,
-            scalarRegisterBufferIndex,
-            GraphicsWaveLaneCount);
+            initialScalarBufferIndex,
+            pixelInputEnable: pixelInputEnable,
+            pixelInputAddress: pixelInputAddress,
+            waveLaneCount: GraphicsWaveLaneCount,
+            storageBufferOffsetAlignment: storageBufferOffsetAlignment);
         return context.TryCompile(out shader, out error);
     }
 
@@ -146,7 +153,10 @@ public static partial class Gen5SpirvTranslator
         int globalBufferBase = 0,
         int totalGlobalBufferCount = -1,
         int imageBindingBase = 0,
-        int scalarRegisterBufferIndex = -1)
+        int initialScalarBufferIndex = -1,
+        int requiredVertexOutputCount = 0,
+        ulong storageBufferOffsetAlignment =
+            Gen5GlobalMemoryBinding.PortableDescriptorOffsetAlignment)
     {
         var context = new CompilationContext(
             Gen5SpirvStage.Vertex,
@@ -159,8 +169,10 @@ public static partial class Gen5SpirvTranslator
             globalBufferBase,
             totalGlobalBufferCount,
             imageBindingBase,
-            scalarRegisterBufferIndex,
-            GraphicsWaveLaneCount);
+            initialScalarBufferIndex,
+            requiredVertexOutputCount: requiredVertexOutputCount,
+            waveLaneCount: GraphicsWaveLaneCount,
+            storageBufferOffsetAlignment: storageBufferOffsetAlignment);
         return context.TryCompile(out shader, out error);
     }
 
@@ -174,7 +186,7 @@ public static partial class Gen5SpirvTranslator
         out string error,
         uint waveLaneCount = 32,
         int totalGlobalBufferCount = -1,
-        int scalarRegisterBufferIndex = -1)
+        int initialScalarBufferIndex = -1)
     {
         if (waveLaneCount is not (32 or 64))
         {
@@ -194,8 +206,45 @@ public static partial class Gen5SpirvTranslator
             0,
             totalGlobalBufferCount,
             0,
-            scalarRegisterBufferIndex,
-            waveLaneCount);
+            initialScalarBufferIndex,
+            waveLaneCount: waveLaneCount);
+        return context.TryCompile(out shader, out error);
+    }
+
+    public static bool TryCompileComputeShader(
+        Gen5ShaderState state,
+        Gen5ShaderEvaluation evaluation,
+        uint localSizeX,
+        uint localSizeY,
+        uint localSizeZ,
+        out Gen5SpirvShader shader,
+        out string error,
+        int totalGlobalBufferCount,
+        int initialScalarBufferIndex,
+        uint waveLaneCount,
+        ulong storageBufferOffsetAlignment)
+    {
+        if (waveLaneCount is not (32 or 64))
+        {
+            shader = default!;
+            error = "wave lane count must be 32 or 64";
+            return false;
+        }
+
+        var context = new CompilationContext(
+            Gen5SpirvStage.Compute,
+            state,
+            evaluation,
+            [],
+            Math.Max(localSizeX, 1),
+            Math.Max(localSizeY, 1),
+            Math.Max(localSizeZ, 1),
+            0,
+            totalGlobalBufferCount,
+            0,
+            initialScalarBufferIndex,
+            waveLaneCount: waveLaneCount,
+            storageBufferOffsetAlignment: storageBufferOffsetAlignment);
         return context.TryCompile(out shader, out error);
     }
 
@@ -209,6 +258,7 @@ public static partial class Gen5SpirvTranslator
         private readonly uint _waveLaneCount;
         private readonly bool _emulateWave64;
         private readonly bool _perInvocationGraphicsMasks;
+        private readonly int _requiredVertexOutputCount;
         private readonly uint _localSizeX;
         private readonly uint _localSizeY;
         private readonly uint _localSizeZ;
@@ -216,6 +266,9 @@ public static partial class Gen5SpirvTranslator
         private readonly int _totalGlobalBufferCount;
         private readonly int _imageBindingBase;
         private readonly int _scalarRegisterBufferIndex;
+        private readonly uint _pixelInputEnable;
+        private readonly uint _pixelInputAddress;
+        private readonly ulong _storageBufferOffsetAlignment;
         private readonly List<uint> _interfaces = [];
         private readonly Dictionary<uint, uint> _pixelInputs = [];
         private readonly Dictionary<uint, SpirvPixelOutput> _pixelOutputs = [];
@@ -316,7 +369,12 @@ public static partial class Gen5SpirvTranslator
             int totalGlobalBufferCount,
             int imageBindingBase,
             int scalarRegisterBufferIndex,
-            uint waveLaneCount = 32)
+            uint pixelInputEnable = 0,
+            uint pixelInputAddress = 0,
+            int requiredVertexOutputCount = 0,
+            uint waveLaneCount = 32,
+            ulong storageBufferOffsetAlignment =
+                Gen5GlobalMemoryBinding.PortableDescriptorOffsetAlignment)
         {
             _stage = stage;
             _state = state;
@@ -342,6 +400,20 @@ public static partial class Gen5SpirvTranslator
                 : totalGlobalBufferCount;
             _imageBindingBase = imageBindingBase;
             _scalarRegisterBufferIndex = scalarRegisterBufferIndex;
+            _pixelInputEnable = pixelInputEnable;
+            _pixelInputAddress = pixelInputAddress;
+            _requiredVertexOutputCount = requiredVertexOutputCount;
+            if (storageBufferOffsetAlignment == 0 ||
+                (storageBufferOffsetAlignment & (storageBufferOffsetAlignment - 1)) != 0 ||
+                storageBufferOffsetAlignment > uint.MaxValue)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(storageBufferOffsetAlignment),
+                    storageBufferOffsetAlignment,
+                    "storage-buffer offset alignment must be a uint-sized power of two");
+            }
+
+            _storageBufferOffsetAlignment = storageBufferOffsetAlignment;
         }
 
         public bool TryCompile(out Gen5SpirvShader shader, out string error)
@@ -916,7 +988,14 @@ public static partial class Gen5SpirvTranslator
                     .Select(export => export.Target - 32)
                     .Distinct()
                     .Order()
-                    .ToArray();
+                    .ToHashSet();
+                for (uint parameter = 0;
+                     parameter < (uint)Math.Max(_requiredVertexOutputCount, 0);
+                     parameter++)
+                {
+                    parameters.Add(parameter);
+                }
+
                 foreach (var parameter in parameters)
                 {
                     var variable = _module.AddGlobalVariable(
@@ -1094,18 +1173,7 @@ public static partial class Gen5SpirvTranslator
             else if (_stage == Gen5SpirvStage.Pixel)
             {
                 var fragCoord = Load(_vec4Type, _fragCoordInput);
-                var x = _module.AddInstruction(
-                    SpirvOp.CompositeExtract,
-                    _floatType,
-                    fragCoord,
-                    0);
-                var y = _module.AddInstruction(
-                    SpirvOp.CompositeExtract,
-                    _floatType,
-                    fragCoord,
-                    1);
-                StoreV(2, Bitcast(_uintType, x), guardWithExec: false);
-                StoreV(3, Bitcast(_uintType, y), guardWithExec: false);
+                EmitPixelInputState(fragCoord);
                 foreach (var output in _pixelOutputs.Values)
                 {
                     Store(output.Variable, _module.ConstantNull(output.Type));
@@ -1185,6 +1253,60 @@ public static partial class Gen5SpirvTranslator
                     }
                 }
             }
+        }
+
+        private void EmitPixelInputState(uint fragCoord)
+        {
+            uint vgpr = 0;
+            AdvancePixelInput(0, 2, ref vgpr);
+            AdvancePixelInput(1, 2, ref vgpr);
+            AdvancePixelInput(2, 2, ref vgpr);
+            AdvancePixelInput(3, 3, ref vgpr);
+            AdvancePixelInput(4, 2, ref vgpr);
+            AdvancePixelInput(5, 2, ref vgpr);
+            AdvancePixelInput(6, 2, ref vgpr);
+            AdvancePixelInput(7, 1, ref vgpr);
+            EmitPixelPositionInput(8, 0, fragCoord, ref vgpr);
+            EmitPixelPositionInput(9, 1, fragCoord, ref vgpr);
+            EmitPixelPositionInput(10, 2, fragCoord, ref vgpr);
+            EmitPixelPositionInput(11, 3, fragCoord, ref vgpr);
+            AdvancePixelInput(12, 1, ref vgpr);
+            AdvancePixelInput(13, 1, ref vgpr);
+            AdvancePixelInput(14, 1, ref vgpr);
+            AdvancePixelInput(15, 1, ref vgpr);
+        }
+
+        private void AdvancePixelInput(int bit, uint dwordCount, ref uint vgpr)
+        {
+            if ((_pixelInputAddress & (1u << bit)) != 0)
+            {
+                vgpr += dwordCount;
+            }
+        }
+
+        private void EmitPixelPositionInput(
+            int bit,
+            uint component,
+            uint fragCoord,
+            ref uint vgpr)
+        {
+            var mask = 1u << bit;
+            if ((_pixelInputAddress & mask) == 0)
+            {
+                return;
+            }
+
+            if ((_pixelInputEnable & mask) != 0)
+            {
+                var value = _module.AddInstruction(
+                    SpirvOp.CompositeExtract,
+                    _floatType,
+                    fragCoord,
+                    component);
+                StoreV(vgpr, Bitcast(_uintType, value), guardWithExec: false);
+            }
+
+            vgpr++;
         }
 
         private void StoreComputeSystemRegister(
@@ -5760,8 +5882,7 @@ public static partial class Gen5SpirvTranslator
             var byteBias =
                 _evaluation.GlobalMemoryBindings[guestBindingIndex]
                     .BaseAddress &
-                (Gen5GlobalMemoryBinding
-                    .PortableDescriptorOffsetAlignment - 1);
+                (_storageBufferOffsetAlignment - 1);
             if ((byteBias & (sizeof(uint) - 1)) != 0)
             {
                 throw new InvalidOperationException(
@@ -5779,9 +5900,7 @@ public static partial class Gen5SpirvTranslator
                 var runtimeDwordBias = ShiftRightLogical(
                     BitwiseAnd(
                         runtimeBaseAddress,
-                        UInt(checked((uint)(
-                            Gen5GlobalMemoryBinding
-                                .PortableDescriptorOffsetAlignment - 1)))),
+                        UInt(checked((uint)(_storageBufferOffsetAlignment - 1)))),
                     UInt(2));
                 return IAdd(dwordAddress, runtimeDwordBias);
             }

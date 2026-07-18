@@ -269,7 +269,9 @@ public sealed class RenderTargetSamplingTests
             ScalarAddress: 8,
             ComputeBufferAddress,
             [store.Pc],
-            bindingData)
+            bindingData,
+            bindingData.Length,
+            DataPooled: false)
         {
             Writable = true,
         };
@@ -299,6 +301,7 @@ public sealed class RenderTargetSamplingTests
         var guestMemory = new ArrayCpuMemory(
             ComputeBufferAddress,
             bindingData.ToArray());
+        VulkanVideoPresenter.AttachGuestMemory(guestMemory);
         var workSequence = VulkanVideoPresenter.SubmitComputeDispatch(
             ShaderAddress,
             shader.Spirv,
@@ -307,17 +310,27 @@ public sealed class RenderTargetSamplingTests
                 new GuestMemoryBuffer(
                     ComputeBufferAddress,
                     bindingData,
+                    bindingData.Length,
+                    Pooled: false,
                     Writable: true,
-                    guestMemory),
+                    WriteBackToGuest: true),
             ],
             groupCountX: 1,
             groupCountY: 1,
-            groupCountZ: 1);
+            groupCountZ: 1,
+            baseGroupX: 0,
+            baseGroupY: 0,
+            baseGroupZ: 0,
+            localSizeX: 4,
+            localSizeY: 1,
+            localSizeZ: 1,
+            isIndirect: false,
+            writesGlobalMemory: true);
 
         Assert.True(
             VulkanVideoPresenter.WaitForGuestWork(
                 workSequence,
-                TimeSpan.FromSeconds(10)),
+                timeoutMilliseconds: 10_000),
             $"Compute dispatch {workSequence} did not reach CPU visibility.");
         var output = new byte[bindingData.Length];
         Assert.True(guestMemory.TryRead(ComputeBufferAddress, output));
@@ -628,7 +641,9 @@ public sealed class RenderTargetSamplingTests
                     Width: SourceWidth,
                     Height: -(float)SourceHeight,
                     MinDepth: 0,
-                    MaxDepth: 1)));
+                    MaxDepth: 1),
+                GuestRasterState.Default,
+                GuestDepthState.Default));
 
         ComposeTextureTo(
             SeededTargetAddress,
@@ -712,14 +727,13 @@ public sealed class RenderTargetSamplingTests
         var memory = new ArrayCpuMemory(
             ConstantsAddress,
             constants);
-        buffers[0] = original[0] with
-        {
-            GuestMemory = memory,
-        };
+        VulkanVideoPresenter.AttachGuestMemory(memory);
+        buffers[0] = original[0];
         buffers[1] = new GuestMemoryBuffer(
             ConstantsAddress,
             new byte[constants.Length],
-            GuestMemory: memory);
+            constants.Length,
+            Pooled: false);
         for (var index = 2; index < original.Count; index++)
         {
             buffers[index] = original[index];
@@ -760,7 +774,9 @@ public sealed class RenderTargetSamplingTests
             renderState: new GuestRenderState(
                 [GuestBlendState.Default],
                 Scissor: null,
-                Viewport: null)
+                Viewport: null,
+                GuestRasterState.Default,
+                GuestDepthState.Default)
             {
                 Depth = new GuestDepthState(
                     TestEnable: true,
@@ -799,10 +815,12 @@ public sealed class RenderTargetSamplingTests
             SourceWidth,
             SourceHeight,
             Rgba8DataFormat,
+            UnormNumberType,
             destinationAddress,
             DestinationWidth,
             DestinationHeight,
-            Rgba8DataFormat);
+            Rgba8DataFormat,
+            UnormNumberType);
 
     private static void ComposeSourceTo(ulong destinationAddress)
         => ComposeSourceTo(
@@ -876,7 +894,9 @@ public sealed class RenderTargetSamplingTests
             primitiveType: 6,
             indexBuffer: new GuestIndexBuffer(
                 [0, 0, 1, 0, 2, 0, 3, 0],
-                Is32Bit: false),
+                Length: 8,
+                Is32Bit: false,
+                Pooled: false),
             vertexBuffers:
             [
                 CreateVertexBuffer(
@@ -903,7 +923,9 @@ public sealed class RenderTargetSamplingTests
                     region.Width,
                     -region.Height,
                     0,
-                    1)));
+                    1),
+                GuestRasterState.Default,
+                GuestDepthState.Default));
     }
 
     private static void ComposeCpuTextureToRightHalf(
@@ -968,7 +990,9 @@ public sealed class RenderTargetSamplingTests
                     2, 0, 0, 0,
                     3, 0, 0, 0,
                 ],
-                Is32Bit: true),
+                Length: 24,
+                Is32Bit: true,
+                Pooled: false),
             vertexBuffers:
             [
                 CreateVertexBuffer(
@@ -1006,7 +1030,9 @@ public sealed class RenderTargetSamplingTests
                     DestinationWidth,
                     -DestinationHeight,
                     0,
-                    1)));
+                    1),
+                GuestRasterState.Default,
+                GuestDepthState.Default));
     }
 
     private static byte[] CreateTranslatedColorTransformFragment(
@@ -1079,7 +1105,9 @@ public sealed class RenderTargetSamplingTests
             ScalarAddress: 12,
             ConstantsAddress,
             InstructionPcs: [0],
-            constants);
+            constants,
+            constants.Length,
+            DataPooled: false);
         var evaluation = new Gen5ShaderEvaluation(
             scalarRegisters,
             scalarRegisters,
@@ -1103,16 +1131,16 @@ public sealed class RenderTargetSamplingTests
                 out var shader,
                 out var compileError,
                 totalGlobalBufferCount: 5,
-                scalarRegisterBufferIndex: 3),
+                initialScalarBufferIndex: 3),
             compileError);
         globalMemoryBuffers =
         [
-            new GuestMemoryBuffer(ConstantsAddress, constants),
-            new GuestMemoryBuffer(0, new byte[256 * sizeof(uint)]),
-            new GuestMemoryBuffer(0, new byte[256 * sizeof(uint)]),
+            new GuestMemoryBuffer(ConstantsAddress, constants, constants.Length, Pooled: false),
+            new GuestMemoryBuffer(0, new byte[256 * sizeof(uint)], 256 * sizeof(uint), Pooled: false),
+            new GuestMemoryBuffer(0, new byte[256 * sizeof(uint)], 256 * sizeof(uint), Pooled: false),
             new GuestMemoryBuffer(0, CreateScalarRegisterSnapshot(
-                evaluation.InitialScalarRegisters)),
-            new GuestMemoryBuffer(0, new byte[256 * sizeof(uint)]),
+                evaluation.InitialScalarRegisters), 256 * sizeof(uint), Pooled: false),
+            new GuestMemoryBuffer(0, new byte[256 * sizeof(uint)], 256 * sizeof(uint), Pooled: false),
         ];
         return shader.Spirv;
     }
@@ -1182,7 +1210,9 @@ public sealed class RenderTargetSamplingTests
                     BaseAddress: 0,
                     Stride: 16,
                     OffsetBytes: 0,
-                    Data: []),
+                    Data: [],
+                    DataLength: 0,
+                    DataPooled: false),
                 new Gen5VertexInputBinding(
                     Pc: 8,
                     Location: 1,
@@ -1192,7 +1222,9 @@ public sealed class RenderTargetSamplingTests
                     BaseAddress: 0,
                     Stride: 16,
                     OffsetBytes: 0,
-                    Data: []),
+                    Data: [],
+                    DataLength: 0,
+                    DataPooled: false),
             ]);
         var state = new Gen5ShaderState(program, [], Metadata: null);
         Assert.True(
@@ -1203,7 +1235,7 @@ public sealed class RenderTargetSamplingTests
                 out var compileError,
                 globalBufferBase: 1,
                 totalGlobalBufferCount: 5,
-                scalarRegisterBufferIndex: 4),
+                initialScalarBufferIndex: 4),
             compileError);
         return shader.Spirv;
     }
@@ -1230,7 +1262,9 @@ public sealed class RenderTargetSamplingTests
             baseAddress,
             Stride: stride,
             OffsetBytes: 0,
-            data);
+            data,
+            Length: data.Length,
+            Pooled: false);
     }
 
     private static byte[] CreatePassthroughVertex()

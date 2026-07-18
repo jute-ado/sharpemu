@@ -3,6 +3,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using SharpEmu.Libs.Gpu;
 using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.VideoOut;
 using SharpEmu.ShaderCompiler;
@@ -27,5 +28,7 @@ internal static class AgcShaderCompilerHooks
     {
         Gen5ShaderScalarEvaluator.FallbackMemoryReader =
             KernelMemoryCompatExports.TryReadTrackedLibcHeap;
+        Gen5ShaderScalarEvaluator.GlobalMemoryPool =
+            GuestDataPool.Shared;
     }
 }

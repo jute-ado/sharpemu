@@ -68,7 +68,7 @@ public sealed class GuestDepthAttachmentTests
     {
         var stale = Target with { Width = 1, Height = 1 };
 
-        var resolved = VulkanVideoPresenter.ResolveGuestDepthExtent(
+        var resolved = GuestDepthExtentResolver.Resolve(
             stale,
             colorWidth: 1280,
             colorHeight: 720,
@@ -94,7 +94,7 @@ public sealed class GuestDepthAttachmentTests
             IsFallback: false,
             IsStorage: false);
 
-        var resolved = VulkanVideoPresenter.ResolveGuestDepthExtent(
+        var resolved = GuestDepthExtentResolver.Resolve(
             undersized,
             colorWidth: 1920,
             colorHeight: 1080,
