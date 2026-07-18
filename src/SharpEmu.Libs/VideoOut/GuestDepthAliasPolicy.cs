@@ -33,8 +33,10 @@ internal static class GuestDepthAliasPolicy
             return GuestDepthAliasKind.None;
         }
 
-        if (depth.GuestFormat != 3 ||
-            textureFormat != Format.R32Sfloat ||
+        if (!GuestDepthFormatPolicy.TryResolve(
+                depth.GuestFormat,
+                out var formatPolicy) ||
+            textureFormat != formatPolicy.TextureFormat ||
             texture.IsStorage ||
             texture.MipLevel != 0 ||
             texture.MipLevels != 1 ||

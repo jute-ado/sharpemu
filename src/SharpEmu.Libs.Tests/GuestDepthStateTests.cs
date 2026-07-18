@@ -60,6 +60,22 @@ public sealed class GuestDepthStateTests
         Assert.Same(memory, target.GuestMemory);
     }
 
+    [Theory]
+    [InlineData(0u)]
+    [InlineData(2u)]
+    public void DecodeDepthTargetRejectsUnknownFormats(uint guestFormat)
+    {
+        var registers = new Dictionary<uint, uint>
+        {
+            [0x000] = 1,
+            [0x007] = 15u | (15u << 16),
+            [0x010] = guestFormat,
+            [0x012] = 0x1234,
+        };
+
+        Assert.Null(AgcExports.DecodeDepthTarget(registers));
+    }
+
     [Fact]
     public void ReadLinearZ32DepthPreservesFloatingPointBits()
     {
@@ -87,7 +103,7 @@ public sealed class GuestDepthStateTests
     }
 
     [Fact]
-    public void ReadLinearZ16DepthPromotesToD32WithoutChangingRepresentedValue()
+    public void ReadLinearZ16DepthPreservesNativeUnormBits()
     {
         const ulong address = 0x0041_0000;
         ushort[] values = [0, 32768, ushort.MaxValue];
@@ -110,14 +126,7 @@ public sealed class GuestDepthStateTests
             swizzleMode: 0,
             out var pixels));
 
-        for (var index = 0; index < values.Length; index++)
-        {
-            Assert.Equal(
-                values[index] / (float)ushort.MaxValue,
-                BitConverter.Int32BitsToSingle(
-                    BinaryPrimitives.ReadInt32LittleEndian(
-                        pixels.AsSpan(index * sizeof(float), sizeof(float)))));
-        }
+        Assert.Equal(source, pixels);
     }
 
     [Fact]
