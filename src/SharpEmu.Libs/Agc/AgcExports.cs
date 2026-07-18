@@ -3901,7 +3901,8 @@ public static partial class AgcExports
                         ctx,
                         destinationAddress,
                         byteCount,
-                        immediateFill ? (uint)sourceAddress : null);
+                        immediateFill ? (uint)sourceAddress : null,
+                        immediateFill ? 0 : sourceAddress);
                 }
 
                 if (tracePacket)
@@ -4384,7 +4385,8 @@ public static partial class AgcExports
         CpuContext ctx,
         ulong destinationAddress,
         ulong byteCount,
-        uint? fillValue)
+        uint? fillValue,
+        ulong sourceAddress = 0)
     {
         var hasImage = GuestGpu.Current.TryGetGuestImageExtent(
             destinationAddress,
@@ -4411,6 +4413,18 @@ public static partial class AgcExports
         if (fillValue is { } fill)
         {
             GuestGpu.Current.SubmitGuestImageFill(destinationAddress, fill);
+            return;
+        }
+
+        // The CPU copy above preserves guest-memory semantics, but a live
+        // source render target may have newer GPU-only pixels. Prefer the
+        // backend's exact image copy when it can prove format and extent
+        // compatibility; otherwise upload the copied guest-memory bytes.
+        if (sourceAddress != 0 &&
+            GuestGpu.Current.TrySubmitGuestImageCopy(
+                sourceAddress,
+                destinationAddress))
+        {
             return;
         }
 
@@ -4522,7 +4536,12 @@ public static partial class AgcExports
                     byteCount);
                 if (copied)
                 {
-                    MirrorDmaWriteToGuestImage(ctx, destinationAddress, byteCount, fillValue: null);
+                    MirrorDmaWriteToGuestImage(
+                        ctx,
+                        destinationAddress,
+                        byteCount,
+                        fillValue: null,
+                        sourceAddress);
                 }
             }
         }

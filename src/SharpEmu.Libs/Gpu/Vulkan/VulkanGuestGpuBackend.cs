@@ -378,6 +378,9 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
     public void SubmitGuestImageWrite(ulong address, byte[] pixels) =>
         VulkanVideoPresenter.SubmitGuestImageWrite(address, pixels);
 
+    public bool TrySubmitGuestImageCopy(ulong sourceAddress, ulong destinationAddress) =>
+        VulkanVideoPresenter.TrySubmitGuestImageCopy(sourceAddress, destinationAddress);
+
     public bool TryGetGuestImageExtent(ulong address, out uint width, out uint height, out ulong byteCount) =>
         VulkanVideoPresenter.TryGetGuestImageExtent(address, out width, out height, out byteCount);
 
