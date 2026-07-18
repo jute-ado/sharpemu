@@ -2974,34 +2974,6 @@ internal static unsafe class VulkanVideoPresenter
             }
         }
 
-        private static int ScorePhysicalDevice(
-            PhysicalDeviceProperties properties,
-            string name,
-            string? deviceOverride)
-        {
-            if (!string.IsNullOrWhiteSpace(deviceOverride))
-            {
-                return name.Contains(deviceOverride, StringComparison.OrdinalIgnoreCase) ? 1000 : -1000;
-            }
-
-            var score = properties.DeviceType switch
-            {
-                PhysicalDeviceType.DiscreteGpu => 300,
-                PhysicalDeviceType.VirtualGpu => 100,
-                PhysicalDeviceType.Cpu => 50,
-                // Last resort: only picked when nothing else can present.
-                PhysicalDeviceType.IntegratedGpu => -100,
-                _ => 10,
-            };
-
-            if (properties.VendorID == NvidiaVendorId)
-            {
-                score += 500;
-            }
-
-            return score;
-        }
-
         private void CreateDevice()
         {
             var priority = 1.0f;
