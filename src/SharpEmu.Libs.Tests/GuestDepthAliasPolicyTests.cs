@@ -14,7 +14,8 @@ public sealed class GuestDepthAliasPolicyTests
         Address: 0x1000,
         Width: 1920,
         Height: 1080,
-        GuestFormat: 3);
+        GuestFormat: 3,
+        AttachmentFormat: Format.D32Sfloat);
 
     [Fact]
     public void ExactD32SampleReusesCanonicalDepthImage()
@@ -34,7 +35,11 @@ public sealed class GuestDepthAliasPolicyTests
         Assert.Equal(
             GuestDepthAliasKind.ExactSample,
             GuestDepthAliasPolicy.Classify(
-                Depth with { GuestFormat = 1 },
+                Depth with
+                {
+                    GuestFormat = 1,
+                    AttachmentFormat = Format.D16Unorm,
+                },
                 Texture() with { Format = 2, NumberType = 0 },
                 Format.R16Unorm,
                 depthIsAttached: false));
@@ -116,6 +121,69 @@ public sealed class GuestDepthAliasPolicyTests
             GuestDepthAliasPolicy.Classify(
                 Depth,
                 Texture() with { Address = 0x2000 },
+                Format.R32Sfloat,
+                depthIsAttached: false));
+    }
+
+    [Fact]
+    public void PromotedD16AttachmentCannotUseNativeTextureAlias()
+    {
+        Assert.Equal(
+            GuestDepthAliasKind.Incompatible,
+            GuestDepthAliasPolicy.Classify(
+                Depth with
+                {
+                    GuestFormat = 1,
+                    AttachmentFormat = Format.D24UnormS8Uint,
+                },
+                Texture() with { Format = 2, NumberType = 0 },
+                Format.R16Unorm,
+                depthIsAttached: false));
+    }
+
+    [Fact]
+    public void OverlappingStencilPlaneRejectsDepthAlias()
+    {
+        Assert.Equal(
+            GuestDepthAliasKind.Incompatible,
+            GuestDepthAliasPolicy.Classify(
+                Depth with
+                {
+                    StencilAddress = Depth.Address + 0x1000,
+                    AttachmentFormat = Format.D32SfloatS8Uint,
+                },
+                Texture(),
+                Format.R32Sfloat,
+                depthIsAttached: false));
+    }
+
+    [Fact]
+    public void DisjointStencilPlanePreservesDepthAlias()
+    {
+        var depthByteCount =
+            (ulong)Depth.Width * Depth.Height * sizeof(float);
+
+        Assert.Equal(
+            GuestDepthAliasKind.ExactSample,
+            GuestDepthAliasPolicy.Classify(
+                Depth with
+                {
+                    StencilAddress = Depth.Address + depthByteCount + 0x1000,
+                    AttachmentFormat = Format.D32SfloatS8Uint,
+                },
+                Texture(),
+                Format.R32Sfloat,
+                depthIsAttached: false));
+    }
+
+    [Fact]
+    public void ExplicitMismatchedSwizzleRejectsDepthAlias()
+    {
+        Assert.Equal(
+            GuestDepthAliasKind.Incompatible,
+            GuestDepthAliasPolicy.Classify(
+                Depth with { SwizzleMode = 5 },
+                Texture() with { TileMode = 4 },
                 Format.R32Sfloat,
                 depthIsAttached: false));
     }
