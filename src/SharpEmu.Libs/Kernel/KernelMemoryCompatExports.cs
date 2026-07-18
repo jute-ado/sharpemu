@@ -56,17 +56,6 @@ public static partial class KernelMemoryCompatExports
     private const ulong FlexibleMemorySizeBytes = 448UL * 1024 * 1024;
     private const int OrbisVirtualQueryInfoSize = 72;
     private const int OrbisKernelMaximumNameLength = 32;
-    // Raw Windows PAGE_* values used only against HostRegionInfo.RawProtection,
-    // which by contract carries the untranslated protection word of the host
-    // platform in use (see IHostMemory).
-    private const uint HostPageNoAccess = 0x01;
-    private const uint HostPageReadOnly = 0x02;
-    private const uint HostPageReadWrite = 0x04;
-    private const uint HostPageWriteCopy = 0x08;
-    private const uint HostPageExecuteRead = 0x20;
-    private const uint HostPageExecuteReadWrite = 0x40;
-    private const uint HostPageExecuteWriteCopy = 0x80;
-    private const uint HostPageGuard = 0x100;
     private const int Enomem = 12;
     private const int Efault = 14;
     private const int Einval = 22;
@@ -7187,7 +7176,7 @@ public static partial class KernelMemoryCompatExports
         return highWaterMark;
     }
 
-    private static bool TryReadHostMemory(ulong address, Span<byte> destination)
+    private static unsafe bool TryReadHostMemory(ulong address, Span<byte> destination)
     {
         if (destination.IsEmpty)
         {
@@ -7207,9 +7196,7 @@ public static partial class KernelMemoryCompatExports
 
         try
         {
-            var temporary = new byte[destination.Length];
-            Marshal.Copy((nint)address, temporary, 0, temporary.Length);
-            temporary.AsSpan().CopyTo(destination);
+            new ReadOnlySpan<byte>((void*)address, destination.Length).CopyTo(destination);
             return true;
         }
         catch
@@ -7257,6 +7244,41 @@ public static partial class KernelMemoryCompatExports
         }
 
         return false;
+    }
+
+    internal static bool TryReadShaderGuestMemory(
+        ulong address,
+        Span<byte> destination)
+    {
+        if (destination.IsEmpty)
+        {
+            return true;
+        }
+
+        if (TryReadTrackedLibcHeap(address, destination))
+        {
+            return true;
+        }
+
+        var length = (ulong)destination.Length;
+        lock (_memoryGate)
+        {
+            if (TryFindVirtualQueryRegionLocked(
+                    address,
+                    findNext: false,
+                    out var region) &&
+                length <= region.Length &&
+                address >= region.Address &&
+                length <= region.Address + region.Length - address)
+            {
+                return TryReadHostMemory(address, destination);
+            }
+        }
+
+        // Direct execution uses guest virtual addresses as host virtual addresses.
+        // Some native mmap paths predate _mappedRegions tracking, so retain the same
+        // committed/readable-page fallback used by the libc compatibility layer.
+        return TryReadHostMemory(address, destination);
     }
 
     internal static bool TryReadTrackedLibcHeapGpuAlias(
@@ -7615,7 +7637,7 @@ public static partial class KernelMemoryCompatExports
         return value != 0 && (value & (value - 1)) == 0;
     }
 
-    private static bool TryWriteHostMemory(ulong address, ReadOnlySpan<byte> source)
+    private static unsafe bool TryWriteHostMemory(ulong address, ReadOnlySpan<byte> source)
     {
         if (source.IsEmpty)
         {
@@ -7635,8 +7657,7 @@ public static partial class KernelMemoryCompatExports
 
         try
         {
-            var temporary = source.ToArray();
-            Marshal.Copy(temporary, 0, (nint)address, temporary.Length);
+            source.CopyTo(new Span<byte>((void*)address, source.Length));
             return true;
         }
         catch
@@ -7679,6 +7700,20 @@ public static partial class KernelMemoryCompatExports
 
     private static bool IsHostRangeAccessible(ulong address, ulong length, bool writeAccess)
     {
+        return IsHostRangeAccessible(
+            HostMemory,
+            address,
+            length,
+            writeAccess);
+    }
+
+    internal static bool IsHostRangeAccessible(
+        IHostMemory hostMemory,
+        ulong address,
+        ulong length,
+        bool writeAccess)
+    {
+        ArgumentNullException.ThrowIfNull(hostMemory);
         if (address == 0 || length == 0)
         {
             return false;
@@ -7695,37 +7730,48 @@ public static partial class KernelMemoryCompatExports
             return false;
         }
 
-        // The compatibility fallback historically accepts raw host pointers on Windows.
-        // Host memory queries are the safety boundary that makes those probes non-faulting.
-        // No non-Windows host backend exists yet, so raw host-pointer probing remains
-        // disabled there.
-        if (!OperatingSystem.IsWindows())
-        {
-            return false;
-        }
-
-        if (!TryQueryHostPage(address, out var startInfo) || !HasRequiredProtection(startInfo.RawProtection, writeAccess))
-        {
-            return false;
-        }
-
         var endAddress = address + length - 1;
-        if (endAddress == address)
+        var currentAddress = address;
+        while (currentAddress <= endAddress)
         {
-            return true;
-        }
+            if (!TryQueryHostPage(hostMemory, currentAddress, out var info) ||
+                !HasRequiredProtection(info.Protection, writeAccess))
+            {
+                return false;
+            }
 
-        if (!TryQueryHostPage(endAddress, out var endInfo) || !HasRequiredProtection(endInfo.RawProtection, writeAccess))
-        {
-            return false;
+            var regionBase = info.BaseAddress;
+            var regionSize = info.RegionSize;
+            if (regionSize == 0 ||
+                regionBase > currentAddress ||
+                ulong.MaxValue - regionBase < regionSize)
+            {
+                return false;
+            }
+
+            var regionEnd = regionBase + regionSize;
+            if (regionEnd <= currentAddress)
+            {
+                return false;
+            }
+
+            if (regionEnd > endAddress)
+            {
+                return true;
+            }
+
+            currentAddress = regionEnd;
         }
 
         return true;
     }
 
-    private static bool TryQueryHostPage(ulong address, out HostRegionInfo info)
+    private static bool TryQueryHostPage(
+        IHostMemory hostMemory,
+        ulong address,
+        out HostRegionInfo info)
     {
-        if (!HostMemory.Query(address, out info))
+        if (!hostMemory.Query(address, out info))
         {
             return false;
         }
@@ -7733,17 +7779,24 @@ public static partial class KernelMemoryCompatExports
         return info.State == HostRegionState.Committed;
     }
 
-    private static bool HasRequiredProtection(uint protect, bool writeAccess)
+    private static bool HasRequiredProtection(
+        HostPageProtection protection,
+        bool writeAccess)
     {
-        if ((protect & (HostPageNoAccess | HostPageGuard)) != 0)
+        if (writeAccess)
         {
-            return false;
+            return protection is
+                HostPageProtection.ReadWrite or
+                HostPageProtection.ReadWriteExecute or
+                HostPageProtection.ExecuteWriteCopy;
         }
 
-        const uint readableMask = HostPageReadOnly | HostPageReadWrite | HostPageWriteCopy | HostPageExecuteRead | HostPageExecuteReadWrite | HostPageExecuteWriteCopy;
-        const uint writableMask = HostPageReadWrite | HostPageWriteCopy | HostPageExecuteReadWrite | HostPageExecuteWriteCopy;
-        var expected = writeAccess ? writableMask : readableMask;
-        return (protect & expected) != 0;
+        return protection is
+            HostPageProtection.ReadOnly or
+            HostPageProtection.ReadWrite or
+            HostPageProtection.ReadExecute or
+            HostPageProtection.ReadWriteExecute or
+            HostPageProtection.ExecuteWriteCopy;
     }
 
     private static bool TryWriteOpenDescriptorStat(CpuContext ctx, int fd, ulong statAddress)

@@ -24,6 +24,7 @@ internal sealed unsafe partial class WindowsHostMemory : IHostMemory
     private const uint PAGE_EXECUTE_READ = 0x20;
     private const uint PAGE_EXECUTE_READWRITE = 0x40;
     private const uint PAGE_EXECUTE_WRITECOPY = 0x80;
+    private const uint PAGE_GUARD = 0x100;
 
     public ulong Allocate(ulong desiredAddress, ulong size, HostPageProtection protection)
     {
@@ -100,10 +101,18 @@ internal sealed unsafe partial class WindowsHostMemory : IHostMemory
         _ => HostRegionState.Free,
     };
 
-    private static HostPageProtection ToHostProtection(uint rawProtection)
+    internal static HostPageProtection ToHostProtection(uint rawProtection)
     {
-        // Strip PAGE_GUARD/PAGE_NOCACHE/PAGE_WRITECOMBINE modifiers; callers needing
-        // them compare HostRegionInfo.RawProtection directly.
+        // Guard pages raise an exception on first access even when their base
+        // protection is readable. Keep that safety property in the portable
+        // abstraction instead of requiring every caller to inspect Windows
+        // protection bits.
+        if ((rawProtection & PAGE_GUARD) != 0)
+        {
+            return HostPageProtection.NoAccess;
+        }
+
+        // PAGE_NOCACHE/PAGE_WRITECOMBINE do not change accessibility.
         return (rawProtection & 0xFF) switch
         {
             PAGE_READONLY => HostPageProtection.ReadOnly,

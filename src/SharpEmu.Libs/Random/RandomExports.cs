@@ -8,8 +8,8 @@ namespace SharpEmu.Libs.Random;
 
 public static class RandomExports
 {
-    private const ulong MaximumRandomBytes = 64;
     private const int RandomErrorInvalid = unchecked((int)0x817C0016);
+    private const int MaxRandomBytes = 64;
 
     [SysAbiExport(
         Nid = "PI7jIZj4pcE",
@@ -18,31 +18,22 @@ public static class RandomExports
         LibraryName = "libSceRandom")]
     public static int RandomGetRandomNumber(CpuContext ctx)
     {
-        var outputAddress = ctx[CpuRegister.Rdi];
+        var destination = ctx[CpuRegister.Rdi];
         var size = ctx[CpuRegister.Rsi];
-        if (size > MaximumRandomBytes || (outputAddress == 0 && size != 0))
+        if ((destination == 0 && size != 0) || size > MaxRandomBytes)
         {
-            return SetResult(ctx, RandomErrorInvalid);
+            return ctx.SetReturn(RandomErrorInvalid);
         }
 
         if (size == 0)
         {
-            return SetResult(ctx, (int)OrbisGen2Result.ORBIS_GEN2_OK);
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
         }
 
-        Span<byte> randomBytes = stackalloc byte[checked((int)size)];
-        RandomNumberGenerator.Fill(randomBytes);
-        if (!ctx.Memory.TryWrite(outputAddress, randomBytes))
-        {
-            return SetResult(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
-        }
-
-        return SetResult(ctx, (int)OrbisGen2Result.ORBIS_GEN2_OK);
-    }
-
-    private static int SetResult(CpuContext ctx, int result)
-    {
-        ctx[CpuRegister.Rax] = unchecked((ulong)result);
-        return result;
+        Span<byte> bytes = stackalloc byte[(int)size];
+        RandomNumberGenerator.Fill(bytes);
+        return ctx.Memory.TryWrite(destination, bytes)
+            ? ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK)
+            : ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
 }

@@ -92,6 +92,11 @@ public partial class MainWindow : Window
     // plain window color remains the fallback when the asset fails to load.
     private Bitmap? _defaultBackdrop;
 
+    // Whether the native loading/closing popup should be showing; it is a
+    // desktop-topmost popup, so it closes while the launcher is in the
+    // background or minimized and reopens from this flag on activation.
+    private bool _sessionLoadingActive;
+
     // Controller navigation state.
     private readonly DispatcherTimer _gamepadTimer;
     private HostGamepadButtons _previousPadButtons;
@@ -150,8 +155,18 @@ public partial class MainWindow : Window
         };
         _libraryBlurTimer.Tick += (_, _) => AdvanceLibraryBlur();
 
-        Activated += (_, _) => UpdateSessionBarVisibility();
-        Deactivated += (_, _) => SessionBarPopup.IsOpen = false;
+        // Native popups float above every window on the desktop; they must
+        // follow the launcher into the background or a minimized state.
+        Activated += (_, _) =>
+        {
+            UpdateSessionBarVisibility();
+            SessionLoadingPopup.IsOpen = _sessionLoadingActive;
+        };
+        Deactivated += (_, _) =>
+        {
+            SessionBarPopup.IsOpen = false;
+            SessionLoadingPopup.IsOpen = false;
+        };
 
         TitleBar.PointerPressed += OnTitleBarPointerPressed;
         GameList.SelectionChanged += (_, _) => UpdateSelectedGame();
@@ -414,6 +429,15 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_isRunning || _isStopping)
+        {
+            // The game renders inside the launcher window, so the launcher
+            // stays active while playing. The controller belongs to the game
+            // then: no navigation, and Circle/B must never stop the session.
+            _previousPadButtons = pad.Buttons;
+            return;
+        }
+
         var shoulderPressed = pad.Buttons & ~_previousPadButtons;
         if ((shoulderPressed & HostGamepadButtons.L1) != 0)
         {
@@ -461,11 +485,6 @@ public partial class MainWindow : Window
         if ((pressed & HostGamepadButtons.Cross) != 0)
         {
             LaunchSelected();
-        }
-
-        if ((pressed & HostGamepadButtons.Circle) != 0)
-        {
-            StopEmulator();
         }
 
         _previousPadButtons = pad.Buttons;
@@ -1626,13 +1645,23 @@ public partial class MainWindow : Window
         base.OnPropertyChanged(change);
         if (change.Property == WindowStateProperty)
         {
+            // The XAML WindowState="Maximized" assignment raises this change
+            // during InitializeComponent, before named controls are wired up.
             if (WindowState == WindowState.Minimized)
             {
                 _sndPreview.Pause();
+                if (SessionLoadingPopup is { } popup)
+                {
+                    popup.IsOpen = false;
+                }
             }
             else
             {
                 _sndPreview.Resume();
+                if (SessionLoadingPopup is { } popup)
+                {
+                    popup.IsOpen = _sessionLoadingActive;
+                }
             }
         }
     }
@@ -2007,7 +2036,7 @@ public partial class MainWindow : Window
                 ContentToolbar.IsVisible = false;
                 ConsolePanel.IsVisible = false;
                 LaunchBar.IsVisible = false;
-                SessionLoadingPopup.IsOpen = false;
+                HideSessionLoading();
                 UpdateSessionBarVisibility();
             }
         });
@@ -2107,7 +2136,7 @@ public partial class MainWindow : Window
         GameView.IsVisible = false;
         GameView.IsHitTestVisible = true;
         SessionBarPopup.IsOpen = false;
-        SessionLoadingPopup.IsOpen = false;
+        HideSessionLoading();
         AnimateLibraryBlur(0, clearWhenComplete: true);
         MainContent.Margin = new Thickness(32, 24, 32, 20);
         ContentToolbar.IsVisible = true;
@@ -2191,7 +2220,14 @@ public partial class MainWindow : Window
     {
         SessionLoadingTitle.Text = title;
         SessionLoadingDetail.Text = detail;
-        SessionLoadingPopup.IsOpen = true;
+        _sessionLoadingActive = true;
+        SessionLoadingPopup.IsOpen = IsActive && WindowState != WindowState.Minimized;
+    }
+
+    private void HideSessionLoading()
+    {
+        _sessionLoadingActive = false;
+        SessionLoadingPopup.IsOpen = false;
     }
 
     private void ReturnToLibraryWhileStopping()

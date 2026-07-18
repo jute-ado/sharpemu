@@ -37,35 +37,6 @@ public sealed class GuestBufferRangeSetTests
     }
 
     [Fact]
-    public void MergeRequestsPromotesOverlappingAliasesToWritable()
-    {
-        var merged = GuestBufferRangeSet.MergeRequests(
-        [
-            new GuestBufferRangeRequest(
-                new GuestBufferRange(0x180, 0x20),
-                Writable: false),
-            new GuestBufferRangeRequest(
-                new GuestBufferRange(0x100, 0x80),
-                Writable: true),
-            new GuestBufferRangeRequest(
-                new GuestBufferRange(0x300, 0x20),
-                Writable: false),
-        ]);
-
-        Assert.Equal(2, merged.Count);
-        Assert.Equal(
-            new GuestBufferRangeRequest(
-                new GuestBufferRange(0x100, 0xA0),
-                Writable: true),
-            merged[0]);
-        Assert.Equal(
-            new GuestBufferRangeRequest(
-                new GuestBufferRange(0x300, 0x20),
-                Writable: false),
-            merged[1]);
-    }
-
-    [Fact]
     public void ContainmentAndOverlapUseHalfOpenRanges()
     {
         var allocation = new GuestBufferRange(0x100, 0x100);
@@ -95,27 +66,6 @@ public sealed class GuestBufferRangeSetTests
         Assert.Equal(
             new GuestBufferRange(0x1F0, 0x190),
             expanded);
-    }
-
-    [Theory]
-    [InlineData(true, 3UL, 2UL, false, true)]
-    [InlineData(true, 2UL, 2UL, false, false)]
-    [InlineData(true, 0UL, 0UL, true, true)]
-    [InlineData(false, 3UL, 2UL, true, false)]
-    public void ReadOnlyMutationVersionsOnlyWhileReferenced(
-        bool changed,
-        ulong lastUse,
-        ulong completed,
-        bool open,
-        bool expected)
-    {
-        Assert.Equal(
-            expected,
-            GuestBufferRangeSet.MustVersionReadOnlyMutation(
-                changed,
-                lastUse,
-                completed,
-                open));
     }
 
     [Fact]

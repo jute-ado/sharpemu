@@ -3,6 +3,7 @@
 
 using SharpEmu.HLE;
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Numerics;
 
 namespace SharpEmu.ShaderCompiler;
@@ -1893,7 +1894,8 @@ public static class Gen5ShaderScalarEvaluator
                 continue;
             }
 
-            if (!ctx.TryReadUInt32(
+            if (!TryReadUInt32(
+                    ctx,
                     address + (ulong)(index * sizeof(uint)),
                     out var value) &&
                 !TryReadUserDataScalarLoad(
@@ -2252,4 +2254,17 @@ public static class Gen5ShaderScalarEvaluator
         opcode.StartsWith("ImageGather", StringComparison.Ordinal) ||
         opcode == "ImageGetLod";
 
+    private static bool TryReadUInt32(CpuContext ctx, ulong address, out uint value)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(uint)];
+        if (!ctx.Memory.TryRead(address, bytes) &&
+            FallbackMemoryReader?.Invoke(address, bytes) != true)
+        {
+            value = 0;
+            return false;
+        }
+
+        value = BinaryPrimitives.ReadUInt32LittleEndian(bytes);
+        return true;
+    }
 }

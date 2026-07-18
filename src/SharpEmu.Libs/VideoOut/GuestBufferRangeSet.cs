@@ -10,10 +10,6 @@ internal readonly record struct GuestBufferRange(ulong Start, ulong Length)
     public ulong End => checked(Start + Length);
 }
 
-internal readonly record struct GuestBufferRangeRequest(
-    GuestBufferRange Range,
-    bool Writable);
-
 internal readonly record struct GuestBufferCacheEntry(
     GuestBufferRange Range,
     ulong LastUseSequence,
@@ -62,42 +58,6 @@ internal static class GuestBufferRangeSet
         return true;
     }
 
-    public static List<GuestBufferRangeRequest> MergeRequests(
-        IReadOnlyList<GuestBufferRangeRequest> requests)
-    {
-        var ordered = new List<GuestBufferRangeRequest>(requests.Count);
-        foreach (var request in requests)
-        {
-            if (request.Range.Length != 0)
-            {
-                ordered.Add(request);
-            }
-        }
-
-        ordered.Sort(static (left, right) =>
-            left.Range.Start.CompareTo(right.Range.Start));
-        var merged = new List<GuestBufferRangeRequest>(ordered.Count);
-        foreach (var request in ordered)
-        {
-            if (merged.Count == 0 ||
-                request.Range.Start > merged[^1].Range.End)
-            {
-                merged.Add(request);
-                continue;
-            }
-
-            var previous = merged[^1];
-            var end = Math.Max(previous.Range.End, request.Range.End);
-            merged[^1] = new GuestBufferRangeRequest(
-                new GuestBufferRange(
-                    previous.Range.Start,
-                    end - previous.Range.Start),
-                previous.Writable || request.Writable);
-        }
-
-        return merged;
-    }
-
     public static bool Contains(
         GuestBufferRange allocation,
         GuestBufferRange requested) =>
@@ -144,15 +104,6 @@ internal static class GuestBufferRangeSet
 
         return new GuestBufferRange(start, end - start);
     }
-
-    public static bool MustVersionReadOnlyMutation(
-        bool contentsChanged,
-        ulong lastUseSequence,
-        ulong completedSequence,
-        bool referencedByOpenSubmission) =>
-        contentsChanged &&
-        (lastUseSequence > completedSequence ||
-         referencedByOpenSubmission);
 
     public static List<int> SelectEvictions(
         IReadOnlyList<GuestBufferCacheEntry> entries,

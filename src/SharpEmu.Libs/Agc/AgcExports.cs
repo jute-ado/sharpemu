@@ -615,6 +615,8 @@ public static partial class AgcExports
         public ulong WorkSequence { get; set; }
         public ulong SubmissionSequence { get; set; }
         public bool WaitMonitorRunning { get; set; }
+        public object WaitMonitorSignalGate { get; } = new();
+        public long WaitMonitorSignalVersion { get; set; }
     }
 
     private readonly record struct RegisteredAgcResource(
@@ -3595,26 +3597,10 @@ public static partial class AgcExports
                         currentAddress,
                         length,
                         op,
-                        out var dispatch,
-                        out var indirectDimsRetryAddress))
+                        out var dispatch))
                 {
                     state.FrameDispatchCount++;
                     ObserveComputeDispatch(ctx, gpuState, state, dispatch);
-                }
-                else if (indirectDimsRetryAddress != 0 &&
-                         HandleSubmittedIndirectDimsWait(
-                             ctx,
-                             state,
-                             commandAddress,
-                             currentAddress,
-                             offset,
-                             dwordCount,
-                             indirectDimsRetryAddress,
-                             tracePackets,
-                             depth,
-                             continuation))
-                {
-                    return true; // suspend until the producer computes the dims
                 }
             }
 
@@ -3953,27 +3939,11 @@ public static partial class AgcExports
         void CompleteAndWake()
         {
             CompleteLabelProducer(producer);
-            if (GpuWaitRegistry.Count == 0)
+            lock (gpuState.WaitMonitorSignalGate)
             {
-                return;
+                gpuState.WaitMonitorSignalVersion++;
+                Monitor.Pulse(gpuState.WaitMonitorSignalGate);
             }
-
-            // Resuming a DCB can enqueue another compute dispatch and wait for
-            // it. Never do that reentrantly on the Vulkan render thread.
-            ThreadPool.UnsafeQueueUserWorkItem(
-                static state =>
-                {
-                    var (resumeContext, resumeGpuState) = state;
-                    lock (resumeGpuState.Gate)
-                    {
-                        DrainResumableDcbs(
-                            resumeContext,
-                            resumeGpuState,
-                            tracePackets: _traceAgc);
-                    }
-                },
-                (ctx, gpuState),
-                preferLocal: false);
         }
 
         void ApplyAndQueueCompletion()
@@ -4907,92 +4877,6 @@ public static partial class AgcExports
         return true;
     }
 
-    // Returns true when the DCB should suspend parsing at this wait (its
-    // continuation was registered into GpuWaitRegistry); false to keep parsing
-    // (already satisfied, unreadable, or legacy force-satisfy mode).
-    // How long an indirect dispatch may wait for its producing dispatch to write
-    // non-zero dimensions before we give up and drop it (matching the pre-existing
-    // reject behavior). The producer runs on the render thread within a frame or
-    // two; this only bounds the pathological/legitimately-empty case.
-    private const long IndirectDimsRetryBudgetMs = 150;
-
-    private static readonly object _indirectDimsGate = new();
-    // Keys (memory, packetAddress) whose retry deadline elapsed. Added by
-    // DrainResumableDcbs when it resumes an expired retry, consumed by the very
-    // next re-parse of that packet so it drops instead of re-suspending. Never
-    // persists across frames — a fresh submit of the same packet retries anew.
-    private static readonly HashSet<(object, ulong)> _indirectDimsExpired = new();
-
-    // Suspends an indirect-dispatch DCB until the guest buffer holding its
-    // thread-group dimensions becomes non-zero (written by a prior GPU dispatch),
-    // then re-parses the dispatch. Returns false — so the caller drops the work —
-    // when the dims already expired once (genuinely empty dispatch).
-    private static bool HandleSubmittedIndirectDimsWait(
-        CpuContext ctx,
-        SubmittedDcbState state,
-        ulong commandAddress,
-        ulong packetAddress,
-        uint offset,
-        uint dwordCount,
-        ulong dimsAddress,
-        bool tracePacket,
-        int depth,
-        SubmittedDcbContinuation? continuation)
-    {
-        if (!_gpuWaitSuspendEnabled ||
-            dimsAddress == 0 ||
-            dimsAddress % sizeof(uint) != 0)
-        {
-            return false;
-        }
-
-        var key = (ctx.Memory, packetAddress);
-        lock (_indirectDimsGate)
-        {
-            // This is the re-parse right after the deadline elapsed: drop the
-            // dispatch instead of suspending again.
-            if (_indirectDimsExpired.Remove(key))
-            {
-                return false;
-            }
-        }
-
-        var waiter = new GpuWaitRegistry.WaitingDcb
-        {
-            CommandBufferAddress = commandAddress,
-            ResumeAddress = packetAddress, // re-parse this dispatch packet
-            ResumeOffset = offset,
-            TotalDwords = dwordCount,
-            WaitAddress = dimsAddress,
-            ReferenceValue = 0,
-            Mask = 0xFFFFFFFF,
-            CompareFunction = 4, // NOT_EQUAL: dims became available
-            Is64Bit = false,
-            IsStandard = false,
-            Memory = ctx.Memory,
-            QueueName = state.QueueName,
-            SubmissionId = state.ActiveSubmissionId,
-            RegisteredTicks = System.Diagnostics.Stopwatch.GetTimestamp(),
-            RetryDeadlineTicks = System.Diagnostics.Stopwatch.GetTimestamp() +
-                (IndirectDimsRetryBudgetMs * System.Diagnostics.Stopwatch.Frequency / 1000L),
-            State = state,
-            Depth = depth,
-            Continuation = continuation,
-        };
-
-        GpuWaitRegistry.Register(dimsAddress, waiter);
-        var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
-        EnsureGpuWaitMonitor(ctx, gpuState);
-        if (tracePacket)
-        {
-            TraceAgc(
-                $"agc.dispatch_indirect_wait dims=0x{dimsAddress:X16} " +
-                $"packet=0x{packetAddress:X16} queue={state.QueueName}");
-        }
-
-        return true;
-    }
-
     private static bool HandleSubmittedWaitRegMem(
         CpuContext ctx,
         SubmittedDcbState state,
@@ -5160,38 +5044,45 @@ public static partial class AgcExports
         SubmittedGpuState gpuState)
     {
         var delayMilliseconds = 1;
+        long observedSignal;
+        lock (gpuState.WaitMonitorSignalGate)
+        {
+            observedSignal = gpuState.WaitMonitorSignalVersion;
+        }
+
         while (true)
         {
-            var madeProgress = false;
+            int resumed;
+            int remaining;
             lock (gpuState.Gate)
             {
-                var before = GpuWaitRegistry.CountForMemory(ctx.Memory);
-                if (before == 0)
-                {
-                    gpuState.WaitMonitorRunning = false;
-                    return;
-                }
-
-                DrainResumableDcbs(ctx, gpuState, tracePackets: _traceAgc);
-                var after = GpuWaitRegistry.CountForMemory(ctx.Memory);
-                madeProgress = after < before;
-                if (madeProgress)
+                resumed = DrainResumableDcbs(ctx, gpuState, tracePackets: _traceAgc);
+                remaining = GpuWaitRegistry.CountForMemory(ctx.Memory);
+                if (_traceAgc && resumed != 0)
                 {
                     Console.Error.WriteLine(
-                        $"[LOADER][TRACE] agc.wait_monitor_resumed count={before - after} " +
-                        $"remaining={after}");
+                        $"[LOADER][TRACE] agc.wait_monitor_resumed count={resumed} " +
+                        $"remaining={remaining}");
                 }
-                if (after == 0)
+                if (remaining == 0)
                 {
                     gpuState.WaitMonitorRunning = false;
                     return;
                 }
             }
 
-            delayMilliseconds = madeProgress
+            delayMilliseconds = resumed != 0
                 ? 1
                 : Math.Min(delayMilliseconds * 2, 16);
-            Thread.Sleep(delayMilliseconds);
+            lock (gpuState.WaitMonitorSignalGate)
+            {
+                if (gpuState.WaitMonitorSignalVersion == observedSignal)
+                {
+                    Monitor.Wait(gpuState.WaitMonitorSignalGate, delayMilliseconds);
+                }
+
+                observedSignal = gpuState.WaitMonitorSignalVersion;
+            }
         }
     }
 
@@ -5245,43 +5136,23 @@ public static partial class AgcExports
     // guest memory (labels are advanced by ReleaseMem/WriteData/DmaData packets
     // or direct CPU writes) and resumes the ones now satisfied. A resumed DCB
     // can itself write labels that unblock others, so loop to a fixed point.
-    private static void DrainResumableDcbs(
+    private static int DrainResumableDcbs(
         CpuContext ctx,
         SubmittedGpuState gpuState,
         bool tracePackets)
     {
         if (!_gpuWaitSuspendEnabled)
         {
-            return;
+            return 0;
         }
 
+        var resumedCount = 0;
         for (var pass = 0; pass < 256; pass++)
         {
             var woken = GpuWaitRegistry.CollectSatisfied(ctx.Memory, (address, is64Bit) =>
                 is64Bit
                     ? TryReadUInt64(ctx, address, out var value64) ? value64 : (ulong?)null
                     : TryReadUInt32(ctx, address, out var value32) ? value32 : (ulong?)null);
-
-            // Indirect-dispatch dimension retries whose deadline elapsed are
-            // resumed so they drop instead of stalling. Flag each so its immediate
-            // re-parse drops the dispatch rather than suspending again.
-            var expiredRetries = GpuWaitRegistry.CollectExpiredRetries(
-                ctx.Memory, System.Diagnostics.Stopwatch.GetTimestamp());
-            if (expiredRetries is not null)
-            {
-                lock (_indirectDimsGate)
-                {
-                    foreach (var retry in expiredRetries)
-                    {
-                        _indirectDimsExpired.Add((ctx.Memory, retry.ResumeAddress));
-                    }
-                }
-
-                foreach (var retry in expiredRetries)
-                {
-                    ResumeSuspendedDcb(ctx, gpuState, retry, tracePackets);
-                }
-            }
 
             // Break cross-queue deadlocks: a waiter stuck past the deadline whose
             // label a real producer already signalled (but guest memory has since
@@ -5305,7 +5176,7 @@ public static partial class AgcExports
                 }
             }
 
-            if (woken is null && expiredRetries is null && deadlockBroken is null)
+            if (woken is null && deadlockBroken is null)
             {
                 if (_gpuWaitStaleTicks > 0 &&
                     GpuWaitRegistry.CollectUnreportedStale(
@@ -5332,7 +5203,7 @@ public static partial class AgcExports
                     }
                 }
 
-                return;
+                return resumedCount;
             }
 
             if (woken is not null)
@@ -5340,9 +5211,12 @@ public static partial class AgcExports
                 foreach (var waiter in woken)
                 {
                     ResumeSuspendedDcb(ctx, gpuState, waiter, tracePackets);
+                    resumedCount++;
                 }
             }
         }
+
+        return resumedCount;
     }
 
     private static void ResumeSuspendedDcb(
@@ -8949,14 +8823,9 @@ public static partial class AgcExports
         ulong packetAddress,
         uint packetLength,
         uint opcode,
-        out ComputeDispatchTopology dispatch,
-        out ulong indirectDimsRetryAddress)
+        out ComputeDispatchTopology dispatch)
     {
         dispatch = default;
-        // Non-zero only when this is an INDIRECT dispatch whose dimensions read as
-        // zero — meaning the producing GPU dispatch that computes them has not run
-        // yet. The caller suspends on this address instead of dropping the work.
-        indirectDimsRetryAddress = 0;
         ulong dimensionsAddress;
         uint initiator;
         string dispatchSource;
@@ -9005,17 +8874,6 @@ public static partial class AgcExports
 
         if (dispatchEndX == 0 || dispatchEndY == 0 || dispatchEndZ == 0)
         {
-            // Indirect dispatches read their dimensions from a guest buffer a
-            // prior GPU dispatch fills. Zero here means that producer has not run
-            // yet — signal the caller to suspend on the dims buffer and retry,
-            // rather than dropping the work (which black-screens GPU-driven games
-            // like Astro Bot). Direct dispatches carry dims inline, so a zero is
-            // genuinely malformed and still rejected.
-            if (opcode == ItDispatchIndirect)
-            {
-                indirectDimsRetryAddress = dimensionsAddress;
-            }
-
             return RejectComputeDispatch(
                 dimensionsAddress,
                 initiator,
@@ -9490,7 +9348,7 @@ public static partial class AgcExports
                     out _);
                 var globalMemoryBuffers =
                     CreateTranslatedComputeGlobalBuffers(evaluation);
-                var workSequence = GuestGpu.Current.SubmitComputeDispatch(
+                GuestGpu.Current.SubmitComputeDispatch(
                     shaderAddress,
                     computeShader,
                     textures,
@@ -9509,12 +9367,9 @@ public static partial class AgcExports
                     dispatch.ThreadCountX,
                     dispatch.ThreadCountY,
                     dispatch.ThreadCountZ);
+                // Vulkan queue order keeps dependent dispatches coherent. CPU visibility is
+                // published by explicit PM4 release/write actions instead of per dispatch.
                 gpuDispatch = true;
-                if (writesGlobalMemory &&
-                    !GuestGpu.Current.WaitForGuestWork(workSequence))
-                {
-                    computeError = $"global-write-sync-timeout sequence={workSequence}";
-                }
             }
         }
 
