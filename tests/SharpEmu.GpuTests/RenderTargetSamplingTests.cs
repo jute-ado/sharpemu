@@ -53,7 +53,7 @@ public sealed class RenderTargetSamplingTests
         Directory.CreateDirectory(captureDirectory);
         Environment.SetEnvironmentVariable(
             "SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE",
-            $"0x{FirstDisplayAddress:X}@10");
+            $"0x{FirstDisplayAddress:X}@11");
         Environment.SetEnvironmentVariable(
             "SHARPEMU_GUEST_IMAGE_DUMP_DIR",
             captureDirectory);
@@ -117,6 +117,7 @@ public sealed class RenderTargetSamplingTests
             }
             AssertDepthCompareAndClear(FirstDisplayAddress);
             ComposeSeededTargetToLeftQuarter(FirstDisplayAddress);
+            ComposeDepthToSecondSixteenth(FirstDisplayAddress);
             ComposeVersionedBuffersToSecondQuarter(
                 FirstDisplayAddress);
             ComposeCpuTextureToRightHalf(
@@ -133,8 +134,16 @@ public sealed class RenderTargetSamplingTests
             AssertRgbaRegion(
                 pixels,
                 xStart: 0,
-                xEnd: DestinationWidth / 8,
+                xEnd: DestinationWidth / 16,
                 expectedRed: 255,
+                expectedGreen: 0,
+                expectedBlue: 0,
+                expectedAlpha: 255);
+            AssertRgbaRegion(
+                pixels,
+                xStart: DestinationWidth / 16,
+                xEnd: DestinationWidth / 8,
+                expectedRed: 64,
                 expectedGreen: 0,
                 expectedBlue: 0,
                 expectedAlpha: 255);
@@ -317,6 +326,14 @@ public sealed class RenderTargetSamplingTests
             blue: 0.875f,
             clearDepth: true,
             depthAddress: InitialDepthAddress);
+        SubmitSolidWithDepth(
+            SourceAddress,
+            red: 1f,
+            green: 1f,
+            blue: 1f,
+            clearDepth: true,
+            depthClearValue: 0.25f,
+            compareOp: 0);
 
         ComposeTextureTo(
             SecondDisplayAddress,
@@ -355,6 +372,22 @@ public sealed class RenderTargetSamplingTests
                 Width: DestinationWidth / 8,
                 Height: DestinationHeight));
     }
+
+    private static void ComposeDepthToSecondSixteenth(ulong destinationAddress)
+        => ComposeTextureTo(
+            DepthAddress,
+            SourceWidth,
+            SourceHeight,
+            destinationAddress,
+            SpirvFixedShaders.CreateCopyFragment(),
+            CreatePassthroughVertex(),
+            textureDataFormat: 4,
+            textureNumberType: 7,
+            destinationRegion: new GuestRect(
+                X: checked((int)(DestinationWidth / 16)),
+                Y: 0,
+                Width: DestinationWidth / 16,
+                Height: DestinationHeight));
 
     private static void SubmitSolid(
         ulong address,
@@ -523,7 +556,9 @@ public sealed class RenderTargetSamplingTests
         float blue,
         bool clearDepth,
         ulong depthAddress = DepthAddress,
-        ICpuMemory? guestMemory = null)
+        ICpuMemory? guestMemory = null,
+        float depthClearValue = 1f,
+        uint compareOp = 1)
     {
         VulkanVideoPresenter.SubmitOffscreenTranslatedDraw(
             SpirvFixedShaders.CreateSolidFragment(red, green, blue, alpha: 1f),
@@ -544,7 +579,7 @@ public sealed class RenderTargetSamplingTests
                 Depth = new GuestDepthState(
                     TestEnable: true,
                     WriteEnable: true,
-                    CompareOp: 1,
+                    CompareOp: compareOp,
                     ClearEnable: clearDepth),
             },
             depthTarget: new GuestDepthTarget(
@@ -554,7 +589,7 @@ public sealed class RenderTargetSamplingTests
                 Height: SourceHeight,
                 GuestFormat: 3,
                 SwizzleMode: 0,
-                ClearDepth: 1f,
+                ClearDepth: depthClearValue,
                 ReadOnly: false,
                 guestMemory));
     }
@@ -608,6 +643,7 @@ public sealed class RenderTargetSamplingTests
         byte[] vertexSpirv,
         IReadOnlyList<GuestMemoryBuffer>? globalMemoryBuffers = null,
         uint textureDataFormat = Rgba8DataFormat,
+        uint textureNumberType = UnormNumberType,
         GuestRect? destinationRegion = null)
     {
         var region = destinationRegion ?? new GuestRect(
@@ -623,7 +659,7 @@ public sealed class RenderTargetSamplingTests
                     sourceWidth,
                     sourceHeight,
                     textureDataFormat,
-                    UnormNumberType,
+                    textureNumberType,
                     [],
                     IsFallback: false,
                     IsStorage: false),

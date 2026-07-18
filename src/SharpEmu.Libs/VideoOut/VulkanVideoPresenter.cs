@@ -1973,7 +1973,7 @@ internal static unsafe class VulkanVideoPresenter
         private bool _deviceLostLogged;
         private int _directPresentationCount;
         private readonly Dictionary<ulong, GuestImageResource> _guestImages = new();
-        private readonly Dictionary<GuestDepthKey, GuestDepthResource> _guestDepthImages = new();
+        private readonly Dictionary<ulong, GuestDepthResource> _guestDepthImages = new();
         private readonly HashSet<(ulong Address, uint Width, uint Height, Format Format)> _tracedTextureCacheHits = new();
         private static readonly bool _dumpTextures = string.Equals(
             Environment.GetEnvironmentVariable("SHARPEMU_DUMP_TEXTURES"),
@@ -2087,6 +2087,7 @@ internal static unsafe class VulkanVideoPresenter
             public GuestSampler SamplerState;
             public Sampler Sampler;
             public GuestImageResource? GuestImage;
+            public GuestDepthResource? GuestDepth;
             public ulong CpuContentFingerprint;
             public bool UpdatesCpuContent;
             public bool UploadFromShaderReadLayout;
@@ -2151,6 +2152,12 @@ internal static unsafe class VulkanVideoPresenter
             public bool Initialized;
             public ImageLayout Layout = ImageLayout.Undefined;
             public float ClearDepth = 1f;
+
+            public GuestDepthAliasSurface AliasSurface => new(
+                Key.Address,
+                Key.Width,
+                Key.Height,
+                Key.GuestFormat);
         }
 
         private sealed record PendingGuestSubmission(
@@ -3897,7 +3904,8 @@ internal static unsafe class VulkanVideoPresenter
             RenderPass renderPass,
             IReadOnlyList<Format> renderTargetFormats,
             Extent2D extent,
-            bool hasDepthAttachment = false)
+            bool hasDepthAttachment = false,
+            GuestDepthResource? depthAttachment = null)
         {
             var vertexSpirv = draw.VertexSpirv;
             if (draw.RenderState.Blends.Count != renderTargetFormats.Count)
@@ -3947,7 +3955,9 @@ internal static unsafe class VulkanVideoPresenter
 
                 for (var index = 0; index < draw.Textures.Count; index++)
                 {
-                    resources.Textures[index] = ResolveTextureResource(draw.Textures[index]);
+                    resources.Textures[index] = ResolveTextureResource(
+                        draw.Textures[index],
+                        depthAttachment);
                 }
 
                 PrepareGuestBufferAllocations(
@@ -4679,14 +4689,25 @@ internal static unsafe class VulkanVideoPresenter
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
-        private TextureResource ResolveTextureResource(GuestDrawTexture texture)
+        private TextureResource ResolveTextureResource(
+            GuestDrawTexture texture,
+            GuestDepthResource? depthAttachment = null)
         {
+            var vkFormat = GetTextureFormat(texture.Format, texture.NumberType);
+            if (TryResolveSampledDepth(
+                    texture,
+                    vkFormat,
+                    depthAttachment,
+                    out var sampledDepth))
+            {
+                return sampledDepth;
+            }
+
             if (texture.IsStorage)
             {
                 return ResolveStorageImageResource(texture);
             }
 
-            var vkFormat = GetTextureFormat(texture.Format, texture.NumberType);
             if (texture.Address != 0 &&
                 _guestImages.TryGetValue(texture.Address, out var guestImage) &&
                 IsCompatibleGuestImageAlias(texture, guestImage) &&
@@ -4750,6 +4771,58 @@ internal static unsafe class VulkanVideoPresenter
             }
 
             return CreateTextureResource(texture);
+        }
+
+        private bool TryResolveSampledDepth(
+            GuestDrawTexture texture,
+            Format textureFormat,
+            GuestDepthResource? depthAttachment,
+            out TextureResource resource)
+        {
+            resource = default!;
+            if (!_guestDepthImages.TryGetValue(texture.Address, out var candidate))
+            {
+                return false;
+            }
+
+            var kind = GuestDepthAliasPolicy.Classify(
+                candidate.AliasSurface,
+                texture,
+                textureFormat,
+                ReferenceEquals(candidate, depthAttachment));
+            if (kind == GuestDepthAliasKind.AttachmentFeedback)
+            {
+                throw new InvalidOperationException(
+                    $"guest depth 0x{texture.Address:X16} cannot be sampled " +
+                    "while attached in the same draw");
+            }
+
+            if (kind != GuestDepthAliasKind.ExactSample)
+            {
+                throw new InvalidOperationException(
+                    $"guest image 0x{texture.Address:X16} overlaps canonical depth " +
+                    "with an unsupported format, extent, mip, storage, or swizzle");
+            }
+
+            if (!candidate.Initialized)
+            {
+                throw new InvalidOperationException(
+                    $"guest depth 0x{texture.Address:X16} was sampled before initialization");
+            }
+
+            resource = new TextureResource
+            {
+                Address = texture.Address,
+                Image = candidate.Image,
+                View = candidate.View,
+                Width = candidate.Key.Width,
+                Height = candidate.Key.Height,
+                RowLength = candidate.Key.Width,
+                DstSelect = texture.DstSelect,
+                SamplerState = texture.Sampler,
+                GuestDepth = candidate,
+            };
+            return true;
         }
 
         private bool TryCreateCpuTextureRefreshResource(
@@ -5011,6 +5084,11 @@ internal static unsafe class VulkanVideoPresenter
             if (texture.Address == 0)
             {
                 throw new InvalidOperationException("Storage image has no guest address.");
+            }
+            if (_guestDepthImages.ContainsKey(texture.Address))
+            {
+                throw new InvalidOperationException(
+                    $"storage image 0x{texture.Address:X16} overlaps canonical guest depth");
             }
 
             var format = GetTextureFormat(texture.Format, texture.NumberType);
@@ -6438,6 +6516,9 @@ internal static unsafe class VulkanVideoPresenter
                     if (isFirstBatch)
                     {
                         RecordTextureUploads(resources, PipelineStageFlags.ComputeShaderBit);
+                        RecordDepthImagesForSampling(
+                            resources,
+                            PipelineStageFlags.ComputeShaderBit);
                         RecordStorageImagesForWrite(resources, PipelineStageFlags.ComputeShaderBit);
                     }
 
@@ -6804,7 +6885,8 @@ internal static unsafe class VulkanVideoPresenter
                     renderPass,
                     formats,
                     extent,
-                    hasDepthAttachment: depth is not null);
+                    hasDepthAttachment: depth is not null,
+                    depthAttachment: depth);
                 var targetUploadArray =
                     new TextureResource[targetUploads.Count];
                 targetUploads.CopyTo(targetUploadArray);
@@ -6833,10 +6915,14 @@ internal static unsafe class VulkanVideoPresenter
                 BeginDebugLabel(_commandBuffer, resources.DebugName);
                 RecordTextureUploads(resources.TargetUploads, PipelineStageFlags.FragmentShaderBit);
                 RecordTextureUploads(resources, PipelineStageFlags.FragmentShaderBit);
+                RecordDepthImagesForSampling(
+                    resources,
+                    PipelineStageFlags.FragmentShaderBit);
                 RecordStorageImagesForWrite(resources, PipelineStageFlags.FragmentShaderBit);
                 if (depth is not null)
                 {
                     RecordDepthUpload(resources, depth);
+                    RecordDepthForAttachment(depth);
                 }
 
                 var toColorAttachments = stackalloc ImageMemoryBarrier[targets.Length];
@@ -7082,6 +7168,12 @@ internal static unsafe class VulkanVideoPresenter
             GuestRenderTarget target,
             Format format)
         {
+            if (_guestDepthImages.ContainsKey(target.Address))
+            {
+                throw new InvalidOperationException(
+                    $"color target 0x{target.Address:X16} overlaps canonical guest depth");
+            }
+
             var mipLevels = ClampMipLevels(target.Width, target.Height, target.MipLevels);
             if (_guestImages.TryGetValue(target.Address, out var existing))
             {
@@ -7391,17 +7483,45 @@ internal static unsafe class VulkanVideoPresenter
             GuestDepthTarget target,
             bool loadInitialContents)
         {
+            if (_guestImages.TryGetValue(target.Address, out var colorImage))
+            {
+                if (loadInitialContents && colorImage.Initialized)
+                {
+                    throw new InvalidOperationException(
+                        $"guest depth 0x{target.Address:X16} overlaps a GPU-authored " +
+                        "color image whose contents cannot yet be migrated losslessly");
+                }
+
+                CompletePendingPresentation(wait: true);
+                WaitForAllGuestSubmissions();
+                DestroyGuestImage(colorImage);
+                _guestImages.Remove(target.Address);
+                lock (_gate)
+                {
+                    _availableGuestImages.Remove(target.Address);
+                    _gpuGuestImages.Remove(target.Address);
+                }
+            }
+
             var key = new GuestDepthKey(
                 target.Address,
                 target.Width,
                 target.Height,
                 target.GuestFormat,
                 target.SwizzleMode);
-            if (_guestDepthImages.TryGetValue(key, out var existing))
+            if (_guestDepthImages.TryGetValue(target.Address, out var existing))
             {
-                existing.ClearDepth = target.ClearDepth;
-                TryStageInitialDepth(existing, target, loadInitialContents);
-                return existing;
+                if (existing.Key == key)
+                {
+                    existing.ClearDepth = target.ClearDepth;
+                    TryStageInitialDepth(existing, target, loadInitialContents);
+                    return existing;
+                }
+
+                CompletePendingPresentation(wait: true);
+                WaitForAllGuestSubmissions();
+                DestroyGuestDepth(existing);
+                _guestDepthImages.Remove(target.Address);
             }
 
             var imageInfo = new ImageCreateInfo
@@ -7466,7 +7586,7 @@ internal static unsafe class VulkanVideoPresenter
                 ClearDepth = target.ClearDepth,
             };
             TryStageInitialDepth(resource, target, loadInitialContents);
-            _guestDepthImages.Add(key, resource);
+            _guestDepthImages.Add(target.Address, resource);
             return resource;
         }
 
@@ -8710,6 +8830,9 @@ internal static unsafe class VulkanVideoPresenter
         {
             BeginDebugLabel(_commandBuffer, "SharpEmu swapchain draw");
             RecordTextureUploads(resources, PipelineStageFlags.FragmentShaderBit);
+            RecordDepthImagesForSampling(
+                resources,
+                PipelineStageFlags.FragmentShaderBit);
             RecordStorageImagesForWrite(resources, PipelineStageFlags.FragmentShaderBit);
             RecordTranslatedGraphicsPass(
                 resources,
@@ -8910,7 +9033,103 @@ internal static unsafe class VulkanVideoPresenter
                 null,
                 1,
                 &toDepthAttachment);
+            depth.Layout = ImageLayout.DepthStencilAttachmentOptimal;
             resources.DepthUpload = depth;
+        }
+
+        private void RecordDepthImagesForSampling(
+            TranslatedDrawResources resources,
+            PipelineStageFlags shaderStage)
+        {
+            var transitioned = new HashSet<GuestDepthResource>();
+            foreach (var texture in resources.Textures)
+            {
+                if (texture.GuestDepth is not { } depth ||
+                    !transitioned.Add(depth) ||
+                    depth.Layout == ImageLayout.ShaderReadOnlyOptimal)
+                {
+                    continue;
+                }
+
+                if (depth.Layout != ImageLayout.DepthStencilAttachmentOptimal)
+                {
+                    throw new InvalidOperationException(
+                        $"guest depth 0x{depth.Key.Address:X16} has unsupported " +
+                        $"sample source layout {depth.Layout}");
+                }
+
+                var toShaderRead = new ImageMemoryBarrier
+                {
+                    SType = StructureType.ImageMemoryBarrier,
+                    SrcAccessMask =
+                        AccessFlags.DepthStencilAttachmentReadBit |
+                        AccessFlags.DepthStencilAttachmentWriteBit,
+                    DstAccessMask = AccessFlags.ShaderReadBit,
+                    OldLayout = ImageLayout.DepthStencilAttachmentOptimal,
+                    NewLayout = ImageLayout.ShaderReadOnlyOptimal,
+                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    Image = depth.Image,
+                    SubresourceRange = DepthSubresourceRange(),
+                };
+                _vk.CmdPipelineBarrier(
+                    _commandBuffer,
+                    PipelineStageFlags.EarlyFragmentTestsBit |
+                        PipelineStageFlags.LateFragmentTestsBit,
+                    shaderStage,
+                    0,
+                    0,
+                    null,
+                    0,
+                    null,
+                    1,
+                    &toShaderRead);
+                depth.Layout = ImageLayout.ShaderReadOnlyOptimal;
+            }
+        }
+
+        private void RecordDepthForAttachment(GuestDepthResource depth)
+        {
+            if (depth.Layout == ImageLayout.DepthStencilAttachmentOptimal ||
+                depth.Layout == ImageLayout.Undefined)
+            {
+                return;
+            }
+
+            if (depth.Layout != ImageLayout.ShaderReadOnlyOptimal)
+            {
+                throw new InvalidOperationException(
+                    $"guest depth 0x{depth.Key.Address:X16} has unsupported " +
+                    $"attachment source layout {depth.Layout}");
+            }
+
+            var toDepthAttachment = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.ShaderReadBit,
+                DstAccessMask =
+                    AccessFlags.DepthStencilAttachmentReadBit |
+                    AccessFlags.DepthStencilAttachmentWriteBit,
+                OldLayout = ImageLayout.ShaderReadOnlyOptimal,
+                NewLayout = ImageLayout.DepthStencilAttachmentOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = depth.Image,
+                SubresourceRange = DepthSubresourceRange(),
+            };
+            _vk.CmdPipelineBarrier(
+                _commandBuffer,
+                PipelineStageFlags.AllCommandsBit,
+                PipelineStageFlags.EarlyFragmentTestsBit |
+                    PipelineStageFlags.LateFragmentTestsBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &toDepthAttachment);
+            depth.Layout = ImageLayout.DepthStencilAttachmentOptimal;
         }
 
         private void RecordStorageImagesForWrite(
