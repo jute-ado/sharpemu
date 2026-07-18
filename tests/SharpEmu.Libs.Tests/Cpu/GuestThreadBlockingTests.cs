@@ -61,6 +61,26 @@ public sealed class GuestThreadBlockingTests
     }
 
     [Fact]
+    public void SafePointAcknowledgementPreventsStaleWaitInterrupt()
+    {
+        GuestThreadBlocking.BeginExecution();
+        var gate = new object();
+        var deliveries = 0;
+        GuestThreadBlocking.DeliverInterruptForCurrentThread =
+            () => deliveries++;
+        GuestThreadBlocking.RequestInterrupt(0x43);
+
+        GuestThreadBlocking.AcknowledgeInterrupt(0x43);
+        lock (gate)
+        {
+            GuestThreadBlocking.Checkpoint(0x43, gate);
+        }
+
+        Assert.Equal(0, deliveries);
+        GuestThreadBlocking.DeliverInterruptForCurrentThread = null;
+    }
+
+    [Fact]
     public void WaitSliceIsPositiveBoundedAndExpires()
     {
         var deadline = GuestThreadExecution.ComputeDeadlineTimestamp(

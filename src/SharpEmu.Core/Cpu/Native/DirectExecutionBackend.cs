@@ -512,9 +512,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 		public Thread? HostThread { get; set; }
 
-		public int HostThreadId;
+        public int HostThreadId;
 
-		public GuestContinuationRunner? ContinuationRunner { get; set; }
+        public GuestContinuationRunner? ContinuationRunner { get; set; }
+
+        public ulong ExceptionStackBase { get; set; }
 	}
 
 	private sealed class GuestContinuationRunner : IDisposable
@@ -1176,7 +1178,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		MarkExecutionProgress();
 		BindTlsBase(context);
 		var previousGuestThreadScheduler = GuestThreadExecution.Scheduler;
+		var previousInterruptDeliverer =
+			GuestThreadBlocking.DeliverInterruptForCurrentThread;
 		GuestThreadExecution.Scheduler = this;
+		GuestThreadBlocking.DeliverInterruptForCurrentThread =
+			DeliverPendingGuestExceptionInPlaceForCurrentThread;
 		ImportSetupCheckpoint? importSetupCheckpoint = null;
 		TlsSetupCheckpoint? tlsSetupCheckpoint = null;
 		try
@@ -1244,6 +1250,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 			DrainDeferredBootstrapTraces();
 			GuestThreadExecution.Scheduler = previousGuestThreadScheduler;
+			GuestThreadBlocking.DeliverInterruptForCurrentThread =
+				previousInterruptDeliverer;
 			Console.Error.WriteLine("[LOADER][INFO] === Execute END (LastError: " + (LastError ?? "null") + ") ===");
 		}
 	}
@@ -4580,6 +4588,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			_readyGuestThreads.Clear();
 			Interlocked.Exchange(ref _readyGuestThreadCount, 0);
 			_guestThreads.Clear();
+			ClearGuestExceptionState();
 		}
 
 		foreach (var runner in runners)

@@ -85,6 +85,18 @@ public static class GuestThreadBlocking
     }
 
     /// <summary>
+    /// Clears an interrupt that was delivered at a normal import safe point
+    /// before the target entered an HLE wait.
+    /// </summary>
+    public static void AcknowledgeInterrupt(ulong guestThreadHandle)
+    {
+        if (guestThreadHandle != 0)
+        {
+            _interrupted.TryRemove(guestThreadHandle, out _);
+        }
+    }
+
+    /// <summary>
     /// Delivers a pending guest exception outside an HLE synchronization gate,
     /// then reacquires the gate so the caller can re-check its wait predicate.
     /// The caller must hold <paramref name="gate"/>.

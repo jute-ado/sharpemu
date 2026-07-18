@@ -33,7 +33,7 @@ public interface IGuestThreadScheduler
     /// TryStartThread, but kernel exception delivery must still be able to
     /// target it.
     /// </summary>
-    void RegisterGuestThreadContext(ulong threadHandle, CpuContext context) { }
+    void RegisterGuestThreadContext(ulong threadHandle, CpuContext context);
 
     bool TryStartThread(CpuContext creatorContext, GuestThreadStartRequest request, out string? error);
 
