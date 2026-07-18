@@ -93,6 +93,113 @@ public sealed class LibcMemoryScanTests
             KernelMemoryCompatExports.Memchr(context));
     }
 
+    [Fact]
+    public void StrstrFindsMatchAcrossGuestPageBoundary()
+    {
+        const ulong haystack = 0x1FFB;
+        const ulong needle = 0x4000;
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(
+            haystack,
+            "abcde-needle-suffix\0"u8.ToArray());
+        memory.AddRegion(needle, "needle\0"u8.ToArray());
+        var context = CreateContext(memory, haystack, needle, 0);
+
+        Assert.Equal(0, KernelMemoryCompatExports.Strstr(context));
+        Assert.Equal(haystack + 6, context[CpuRegister.Rax]);
+    }
+
+    [Fact]
+    public void StrstrReturnsMatchWithoutReadingUnreadableTail()
+    {
+        const ulong haystack = 0x3000;
+        const ulong needle = 0x5000;
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(haystack, "prefix-needle"u8.ToArray());
+        memory.AddRegion(needle, "needle\0"u8.ToArray());
+        var context = CreateContext(memory, haystack, needle, 0);
+
+        Assert.Equal(0, KernelMemoryCompatExports.Strstr(context));
+        Assert.Equal(haystack + 7, context[CpuRegister.Rax]);
+    }
+
+    [Fact]
+    public void StrstrReportsFaultBeforeMatchAndNullWhenAbsent()
+    {
+        const ulong haystack = 0x3000;
+        const ulong needle = 0x5000;
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(haystack, "no match here\0"u8.ToArray());
+        memory.AddRegion(needle, "needle\0"u8.ToArray());
+        var context = CreateContext(memory, haystack, needle, 0);
+
+        Assert.Equal(0, KernelMemoryCompatExports.Strstr(context));
+        Assert.Equal(0UL, context[CpuRegister.Rax]);
+
+        context[CpuRegister.Rdi] = 0x6000;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            KernelMemoryCompatExports.Strstr(context));
+    }
+
+    [Fact]
+    public void StrstrEmptyNeedleDoesNotReadHaystack()
+    {
+        const ulong needle = 0x5000;
+        var inner = new FakeGuestMemory();
+        inner.AddRegion(needle, [0]);
+        var memory = new CountingMemory(inner, MaxTransferSize);
+        var context = CreateContext(memory, 0xDEAD_BEEF, needle, 0);
+
+        Assert.Equal(0, KernelMemoryCompatExports.Strstr(context));
+        Assert.Equal(0xDEAD_BEEFUL, context[CpuRegister.Rax]);
+        Assert.All(
+            inner.ReadAddresses,
+            address => Assert.Equal(needle, address));
+    }
+
+    [Fact]
+    public void StrcasecmpScansLargeEqualStringsInPageBoundedChunks()
+    {
+        const int length = 40_000;
+        var left = new byte[40_960];
+        var right = new byte[40_960];
+        for (var index = 0; index < length; index++)
+        {
+            left[index] = (byte)('A' + (index % 26));
+            right[index] = (byte)('a' + (index % 26));
+        }
+
+        var inner = new FakeGuestMemory();
+        inner.AddRegion(LeftAddress, left);
+        inner.AddRegion(RightAddress, right);
+        var memory = new CountingMemory(inner, MaxTransferSize);
+        var context = CreateContext(
+            memory,
+            LeftAddress,
+            RightAddress,
+            0);
+
+        Assert.Equal(0, KernelMemoryCompatExports.Strcasecmp(context));
+        Assert.Equal(0UL, context[CpuRegister.Rax]);
+        Assert.InRange(memory.ReadCalls, 2, 24);
+        Assert.InRange(memory.LargestRead, 1, 4096);
+    }
+
+    [Fact]
+    public void StrcmpReturnsExactDifferenceAcrossGuestPageBoundary()
+    {
+        const ulong left = 0x1FFD;
+        const ulong right = 0x2FFD;
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(left, [1, 2, 3, 4, 5, 0]);
+        memory.AddRegion(right, [1, 2, 3, 7, 5, 0]);
+        var context = CreateContext(memory, left, right, 0);
+
+        Assert.Equal(0, KernelMemoryCompatExports.Strcmp(context));
+        Assert.Equal(unchecked((ulong)-3L), context[CpuRegister.Rax]);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

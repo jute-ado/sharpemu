@@ -732,41 +732,13 @@ public static partial class KernelMemoryCompatExports
 
     private static bool TryCompareStringsCaseInsensitive(CpuContext ctx, ulong left, ulong right, ulong limit, out int compare)
     {
-        compare = 0;
-        var max = limit == ulong.MaxValue ? 1_048_576UL : Math.Min(limit, 1_048_576UL);
-        if (max == 0)
-        {
-            return true;
-        }
-
-        if (left == 0 || right == 0)
-        {
-            return false;
-        }
-
-        Span<byte> leftByte = stackalloc byte[1];
-        Span<byte> rightByte = stackalloc byte[1];
-        for (ulong i = 0; i < max; i++)
-        {
-            if (!TryAddU64(left, i, out var leftAddress) ||
-                !TryAddU64(right, i, out var rightAddress) ||
-                !TryReadCompat(ctx, leftAddress, leftByte) ||
-                !TryReadCompat(ctx, rightAddress, rightByte))
-            {
-                return false;
-            }
-
-            var leftLower = ToAsciiLower(leftByte[0]);
-            var rightLower = ToAsciiLower(rightByte[0]);
-            compare = leftLower - rightLower;
-            if (compare != 0 || leftByte[0] == 0 || rightByte[0] == 0)
-            {
-                return true;
-            }
-        }
-
-        compare = 0;
-        return true;
+        return TryCompareStringsCore(
+            ctx,
+            left,
+            right,
+            limit,
+            caseInsensitive: true,
+            out compare);
     }
 
     private static byte ToAsciiLower(byte value) => value is >= (byte)'A' and <= (byte)'Z' ? (byte)(value + 32) : value;
@@ -1877,7 +1849,7 @@ public static partial class KernelMemoryCompatExports
     {
         var haystack = ctx[CpuRegister.Rdi];
         var needle = ctx[CpuRegister.Rsi];
-        if (!TryReadCString(ctx, haystack, 1_048_576, out var haystackBytes))
+        if (haystack == 0)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
@@ -1894,8 +1866,17 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        var matchIndex = haystackBytes.AsSpan().IndexOf(needleBytes.AsSpan());
-        ctx[CpuRegister.Rax] = matchIndex >= 0 ? haystack + (ulong)matchIndex : 0;
+        if (!TryFindCString(
+                ctx,
+                haystack,
+                needleBytes,
+                1_048_576,
+                out var matchAddress))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        ctx[CpuRegister.Rax] = matchAddress;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -5617,6 +5598,142 @@ public static partial class KernelMemoryCompatExports
         return TryReadBytesUntilNull(ctx, address, maxLength, 1_048_576, out bytes);
     }
 
+    private static bool TryFindCString(
+        CpuContext ctx,
+        ulong address,
+        ReadOnlySpan<byte> needle,
+        int maxLength,
+        out ulong matchAddress)
+    {
+        matchAddress = 0;
+        if (address == 0)
+        {
+            return false;
+        }
+
+        int[]? rentedPrefix = null;
+        Span<int> prefix = needle.Length <= 256
+            ? stackalloc int[needle.Length]
+            : (rentedPrefix = ArrayPool<int>.Shared.Rent(needle.Length))
+                .AsSpan(0, needle.Length);
+        try
+        {
+            var prefixLength = 0;
+            for (var index = 1; index < needle.Length; index++)
+            {
+                while (prefixLength > 0 &&
+                    needle[index] != needle[prefixLength])
+                {
+                    prefixLength = prefix[prefixLength - 1];
+                }
+
+                if (needle[index] == needle[prefixLength])
+                {
+                    prefixLength++;
+                }
+
+                prefix[index] = prefixLength;
+            }
+
+            const int pageSize = 4096;
+            Span<byte> chunk = stackalloc byte[pageSize];
+            var offset = 0UL;
+            var matched = 0;
+            while (offset < (ulong)maxLength)
+            {
+                if (!TryAddU64(address, offset, out var current))
+                {
+                    return false;
+                }
+
+                var pageRemaining =
+                    pageSize - (int)(current & (pageSize - 1));
+                var requestLimit = offset == 0 ? 256 : pageSize;
+                var remaining = (int)Math.Min(
+                    (ulong)maxLength - offset,
+                    (ulong)Math.Min(pageRemaining, requestLimit));
+                var span = chunk[..remaining];
+                if (TryReadCompat(ctx, current, span))
+                {
+                    for (var index = 0; index < span.Length; index++)
+                    {
+                        var value = span[index];
+                        if (value == 0)
+                        {
+                            return true;
+                        }
+
+                        if (AdvanceCStringSearch(
+                                value,
+                                needle,
+                                prefix,
+                                ref matched))
+                        {
+                            matchAddress = current +
+                                (ulong)index + 1 -
+                                (ulong)needle.Length;
+                            return true;
+                        }
+                    }
+
+                    offset += (ulong)span.Length;
+                    continue;
+                }
+
+                var one = span[..1];
+                if (!TryReadCompat(ctx, current, one))
+                {
+                    return false;
+                }
+
+                if (one[0] == 0)
+                {
+                    return true;
+                }
+
+                if (AdvanceCStringSearch(
+                        one[0],
+                        needle,
+                        prefix,
+                        ref matched))
+                {
+                    matchAddress = current + 1 - (ulong)needle.Length;
+                    return true;
+                }
+
+                offset++;
+            }
+
+            return true;
+        }
+        finally
+        {
+            if (rentedPrefix is not null)
+            {
+                ArrayPool<int>.Shared.Return(rentedPrefix);
+            }
+        }
+    }
+
+    private static bool AdvanceCStringSearch(
+        byte value,
+        ReadOnlySpan<byte> needle,
+        ReadOnlySpan<int> prefix,
+        ref int matched)
+    {
+        while (matched > 0 && value != needle[matched])
+        {
+            matched = prefix[matched - 1];
+        }
+
+        if (value == needle[matched])
+        {
+            matched++;
+        }
+
+        return matched == needle.Length;
+    }
+
     private static bool TryReadBytesUntilNull(
         CpuContext ctx,
         ulong address,
@@ -5717,6 +5834,23 @@ public static partial class KernelMemoryCompatExports
 
     private static bool TryCompareStrings(CpuContext ctx, ulong left, ulong right, ulong limit, out int compare)
     {
+        return TryCompareStringsCore(
+            ctx,
+            left,
+            right,
+            limit,
+            caseInsensitive: false,
+            out compare);
+    }
+
+    private static bool TryCompareStringsCore(
+        CpuContext ctx,
+        ulong left,
+        ulong right,
+        ulong limit,
+        bool caseInsensitive,
+        out int compare)
+    {
         compare = 0;
         var max = limit == ulong.MaxValue ? 1_048_576UL : Math.Min(limit, 1_048_576UL);
         if (max == 0)
@@ -5729,23 +5863,62 @@ public static partial class KernelMemoryCompatExports
             return false;
         }
 
-        Span<byte> leftByte = stackalloc byte[1];
-        Span<byte> rightByte = stackalloc byte[1];
-        for (ulong i = 0; i < max; i++)
+        const int pageSize = 4096;
+        Span<byte> leftChunk = stackalloc byte[pageSize];
+        Span<byte> rightChunk = stackalloc byte[pageSize];
+        var offset = 0UL;
+        while (offset < max)
         {
-            if (!TryAddU64(left, i, out var leftAddress) ||
-                !TryAddU64(right, i, out var rightAddress) ||
-                !TryReadCompat(ctx, leftAddress, leftByte) ||
-                !TryReadCompat(ctx, rightAddress, rightByte))
+            if (!TryAddU64(left, offset, out var leftAddress) ||
+                !TryAddU64(right, offset, out var rightAddress))
             {
                 return false;
             }
 
-            compare = leftByte[0] - rightByte[0];
-            if (compare != 0 || leftByte[0] == 0 || rightByte[0] == 0)
+            var leftPageRemaining =
+                pageSize - (int)(leftAddress & (pageSize - 1));
+            var rightPageRemaining =
+                pageSize - (int)(rightAddress & (pageSize - 1));
+            var requestLimit = offset == 0 ? 256 : pageSize;
+            var length = (int)Math.Min(
+                max - offset,
+                (ulong)Math.Min(
+                    requestLimit,
+                    Math.Min(leftPageRemaining, rightPageRemaining)));
+            var leftSpan = leftChunk[..length];
+            var rightSpan = rightChunk[..length];
+            if (!TryReadCompat(ctx, leftAddress, leftSpan) ||
+                !TryReadCompat(ctx, rightAddress, rightSpan))
             {
-                return true;
+                leftSpan = leftChunk[..1];
+                rightSpan = rightChunk[..1];
+                if (!TryReadCompat(ctx, leftAddress, leftSpan) ||
+                    !TryReadCompat(ctx, rightAddress, rightSpan))
+                {
+                    return false;
+                }
+
+                length = 1;
             }
+
+            for (var index = 0; index < length; index++)
+            {
+                var leftValue = leftSpan[index];
+                var rightValue = rightSpan[index];
+                var comparedLeft = caseInsensitive
+                    ? ToAsciiLower(leftValue)
+                    : leftValue;
+                var comparedRight = caseInsensitive
+                    ? ToAsciiLower(rightValue)
+                    : rightValue;
+                compare = comparedLeft - comparedRight;
+                if (compare != 0 || leftValue == 0 || rightValue == 0)
+                {
+                    return true;
+                }
+            }
+
+            offset += (ulong)length;
         }
 
         compare = 0;
