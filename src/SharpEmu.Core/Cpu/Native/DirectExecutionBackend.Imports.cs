@@ -449,6 +449,12 @@ public sealed partial class DirectExecutionBackend
 			{
 				GuestThreadExecution.RestoreImportCallFrame(previousImportCallFrame);
 			}
+			DeliverPendingGuestExceptionAtSafePoint(
+				cpuContext,
+				CaptureImportBoundaryContinuation(
+					cpuContext,
+					argPackPtr,
+					num7));
 			if (dispatchResolved &&
 				orbisGen2Result == OrbisGen2Result.ORBIS_GEN2_OK &&
 				string.Equals(importStubEntry.Nid, "BohYr-F7-is", StringComparison.Ordinal))
@@ -632,6 +638,12 @@ public sealed partial class DirectExecutionBackend
 			}
 		}
 
+		DeliverPendingGuestExceptionAtSafePoint(
+			cpuContext,
+			CaptureImportBoundaryContinuation(
+				cpuContext,
+				argPackPtr,
+				returnRip));
 		if (returnValue != (int)OrbisGen2Result.ORBIS_GEN2_OK)
 		{
 			var returnResult = (OrbisGen2Result)returnValue;
@@ -677,6 +689,36 @@ public sealed partial class DirectExecutionBackend
 			*(ulong*)(registerAddress + 8) = high;
 		}
 	}
+
+	private static GuestCpuContinuation CaptureImportBoundaryContinuation(
+		CpuContext context,
+		nint argPackPtr,
+		ulong returnRip) =>
+		new(
+			Rip: returnRip,
+			Rsp: (ulong)argPackPtr + 104UL,
+			ReturnSlotAddress: (ulong)argPackPtr + 96UL,
+			Rflags: context.Rflags,
+			FsBase: context.FsBase,
+			GsBase: context.GsBase,
+			Rax: context[CpuRegister.Rax],
+			Rcx: context[CpuRegister.Rcx],
+			Rdx: context[CpuRegister.Rdx],
+			Rbx: context[CpuRegister.Rbx],
+			Rbp: context[CpuRegister.Rbp],
+			Rsi: context[CpuRegister.Rsi],
+			Rdi: context[CpuRegister.Rdi],
+			R8: context[CpuRegister.R8],
+			R9: context[CpuRegister.R9],
+			R10: context[CpuRegister.R10],
+			R11: context[CpuRegister.R11],
+			R12: context[CpuRegister.R12],
+			R13: context[CpuRegister.R13],
+			R14: context[CpuRegister.R14],
+			R15: context[CpuRegister.R15],
+			FpuControlWord: context.FpuControlWord,
+			Mxcsr: context.Mxcsr,
+			RestoreFullFpuState: false);
 
 	// Subset of the leaf set that additionally skips the import-call-frame
 	// bookkeeping. The same scalar-only (no XMM args, no XMM return) constraint

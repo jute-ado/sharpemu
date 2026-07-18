@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using SharpEmu.Core.Cpu;
 using SharpEmu.Core.Cpu.Native;
+using SharpEmu.Core.Memory;
 using SharpEmu.HLE;
 using SharpEmu.HLE.Host;
 using Xunit;
@@ -98,6 +99,53 @@ public sealed class NativeBackendConstructionTests
         Assert.Null(secondDisposeException);
         Assert.Equal([17u, 23u], threading.FreedSlots);
         Assert.Empty(memory.ActiveAllocations);
+    }
+
+    [Fact]
+    public void RegisteredPrimaryThreadAcceptsQueuedGuestException()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var hostMemory =
+            new AllocatingHostMemory(failedAllocation: int.MaxValue);
+        var platform = new StubHostPlatform(
+            threading,
+            hostMemory,
+            new StubHostSymbolResolver(address: 1));
+        using var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        var context =
+            new CpuContext(new VirtualMemory(), Generation.Gen5);
+        const ulong threadHandle = 0x1234;
+        backend.RegisterGuestThreadContext(threadHandle, context);
+
+        Assert.True(
+            backend.TryRaiseGuestException(
+                context,
+                threadHandle,
+                handler: 0x1234_0000,
+                exceptionType: 30,
+                out var error));
+        Assert.Null(error);
+
+        // Duplicate raises coalesce while preserving the pending delivery.
+        Assert.True(
+            backend.TryRaiseGuestException(
+                context,
+                threadHandle,
+                handler: 0x1234_0000,
+                exceptionType: 30,
+                out error));
+        Assert.Null(error);
+        Assert.False(
+            backend.TryRaiseGuestException(
+                context,
+                threadHandle + 1,
+                handler: 0x1234_0000,
+                exceptionType: 30,
+                out error));
+        Assert.Contains("unknown", error);
     }
 
     [Fact]
