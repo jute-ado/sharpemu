@@ -8455,15 +8455,19 @@ internal static unsafe class VulkanVideoPresenter
 
             var source = guestBuffer.Data.AsSpan(0, guestBuffer.Length);
             var shadow = allocation.Shadow.AsSpan(checked((int)guestOffset), guestBuffer.Length);
-            if (!source.SequenceEqual(shadow))
+            var contentsChanged = !source.SequenceEqual(shadow);
+            if (contentsChanged)
             {
                 var sharedReadOnly = string.Equals(
                     allocation.QueueName,
                     SharedReadOnlyGuestBufferQueue,
                     StringComparison.Ordinal);
                 if (sharedReadOnly &&
-                    (allocation.LastUseTimeline > _completedTimeline ||
-                     IsGuestBufferAllocationReferencedByOpenBatch(allocation)))
+                    GuestBufferRangeSet.MustVersionReadOnlyMutation(
+                        contentsChanged,
+                        allocation.LastUseTimeline,
+                        _completedTimeline,
+                        IsGuestBufferAllocationReferencedByOpenBatch(allocation)))
                 {
                     return CreateVersionedReadOnlyGlobalBufferResource(
                         guestBuffer,
@@ -8628,7 +8632,7 @@ internal static unsafe class VulkanVideoPresenter
                 return;
             }
 
-            var ranges = new List<(ulong Start, ulong End, bool Writable)>(buffers.Count);
+            var requests = new List<GuestBufferRangeRequest>(buffers.Count);
             foreach (var buffer in buffers)
             {
                 if (buffer.BaseAddress == 0)
@@ -8636,44 +8640,32 @@ internal static unsafe class VulkanVideoPresenter
                     continue;
                 }
 
-                var size = (ulong)Math.Max(buffer.Length, sizeof(uint));
-                var alignedStart = buffer.BaseAddress &
-                    ~(GuestStorageBufferOffsetAlignment - 1);
-                var paddedEnd = checked(buffer.BaseAddress + size + 3) & ~3UL;
-                ranges.Add((
-                    alignedStart,
-                    paddedEnd,
+                if (!GuestBufferRangeSet.TryCreate(
+                        buffer.BaseAddress,
+                        buffer.Length,
+                        out var range))
+                {
+                    throw new InvalidOperationException(
+                        $"invalid Vulkan guest buffer range: " +
+                        $"base=0x{buffer.BaseAddress:X16} bytes={buffer.Length}");
+                }
+
+                requests.Add(new GuestBufferRangeRequest(
+                    range,
                     buffer.Writable && buffer.WriteBackToGuest));
             }
 
-            if (ranges.Count == 0)
+            if (requests.Count == 0)
             {
                 return;
             }
 
-            ranges.Sort(static (left, right) => left.Start.CompareTo(right.Start));
-            var merged = new List<(ulong Start, ulong End, bool Writable)>(ranges.Count);
-            foreach (var range in ranges)
-            {
-                if (merged.Count == 0 || range.Start > merged[^1].End)
-                {
-                    merged.Add(range);
-                    continue;
-                }
-
-                var previous = merged[^1];
-                merged[^1] = (
-                    previous.Start,
-                    Math.Max(previous.End, range.End),
-                    previous.Writable || range.Writable);
-            }
-
-            foreach (var range in merged)
+            foreach (var request in GuestBufferRangeSet.MergeRequests(requests))
             {
                 EnsureGuestBufferAllocation(
-                    range.Start,
-                    range.End,
-                    range.Writable
+                    request.Range.Start,
+                    request.Range.End,
+                    request.Writable
                         ? _activeGuestQueue.Name
                         : SharedReadOnlyGuestBufferQueue);
             }
@@ -8684,40 +8676,52 @@ internal static unsafe class VulkanVideoPresenter
             ulong requestedEnd,
             string queueName)
         {
-            var start = requestedStart;
-            var end = requestedEnd;
-            List<GuestBufferAllocation> overlaps;
-            do
+            var requested = new GuestBufferRange(
+                requestedStart,
+                checked(requestedEnd - requestedStart));
+            var allocationRanges = new List<GuestBufferRange>();
+            foreach (var allocation in _guestBufferAllocations)
             {
-                overlaps = _guestBufferAllocations
-                    .Where(allocation =>
-                        string.Equals(
-                            allocation.QueueName,
-                            queueName,
-                            StringComparison.Ordinal) &&
-                        allocation.BaseAddress < end &&
-                        start < allocation.BaseAddress + allocation.Size)
-                    .ToList();
-                var expandedStart = overlaps.Aggregate(
-                    start,
-                    static (value, allocation) => Math.Min(value, allocation.BaseAddress));
-                var expandedEnd = overlaps.Aggregate(
-                    end,
-                    static (value, allocation) =>
-                        Math.Max(value, allocation.BaseAddress + allocation.Size));
-                if (expandedStart == start && expandedEnd == end)
+                if (string.Equals(
+                        allocation.QueueName,
+                        queueName,
+                        StringComparison.Ordinal))
                 {
-                    break;
+                    allocationRanges.Add(new GuestBufferRange(
+                        allocation.BaseAddress,
+                        allocation.Size));
+                }
+            }
+
+            var expanded = GuestBufferRangeSet.ExpandToOverlapClosure(
+                requested,
+                allocationRanges);
+            var overlaps = new List<GuestBufferAllocation>();
+            foreach (var allocation in _guestBufferAllocations)
+            {
+                if (!string.Equals(
+                        allocation.QueueName,
+                        queueName,
+                        StringComparison.Ordinal))
+                {
+                    continue;
                 }
 
-                start = expandedStart;
-                end = expandedEnd;
+                var allocationRange = new GuestBufferRange(
+                    allocation.BaseAddress,
+                    allocation.Size);
+                if (GuestBufferRangeSet.Overlaps(expanded, allocationRange))
+                {
+                    overlaps.Add(allocation);
+                }
             }
-            while (true);
 
             if (overlaps.Count == 1 &&
-                overlaps[0].BaseAddress <= requestedStart &&
-                overlaps[0].BaseAddress + overlaps[0].Size >= requestedEnd)
+                GuestBufferRangeSet.Contains(
+                    new GuestBufferRange(
+                        overlaps[0].BaseAddress,
+                        overlaps[0].Size),
+                    requested))
             {
                 return;
             }
@@ -8731,7 +8735,10 @@ internal static unsafe class VulkanVideoPresenter
                 WriteBackAllDirtyGuestBuffers();
             }
 
-            var replacement = CreateGuestBufferAllocation(start, end, queueName);
+            var replacement = CreateGuestBufferAllocation(
+                expanded.Start,
+                expanded.End,
+                queueName);
             foreach (var overlap in overlaps)
             {
                 _guestBufferAllocations.Remove(overlap);
@@ -8748,7 +8755,7 @@ internal static unsafe class VulkanVideoPresenter
             });
             TraceVulkanShader(
                 $"vk.guest_buffer_allocation queue={queueName} " +
-                $"base=0x{start:X16} bytes={replacement.Size} " +
+                $"base=0x{expanded.Start:X16} bytes={replacement.Size} " +
                 $"merged={overlaps.Count}");
         }
 
