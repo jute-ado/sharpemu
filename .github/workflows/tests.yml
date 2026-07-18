@@ -64,6 +64,7 @@ jobs:
           --logger trx
           --results-directory artifacts/test-results/${{ runner.os }}
           --collect:"XPlat Code Coverage"
+          --settings tests/coverage.runsettings
           --blame-crash
           --blame-hang
           --blame-hang-timeout 2m
