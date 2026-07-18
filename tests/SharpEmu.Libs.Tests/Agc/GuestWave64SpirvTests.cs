@@ -57,6 +57,102 @@ public sealed class GuestWave64SpirvTests
         Assert.False(ContainsOpcode(shader, SpirvOp.GroupNonUniformShuffle));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void GraphicsLaneInstructionsKeepExecMasksPerInvocation(
+        bool pixelShader)
+    {
+        var (state, evaluation) = CreateProgram(
+        [
+            new(
+                0,
+                Gen5ShaderEncoding.Vop3,
+                "VWritelaneB32",
+                [0, 0],
+                [Gen5Operand.Scalar(0), Gen5Operand.Scalar(1)],
+                [Gen5Operand.Vector(0)],
+                null),
+            EndProgram(8),
+        ]);
+
+        byte[] spirv;
+        if (pixelShader)
+        {
+            Assert.True(
+                Gen5SpirvTranslator.TryCompilePixelShader(
+                    state,
+                    evaluation,
+                    Gen5PixelOutputKind.Float,
+                    out var shader,
+                    out var error),
+                error);
+            spirv = shader.Spirv;
+        }
+        else
+        {
+            Assert.True(
+                Gen5SpirvTranslator.TryCompileVertexShader(
+                    state,
+                    evaluation,
+                    out var shader,
+                    out var error),
+                error);
+            spirv = shader.Spirv;
+        }
+
+        Assert.True(
+            ContainsBuiltIn(
+                spirv,
+                SpirvBuiltIn.SubgroupLocalInvocationId));
+        Assert.False(
+            ContainsOpcode(
+                spirv,
+                SpirvOp.GroupNonUniformBallot));
+        Assert.False(
+            ContainsCapability(
+                spirv,
+                SpirvCapability.GroupNonUniformBallot));
+    }
+
+    [Fact]
+    public void GraphicsReadFirstLaneRetainsItsNativeBallot()
+    {
+        var (state, evaluation) = CreateProgram(
+        [
+            new(
+                0,
+                Gen5ShaderEncoding.Vop1,
+                "VReadfirstlaneB32",
+                [0],
+                [Gen5Operand.Vector(0)],
+                [Gen5Operand.Scalar(0)],
+                null),
+            EndProgram(4),
+        ]);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompilePixelShader(
+                state,
+                evaluation,
+                Gen5PixelOutputKind.Float,
+                out var shader,
+                out var error),
+            error);
+        Assert.True(
+            ContainsOpcode(
+                shader.Spirv,
+                SpirvOp.GroupNonUniformBallot));
+        Assert.True(
+            ContainsCapability(
+                shader.Spirv,
+                SpirvCapability.GroupNonUniformBallot));
+        Assert.True(
+            ContainsOpcode(
+                shader.Spirv,
+                SpirvOp.GroupNonUniformShuffle));
+    }
+
     [Fact]
     public void Wave64DataSharePermutesUseTheSameWorkgroupBridge()
     {
