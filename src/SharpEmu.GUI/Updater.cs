@@ -26,7 +26,13 @@ public static class Updater
         string Name,
         string DownloadUrl,
         long Size,
-        string Sha256);
+        string Sha256,
+        string TagName);
+
+    internal readonly record struct CommitComparison(string Status);
+
+    public sealed class UpdateChecksumException(string message)
+        : IOException(message);
 
     public static async Task<UpdateInfo?> CheckAsync(string? currentSha, CancellationToken cancellationToken = default)
     {
@@ -36,11 +42,27 @@ public static class Updater
 
         using var response = await Http.GetAsync(LatestReleaseUrl, timeout.Token);
         response.EnsureSuccessStatusCode();
-        return ParseRelease(
+        var update = ParseRelease(
             await response.Content.ReadAsStringAsync(timeout.Token),
             currentSha,
             platform.Rid,
             platform.Extension);
+        if (update is null || currentSha is null)
+        {
+            return null;
+        }
+
+        var comparison = await CompareCommitsAsync(
+            currentSha,
+            update.Sha,
+            timeout.Token);
+        return IsForwardUpdate(
+                currentSha,
+                typeof(Updater).Assembly.GetName().Version?.ToString(),
+                update,
+                comparison)
+            ? update
+            : null;
     }
 
     public static async Task DownloadAndRestartAsync(
@@ -59,53 +81,82 @@ public static class Updater
             "SharpEmu.Update",
             $"{Environment.ProcessId}-{Guid.NewGuid():N}");
         var payload = Path.Combine(root, "payload");
-        Directory.CreateDirectory(root);
-        var archive = Path.Combine(root, update.Name);
-        using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        using (var response = await Http.GetAsync(update.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
+        var launched = false;
+        try
         {
-            response.EnsureSuccessStatusCode();
-            await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
-            await using var output = File.Create(archive);
-            var buffer = new byte[81920];
-            long written = 0;
-            int read;
-            while ((read = await input.ReadAsync(buffer, cancellationToken)) > 0)
+            Directory.CreateDirectory(root);
+            var archive = Path.Combine(root, update.Name);
+            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            using (var response = await Http.GetAsync(
+                       update.DownloadUrl,
+                       HttpCompletionOption.ResponseHeadersRead,
+                       cancellationToken))
             {
-                await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-                hasher.AppendData(buffer, 0, read);
-                written += read;
-                progress?.Report(update.Size == 0 ? 0 : (int)(written * 100 / update.Size));
+                response.EnsureSuccessStatusCode();
+                await using var input =
+                    await response.Content.ReadAsStreamAsync(cancellationToken);
+                await using var output = File.Create(archive);
+                var buffer = new byte[81920];
+                long written = 0;
+                int read;
+                while ((read = await input.ReadAsync(buffer, cancellationToken)) > 0)
+                {
+                    await output.WriteAsync(
+                        buffer.AsMemory(0, read),
+                        cancellationToken);
+                    hasher.AppendData(buffer, 0, read);
+                    written += read;
+                    progress?.Report(
+                        update.Size == 0
+                            ? 0
+                            : (int)(written * 100 / update.Size));
+                }
+
+                if (written != update.Size)
+                {
+                    throw new InvalidDataException(
+                        $"Downloaded {written} bytes; expected {update.Size}.");
+                }
             }
 
-            if (written != update.Size)
+            var actualHash =
+                Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
+            if (!CryptographicOperations.FixedTimeEquals(
+                    Convert.FromHexString(actualHash),
+                    Convert.FromHexString(update.Sha256)))
             {
-                throw new InvalidDataException($"Downloaded {written} bytes; expected {update.Size}.");
+                throw new UpdateChecksumException(
+                    $"Downloaded update checksum {actualHash} does not match " +
+                    $"release checksum {update.Sha256}.");
+            }
+
+            var platform = CurrentPlatform();
+            var stagedExe = ExtractArchive(
+                archive,
+                payload,
+                platform.Extension,
+                platform.ExecutableName);
+
+            var start = new ProcessStartInfo(stagedExe)
+            {
+                UseShellExecute = false,
+                WorkingDirectory = payload,
+            };
+            start.ArgumentList.Add(ApplyArgument);
+            start.ArgumentList.Add(Environment.ProcessId.ToString());
+            start.ArgumentList.Add(AppContext.BaseDirectory);
+            using var helper = Process.Start(start)
+                ?? throw new InvalidOperationException(
+                    "The update installer could not be started.");
+            launched = true;
+        }
+        finally
+        {
+            if (!launched)
+            {
+                TryDeleteDirectory(root);
             }
         }
-
-        var actualHash = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
-        if (!CryptographicOperations.FixedTimeEquals(
-                Convert.FromHexString(actualHash),
-                Convert.FromHexString(update.Sha256)))
-        {
-            throw new InvalidDataException(
-                $"Downloaded update checksum {actualHash} does not match release checksum {update.Sha256}.");
-        }
-
-        var platform = CurrentPlatform();
-        var stagedExe = ExtractArchive(archive, payload, platform.Extension, platform.ExecutableName);
-
-        var start = new ProcessStartInfo(stagedExe)
-        {
-            UseShellExecute = false,
-            WorkingDirectory = payload,
-        };
-        start.ArgumentList.Add(ApplyArgument);
-        start.ArgumentList.Add(Environment.ProcessId.ToString());
-        start.ArgumentList.Add(AppContext.BaseDirectory);
-        using var helper = Process.Start(start)
-            ?? throw new InvalidOperationException("The update installer could not be started.");
     }
 
     /// <summary>Runs from the downloaded executable after the old GUI exits.</summary>
@@ -212,7 +263,8 @@ public static class Updater
                     name,
                     asset.GetProperty("browser_download_url").GetString()!,
                     asset.GetProperty("size").GetInt64(),
-                    sha256.ToLowerInvariant())));
+                    sha256.ToLowerInvariant(),
+                    document.RootElement.GetProperty("tag_name").GetString() ?? "")));
         }
 
         var latest = candidates.OrderByDescending(candidate => candidate.Created).FirstOrDefault().Update;
@@ -248,6 +300,81 @@ public static class Updater
         currentSha is not null &&
         (releaseSha.StartsWith(currentSha, StringComparison.OrdinalIgnoreCase) ||
          currentSha.StartsWith(releaseSha, StringComparison.OrdinalIgnoreCase));
+
+    private static async Task<CommitComparison> CompareCommitsAsync(
+        string currentSha,
+        string releaseSha,
+        CancellationToken cancellationToken)
+    {
+        var url =
+            $"https://api.github.com/repos/{BuildInfo.CanonicalRepository}/compare/" +
+            $"{currentSha}...{releaseSha}";
+        using var response = await Http.GetAsync(url, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return ParseCommitComparison(
+            await response.Content.ReadAsStringAsync(cancellationToken));
+    }
+
+    internal static CommitComparison ParseCommitComparison(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return new CommitComparison(
+            document.RootElement.GetProperty("status").GetString() ?? "");
+    }
+
+    internal static bool IsForwardUpdate(
+        string currentSha,
+        string? currentVersion,
+        UpdateInfo update,
+        CommitComparison comparison)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(currentSha);
+        ArgumentNullException.ThrowIfNull(update);
+
+        return !IsSameCommit(update.Sha, currentSha) &&
+            string.Equals(comparison.Status, "ahead", StringComparison.Ordinal) &&
+            !IsReleaseCoreVersionOlder(update.TagName, currentVersion);
+    }
+
+    private static bool IsReleaseCoreVersionOlder(
+        string releaseTag,
+        string? currentVersion)
+    {
+        return TryParseCoreVersion(releaseTag, out var release) &&
+            TryParseCoreVersion(currentVersion, out var current) &&
+            release.CompareTo(current) < 0;
+    }
+
+    private static bool TryParseCoreVersion(
+        string? value,
+        out (int Major, int Minor, int Patch) version)
+    {
+        version = default;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalized = value.Trim();
+        if (normalized.StartsWith('v'))
+        {
+            normalized = normalized[1..];
+        }
+
+        var suffix = normalized.IndexOfAny(['-', '+']);
+        if (suffix >= 0)
+        {
+            normalized = normalized[..suffix];
+        }
+
+        if (!Version.TryParse(normalized, out var parsed) || parsed.Build < 0)
+        {
+            return false;
+        }
+
+        version = (parsed.Major, parsed.Minor, parsed.Build);
+        return true;
+    }
 
     internal static bool IsSafeArchiveName(string name) =>
         !string.IsNullOrWhiteSpace(name) &&
@@ -381,6 +508,21 @@ public static class Updater
             {
                 File.SetUnixFileMode(destinationFile, File.GetUnixFileMode(file));
             }
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup must not hide the download or launch failure.
         }
     }
 

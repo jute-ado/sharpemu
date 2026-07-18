@@ -868,6 +868,11 @@ public partial class MainWindow : Window
             SetUpdateStatus("Updater.Status.Installing");
             Close();
         }
+        catch (Updater.UpdateChecksumException)
+        {
+            SetUpdateStatus("Updater.Status.ChecksumFailed");
+            UpdateButton.IsEnabled = true;
+        }
         catch
         {
             SetUpdateStatus("Updater.Status.Failed");

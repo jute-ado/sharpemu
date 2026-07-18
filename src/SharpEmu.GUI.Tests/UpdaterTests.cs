@@ -58,6 +58,7 @@ public sealed class UpdaterTests
         Assert.Equal(ReleaseSha, update.Sha);
         Assert.Equal("sharpemu-0.0.1-osx-x64.tar.gz", update.Name);
         Assert.Equal(Digest, update.Sha256);
+        Assert.Equal("v0.0.1-main-0123456", update.TagName);
     }
 
     [Fact]
@@ -106,6 +107,61 @@ public sealed class UpdaterTests
             extension: ".zip");
 
         Assert.Null(update);
+    }
+
+    [Theory]
+    [InlineData("ahead", true)]
+    [InlineData("behind", false)]
+    [InlineData("diverged", false)]
+    [InlineData("identical", false)]
+    [InlineData("", false)]
+    public void UpdateRequiresReleaseCommitToBeAhead(
+        string comparisonStatus,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            Updater.IsForwardUpdate(
+                currentSha: "7654321",
+                currentVersion: "0.0.2.0",
+                CreateUpdate(
+                    sha: ReleaseSha,
+                    tagName: "v0.0.2-beta.3-main-0123456"),
+                new Updater.CommitComparison(comparisonStatus)));
+    }
+
+    [Fact]
+    public void UpdateRejectsOlderReleaseVersionEvenWhenCommitIsAhead()
+    {
+        Assert.False(
+            Updater.IsForwardUpdate(
+                currentSha: "7654321",
+                currentVersion: "0.0.3.0",
+                CreateUpdate(
+                    sha: ReleaseSha,
+                    tagName: "v0.0.2-beta.3-main-0123456"),
+                new Updater.CommitComparison("ahead")));
+    }
+
+    [Fact]
+    public void UpdateRejectsTheCurrentlyInstalledCommit()
+    {
+        Assert.False(
+            Updater.IsForwardUpdate(
+                currentSha: ReleaseSha[..7],
+                currentVersion: "0.0.2.0",
+                CreateUpdate(
+                    sha: ReleaseSha,
+                    tagName: "v0.0.2-beta.3-main-0123456"),
+                new Updater.CommitComparison("ahead")));
+    }
+
+    [Fact]
+    public void CommitComparisonReadsGitHubStatus()
+    {
+        Assert.Equal(
+            "ahead",
+            Updater.ParseCommitComparison("""{"status":"ahead"}""").Status);
     }
 
     [Fact]
@@ -208,6 +264,17 @@ public sealed class UpdaterTests
             ["size"] = extension == ".zip" ? 42 : 84,
             ["digest"] = includeDigest ? $"sha256:{Digest}" : null,
         };
+
+    private static Updater.UpdateInfo CreateUpdate(
+        string sha,
+        string tagName) =>
+        new(
+            sha,
+            "sharpemu-0.0.2-beta.3-win-x64.zip",
+            "https://github.com/jute-ado/sharpemu/releases/download/test/update.zip",
+            42,
+            Digest,
+            tagName);
 
     private sealed class TemporaryDirectories : IDisposable
     {

@@ -58,7 +58,8 @@ for the exact code difference.
 
 > [!NOTE]
 > SharpEmu supports Windows x64, Linux x64, and macOS x64. Apple Silicon Macs
-> can run the macOS x64 build through Rosetta 2.
+> can run the macOS x64 build through Rosetta 2, and Windows on ARM devices
+> can run the Windows x64 build through Windows' built-in x64 emulation.
 
 > [!WARNING]
 > SharpEmu is an experimental PS5 emulator written in C#. This fork’s current

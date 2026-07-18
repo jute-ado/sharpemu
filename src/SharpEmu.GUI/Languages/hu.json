@@ -170,5 +170,6 @@
   "Updater.Status.Installing": "Frissítés telepítése…",
   "Updater.Status.Timeout": "A frissítéskeresés 10 másodperc után túllépte az időkorlátot.",
   "Updater.Status.Failed": "Nem sikerült frissítéseket keresni.",
+  "Updater.Status.ChecksumFailed": "A letöltött frissítés SHA-256 ellenőrzése sikertelen.",
   "Updater.Status.Unsupported": "Az automatikus frissítéshez Windows, Linux vagy macOS x64 build szükséges."
 }
