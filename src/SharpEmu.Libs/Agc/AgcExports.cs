@@ -183,7 +183,7 @@ public static partial class AgcExports
         (ulong Es, ulong EsState, ulong Ps, ulong PsState, ulong OutputLayout, uint OutputCount, uint Attributes),
         (IGuestCompiledShader Vertex, IGuestCompiledShader Pixel)> _graphicsShaderCache = new();
     private static readonly ConcurrentDictionary<
-        (ulong Cs, ulong State, uint LocalX, uint LocalY, uint LocalZ),
+        (ulong Cs, ulong State, uint LocalX, uint LocalY, uint LocalZ, uint WaveLaneCount),
         IGuestCompiledShader> _computeShaderCache = new();
     private static readonly Dictionary<ulong, ulong> _shaderHeadersByCode = new();
     private static readonly bool _traceAgc = string.Equals(
@@ -398,7 +398,8 @@ public static partial class AgcExports
     private readonly record struct ComputeDispatch(
         uint GroupCountX,
         uint GroupCountY,
-        uint GroupCountZ);
+        uint GroupCountZ,
+        uint WaveLaneCount);
 
     private sealed class SubmittedDcbState
     {
@@ -5539,9 +5540,19 @@ public static partial class AgcExports
             return false;
         }
 
-        dispatch = new ComputeDispatch(groupCountX, groupCountY, groupCountZ);
+        dispatch = new ComputeDispatch(
+            groupCountX,
+            groupCountY,
+            groupCountZ,
+            DecodeComputeWaveLaneCount(initiator));
         return true;
     }
+
+    // GFX10 COMPUTE_DISPATCH_INITIATOR.CS_W32_EN is bit 15. Keep the
+    // per-dispatch value authoritative: it is what the command processor uses
+    // when starting this dispatch and may differ between submissions.
+    internal static uint DecodeComputeWaveLaneCount(uint initiator) =>
+        (initiator & (1u << 15)) != 0 ? 32u : 64u;
 
     private static void ObserveComputeDispatch(
         CpuContext ctx,
@@ -5650,7 +5661,8 @@ public static partial class AgcExports
                 ComputeShaderStateFingerprint(evaluation),
                 localSizeX,
                 localSizeY,
-                localSizeZ);
+                localSizeZ,
+                dispatch.WaveLaneCount);
             _computeShaderCache.TryGetValue(shaderKey, out var computeShader);
 
             if (computeShader is null &&
@@ -5661,7 +5673,8 @@ public static partial class AgcExports
                     localSizeY,
                     localSizeZ,
                     out computeShader,
-                    out computeError))
+                    out computeError,
+                    dispatch.WaveLaneCount))
             {
                 DumpCompiledShader(
                     "cs",
@@ -5703,6 +5716,7 @@ public static partial class AgcExports
                     $"agc.compute_shader cs=0x{shaderAddress:X16} " +
                     $"groups={dispatch.GroupCountX}x{dispatch.GroupCountY}x{dispatch.GroupCountZ} " +
                     $"local={localSizeX}x{localSizeY}x{localSizeZ} " +
+                    $"wave={dispatch.WaveLaneCount} " +
                     $"sys={DescribeComputeSystemRegisters(computeSystemRegisters)} " +
                     $"gpu={gpuDispatch} blits={blitCount} " +
                     $"globals={evaluation.GlobalMemoryBindings.Count}" +

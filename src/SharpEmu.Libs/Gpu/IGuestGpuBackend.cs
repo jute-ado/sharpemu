@@ -53,7 +53,8 @@ internal interface IGuestGpuBackend
         uint localSizeY,
         uint localSizeZ,
         out IGuestCompiledShader? shader,
-        out string error);
+        out string error,
+        uint waveLaneCount = 32);
 
     void HideSplashScreen();
 

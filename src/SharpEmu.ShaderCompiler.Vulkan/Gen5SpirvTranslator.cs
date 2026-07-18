@@ -168,8 +168,16 @@ public static partial class Gen5SpirvTranslator
         uint localSizeY,
         uint localSizeZ,
         out Gen5SpirvShader shader,
-        out string error)
+        out string error,
+        uint waveLaneCount = 32)
     {
+        if (waveLaneCount is not (32 or 64))
+        {
+            shader = default!;
+            error = "wave lane count must be 32 or 64";
+            return false;
+        }
+
         var context = new CompilationContext(
             Gen5SpirvStage.Compute,
             state,
@@ -181,7 +189,8 @@ public static partial class Gen5SpirvTranslator
             0,
             -1,
             0,
-            -1);
+            -1,
+            waveLaneCount);
         return context.TryCompile(out shader, out error);
     }
 
@@ -192,6 +201,8 @@ public static partial class Gen5SpirvTranslator
         private readonly Gen5ShaderState _state;
         private readonly Gen5ShaderEvaluation _evaluation;
         private readonly IReadOnlyList<Gen5PixelOutputBinding> _pixelOutputBindings;
+        private readonly uint _waveLaneCount;
+        private readonly bool _emulateWave64;
         private readonly uint _localSizeX;
         private readonly uint _localSizeY;
         private readonly uint _localSizeZ;
@@ -244,6 +255,9 @@ public static partial class Gen5SpirvTranslator
         private uint _localInvocationIdInput;
         private uint _workGroupIdInput;
         private uint _subgroupInvocationIdInput;
+        private uint _localInvocationIndexInput;
+        private uint _waveScratch;
+        private uint _waveScratchElementPointer;
         private uint _glsl;
 
         private enum ImageComponentKind
@@ -293,12 +307,18 @@ public static partial class Gen5SpirvTranslator
             int globalBufferBase,
             int totalGlobalBufferCount,
             int imageBindingBase,
-            int scalarRegisterBufferIndex)
+            int scalarRegisterBufferIndex,
+            uint waveLaneCount = 32)
         {
             _stage = stage;
             _state = state;
             _evaluation = evaluation;
             _pixelOutputBindings = pixelOutputBindings;
+            _waveLaneCount = waveLaneCount;
+            _emulateWave64 =
+                stage == Gen5SpirvStage.Compute &&
+                waveLaneCount == 64 &&
+                UsesSubgroupOperations();
             _localSizeX = localSizeX;
             _localSizeY = localSizeY;
             _localSizeZ = localSizeZ;
@@ -314,6 +334,16 @@ public static partial class Gen5SpirvTranslator
         {
             shader = default!;
             error = string.Empty;
+            var localInvocationCount =
+                (ulong)_localSizeX * _localSizeY * _localSizeZ;
+            if (_emulateWave64 && localInvocationCount != 64)
+            {
+                error =
+                    "wave64 translation currently requires exactly 64 local invocations " +
+                    "when the shader uses guest-wave coordination";
+                return false;
+            }
+
             try
             {
                 DeclareModule();
@@ -457,13 +487,12 @@ public static partial class Gen5SpirvTranslator
                 _module.AddCapability(SpirvCapability.ImageGatherExtended);
             }
 
-            if (UsesSubgroupOperations())
+            if (UsesSubgroupOperations() && !_emulateWave64)
             {
                 _module.AddCapability(SpirvCapability.GroupNonUniform);
-                if (UsesSubgroupBallot())
-                {
-                    _module.AddCapability(SpirvCapability.GroupNonUniformBallot);
-                }
+                // Native wave32 initializes EXEC/VCC from a subgroup ballot,
+                // even when the guest instruction itself only shuffles lanes.
+                _module.AddCapability(SpirvCapability.GroupNonUniformBallot);
 
                 if (UsesSubgroupShuffle())
                 {
@@ -547,6 +576,7 @@ public static partial class Gen5SpirvTranslator
             DeclareImages();
             DeclareScratch();
             DeclareLds();
+            DeclareWave64Scratch();
             DeclareStageInterface();
         }
 
@@ -585,6 +615,28 @@ public static partial class Gen5SpirvTranslator
                 SpirvStorageClass.Workgroup);
             _module.AddName(_lds, "lds");
             _interfaces.Add(_lds);
+        }
+
+        private void DeclareWave64Scratch()
+        {
+            if (!_emulateWave64)
+            {
+                return;
+            }
+
+            // A translated wave64 workgroup is exactly one guest wave. Keeping
+            // lane exchange in its own 64-dword allocation avoids aliasing guest
+            // LDS and makes the bridge independent of the host subgroup width.
+            var scratchArrayType = _module.TypeArray(_uintType, 64);
+            var scratchArrayPointer =
+                _module.TypePointer(SpirvStorageClass.Workgroup, scratchArrayType);
+            _waveScratchElementPointer =
+                _module.TypePointer(SpirvStorageClass.Workgroup, _uintType);
+            _waveScratch = _module.AddGlobalVariable(
+                scratchArrayPointer,
+                SpirvStorageClass.Workgroup);
+            _module.AddName(_waveScratch, "guestWave64Scratch");
+            _interfaces.Add(_waveScratch);
         }
 
         private void DeclareBuffers()
@@ -746,14 +798,28 @@ public static partial class Gen5SpirvTranslator
             {
                 var subgroupPointer =
                     _module.TypePointer(SpirvStorageClass.Input, _uintType);
-                _subgroupInvocationIdInput = _module.AddGlobalVariable(
-                    subgroupPointer,
-                    SpirvStorageClass.Input);
-                _module.AddDecoration(
-                    _subgroupInvocationIdInput,
-                    SpirvDecoration.BuiltIn,
-                    (uint)SpirvBuiltIn.SubgroupLocalInvocationId);
-                _interfaces.Add(_subgroupInvocationIdInput);
+                if (_emulateWave64)
+                {
+                    _localInvocationIndexInput = _module.AddGlobalVariable(
+                        subgroupPointer,
+                        SpirvStorageClass.Input);
+                    _module.AddDecoration(
+                        _localInvocationIndexInput,
+                        SpirvDecoration.BuiltIn,
+                        (uint)SpirvBuiltIn.LocalInvocationIndex);
+                    _interfaces.Add(_localInvocationIndexInput);
+                }
+                else
+                {
+                    _subgroupInvocationIdInput = _module.AddGlobalVariable(
+                        subgroupPointer,
+                        SpirvStorageClass.Input);
+                    _module.AddDecoration(
+                        _subgroupInvocationIdInput,
+                        SpirvDecoration.BuiltIn,
+                        (uint)SpirvBuiltIn.SubgroupLocalInvocationId);
+                    _interfaces.Add(_subgroupInvocationIdInput);
+                }
             }
 
             if (_stage == Gen5SpirvStage.Vertex)
@@ -955,7 +1021,7 @@ public static partial class Gen5SpirvTranslator
             }
 
             Store(_scc, _module.ConstantBool(false));
-            if (_subgroupInvocationIdInput != 0)
+            if (HasGuestWaveLanes())
             {
                 StoreWaveMask(106, _module.ConstantBool(false));
                 StoreWaveMask(126, _module.ConstantBool(true));
@@ -1311,19 +1377,14 @@ public static partial class Gen5SpirvTranslator
                     _uintType,
                     Load(_boolType, _exec),
                     targetLane,
-                    UInt(RdnaWaveLaneCount));
-                var destinationLane = BitwiseAnd(
-                    Load(_uintType, _subgroupInvocationIdInput),
-                    UInt(RdnaWaveLaneCount - 1));
-                var winnerLane = UInt(RdnaWaveLaneCount);
+                    UInt(_waveLaneCount));
+                var destinationLane = GuestWaveLane();
+                var winnerLane = UInt(_waveLaneCount);
                 // Scan source lanes from low to high so a later matching lane
                 // reproduces the LDS rule that the highest lane wins a collision.
-                for (uint sourceLane = 0; sourceLane < RdnaWaveLaneCount; sourceLane++)
+                for (uint sourceLane = 0; sourceLane < _waveLaneCount; sourceLane++)
                 {
-                    var candidateTarget = _module.AddInstruction(
-                        SpirvOp.GroupNonUniformShuffle,
-                        _uintType,
-                        UInt(3),
+                    var candidateTarget = WaveBroadcast(
                         activeTargetLane,
                         UInt(sourceLane));
                     var matches = _module.AddInstruction(
@@ -1343,17 +1404,14 @@ public static partial class Gen5SpirvTranslator
                     SpirvOp.IEqual,
                     _boolType,
                     winnerLane,
-                    UInt(RdnaWaveLaneCount));
+                    UInt(_waveLaneCount));
                 var safeWinnerLane = _module.AddInstruction(
                     SpirvOp.Select,
                     _uintType,
                     unwritten,
                     UInt(0),
                     winnerLane);
-                var winnerValue = _module.AddInstruction(
-                    SpirvOp.GroupNonUniformShuffle,
-                    _uintType,
-                    UInt(3),
+                var winnerValue = WaveBroadcast(
                     GetRawSource(instruction, 1),
                     safeWinnerLane);
                 var value = _module.AddInstruction(
@@ -1385,10 +1443,7 @@ public static partial class Gen5SpirvTranslator
                     Load(_boolType, _exec),
                     GetRawSource(instruction, sourceIndex),
                     UInt(0));
-                var value = _module.AddInstruction(
-                    SpirvOp.GroupNonUniformShuffle,
-                    _uintType,
-                    UInt(3),
+                var value = WaveBroadcast(
                     activeSource,
                     sourceLane);
                 StoreV(instruction.Destinations[0].Value, value);
@@ -1901,7 +1956,7 @@ public static partial class Gen5SpirvTranslator
                 EffectiveDsSingleOffsetBytes(control));
             return BitwiseAnd(
                 ShiftRightLogical(byteIndex, UInt(2)),
-                UInt(RdnaWaveLaneCount - 1));
+                UInt(_waveLaneCount - 1));
         }
 
         private uint EmitAtomicCompareExchangeLoop(
@@ -2089,7 +2144,7 @@ public static partial class Gen5SpirvTranslator
         private uint EmitDsAddTidByteAddress(Gen5DataShareControl control)
         {
             var laneOffset = ShiftLeftLogical(
-                Load(_uintType, _subgroupInvocationIdInput),
+                GuestWaveLane(),
                 UInt(2));
             return LdsByteAddress(
                 IAdd(LoadS(M0Register), laneOffset),
@@ -2099,19 +2154,26 @@ public static partial class Gen5SpirvTranslator
         private uint EmitDsSwizzleSourceLane(Gen5DataShareControl control)
         {
             var offset = EffectiveDsSingleOffsetBytes(control);
-            var lane = BitwiseAnd(
-                Load(_uintType, _subgroupInvocationIdInput),
-                UInt(RdnaWaveLaneCount - 1));
+            var lane = GuestWaveLane();
+            var waveHalf = BitwiseAnd(lane, UInt(32));
+            var laneInHalf = BitwiseAnd(lane, UInt(31));
             if (offset >= 0xE000)
             {
                 var mask = offset & 0x1F;
                 var reversedLane = ShiftRightLogical(
-                    _module.AddInstruction(SpirvOp.BitReverse, _uintType, lane),
+                    _module.AddInstruction(
+                        SpirvOp.BitReverse,
+                        _uintType,
+                        laneInHalf),
                     UInt(27));
                 var compactedLane = ShiftRightLogical(
                     reversedLane,
                     UInt((uint)System.Numerics.BitOperations.PopCount(mask)));
-                return BitwiseOr(compactedLane, BitwiseAnd(lane, UInt(mask)));
+                return BitwiseOr(
+                    waveHalf,
+                    BitwiseOr(
+                        compactedLane,
+                        BitwiseAnd(laneInHalf, UInt(mask))));
             }
 
             if (offset >= 0xC000)
@@ -2119,36 +2181,46 @@ public static partial class Gen5SpirvTranslator
                 var mask = offset & 0x1F;
                 var rotate = (offset >> 5) & 0x1F;
                 var rotatedLane = (offset & 0x400) == 0
-                    ? IAdd(lane, UInt(rotate))
+                    ? IAdd(laneInHalf, UInt(rotate))
                     : _module.AddInstruction(
                         SpirvOp.ISub,
                         _uintType,
-                        lane,
+                        laneInHalf,
                         UInt(rotate));
                 return BitwiseOr(
-                    BitwiseAnd(lane, UInt(mask)),
-                    BitwiseAnd(
-                        rotatedLane,
-                        UInt((RdnaWaveLaneCount - 1) & ~mask)));
+                    waveHalf,
+                    BitwiseOr(
+                        BitwiseAnd(laneInHalf, UInt(mask)),
+                        BitwiseAnd(
+                            rotatedLane,
+                            UInt(31u & ~mask))));
             }
 
             if ((offset & 0x8000) != 0)
             {
-                var localLane = BitwiseAnd(lane, UInt(3));
+                var localLane = BitwiseAnd(laneInHalf, UInt(3));
                 var selector = BitwiseAnd(
                     ShiftRightLogical(
                         UInt(offset),
                         ShiftLeftLogical(localLane, UInt(1))),
                     UInt(3));
-                return BitwiseOr(BitwiseAnd(lane, UInt(~3u)), selector);
+                return BitwiseOr(
+                    waveHalf,
+                    BitwiseOr(
+                        BitwiseAnd(laneInHalf, UInt(28)),
+                        selector));
             }
 
             var andMask = offset & 0x1F;
             var orMask = (offset >> 5) & 0x1F;
             var xorMask = (offset >> 10) & 0x1F;
-            return BitwiseXor(
-                BitwiseOr(BitwiseAnd(lane, UInt(andMask)), UInt(orMask)),
-                UInt(xorMask));
+            return BitwiseOr(
+                waveHalf,
+                BitwiseXor(
+                    BitwiseOr(
+                        BitwiseAnd(laneInHalf, UInt(andMask)),
+                        UInt(orMask)),
+                    UInt(xorMask)));
         }
 
         // Regular DS offsets are bytes. The read2/write2 families instead
@@ -5721,6 +5793,9 @@ public static partial class Gen5SpirvTranslator
         private uint BitwiseAnd64(uint left, uint right) =>
             _module.AddInstruction(SpirvOp.BitwiseAnd, _ulongType, left, right);
 
+        private uint BitwiseOr64(uint left, uint right) =>
+            _module.AddInstruction(SpirvOp.BitwiseOr, _ulongType, left, right);
+
         private uint BitwiseOr(uint left, uint right) =>
             _module.AddInstruction(SpirvOp.BitwiseOr, _uintType, left, right);
 
@@ -5731,29 +5806,57 @@ public static partial class Gen5SpirvTranslator
             _module.AddInstruction(SpirvOp.LogicalNot, _boolType, value);
 
         private uint SubgroupAny(uint condition) =>
-            _subgroupInvocationIdInput == 0
+            !HasGuestWaveLanes()
                 ? condition
-                : _module.AddInstruction(
-                    SpirvOp.GroupNonUniformAny,
-                    _boolType,
-                    UInt(3),
-                    condition);
+                : _emulateWave64
+                    ? IsNotZero64(BooleanToWaveMask(condition))
+                    : _module.AddInstruction(
+                        SpirvOp.GroupNonUniformAny,
+                        _boolType,
+                        UInt(3),
+                        condition);
+
+        private uint GuestWaveLane()
+        {
+            if (_emulateWave64)
+            {
+                return BitwiseAnd(
+                    Load(_uintType, _localInvocationIndexInput),
+                    UInt(63));
+            }
+
+            if (_subgroupInvocationIdInput != 0)
+            {
+                return BitwiseAnd(
+                    Load(_uintType, _subgroupInvocationIdInput),
+                    UInt(31));
+            }
+
+            return UInt(0);
+        }
+
+        private bool HasGuestWaveLanes() =>
+            _emulateWave64 || _subgroupInvocationIdInput != 0;
 
         private uint CurrentLaneBit()
         {
-            if (_subgroupInvocationIdInput == 0)
+            if (!HasGuestWaveLanes())
             {
                 return _module.Constant64(_ulongType, 1);
             }
 
-            var lane = Load(_uintType, _subgroupInvocationIdInput);
-            var maskedLane = BitwiseAnd(lane, UInt(RdnaWaveLaneCount - 1));
+            var maskedLane = GuestWaveLane();
             var shifted = ShiftLeftLogical64(
                 _module.Constant64(_ulongType, 1),
                 _module.AddInstruction(
                     SpirvOp.UConvert,
                     _ulongType,
                     maskedLane));
+            if (_emulateWave64)
+            {
+                return shifted;
+            }
+
             return _module.AddInstruction(
                 SpirvOp.Select,
                 _ulongType,
@@ -5777,8 +5880,114 @@ public static partial class Gen5SpirvTranslator
                 CurrentLaneBit(),
                 _module.Constant64(_ulongType, 0));
 
+        private uint BooleanToWaveMask(uint condition)
+        {
+            if (!HasGuestWaveLanes())
+            {
+                return BooleanToLaneMask(condition);
+            }
+
+            if (!_emulateWave64)
+            {
+                var ballot = _module.AddInstruction(
+                    SpirvOp.GroupNonUniformBallot,
+                    _uvec4Type,
+                    UInt(3),
+                    condition);
+                var low = _module.AddInstruction(
+                    SpirvOp.CompositeExtract,
+                    _uintType,
+                    ballot,
+                    0);
+                return _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _ulongType,
+                    low);
+            }
+
+            var lane = GuestWaveLane();
+            var firstLane = _module.AddInstruction(
+                SpirvOp.IEqual,
+                _boolType,
+                lane,
+                UInt(0));
+            EmitConditional(firstLane, () =>
+            {
+                Store(WaveScratchPointer(UInt(0)), UInt(0));
+                Store(WaveScratchPointer(UInt(1)), UInt(0));
+            });
+            EmitWave64Barrier();
+
+            var half = ShiftRightLogical(lane, UInt(5));
+            var bit = ShiftLeftLogical(UInt(1), lane);
+            EmitConditional(condition, () =>
+            {
+                _module.AddInstruction(
+                    SpirvOp.AtomicOr,
+                    _uintType,
+                    WaveScratchPointer(half),
+                    UInt(2),
+                    UInt(0x108),
+                    bit);
+            });
+            EmitWave64Barrier();
+
+            var lowMask = Load(_uintType, WaveScratchPointer(UInt(0)));
+            var highMask = Load(_uintType, WaveScratchPointer(UInt(1)));
+            var combined = BitwiseOr64(
+                _module.AddInstruction(
+                    SpirvOp.UConvert,
+                    _ulongType,
+                    lowMask),
+                ShiftLeftLogical64(
+                    _module.AddInstruction(
+                        SpirvOp.UConvert,
+                        _ulongType,
+                        highMask),
+                    _module.Constant64(_ulongType, 32)));
+            EmitWave64Barrier();
+            return combined;
+        }
+
+        private uint WaveBroadcast(uint value, uint lane)
+        {
+            if (!_emulateWave64)
+            {
+                return _module.AddInstruction(
+                    SpirvOp.GroupNonUniformShuffle,
+                    _uintType,
+                    UInt(3),
+                    value,
+                    BitwiseAnd(lane, UInt(31)));
+            }
+
+            Store(WaveScratchPointer(GuestWaveLane()), value);
+            EmitWave64Barrier();
+            var result = Load(
+                _uintType,
+                WaveScratchPointer(BitwiseAnd(lane, UInt(63))));
+            EmitWave64Barrier();
+            return result;
+        }
+
+        private uint WaveScratchPointer(uint index) =>
+            _module.AddInstruction(
+                SpirvOp.AccessChain,
+                _waveScratchElementPointer,
+                _waveScratch,
+                index);
+
+        private void EmitWave64Barrier()
+        {
+            _module.AddStatement(
+                SpirvOp.ControlBarrier,
+                UInt(2),
+                UInt(2),
+                UInt(0x108));
+        }
+
         private uint IsWaveMaskActive(uint mask) =>
-            _subgroupInvocationIdInput == 0
+            !HasGuestWaveLanes()
                 ? IsNotZero64(mask)
                 : IsCurrentLaneSet(mask);
 
@@ -5791,7 +6000,7 @@ public static partial class Gen5SpirvTranslator
                     CurrentLaneBit()));
 
         private void StoreWaveMask(uint register, uint condition) =>
-            StoreS64(register, BooleanToLaneMask(condition));
+            StoreS64(register, BooleanToWaveMask(condition));
 
         private void EmitExecConditional(Action emit)
         {
@@ -5851,10 +6060,6 @@ public static partial class Gen5SpirvTranslator
             _state.Program.Instructions.Any(instruction =>
                 instruction.Opcode is
                     "VReadfirstlaneB32" or "VReadlaneB32" or "VWritelaneB32");
-
-        private bool UsesSubgroupBallot() =>
-            _state.Program.Instructions.Any(instruction =>
-                instruction.Opcode == "VReadfirstlaneB32");
 
         private bool UsesDsAddTid() =>
             _state.Program.Instructions.Any(instruction =>

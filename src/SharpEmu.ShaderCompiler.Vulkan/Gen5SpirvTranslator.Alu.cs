@@ -75,22 +75,51 @@ public static partial class Gen5SpirvTranslator
                     return false;
                 }
 
-                var activeLanes = _module.AddInstruction(
-                    SpirvOp.GroupNonUniformBallot,
-                    _uvec4Type,
-                    UInt(3),
-                    Load(_boolType, _exec));
-                var firstActiveLane = _module.AddInstruction(
-                    SpirvOp.GroupNonUniformBallotFindLSB,
-                    _uintType,
-                    UInt(3),
-                    activeLanes);
-                var value = _module.AddInstruction(
-                    SpirvOp.GroupNonUniformShuffle,
-                    _uintType,
-                    UInt(3),
-                    GetRawSource(instruction, 0),
-                    firstActiveLane);
+                uint value;
+                if (_emulateWave64)
+                {
+                    var activeMask = BooleanToWaveMask(Load(_boolType, _exec));
+                    var lowMask = _module.AddInstruction(
+                        SpirvOp.UConvert,
+                        _uintType,
+                        activeMask);
+                    var highMask = _module.AddInstruction(
+                        SpirvOp.UConvert,
+                        _uintType,
+                        ShiftRightLogical64(
+                            activeMask,
+                            _module.Constant64(_ulongType, 32)));
+                    var hasLow = IsNotZero(lowMask);
+                    var firstLane = _module.AddInstruction(
+                        SpirvOp.Select,
+                        _uintType,
+                        hasLow,
+                        Ext(73, _uintType, lowMask),
+                        IAdd(UInt(32), Ext(73, _uintType, highMask)));
+                    value = WaveBroadcast(
+                        GetRawSource(instruction, 0),
+                        firstLane);
+                }
+                else
+                {
+                    var activeLanes = _module.AddInstruction(
+                        SpirvOp.GroupNonUniformBallot,
+                        _uvec4Type,
+                        UInt(3),
+                        Load(_boolType, _exec));
+                    var firstActiveLane = _module.AddInstruction(
+                        SpirvOp.GroupNonUniformBallotFindLSB,
+                        _uintType,
+                        UInt(3),
+                        activeLanes);
+                    value = _module.AddInstruction(
+                        SpirvOp.GroupNonUniformShuffle,
+                        _uintType,
+                        UInt(3),
+                        GetRawSource(instruction, 0),
+                        firstActiveLane);
+                }
+
                 StoreS(instruction.Destinations[0].Value, value);
                 return true;
             }
@@ -106,11 +135,8 @@ public static partial class Gen5SpirvTranslator
 
                 var lane = BitwiseAnd(
                     GetRawSource(instruction, 1),
-                    UInt(RdnaWaveLaneCount - 1));
-                var value = _module.AddInstruction(
-                    SpirvOp.GroupNonUniformShuffle,
-                    _uintType,
-                    UInt(3),
+                    UInt(_waveLaneCount - 1));
+                var value = WaveBroadcast(
                     GetRawSource(instruction, 0),
                     lane);
                 StoreS(instruction.Destinations[0].Value, value);
@@ -131,10 +157,10 @@ public static partial class Gen5SpirvTranslator
                     break;
                 case "VWritelaneB32":
                 {
-                    var lane = Load(_uintType, _subgroupInvocationIdInput);
+                    var lane = GuestWaveLane();
                     var selectedLane = BitwiseAnd(
                         GetRawSource(instruction, 1),
-                        UInt(RdnaWaveLaneCount - 1));
+                        UInt(_waveLaneCount - 1));
                     var selected = _module.AddInstruction(
                         SpirvOp.IEqual,
                         _boolType,
@@ -3446,9 +3472,7 @@ public static partial class Gen5SpirvTranslator
             Gen5ShaderInstruction instruction,
             bool highHalf)
         {
-            var lane = _subgroupInvocationIdInput == 0
-                ? UInt(0)
-                : Load(_uintType, _subgroupInvocationIdInput);
+            var lane = GuestWaveLane();
             var inHalf = highHalf
                 ? _module.AddInstruction(
                     SpirvOp.UGreaterThanEqual,
@@ -4709,7 +4733,7 @@ public static partial class Gen5SpirvTranslator
             if (is64Bit)
             {
                 var source = GetRawSource64(instruction, 0);
-                var oldExec = BooleanToLaneMask(Load(_boolType, _exec));
+                var oldExec = BooleanToWaveMask(Load(_boolType, _exec));
                 var notSource = _module.AddInstruction(SpirvOp.Not, _ulongType, source);
                 var notOldExec = _module.AddInstruction(SpirvOp.Not, _ulongType, oldExec);
                 var newExec = instruction.Opcode switch
@@ -4763,7 +4787,7 @@ public static partial class Gen5SpirvTranslator
             var oldExec32 = _module.AddInstruction(
                 SpirvOp.UConvert,
                 _uintType,
-                BooleanToLaneMask(Load(_boolType, _exec)));
+                BooleanToWaveMask(Load(_boolType, _exec)));
             var notSource32 = _module.AddInstruction(SpirvOp.Not, _uintType, source32);
             var notOldExec32 = _module.AddInstruction(SpirvOp.Not, _uintType, oldExec32);
             var newExec32 = instruction.Opcode switch
@@ -6102,7 +6126,7 @@ public static partial class Gen5SpirvTranslator
             var value = GetRawSource(instruction, 0);
             var selectorLow = GetRawSource(instruction, 1);
             var selectorHigh = GetRawSource(instruction, 2);
-            var lane = Load(_uintType, _subgroupInvocationIdInput);
+            var lane = GuestWaveLane();
             var localLane = BitwiseAnd(lane, UInt(15));
             var lowHalf = _module.AddInstruction(
                 SpirvOp.ULessThan,
@@ -6135,12 +6159,7 @@ public static partial class Gen5SpirvTranslator
             }
 
             var targetLane = IAdd(rowBase, selector);
-            return _module.AddInstruction(
-                SpirvOp.GroupNonUniformShuffle,
-                _uintType,
-                UInt(3),
-                value,
-                targetLane);
+            return WaveBroadcast(value, targetLane);
         }
 
         private uint EmitFloatResult(
