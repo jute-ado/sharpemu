@@ -4259,7 +4259,7 @@ public static partial class AgcExports
             vertexInputs,
             renderTargets,
             guestTargets,
-            DecodeDepthTarget(state.CxRegisters),
+            DecodeDepthTarget(state.CxRegisters, ctx.Memory),
             ApplyTransparentPremultipliedFillClear(
                 CreateRenderState(state.CxRegisters, renderTargets, pixelState),
                 textures,
@@ -4592,7 +4592,8 @@ public static partial class AgcExports
     }
 
     internal static GuestDepthTarget? DecodeDepthTarget(
-        IReadOnlyDictionary<uint, uint> registers)
+        IReadOnlyDictionary<uint, uint> registers,
+        ICpuMemory? guestMemory = null)
     {
         var depthState = DecodeDepthState(registers);
         if (!depthState.TestEnable &&
@@ -4651,7 +4652,127 @@ public static partial class AgcExports
             guestFormat,
             (zInfo >> 4) & 0x1Fu,
             clearDepth,
-            ReadOnly: (depthView & (1u << 24)) != 0 || writeAddress == 0);
+            ReadOnly: (depthView & (1u << 24)) != 0 || writeAddress == 0,
+            guestMemory);
+    }
+
+    internal static bool TryReadDepthPixels(
+        ICpuMemory guestMemory,
+        ulong address,
+        uint width,
+        uint height,
+        uint guestFormat,
+        uint swizzleMode,
+        out byte[] d32Pixels)
+    {
+        d32Pixels = [];
+        var bytesPerElement = guestFormat switch
+        {
+            1 => sizeof(ushort),
+            3 => sizeof(float),
+            _ => 0,
+        };
+        if (address == 0 ||
+            width == 0 ||
+            height == 0 ||
+            width > int.MaxValue ||
+            height > int.MaxValue ||
+            bytesPerElement == 0 ||
+            swizzleMode != 0 && !GnmTiling.NeedsDetile(swizzleMode))
+        {
+            return false;
+        }
+
+        ulong linearByteCount;
+        try
+        {
+            linearByteCount = checked(
+                (ulong)width * height * (uint)bytesPerElement);
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+
+        var readByteCount = linearByteCount;
+        if (swizzleMode != 0 &&
+            !GnmTiling.TryGetTiledByteCount(
+                swizzleMode,
+                checked((int)width),
+                checked((int)height),
+                bytesPerElement,
+                out readByteCount))
+        {
+            return false;
+        }
+
+        ulong outputByteCount;
+        try
+        {
+            outputByteCount = checked((ulong)width * height * sizeof(float));
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+
+        if (linearByteCount == 0 ||
+            readByteCount == 0 ||
+            outputByteCount == 0 ||
+            linearByteCount > MaxPresentedTextureBytes ||
+            readByteCount > MaxPresentedTextureBytes ||
+            outputByteCount > MaxPresentedTextureBytes ||
+            linearByteCount > int.MaxValue ||
+            readByteCount > int.MaxValue ||
+            outputByteCount > int.MaxValue)
+        {
+            return false;
+        }
+
+        var source = new byte[(int)readByteCount];
+        if (!guestMemory.TryRead(address, source) &&
+            !KernelMemoryCompatExports.TryReadTrackedLibcHeapGpuAlias(
+                address,
+                source))
+        {
+            return false;
+        }
+
+        var linear = source;
+        if (swizzleMode != 0)
+        {
+            linear = new byte[(int)linearByteCount];
+            if (!GnmTiling.TryDetile(
+                    source,
+                    linear,
+                    swizzleMode,
+                    (int)width,
+                    (int)height,
+                    bytesPerElement))
+            {
+                return false;
+            }
+        }
+
+        if (guestFormat == 3)
+        {
+            d32Pixels = linear;
+            return true;
+        }
+
+        d32Pixels = new byte[(int)outputByteCount];
+        var pixelCount = (int)(outputByteCount / sizeof(float));
+        for (var index = 0; index < pixelCount; index++)
+        {
+            var sourceValue = BinaryPrimitives.ReadUInt16LittleEndian(
+                linear.AsSpan(index * sizeof(ushort), sizeof(ushort)));
+            var promoted = sourceValue / (float)ushort.MaxValue;
+            BinaryPrimitives.WriteInt32LittleEndian(
+                d32Pixels.AsSpan(index * sizeof(float), sizeof(float)),
+                BitConverter.SingleToInt32Bits(promoted));
+        }
+
+        return true;
     }
 
     private static GuestBlendState DecodeBlendState(

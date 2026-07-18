@@ -1918,6 +1918,7 @@ internal static unsafe class VulkanVideoPresenter
             public GuestViewport? Viewport;
             public GuestDepthState Depth = GuestDepthState.Default;
             public bool HasDepthAttachment;
+            public GuestDepthResource? DepthUpload;
             public RenderPass TransientRenderPass;
             public Framebuffer TransientFramebuffer;
         }
@@ -1992,6 +1993,9 @@ internal static unsafe class VulkanVideoPresenter
             public Image Image;
             public DeviceMemory Memory;
             public ImageView View;
+            public VkBuffer StagingBuffer;
+            public DeviceMemory StagingMemory;
+            public bool NeedsUpload;
             public bool Initialized;
             public ImageLayout Layout = ImageLayout.Undefined;
             public float ClearDepth = 1f;
@@ -6206,7 +6210,10 @@ internal static unsafe class VulkanVideoPresenter
                             },
                         };
                     }
-                    depth = GetOrCreateGuestDepth(effectiveDepth);
+                    depth = GetOrCreateGuestDepth(
+                        effectiveDepth,
+                        loadInitialContents:
+                            !work.Draw.RenderState.Depth.ClearEnable);
                     depth.ClearDepth = effectiveDepth.ClearDepth;
                 }
                 else
@@ -6270,6 +6277,10 @@ internal static unsafe class VulkanVideoPresenter
                 BeginDebugLabel(_commandBuffer, resources.DebugName);
                 RecordTextureUploads(resources, PipelineStageFlags.FragmentShaderBit);
                 RecordStorageImagesForWrite(resources, PipelineStageFlags.FragmentShaderBit);
+                if (depth is not null)
+                {
+                    RecordDepthUpload(resources, depth);
+                }
 
                 var toColorAttachments = stackalloc ImageMemoryBarrier[targets.Length];
                 var anyPriorContents = false;
@@ -6356,6 +6367,7 @@ internal static unsafe class VulkanVideoPresenter
                 if (depth is not null)
                 {
                     depth.Initialized = true;
+                    depth.NeedsUpload = false;
                     depth.Layout = ImageLayout.DepthStencilAttachmentOptimal;
                 }
                 MarkSampledImagesInitialized(resources);
@@ -6704,17 +6716,20 @@ internal static unsafe class VulkanVideoPresenter
             var depthReference = default(AttachmentReference);
             if (depth is not null)
             {
+                var loadDepth =
+                    !clearDepth &&
+                    (depth.Initialized || depth.NeedsUpload);
                 attachments[formats.Count] = new AttachmentDescription
                 {
                     Format = DepthFormat,
                     Samples = SampleCountFlags.Count1Bit,
-                    LoadOp = clearDepth || !depth.Initialized
-                        ? AttachmentLoadOp.Clear
-                        : AttachmentLoadOp.Load,
+                    LoadOp = loadDepth
+                        ? AttachmentLoadOp.Load
+                        : AttachmentLoadOp.Clear,
                     StoreOp = AttachmentStoreOp.Store,
                     StencilLoadOp = AttachmentLoadOp.DontCare,
                     StencilStoreOp = AttachmentStoreOp.DontCare,
-                    InitialLayout = depth.Initialized && !clearDepth
+                    InitialLayout = loadDepth
                         ? ImageLayout.DepthStencilAttachmentOptimal
                         : ImageLayout.Undefined,
                     FinalLayout = ImageLayout.DepthStencilAttachmentOptimal,
@@ -6763,7 +6778,9 @@ internal static unsafe class VulkanVideoPresenter
             return (renderPass, framebuffer);
         }
 
-        private GuestDepthResource GetOrCreateGuestDepth(GuestDepthTarget target)
+        private GuestDepthResource GetOrCreateGuestDepth(
+            GuestDepthTarget target,
+            bool loadInitialContents)
         {
             var key = new GuestDepthKey(
                 target.Address,
@@ -6774,6 +6791,7 @@ internal static unsafe class VulkanVideoPresenter
             if (_guestDepthImages.TryGetValue(key, out var existing))
             {
                 existing.ClearDepth = target.ClearDepth;
+                TryStageInitialDepth(existing, target, loadInitialContents);
                 return existing;
             }
 
@@ -6838,12 +6856,58 @@ internal static unsafe class VulkanVideoPresenter
                 View = view,
                 ClearDepth = target.ClearDepth,
             };
+            TryStageInitialDepth(resource, target, loadInitialContents);
             _guestDepthImages.Add(key, resource);
             return resource;
         }
 
+        private void TryStageInitialDepth(
+            GuestDepthResource resource,
+            GuestDepthTarget target,
+            bool loadInitialContents)
+        {
+            if (!loadInitialContents ||
+                resource.Initialized ||
+                resource.NeedsUpload ||
+                target.ReadAddress == 0 ||
+                target.GuestMemory is not { } guestMemory)
+            {
+                return;
+            }
+
+            ulong expectedByteCount;
+            try
+            {
+                expectedByteCount = checked(
+                    (ulong)target.Width * target.Height * sizeof(float));
+            }
+            catch (OverflowException)
+            {
+                expectedByteCount = 0;
+            }
+            if (expectedByteCount != 0 &&
+                expectedByteCount <= int.MaxValue &&
+                AgcExports.TryReadDepthPixels(
+                    guestMemory,
+                    target.ReadAddress,
+                    target.Width,
+                    target.Height,
+                    target.GuestFormat,
+                    target.SwizzleMode,
+                    out var initialPixels) &&
+                (ulong)initialPixels.Length == expectedByteCount)
+            {
+                (resource.StagingBuffer, resource.StagingMemory) =
+                    CreateTextureStagingBuffer(
+                        initialPixels,
+                        $"SharpEmu guest depth 0x{target.Address:X16} upload");
+                resource.NeedsUpload = true;
+            }
+        }
+
         private void DestroyGuestDepth(GuestDepthResource resource)
         {
+            DestroyDepthStaging(resource);
             if (resource.View.Handle != 0)
             {
                 _vk.DestroyImageView(_device, resource.View, null);
@@ -8142,6 +8206,98 @@ internal static unsafe class VulkanVideoPresenter
             }
         }
 
+        private void RecordDepthUpload(
+            TranslatedDrawResources resources,
+            GuestDepthResource depth)
+        {
+            if (!depth.NeedsUpload ||
+                depth.Initialized)
+            {
+                return;
+            }
+
+            if (resources.Depth.ClearEnable)
+            {
+                // A successful clear supersedes the staged guest contents. Keep
+                // the allocation alive until that submission retires so failure
+                // can still retry the original upload.
+                resources.DepthUpload = depth;
+                return;
+            }
+
+            var toTransfer = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = 0,
+                DstAccessMask = AccessFlags.TransferWriteBit,
+                OldLayout = ImageLayout.Undefined,
+                NewLayout = ImageLayout.TransferDstOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = depth.Image,
+                SubresourceRange = DepthSubresourceRange(),
+            };
+            _vk.CmdPipelineBarrier(
+                _commandBuffer,
+                PipelineStageFlags.TopOfPipeBit,
+                PipelineStageFlags.TransferBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &toTransfer);
+
+            var copyRegion = new BufferImageCopy
+            {
+                ImageSubresource = new ImageSubresourceLayers
+                {
+                    AspectMask = ImageAspectFlags.DepthBit,
+                    LayerCount = 1,
+                },
+                ImageExtent = new Extent3D(
+                    depth.Key.Width,
+                    depth.Key.Height,
+                    1),
+            };
+            _vk.CmdCopyBufferToImage(
+                _commandBuffer,
+                depth.StagingBuffer,
+                depth.Image,
+                ImageLayout.TransferDstOptimal,
+                1,
+                &copyRegion);
+
+            var toDepthAttachment = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.TransferWriteBit,
+                DstAccessMask =
+                    AccessFlags.DepthStencilAttachmentReadBit |
+                    AccessFlags.DepthStencilAttachmentWriteBit,
+                OldLayout = ImageLayout.TransferDstOptimal,
+                NewLayout = ImageLayout.DepthStencilAttachmentOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = depth.Image,
+                SubresourceRange = DepthSubresourceRange(),
+            };
+            _vk.CmdPipelineBarrier(
+                _commandBuffer,
+                PipelineStageFlags.TransferBit,
+                PipelineStageFlags.EarlyFragmentTestsBit |
+                    PipelineStageFlags.LateFragmentTestsBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &toDepthAttachment);
+            resources.DepthUpload = depth;
+        }
+
         private void RecordStorageImagesForWrite(
             TranslatedDrawResources resources,
             PipelineStageFlags shaderStage)
@@ -8534,6 +8690,11 @@ internal static unsafe class VulkanVideoPresenter
 
         private void DestroyTranslatedDrawResources(TranslatedDrawResources resources)
         {
+            if (resources.DepthUpload is { Initialized: true } uploadedDepth)
+            {
+                DestroyDepthStaging(uploadedDepth);
+            }
+
             if (resources.TransientFramebuffer.Handle != 0)
             {
                 _vk.DestroyFramebuffer(_device, resources.TransientFramebuffer, null);
@@ -8625,6 +8786,21 @@ internal static unsafe class VulkanVideoPresenter
                 resources.DescriptorSetLayout.Handle != 0)
             {
                 _vk.DestroyDescriptorSetLayout(_device, resources.DescriptorSetLayout, null);
+            }
+        }
+
+        private void DestroyDepthStaging(GuestDepthResource resource)
+        {
+            if (resource.StagingBuffer.Handle != 0)
+            {
+                _vk.DestroyBuffer(_device, resource.StagingBuffer, null);
+                resource.StagingBuffer = default;
+            }
+
+            if (resource.StagingMemory.Handle != 0)
+            {
+                _vk.FreeMemory(_device, resource.StagingMemory, null);
+                resource.StagingMemory = default;
             }
         }
 
@@ -9056,6 +9232,14 @@ internal static unsafe class VulkanVideoPresenter
                 AspectMask = ImageAspectFlags.ColorBit,
                 BaseMipLevel = baseMipLevel,
                 LevelCount = levelCount,
+                LayerCount = 1,
+            };
+
+        private static ImageSubresourceRange DepthSubresourceRange() =>
+            new()
+            {
+                AspectMask = ImageAspectFlags.DepthBit,
+                LevelCount = 1,
                 LayerCount = 1,
             };
 
