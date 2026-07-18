@@ -116,6 +116,8 @@ internal static unsafe class VulkanVideoPresenter
     private static readonly Queue<object> _pendingGuestWork = new();
     private static readonly Dictionary<ulong, uint> _availableGuestImages = new();
     private static readonly Dictionary<ulong, uint> _gpuGuestImages = new();
+    private static readonly Dictionary<ulong, GuestDisplayBuffer>
+        _registeredDisplayBuffers = new();
     private static readonly Dictionary<ulong, byte[]> _pendingGuestImageInitialData = new();
 
     internal static bool ShouldAttachGuestDepth(
@@ -176,7 +178,12 @@ internal static unsafe class VulkanVideoPresenter
 
         lock (_gate)
         {
-            return !_availableGuestImages.ContainsKey(address) &&
+            return (!_registeredDisplayBuffers.TryGetValue(
+                        address,
+                        out var displayBuffer) ||
+                    VideoOutCompressionPolicy.CanSeedFromGuestMemory(
+                        displayBuffer.Compression)) &&
+                !_availableGuestImages.ContainsKey(address) &&
                 !_pendingGuestImageInitialData.ContainsKey(address);
         }
     }
@@ -191,7 +198,12 @@ internal static unsafe class VulkanVideoPresenter
 
         lock (_gate)
         {
-            if (!_availableGuestImages.ContainsKey(address))
+            if ((!_registeredDisplayBuffers.TryGetValue(
+                        address,
+                        out var displayBuffer) ||
+                    VideoOutCompressionPolicy.CanSeedFromGuestMemory(
+                        displayBuffer.Compression)) &&
+                !_availableGuestImages.ContainsKey(address))
             {
                 _pendingGuestImageInitialData[address] = pixels;
             }
@@ -1234,18 +1246,40 @@ internal static unsafe class VulkanVideoPresenter
         return true;
     }
 
-    // Display buffers registered through sceVideoOutRegisterBuffers are valid flip targets
-    // even when no AGC render-target write to them was ever observed.
-    internal static void RegisterKnownDisplayBuffer(ulong address, uint guestFormat)
+    // Registration describes guest memory but does not create a native image.
+    // Uncompressed surfaces may seed their first native render target from guest
+    // bytes; DCC surfaces become available only after a GPU render produces them.
+    internal static void RegisterKnownDisplayBuffer(GuestDisplayBuffer buffer)
     {
-        if (address == 0 || guestFormat == 0)
+        if (buffer.Address == 0 ||
+            buffer.Format == 0 ||
+            buffer.Compression == GuestDisplayCompression.Unsupported)
         {
             return;
         }
 
         lock (_gate)
         {
-            _availableGuestImages[address] = guestFormat;
+            _registeredDisplayBuffers[buffer.Address] = buffer;
+            if (!VideoOutCompressionPolicy.CanSeedFromGuestMemory(
+                    buffer.Compression))
+            {
+                _pendingGuestImageInitialData.Remove(buffer.Address);
+            }
+        }
+    }
+
+    internal static void UnregisterKnownDisplayBuffer(ulong address)
+    {
+        if (address == 0)
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            _registeredDisplayBuffers.Remove(address);
+            _pendingGuestImageInitialData.Remove(address);
         }
     }
 
@@ -9970,6 +10004,7 @@ internal static unsafe class VulkanVideoPresenter
                     {
                         _availableGuestImages.Clear();
                         _gpuGuestImages.Clear();
+                        _registeredDisplayBuffers.Clear();
                     }
                     DestroySwapchainResources();
                     _vk.DestroyDevice(_device, null);

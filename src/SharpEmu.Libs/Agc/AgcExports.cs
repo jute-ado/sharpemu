@@ -6944,6 +6944,8 @@ public static partial class AgcExports
             destination.Width > 8192 ||
             destination.Height > 8192 ||
             destination.TilingMode != 0 ||
+            !VideoOutCompressionPolicy.CanSeedFromGuestMemory(
+                destination.Compression) ||
             destination.PixelFormat is not (
                 VideoOutPixelFormatA8R8G8B8Srgb or
                 VideoOutPixelFormatA8B8G8R8Srgb or

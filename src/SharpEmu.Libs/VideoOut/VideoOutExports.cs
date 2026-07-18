@@ -27,6 +27,7 @@ public static class VideoOutExports
     private const int OrbisVideoOutErrorFlipQueueFull = unchecked((int)0x80290012);
     private const int OrbisVideoOutErrorUnsupportedOutputMode = unchecked((int)0x80290016);
     private const int OrbisVideoOutErrorInvalidOption = unchecked((int)0x8029001A);
+    private const int OrbisVideoOutErrorInvalidCategory = unchecked((int)0x8029001D);
     private const int SceVideoOutBusTypeMain = 0;
     private const int SceVideoOutBufferAttributeOptionNone = 0;
     private const int SceVideoOutTilingModeLinear = 1;
@@ -342,6 +343,7 @@ public static class VideoOutExports
     {
         public required int Index { get; init; }
         public required BufferAttribute Attribute { get; init; }
+        public required GuestDisplayCompression Compression { get; init; }
     }
 
     private sealed class VideoOutBufferSlot
@@ -349,18 +351,21 @@ public static class VideoOutExports
         public int GroupIndex { get; set; } = -1;
         public ulong AddressLeft { get; set; }
         public ulong AddressRight { get; set; }
+        public ulong MetadataAddress { get; set; }
     }
 
     private readonly record struct FlipEventRegistration(ulong Equeue, ulong UserData);
 
-    private readonly record struct BufferAttribute(
+    internal readonly record struct BufferAttribute(
         ulong PixelFormat,
         uint TilingMode,
         uint AspectRatio,
         uint Width,
         uint Height,
         uint PitchInPixel,
-        ulong Option);
+        ulong Option,
+        uint DccControl,
+        ulong DccClearColor);
 
     internal readonly record struct DisplayBufferInfo(
         ulong Address,
@@ -368,7 +373,11 @@ public static class VideoOutExports
         uint TilingMode,
         uint Width,
         uint Height,
-        uint PitchInPixel);
+        uint PitchInPixel,
+        ulong MetadataAddress,
+        GuestDisplayCompression Compression,
+        uint DccControl,
+        ulong DccClearColor);
 
     [SysAbiExport(
         Nid = "Up36PTk687E",
@@ -962,7 +971,11 @@ public static class VideoOutExports
                 attribute.TilingMode,
                 attribute.Width,
                 attribute.Height,
-                attribute.PitchInPixel);
+                attribute.PitchInPixel,
+                slot.MetadataAddress,
+                group.Compression,
+                attribute.DccControl,
+                attribute.DccClearColor);
             return true;
         }
     }
@@ -1002,6 +1015,9 @@ public static class VideoOutExports
             return OrbisVideoOutErrorInvalidValue;
         }
 
+        Span<ulong> unregisteredAddresses =
+            stackalloc ulong[MaxDisplayBuffers];
+        var unregisteredCount = 0;
         lock (_stateGate)
         {
             if (attributeIndex >= port.Groups.Length || port.Groups[attributeIndex] is null)
@@ -1014,14 +1030,23 @@ public static class VideoOutExports
             {
                 if (slot.GroupIndex == attributeIndex)
                 {
+                    unregisteredAddresses[unregisteredCount++] =
+                        slot.AddressLeft;
                     slot.GroupIndex = -1;
                     slot.AddressLeft = 0;
                     slot.AddressRight = 0;
+                    slot.MetadataAddress = 0;
                 }
             }
-
-            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
+
+        for (var index = 0; index < unregisteredCount; index++)
+        {
+            GuestGpu.Current.UnregisterKnownDisplayBuffer(
+                unregisteredAddresses[index]);
+        }
+
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
     [SysAbiExport(
@@ -1156,7 +1181,13 @@ public static class VideoOutExports
             }
         }
 
-        return RegisterBufferRange(port, startIndex, addresses[..bufferNum], attribute);
+        return RegisterBufferRange(
+            port,
+            startIndex,
+            addresses[..bufferNum],
+            ReadOnlySpan<ulong>.Empty,
+            attribute,
+            GuestDisplayCompression.Uncompressed);
     }
 
     [SysAbiExport(
@@ -1198,7 +1229,14 @@ public static class VideoOutExports
             return OrbisVideoOutErrorInvalidValue;
         }
 
-        if (categoryRaw != 0 || option != 0)
+        if (categoryRaw is not (
+                VideoOutCompressionPolicy.UncompressedCategory or
+                VideoOutCompressionPolicy.CompressedCategory))
+        {
+            return OrbisVideoOutErrorInvalidCategory;
+        }
+
+        if (option != 0)
         {
             return OrbisVideoOutErrorInvalidValue;
         }
@@ -1216,18 +1254,71 @@ public static class VideoOutExports
         }
 
         Span<ulong> addresses = stackalloc ulong[Math.Min(bufferNum, MaxDisplayBuffers)];
+        Span<ulong> metadataAddresses =
+            stackalloc ulong[Math.Min(bufferNum, MaxDisplayBuffers)];
+        var compression = GuestDisplayCompression.Unsupported;
         for (var i = 0; i < bufferNum; i++)
         {
             var entryAddress = buffersAddress + ((ulong)i * VideoOutBuffersEntrySize);
-            if (!ctx.TryReadUInt64(entryAddress + 0x00, out addresses[i]) ||
-                !ctx.TryReadUInt64(entryAddress + 0x08, out _))
+            if (!TryReadBuffersEntry(
+                    ctx,
+                    entryAddress,
+                    out addresses[i],
+                    out metadataAddresses[i]))
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
             }
+
+            var currentCompression = VideoOutCompressionPolicy.Classify(
+                categoryRaw,
+                metadataAddresses[i],
+                attribute.DccControl,
+                attribute.DccClearColor);
+            if (currentCompression == GuestDisplayCompression.Unsupported)
+            {
+                return OrbisVideoOutErrorInvalidValue;
+            }
+
+            compression = currentCompression;
         }
 
-        var groupIndex = RegisterBufferRange(port, bufferIndexStart, addresses[..bufferNum], attribute, setIndex);
+        var groupIndex = RegisterBufferRange(
+            port,
+            bufferIndexStart,
+            addresses[..bufferNum],
+            metadataAddresses[..bufferNum],
+            attribute,
+            compression,
+            setIndex);
         return groupIndex < 0 ? groupIndex : setIndex;
+    }
+
+    internal static bool TryReadBuffersEntry(
+        CpuContext ctx,
+        ulong entryAddress,
+        out ulong dataAddress,
+        out ulong metadataAddress)
+    {
+        dataAddress = 0;
+        metadataAddress = 0;
+        if (!GuestAddress.IsRangeValid(
+                entryAddress,
+                VideoOutBuffersEntrySize))
+        {
+            return false;
+        }
+
+        Span<byte> entry = stackalloc byte[VideoOutBuffersEntrySize];
+        if (!ctx.Memory.TryRead(entryAddress, entry))
+        {
+            return false;
+        }
+
+        dataAddress =
+            BinaryPrimitives.ReadUInt64LittleEndian(entry[0x00..0x08]);
+        metadataAddress =
+            BinaryPrimitives.ReadUInt64LittleEndian(entry[0x08..0x10]);
+        return true;
     }
 
     private static void SignalVblank(VideoOutPortState port)
@@ -1446,7 +1537,14 @@ public static class VideoOutExports
             $"vblank_missed={missedEdges}");
     }
 
-    private static int RegisterBufferRange(VideoOutPortState port, int startIndex, ReadOnlySpan<ulong> addresses, BufferAttribute attribute, int requestedGroupIndex = -1)
+    private static int RegisterBufferRange(
+        VideoOutPortState port,
+        int startIndex,
+        ReadOnlySpan<ulong> addresses,
+        ReadOnlySpan<ulong> metadataAddresses,
+        BufferAttribute attribute,
+        GuestDisplayCompression compression,
+        int requestedGroupIndex = -1)
     {
         lock (_stateGate)
         {
@@ -1473,6 +1571,7 @@ public static class VideoOutExports
             {
                 Index = groupIndex,
                 Attribute = attribute,
+                Compression = compression,
             };
             port.OutputWidth = attribute.Width;
             port.OutputHeight = attribute.Height;
@@ -1483,21 +1582,32 @@ public static class VideoOutExports
                 slot.GroupIndex = groupIndex;
                 slot.AddressLeft = addresses[i];
                 slot.AddressRight = 0;
+                slot.MetadataAddress =
+                    metadataAddresses.IsEmpty ? 0 : metadataAddresses[i];
             }
 
             if (_logVideoOut)
             {
                 TraceVideoOut(
-                    $"videoout.register_buffers handle={port.Handle} group={groupIndex} start={startIndex} count={addresses.Length} fmt=0x{attribute.PixelFormat:X} tile={attribute.TilingMode} {attribute.Width}x{attribute.Height} pitch={attribute.PitchInPixel}");
+                    $"videoout.register_buffers handle={port.Handle} group={groupIndex} start={startIndex} count={addresses.Length} fmt=0x{attribute.PixelFormat:X} tile={attribute.TilingMode} {attribute.Width}x{attribute.Height} pitch={attribute.PitchInPixel} compression={compression}");
             }
             GuestGpu.Current.EnsureStarted(attribute.Width, attribute.Height);
 
             var guestFormat = MapPixelFormatToGuestTextureFormat(attribute.PixelFormat);
             if (guestFormat != 0)
             {
-                foreach (var address in addresses)
+                for (var index = 0; index < addresses.Length; index++)
                 {
-                    GuestGpu.Current.RegisterKnownDisplayBuffer(address, guestFormat);
+                    GuestGpu.Current.RegisterKnownDisplayBuffer(
+                        new GuestDisplayBuffer(
+                            addresses[index],
+                            metadataAddresses.IsEmpty
+                                ? 0
+                                : metadataAddresses[index],
+                            guestFormat,
+                            compression,
+                            attribute.DccControl,
+                            attribute.DccClearColor));
                 }
             }
 
@@ -1518,7 +1628,11 @@ public static class VideoOutExports
         return -1;
     }
 
-    private static bool TryReadBufferAttribute(CpuContext ctx, ulong attributeAddress, bool attribute2, out BufferAttribute attribute)
+    internal static bool TryReadBufferAttribute(
+        CpuContext ctx,
+        ulong attributeAddress,
+        bool attribute2,
+        out BufferAttribute attribute)
     {
         attribute = default;
         var attributeSize = attribute2
@@ -1529,34 +1643,70 @@ public static class VideoOutExports
             return false;
         }
 
-        if (!ctx.TryReadUInt32(attributeAddress + 0x04, out var tilingMode) ||
-            !ctx.TryReadUInt32(attributeAddress + 0x0C, out var width) ||
-            !ctx.TryReadUInt32(attributeAddress + 0x10, out var height))
+        Span<byte> bytes = stackalloc byte[VideoOutBufferAttribute2Size];
+        var structure = bytes[..attributeSize];
+        if (!ctx.Memory.TryRead(attributeAddress, structure))
         {
             return false;
         }
 
+        var tilingMode =
+            BinaryPrimitives.ReadUInt32LittleEndian(structure[0x04..0x08]);
+        var width =
+            BinaryPrimitives.ReadUInt32LittleEndian(structure[0x0C..0x10]);
+        var height =
+            BinaryPrimitives.ReadUInt32LittleEndian(structure[0x10..0x14]);
         if (attribute2)
         {
-            if (!ctx.TryReadUInt64(attributeAddress + 0x18, out var option) ||
-                !ctx.TryReadUInt64(attributeAddress + 0x20, out var pixelFormat))
-            {
-                return false;
-            }
+            var option =
+                BinaryPrimitives.ReadUInt64LittleEndian(
+                    structure[0x18..0x20]);
+            var pixelFormat =
+                BinaryPrimitives.ReadUInt64LittleEndian(
+                    structure[0x20..0x28]);
+            var dccClearColor =
+                BinaryPrimitives.ReadUInt64LittleEndian(
+                    structure[0x28..0x30]);
+            var dccControl =
+                BinaryPrimitives.ReadUInt32LittleEndian(
+                    structure[0x30..0x34]);
 
-            attribute = new BufferAttribute(NormalizePixelFormat(pixelFormat), tilingMode, 0, width, height, width, option);
+            attribute = new BufferAttribute(
+                NormalizePixelFormat(pixelFormat),
+                tilingMode,
+                0,
+                width,
+                height,
+                width,
+                option,
+                dccControl,
+                dccClearColor);
             return true;
         }
 
-        if (!ctx.TryReadUInt32(attributeAddress + 0x00, out var pixelFormat32) ||
-            !ctx.TryReadUInt32(attributeAddress + 0x08, out var aspectRatio) ||
-            !ctx.TryReadUInt32(attributeAddress + 0x14, out var pitchInPixel) ||
-            !ctx.TryReadUInt32(attributeAddress + 0x18, out var option32))
-        {
-            return false;
-        }
+        var pixelFormat32 =
+            BinaryPrimitives.ReadUInt32LittleEndian(
+                structure[0x00..0x04]);
+        var aspectRatio =
+            BinaryPrimitives.ReadUInt32LittleEndian(
+                structure[0x08..0x0C]);
+        var pitchInPixel =
+            BinaryPrimitives.ReadUInt32LittleEndian(
+                structure[0x14..0x18]);
+        var option32 =
+            BinaryPrimitives.ReadUInt32LittleEndian(
+                structure[0x18..0x1C]);
 
-        attribute = new BufferAttribute(NormalizePixelFormat(pixelFormat32), tilingMode, aspectRatio, width, height, pitchInPixel, option32);
+        attribute = new BufferAttribute(
+            NormalizePixelFormat(pixelFormat32),
+            tilingMode,
+            aspectRatio,
+            width,
+            height,
+            pitchInPixel,
+            option32,
+            0,
+            0);
         return true;
     }
 
@@ -1577,7 +1727,10 @@ public static class VideoOutExports
                 : null;
         }
 
-        if (group is null || slot.AddressLeft == 0)
+        if (group is null ||
+            slot.AddressLeft == 0 ||
+            !VideoOutCompressionPolicy.CanSeedFromGuestMemory(
+                group.Compression))
         {
             return false;
         }

@@ -75,6 +75,26 @@ internal readonly record struct GuestShaderIdentity(
     ulong ExportShaderAddress,
     ulong PixelShaderAddress);
 
+internal enum GuestDisplayCompression
+{
+    Uncompressed,
+    Dcc256_256_0,
+    Dcc256_64_64,
+    Unsupported,
+}
+
+/// <summary>
+/// A display surface registered by the guest. Format and DccControl retain raw
+/// guest values; Compression records only the VideoOut modes validated by HLE.
+/// </summary>
+internal readonly record struct GuestDisplayBuffer(
+    ulong Address,
+    ulong MetadataAddress,
+    uint Format,
+    GuestDisplayCompression Compression,
+    uint DccControl,
+    ulong DccClearColor);
+
 internal readonly record struct GuestRect(
     int X,
     int Y,
