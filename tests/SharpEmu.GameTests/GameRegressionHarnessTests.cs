@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.Text.Json;
+using SharpEmu.Libs.Pad;
 using Xunit;
 
 namespace SharpEmu.GameTests;
@@ -1149,6 +1150,109 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
+    public void PadReplayEnvironmentIsIsolatedAndCanonical()
+    {
+        var startInfo = new ProcessStartInfo();
+        startInfo.Environment["SHARPEMU_PAD_REPLAY"] = "stale";
+        startInfo.Environment["SHARPEMU_AUTO_CROSS"] = "stale";
+
+        GameRegressionRunner.ConfigurePadReplayEnvironment(
+            startInfo,
+            replay: null);
+
+        Assert.False(
+            startInfo.Environment.ContainsKey("SHARPEMU_PAD_REPLAY"));
+        Assert.False(
+            startInfo.Environment.ContainsKey("SHARPEMU_AUTO_CROSS"));
+
+        var replayDefinition = new GamePadReplay
+        {
+            Events =
+            [
+                new()
+                {
+                    AtMilliseconds = 100,
+                    Buttons = ["Cross", "Right"],
+                    LeftX = 255,
+                },
+                new()
+                {
+                    AtMilliseconds = 500,
+                },
+            ],
+        };
+        GameRegressionRunner.ConfigurePadReplayEnvironment(
+            startInfo,
+            replayDefinition);
+        GameRegressionRunner.ValidateCase(
+            CreateExecutionCase(padReplay: replayDefinition));
+
+        Assert.False(
+            startInfo.Environment.ContainsKey("SHARPEMU_AUTO_CROSS"));
+        Assert.True(PadReplayScript.TryParse(
+            startInfo.Environment["SHARPEMU_PAD_REPLAY"],
+            out var replay,
+            out var error), error);
+        var pressed = Assert.IsType<PadReplayScript>(replay).GetState(100);
+        Assert.Equal(
+            OrbisPadButton.Cross | OrbisPadButton.Right,
+            pressed.Buttons);
+        Assert.Equal(255, pressed.LeftX);
+        Assert.Equal(128, replay.GetState(500).LeftX);
+        Assert.Equal(0u, replay.GetState(500).Buttons);
+    }
+
+    [Fact]
+    public void GameCaseRejectsPadReplayOutsideExecutionWindow()
+    {
+        var replay = new GamePadReplay
+        {
+            Events =
+            [
+                new()
+                {
+                    AtMilliseconds = 20_000,
+                    Buttons = ["Cross"],
+                },
+            ],
+        };
+        var testCase = CreateExecutionCase(padReplay: replay);
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => GameRegressionRunner.ValidateCase(testCase));
+
+        Assert.Contains(
+            "at or after its timeout",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GameCaseRejectsUnknownReplayButton()
+    {
+        var replay = new GamePadReplay
+        {
+            Events =
+            [
+                new()
+                {
+                    AtMilliseconds = 100,
+                    Buttons = ["Share"],
+                },
+            ],
+        };
+        var testCase = CreateExecutionCase(padReplay: replay);
+
+        var error = Assert.Throws<InvalidDataException>(
+            () => GameRegressionRunner.ValidateCase(testCase));
+
+        Assert.Contains(
+            "unknown button",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void EarlyCpuTrapFailsExecutionSurvivalContract()
     {
         var testCase = CreateExecutionCase();
@@ -1400,6 +1504,7 @@ public sealed class GameRegressionHarnessTests
         string[]? requiredVideoOutFrameFingerprints = null,
         PresentedGuestImageExpectation? requiredPresentedGuestImage = null,
         GuestImageWriteExpectation? requiredGuestImageWrite = null,
+        GamePadReplay? padReplay = null,
         bool requireNoUnsupportedRelocations = false,
         string? expectedBundleSha256 =
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") => new()
@@ -1409,6 +1514,7 @@ public sealed class GameRegressionHarnessTests
         Mode = "execution",
         TimeoutSeconds = 20,
         ExpectedBundleSha256 = expectedBundleSha256,
+        PadReplay = padReplay,
         Expectations = new GameRegressionExpectations
         {
             AllowedResults =

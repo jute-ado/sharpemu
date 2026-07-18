@@ -65,6 +65,42 @@ ignored RGBA/BMP artifacts per case.
 Keep one synchronous intermediate capture per case so failures identify one
 pipeline milestone precisely.
 
+## Deterministic controller replay
+
+Execution cases may include a `padReplay` timeline to reach menus and gameplay
+without relying on a focused window or physical controller. Each event is a
+complete pad snapshot that becomes active at `atMilliseconds` after
+`scePadInit`; an empty `buttons` array releases every button. Events must be in
+strictly increasing order and occur before the case timeout.
+
+```json
+"padReplay": {
+  "events": [
+    {
+      "atMilliseconds": 3000,
+      "buttons": ["Cross"]
+    },
+    {
+      "atMilliseconds": 3400,
+      "buttons": []
+    },
+    {
+      "atMilliseconds": 5000,
+      "buttons": ["Right"],
+      "leftX": 255
+    }
+  ]
+}
+```
+
+Supported buttons are `L3`, `R3`, `Options`, the four D-pad directions, `L1`,
+`L2`, `R1`, `R2`, `Triangle`, `Circle`, `Cross`, `Square`, and `TouchPad`.
+Stick and trigger values use the guest's 0–255 representation; omitted sticks
+are centered at 128 and omitted triggers are released. A replay fully replaces
+live host input for that isolated emulator process, making repeated runs
+comparable. The older `SHARPEMU_AUTO_CROSS` debugging variable remains
+compatible but is translated into this same replay engine.
+
 ## Intermediate GPU captures
 
 When a presented frame is wrong but the game is rendering, capture one

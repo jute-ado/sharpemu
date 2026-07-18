@@ -4,12 +4,16 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using SharpEmu.Libs.Pad;
 using SharpEmu.Libs.VideoOut;
 
 namespace SharpEmu.GameTests;
 
 internal static class GameRegressionRunner
 {
+    private static readonly JsonSerializerOptions PadReplaySerializerOptions =
+        new(JsonSerializerDefaults.Web);
+
     public static async Task<GameRegressionExecution> RunAsync(
         GameRegressionCase testCase,
         string manifestPath,
@@ -85,6 +89,7 @@ internal static class GameRegressionRunner
             Path.Combine(
                 artifactDirectory,
                 artifactStem + ".guest-write"));
+        ConfigurePadReplayEnvironment(startInfo, testCase.PadReplay);
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException(
@@ -185,6 +190,22 @@ internal static class GameRegressionRunner
         }
     }
 
+    internal static void ConfigurePadReplayEnvironment(
+        ProcessStartInfo startInfo,
+        GamePadReplay? replay)
+    {
+        ArgumentNullException.ThrowIfNull(startInfo);
+        startInfo.Environment.Remove("SHARPEMU_PAD_REPLAY");
+        startInfo.Environment.Remove("SHARPEMU_AUTO_CROSS");
+        if (replay is null)
+        {
+            return;
+        }
+
+        startInfo.Environment["SHARPEMU_PAD_REPLAY"] =
+            SerializePadReplay(replay);
+    }
+
     public static string ResolveArtifactDirectory(
         GameRegressionManifest manifest,
         string manifestPath)
@@ -232,6 +253,36 @@ internal static class GameRegressionRunner
         {
             throw new InvalidDataException(
                 $"Game regression '{testCase.Name}' has an invalid timeout.");
+        }
+        if (testCase.PadReplay is { } replay)
+        {
+            if (!string.Equals(
+                    testCase.Mode,
+                    "execution",
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' can only use " +
+                    "padReplay in execution mode.");
+            }
+
+            var replayJson = SerializePadReplay(replay);
+            if (!PadReplayScript.TryParse(
+                    replayJson,
+                    out _,
+                    out var replayError))
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' has an invalid " +
+                    $"padReplay: {replayError}.");
+            }
+            if (replay.Events[^1].AtMilliseconds >=
+                checked(testCase.TimeoutSeconds * 1000L))
+            {
+                throw new InvalidDataException(
+                    $"Game regression '{testCase.Name}' has a padReplay " +
+                    "event at or after its timeout.");
+            }
         }
         if (testCase.Expectations.AllowedResults.Length == 0)
         {
@@ -471,6 +522,9 @@ internal static class GameRegressionRunner
             }
         }
     }
+
+    private static string SerializePadReplay(GamePadReplay replay) =>
+        JsonSerializer.Serialize(replay, PadReplaySerializerOptions);
 
     internal static void ValidateReport(
         GameRegressionCase testCase,

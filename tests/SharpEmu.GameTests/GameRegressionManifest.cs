@@ -53,7 +53,35 @@ internal sealed class GameRegressionCase
 
     public string? ExpectedBundleSha256 { get; init; }
 
+    public GamePadReplay? PadReplay { get; init; }
+
     public GameRegressionExpectations Expectations { get; init; } = new();
+}
+
+internal sealed class GamePadReplay
+{
+    public GamePadReplayEvent[] Events { get; init; } = [];
+}
+
+internal sealed class GamePadReplayEvent
+{
+    public long AtMilliseconds { get; init; }
+
+    public string[] Buttons { get; init; } = [];
+
+    public bool Connected { get; init; } = true;
+
+    public byte LeftX { get; init; } = 128;
+
+    public byte LeftY { get; init; } = 128;
+
+    public byte RightX { get; init; } = 128;
+
+    public byte RightY { get; init; } = 128;
+
+    public byte L2 { get; init; }
+
+    public byte R2 { get; init; }
 }
 
 internal sealed class GameRegressionExpectations

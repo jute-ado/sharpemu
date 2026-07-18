@@ -28,6 +28,20 @@
       "mode": "execution",
       "timeoutSeconds": 20,
       "expectedBundleSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "padReplay": {
+        "events": [
+          {
+            "atMilliseconds": 3000,
+            "buttons": [
+              "Cross"
+            ]
+          },
+          {
+            "atMilliseconds": 3400,
+            "buttons": []
+          }
+        ]
+      },
       "expectations": {
         "allowedResults": [
           "EXECUTION_TIMED_OUT",

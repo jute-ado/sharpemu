@@ -34,6 +34,9 @@ public static class PadExports
 
     private static bool _initialized;
     private static int _controlsAnnouncementLogged;
+    private static long _replayStartTimestamp = Stopwatch.GetTimestamp();
+    private static readonly PadReplayConfiguration? ReplayConfiguration =
+        LoadReplayConfiguration();
 
     [SysAbiExport(
         Nid = "hv1luiJrqQM",
@@ -43,6 +46,12 @@ public static class PadExports
     public static int PadInit(CpuContext ctx)
     {
         _initialized = true;
+        if (ReplayConfiguration is { RestartAtPadInit: true })
+        {
+            Volatile.Write(
+                ref _replayStartTimestamp,
+                Stopwatch.GetTimestamp());
+        }
         HostPlatform.Input.EnsureStarted();
         return ctx.SetReturn(0);
     }
@@ -89,9 +98,25 @@ public static class PadExports
         input.EnsureStarted();
         if (Interlocked.Exchange(ref _controlsAnnouncementLogged, 1) == 0)
         {
-            Console.Error.WriteLine(input.DescribeConnectedGamepad() is { } gamepadName
-                ? $"[LOADER][INFO] Controls: {gamepadName} connected (keyboard fallback also active)."
-                : "[LOADER][INFO] Keyboard controls: Arrow keys = D-pad, WASD = left stick, IJKL = right stick, Z/Enter = Cross, X/Esc = Circle, C = Square, V = Triangle, Q = L1, E = R1, R = L2, F = R2, Tab/Backspace = Options. A DualSense or Xbox controller will be used automatically when plugged in.");
+            if (ReplayConfiguration is { Script: { } replay })
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][INFO] Controls: deterministic pad replay active " +
+                    $"({replay.EventCount} events).");
+            }
+            else
+            {
+                Console.Error.WriteLine(input.DescribeConnectedGamepad() is
+                    { } gamepadName
+                    ? $"[LOADER][INFO] Controls: {gamepadName} connected " +
+                        "(keyboard fallback also active)."
+                    : "[LOADER][INFO] Keyboard controls: Arrow keys = D-pad, " +
+                        "WASD = left stick, IJKL = right stick, " +
+                        "Z/Enter = Cross, X/Esc = Circle, C = Square, " +
+                        "V = Triangle, Q = L1, E = R1, R = L2, F = R2, " +
+                        "Tab/Backspace = Options. A DualSense or Xbox " +
+                        "controller will be used automatically when plugged in.");
+            }
         }
 
         return ctx.SetReturn(PrimaryPadHandle);
@@ -452,6 +477,18 @@ public static class PadExports
             return _cachedInputState;
         }
 
+        if (ReplayConfiguration is { Script: { } replay })
+        {
+            var start = Volatile.Read(ref _replayStartTimestamp);
+            var elapsedMilliseconds = start == 0 || now <= start
+                ? 0
+                : checked((long)(
+                    (now - start) * 1000.0 / Stopwatch.Frequency));
+            _cachedInputState = replay.GetState(elapsedMilliseconds);
+            _lastInputSampleTicks = now;
+            return _cachedInputState;
+        }
+
         var input = HostPlatform.Input;
         var acceptsKeyboardInput = input.IsHostWindowFocused();
         var buttons = acceptsKeyboardInput ? ReadKeyboardButtons(input) : 0;
@@ -478,11 +515,6 @@ public static class PadExports
             r2 = Math.Max(r2, pad.RightTrigger);
         }
 
-        if (IsAutoCrossActive())
-        {
-            buttons |= 0x4000;
-        }
-
         _cachedInputState = new PadState(
             Connected: true,
             Buttons: buttons,
@@ -496,50 +528,43 @@ public static class PadExports
         return _cachedInputState;
     }
 
-    private static readonly long PadStartTimestamp = Stopwatch.GetTimestamp();
-    private static readonly double[] AutoCrossTimes = ParseAutoCrossTimes();
-
-    private static double[] ParseAutoCrossTimes()
+    private static PadReplayConfiguration? LoadReplayConfiguration()
     {
-        // SHARPEMU_AUTO_CROSS="40,52,64": presses Cross for 0.4s at each
-        // second offset from process start. Debug aid for unattended runs.
-        var raw = Environment.GetEnvironmentVariable("SHARPEMU_AUTO_CROSS");
-        if (string.IsNullOrWhiteSpace(raw))
+        var replayJson = Environment.GetEnvironmentVariable(
+            "SHARPEMU_PAD_REPLAY");
+        if (!string.IsNullOrWhiteSpace(replayJson))
         {
-            return [];
-        }
-
-        var values = new List<double>();
-        foreach (var token in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            if (double.TryParse(token, System.Globalization.CultureInfo.InvariantCulture, out var value))
+            if (PadReplayScript.TryParse(
+                    replayJson,
+                    out var replay,
+                    out var error) &&
+                replay is not null)
             {
-                values.Add(value);
+                return new PadReplayConfiguration(
+                    replay,
+                    RestartAtPadInit: true);
             }
+
+            Console.Error.WriteLine(
+                $"[LOADER][WARN] Ignoring SHARPEMU_PAD_REPLAY: {error}.");
+            return null;
         }
 
-        return values.ToArray();
+        // Preserve the original unattended Cross debug option by translating
+        // it into the same canonical replay timeline.
+        return PadReplayScript.TryParseAutoCross(
+            Environment.GetEnvironmentVariable("SHARPEMU_AUTO_CROSS"),
+            out var autoCross) &&
+            autoCross is not null
+            ? new PadReplayConfiguration(
+                autoCross,
+                RestartAtPadInit: false)
+            : null;
     }
 
-    private static bool IsAutoCrossActive()
-    {
-        var times = AutoCrossTimes;
-        if (times.Length == 0)
-        {
-            return false;
-        }
-
-        var elapsed = (Stopwatch.GetTimestamp() - PadStartTimestamp) / (double)Stopwatch.Frequency;
-        foreach (var time in times)
-        {
-            if (elapsed >= time && elapsed < time + 0.4)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private sealed record PadReplayConfiguration(
+        PadReplayScript Script,
+        bool RestartAtPadInit);
 
     /// <summary>Maps the host seam's neutral button flags onto SCE_PAD_BUTTON bits.</summary>
     private static uint ToOrbisButtons(HostGamepadButtons buttons)
