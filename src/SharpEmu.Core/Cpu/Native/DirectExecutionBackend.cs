@@ -504,17 +504,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 		public string? BlockReason { get; set; }
 
-		public bool HasBlockedContinuation { get; set; }
-
-		public GuestCpuContinuation BlockedContinuation { get; set; }
-
-		public string? BlockWakeKey { get; set; }
-
-		// Stays set through the wake transition; Resume() consumes it when the thread pumps.
-		public IGuestThreadBlockWaiter? BlockWaiter { get; set; }
-
-		public long BlockDeadlineTimestamp { get; set; }
-
 		public long ImportCount;
 
 		public string? LastImportNid;
@@ -1032,6 +1021,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	public unsafe DirectExecutionBackend(IModuleManager moduleManager, IHostPlatform? hostPlatform = null, IHostFaultHandling? faultHandling = null)
 	{
+		GuestThreadBlocking.BeginExecution();
 		_moduleManager = moduleManager ?? throw new ArgumentNullException("moduleManager");
 		_hostPlatform = hostPlatform ?? HostPlatform.Current;
 		_hostThreading = _hostPlatform.Threading;
@@ -1317,6 +1307,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_hostShutdownRequested = true;
 		_forcedGuestExit = true;
 		_guestTeardownRequested = true;
+		GuestThreadBlocking.RequestShutdown();
 		LastError = string.IsNullOrWhiteSpace(reason)
 			? "Host shutdown requested."
 			: $"Host shutdown requested: {reason}";
@@ -4113,7 +4104,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			return;
 		}
 		var runSynchronously = string.Equals(reason, "entry_return", StringComparison.Ordinal);
-		WakeExpiredBlockedGuestThreads();
 		if (Volatile.Read(ref _readyGuestThreadCount) == 0)
 		{
 			return;
@@ -4171,61 +4161,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 	}
 
-	public int WakeBlockedThreads(string wakeKey, int maxCount = int.MaxValue)
-	{
-		if (string.IsNullOrWhiteSpace(wakeKey) || maxCount <= 0)
-		{
-			return 0;
-		}
-
-		var wakeCount = 0;
-		using (LockGate("WakeBlockedThreads"))
-		{
-			foreach (var thread in _guestThreads.Values)
-			{
-				if (wakeCount >= maxCount)
-				{
-					break;
-				}
-
-				if (thread.State != GuestThreadRunState.Blocked ||
-					!thread.HasBlockedContinuation ||
-					!string.Equals(wakeKey, thread.BlockWakeKey, StringComparison.Ordinal))
-				{
-					continue;
-				}
-
-				if (thread.BlockWaiter is not null && !thread.BlockWaiter.TryWake())
-				{
-					continue;
-				}
-
-				thread.State = GuestThreadRunState.Ready;
-				thread.BlockReason = null;
-				thread.BlockDeadlineTimestamp = 0;
-				_readyGuestThreads.Enqueue(thread);
-				Interlocked.Increment(ref _readyGuestThreadCount);
-				wakeCount++;
-			}
-		}
-
-		if (wakeCount != 0)
-		{
-			if (_logGuestThreads)
-			{
-				Console.Error.WriteLine($"[LOADER][INFO] guest_threads.wake key={wakeKey} count={wakeCount}");
-			}
-
-			// Pump or the readied thread waits for an import dispatch that never comes.
-			if (_cpuContext is { } wakeContext)
-			{
-				Pump(wakeContext, "wake");
-			}
-		}
-
-		return wakeCount;
-	}
-
 	public IReadOnlyList<GuestThreadSnapshot> SnapshotThreads()
 	{
 		using (LockGate("SnapshotThreads"))
@@ -4246,66 +4181,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 			return snapshots;
 		}
-	}
-
-	private void RegisterBlockedGuestThreadContinuation(
-		ulong guestThreadHandle,
-		GuestCpuContinuation continuation,
-		string wakeKey,
-		IGuestThreadBlockWaiter? waiter,
-		long blockDeadlineTimestamp)
-	{
-		if (guestThreadHandle == 0 || continuation.Rip < 65536 || continuation.Rsp == 0)
-		{
-			return;
-		}
-
-		using (LockGate("RegisterBlockedContinuation"))
-		{
-			if (!_guestThreads.TryGetValue(guestThreadHandle, out var thread))
-			{
-				return;
-			}
-
-			thread.BlockedContinuation = continuation;
-			thread.HasBlockedContinuation = true;
-			thread.BlockWakeKey = wakeKey;
-			thread.BlockWaiter = waiter;
-			thread.BlockDeadlineTimestamp = blockDeadlineTimestamp;
-		}
-	}
-
-	private int WakeExpiredBlockedGuestThreads()
-	{
-		var now = Stopwatch.GetTimestamp();
-		var wakeCount = 0;
-		using (LockGate("WakeExpiredBlockedGuestThreads"))
-		{
-			foreach (var thread in _guestThreads.Values)
-			{
-				if (thread.State != GuestThreadRunState.Blocked ||
-					!thread.HasBlockedContinuation ||
-					thread.BlockDeadlineTimestamp == 0 ||
-					thread.BlockDeadlineTimestamp > now)
-				{
-					continue;
-				}
-
-				thread.State = GuestThreadRunState.Ready;
-				thread.BlockReason = null;
-				thread.BlockDeadlineTimestamp = 0;
-				_readyGuestThreads.Enqueue(thread);
-				Interlocked.Increment(ref _readyGuestThreadCount);
-				wakeCount++;
-			}
-		}
-
-		if (wakeCount != 0 && _logGuestThreads)
-		{
-			Console.Error.WriteLine($"[LOADER][INFO] guest_threads.timeout_wake count={wakeCount}");
-		}
-
-		return wakeCount;
 	}
 
 	private void PumpUntilGuestThreadsIdle(CpuContext callerContext, string reason)
@@ -4991,39 +4866,17 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		try
 		{
 			LastError = null;
-			GuestCpuContinuation continuation = default;
-			IGuestThreadBlockWaiter? blockWaiter = null;
-			var resumeContinuation = false;
-			using (LockGate("RunGuestThread.block"))
-			{
-				if (thread.HasBlockedContinuation)
-				{
-					continuation = thread.BlockedContinuation;
-					thread.BlockedContinuation = default;
-					thread.HasBlockedContinuation = false;
-					thread.BlockWakeKey = null;
-					blockWaiter = thread.BlockWaiter;
-					thread.BlockWaiter = null;
-					thread.BlockDeadlineTimestamp = 0;
-					resumeContinuation = true;
-				}
-			}
-
-			if (blockWaiter is not null)
-			{
-				continuation = continuation with { Rax = unchecked((ulong)(long)blockWaiter.Resume()) };
-			}
-
 			if (_logGuestThreads)
 			{
 				Console.Error.WriteLine(
-					resumeContinuation
-						? $"[LOADER][INFO] Pumping guest thread '{thread.Name}' reason={reason} resume=0x{continuation.Rip:X16}"
-						: $"[LOADER][INFO] Pumping guest thread '{thread.Name}' reason={reason} entry=0x{thread.EntryPoint:X16}");
+					$"[LOADER][INFO] Pumping guest thread '{thread.Name}' reason={reason} " +
+					$"entry=0x{thread.EntryPoint:X16}");
 			}
-			var exitReason = resumeContinuation
-				? ExecuteBlockedGuestThreadContinuation(thread.Context, continuation, thread.Name, out var blockReason)
-				: ExecuteGuestThreadEntry(thread.Context, thread.EntryPoint, thread.Name, out blockReason);
+			var exitReason = ExecuteGuestThreadEntry(
+				thread.Context,
+				thread.EntryPoint,
+				thread.Name,
+				out var blockReason);
 			using (LockGate("RunGuestThread.exit"))
 			{
 				switch (exitReason)
@@ -5035,16 +4888,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					case GuestNativeCallExitReason.Blocked:
 						thread.State = GuestThreadRunState.Blocked;
 						thread.BlockReason = blockReason;
-						if (thread.HasBlockedContinuation &&
-							thread.BlockWaiter is not null &&
-							thread.BlockWaiter.TryWake())
-						{
-							thread.State = GuestThreadRunState.Ready;
-							thread.BlockReason = null;
-							thread.BlockDeadlineTimestamp = 0;
-							_readyGuestThreads.Enqueue(thread);
-							Interlocked.Increment(ref _readyGuestThreadCount);
-						}
 						break;
 					default:
 						thread.State = GuestThreadRunState.Faulted;
@@ -5072,50 +4915,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			GuestThreadExecution.RestoreGuestThread(previousGuestThreadHandle);
 			LastError = previousLastError;
 		}
-	}
-
-	private GuestNativeCallExitReason ExecuteBlockedGuestThreadContinuation(
-		CpuContext context,
-		GuestCpuContinuation continuation,
-		string name,
-		out string? reason)
-	{
-		ApplyGuestContinuation(context, continuation);
-		return ExecuteGuestContinuationEntry(
-			context,
-			continuation.Rip,
-			continuation.ReturnSlotAddress,
-			name,
-			out reason);
-	}
-
-	private static void ApplyGuestContinuation(CpuContext context, GuestCpuContinuation continuation)
-	{
-		context.Rip = continuation.Rip;
-		context.Rflags = continuation.Rflags == 0 ? 0x202UL : continuation.Rflags;
-		if (continuation.FsBase != 0)
-		{
-			context.FsBase = continuation.FsBase;
-		}
-		if (continuation.GsBase != 0)
-		{
-			context.GsBase = continuation.GsBase;
-		}
-
-		context[CpuRegister.Rax] = continuation.Rax;
-		context[CpuRegister.Rcx] = continuation.Rcx;
-		context[CpuRegister.Rdx] = continuation.Rdx;
-		context[CpuRegister.Rbx] = continuation.Rbx;
-		context[CpuRegister.Rbp] = continuation.Rbp;
-		context[CpuRegister.Rsi] = continuation.Rsi;
-		context[CpuRegister.Rdi] = continuation.Rdi;
-		context[CpuRegister.R8] = continuation.R8;
-		context[CpuRegister.R9] = continuation.R9;
-		context[CpuRegister.R12] = continuation.R12;
-		context[CpuRegister.R13] = continuation.R13;
-		context[CpuRegister.R14] = continuation.R14;
-		context[CpuRegister.R15] = continuation.R15;
-		context[CpuRegister.Rsp] = continuation.Rsp;
 	}
 
 	private unsafe bool TryAllocateNativeEntryStub(out void* entryStub, out ulong hostRspSlot)
@@ -5971,7 +5770,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			while (!_stallWatchdogStop)
 			{
 				Thread.Sleep(1);
-				WakeExpiredBlockedGuestThreads();
 				if (Volatile.Read(ref _readyGuestThreadCount) > 0 && _cpuContext is { } dispatchContext)
 				{
 					Pump(dispatchContext, "dispatcher");
@@ -6020,7 +5818,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 								$"[LOADER][DIAG] gateless guest-thread: handle=0x{thread.ThreadHandle:X16} name='{thread.Name}' " +
 								$"state={thread.State} imports={Interlocked.Read(ref thread.ImportCount)} " +
 								$"nid={Volatile.Read(ref thread.LastImportNid) ?? "none"} ret=0x{Volatile.Read(ref thread.LastReturnRip):X16} " +
-								$"block={thread.BlockReason ?? "none"} wake={thread.BlockWakeKey ?? "none"}");
+								$"block={thread.BlockReason ?? GuestThreadBlocking.DescribeBlock(thread.ThreadHandle) ?? "none"}");
 						}
 					}
 					catch (Exception snapshotError)
@@ -6095,7 +5893,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private bool HasReadyGuestThread()
 	{
-		WakeExpiredBlockedGuestThreads();
 		using (LockGate("HasReadyGuestThread"))
 		{
 			foreach (var thread in _guestThreads.Values)

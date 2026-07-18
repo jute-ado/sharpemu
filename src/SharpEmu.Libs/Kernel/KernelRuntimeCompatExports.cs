@@ -15,25 +15,6 @@ namespace SharpEmu.Libs.Kernel;
 
 public static class KernelRuntimeCompatExports
 {
-    private sealed class NanosleepWaiter : IGuestThreadBlockWaiter
-    {
-        public required CpuContext Ctx { get; init; }
-        public required ulong RemainAddress { get; init; }
-
-        public int Resume() => CompleteNanosleep(Ctx, RemainAddress);
-
-        public bool TryWake() => false;
-    }
-
-    private sealed class UsleepWaiter : IGuestThreadBlockWaiter
-    {
-        public required CpuContext Ctx { get; init; }
-
-        public int Resume() => CompleteUsleep(Ctx);
-
-        public bool TryWake() => false;
-    }
-
     internal const int ClockRealtime = 0;
     internal const int ClockVirtual = 1;
     internal const int ClockProf = 2;
@@ -70,6 +51,7 @@ public static class KernelRuntimeCompatExports
     private const int AioInitParamSize = 0x3C;
     private const ulong RdtscStubAllocationSize = 16;
     private static readonly object _stateGate = new();
+    private static readonly object _sleepGate = new();
     private static readonly long _processStartCounter = Stopwatch.GetTimestamp();
     private static readonly RdtscDelegate? _rdtscReader = CreateRdtscReader();
     private static readonly ulong _kernelTscFrequency = ResolveKernelTscFrequency();
@@ -149,33 +131,9 @@ public static class KernelRuntimeCompatExports
         // TimeSpan resolution is 100 ns ticks, so sub-100 ns requests round up to
         // a single tick rather than collapsing to a zero-length (no-op) sleep.
         var sleepDuration = GetNanosleepDuration(tvSec, tvNsec);
-        var reason = posix ? "nanosleep" : "sceKernelNanosleep";
-        var deadlineTimestamp = GuestThreadExecution.ComputeDeadlineTimestamp(sleepDuration);
-        if (GuestThreadExecution.RequestCurrentThreadBlock(
-                ctx,
-                reason,
-                $"{reason}:{GuestThreadExecution.CurrentGuestThreadHandle:X16}",
-                new NanosleepWaiter
-                {
-                    Ctx = ctx,
-                    RemainAddress = remainAddress,
-                },
-                blockDeadlineTimestamp: deadlineTimestamp))
-        {
-            ctx[CpuRegister.Rax] = 0;
-            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-        }
-
-        GuestThreadExecution.Scheduler?.Pump(ctx, reason);
-
-        try
-        {
-            Thread.Sleep(sleepDuration);
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            Thread.Sleep(TimeSpan.FromMilliseconds(int.MaxValue));
-        }
+        WaitInPlace(
+            sleepDuration,
+            posix ? "nanosleep" : "sceKernelNanosleep");
 
         WriteRemainingTime(ctx, remainAddress, 0, 0);
         ctx[CpuRegister.Rax] = 0;
@@ -198,13 +156,6 @@ public static class KernelRuntimeCompatExports
         }
 
         return TimeSpan.FromTicks(wholeSecondTicks + subsecondTicks);
-    }
-
-    private static int CompleteNanosleep(CpuContext ctx, ulong remainAddress)
-    {
-        WriteRemainingTime(ctx, remainAddress, 0, 0);
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
     private static int NanosleepFailure(CpuContext ctx, bool posix, int errnoValue, OrbisGen2Result sceResult)
@@ -250,20 +201,6 @@ public static class KernelRuntimeCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        var deadlineTimestamp = GuestThreadExecution.ComputeDeadlineTimestamp(GetUsleepDuration(micros));
-        if (GuestThreadExecution.RequestCurrentThreadBlock(
-                ctx,
-                "sceKernelUsleep",
-                $"sceKernelUsleep:{GuestThreadExecution.CurrentGuestThreadHandle:X16}",
-                new UsleepWaiter { Ctx = ctx },
-                blockDeadlineTimestamp: deadlineTimestamp))
-        {
-            ctx[CpuRegister.Rax] = 0;
-            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-        }
-
-        GuestThreadExecution.Scheduler?.Pump(ctx, "sceKernelUsleep");
-
         if (micros < 1000)
         {
             // Guest worker pools use usleep(1) as a polling backoff. Do not turn
@@ -280,8 +217,7 @@ public static class KernelRuntimeCompatExports
         else
         {
             _shortUsleepCount = 0;
-            var sleepMilliseconds = (int)Math.Min((micros + 999UL) / 1000UL, int.MaxValue);
-            Thread.Sleep(sleepMilliseconds);
+            WaitInPlace(GetUsleepDuration(micros), "sceKernelUsleep");
         }
 
         ctx[CpuRegister.Rax] = 0;
@@ -296,10 +232,34 @@ public static class KernelRuntimeCompatExports
             : TimeSpan.FromTicks((long)microseconds * 10L);
     }
 
-    private static int CompleteUsleep(CpuContext ctx)
+    private static void WaitInPlace(TimeSpan duration, string description)
     {
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        var deadlineTimestamp = GuestThreadExecution.ComputeDeadlineTimestamp(duration);
+        var guestThreadHandle = GuestThreadExecution.CurrentGuestThreadHandle;
+        GuestThreadBlocking.NoteBlocked(guestThreadHandle, description);
+        try
+        {
+            lock (_sleepGate)
+            {
+                while (!GuestThreadBlocking.ShutdownRequested)
+                {
+                    var remainingTicks = deadlineTimestamp - Stopwatch.GetTimestamp();
+                    if (remainingTicks <= 0)
+                    {
+                        break;
+                    }
+
+                    var waitMilliseconds =
+                        GuestThreadBlocking.GetWaitMilliseconds(deadlineTimestamp);
+                    GuestThreadBlocking.Checkpoint(guestThreadHandle, _sleepGate);
+                    _ = Monitor.Wait(_sleepGate, waitMilliseconds);
+                }
+            }
+        }
+        finally
+        {
+            GuestThreadBlocking.NoteUnblocked(guestThreadHandle);
+        }
     }
 
     [SysAbiExport(

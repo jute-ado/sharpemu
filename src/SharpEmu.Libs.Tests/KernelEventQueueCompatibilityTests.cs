@@ -58,43 +58,25 @@ public sealed class KernelEventQueueCompatibilityTests
     }
 
     [Fact]
-    public void DeleteQueueReleasesCooperativeWaitWithNotFound()
+    public async Task DeleteQueueReleasesInPlaceWaitWithNotFound()
     {
+        GuestThreadBlocking.BeginExecution();
         var fixture = CreateQueue(mapEventBuffer: true);
-        var previousGuestThread = GuestThreadExecution.EnterGuestThread(0x1234);
         try
         {
-            fixture.Context[CpuRegister.Rdi] = fixture.Handle;
-            fixture.Context[CpuRegister.Rsi] = EventAddress;
-            fixture.Context[CpuRegister.Rdx] = 1;
-            fixture.Context[CpuRegister.Rcx] = CountAddress;
-            fixture.Context[CpuRegister.R8] = 0;
-            Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_OK,
-                KernelEventQueueCompatExports.KernelWaitEqueue(fixture.Context));
-            Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-                out var reason,
-                out _,
-                out _,
-                out var wakeKey,
-                out IGuestThreadBlockWaiter? waiter,
-                out _));
-            Assert.Equal("sceKernelWaitEqueue", reason);
-            Assert.Equal($"sceKernelWaitEqueue:{fixture.Handle:X16}", wakeKey);
-            Assert.NotNull(waiter);
+            var wait = StartGuestWait(fixture, 0x1234);
+            AssertWaitBlocked(0x1234);
 
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 DeleteQueue(fixture));
-            Assert.True(waiter!.TryWake());
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND,
-                waiter!.Resume());
+                await wait.WaitAsync(TimeSpan.FromSeconds(1)));
             Assert.Equal(0u, ReadUInt32(fixture.Count));
         }
         finally
         {
-            GuestThreadExecution.RestoreGuestThread(previousGuestThread);
             if (KernelEventQueueCompatExports.IsValidEqueue(fixture.Handle))
             {
                 _ = DeleteQueue(fixture);
@@ -143,33 +125,25 @@ public sealed class KernelEventQueueCompatibilityTests
     }
 
     [Fact]
-    public void TimedGuestWaitWakesBeforeDeadlineAndUpdatesRemainingTimeout()
+    public async Task TimedGuestWaitWakesBeforeDeadlineAndUpdatesRemainingTimeout()
     {
-        const uint timeoutMicros = 100_000;
+        GuestThreadBlocking.BeginExecution();
+        const uint timeoutMicros = 5_000_000;
         var fixture = CreateQueue(mapEventBuffer: true);
         BinaryPrimitives.WriteUInt32LittleEndian(fixture.Timeout, timeoutMicros);
         const ulong ident = 0x99;
-        var previousGuestThread = GuestThreadExecution.EnterGuestThread(0x2468);
         try
         {
             Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, AddUserEvent(fixture, ident));
-            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, Wait(fixture, EventAddress));
-            Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-                out var reason,
-                out _,
-                out _,
-                out _,
-                out IGuestThreadBlockWaiter? waiter,
-                out var deadlineTimestamp));
-            Assert.Equal("sceKernelWaitEqueue", reason);
-            Assert.NotNull(waiter);
-            Assert.True(deadlineTimestamp > Stopwatch.GetTimestamp());
+            var wait = StartGuestWait(fixture, 0x2468, timed: true);
+            AssertWaitBlocked(0x2468);
 
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 TriggerUserEvent(fixture, ident, 0x9876));
-            Assert.True(waiter!.TryWake());
-            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, waiter!.Resume());
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                await wait.WaitAsync(TimeSpan.FromSeconds(1)));
             Assert.InRange(
                 BinaryPrimitives.ReadUInt32LittleEndian(fixture.Timeout),
                 1u,
@@ -180,34 +154,24 @@ public sealed class KernelEventQueueCompatibilityTests
         }
         finally
         {
-            GuestThreadExecution.RestoreGuestThread(previousGuestThread);
             DeleteQueue(fixture);
         }
     }
 
     [Fact]
-    public void TimedGuestWaitExpiresWithoutConsumingFutureEvent()
+    public async Task TimedGuestWaitExpiresWithoutConsumingFutureEvent()
     {
+        GuestThreadBlocking.BeginExecution();
         var fixture = CreateQueue(mapEventBuffer: true);
-        BinaryPrimitives.WriteUInt32LittleEndian(fixture.Timeout, 10_000);
+        BinaryPrimitives.WriteUInt32LittleEndian(fixture.Timeout, 20_000);
         const ulong ident = 0xAA;
-        var previousGuestThread = GuestThreadExecution.EnterGuestThread(0x1357);
         try
         {
             Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, AddUserEvent(fixture, ident));
-            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, Wait(fixture, EventAddress));
-            Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-                out _,
-                out _,
-                out _,
-                out _,
-                out IGuestThreadBlockWaiter? waiter,
-                out _));
-            Assert.NotNull(waiter);
-            Assert.False(waiter!.TryWake());
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT,
-                waiter!.Resume());
+                await StartGuestWait(fixture, 0x1357, timed: true)
+                    .WaitAsync(TimeSpan.FromSeconds(1)));
             Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(fixture.Timeout));
             Assert.Equal(0u, ReadUInt32(fixture.Count));
 
@@ -220,47 +184,31 @@ public sealed class KernelEventQueueCompatibilityTests
         }
         finally
         {
-            GuestThreadExecution.RestoreGuestThread(previousGuestThread);
             DeleteQueue(fixture);
         }
     }
 
     [Fact]
-    public void TimedGuestWaitTimeoutCopyoutFailurePreservesPendingEvent()
+    public async Task TimedGuestWaitTimeoutCopyoutFailurePreservesPendingEvent()
     {
-        const uint timeoutMicros = 100_000;
+        GuestThreadBlocking.BeginExecution();
+        const uint timeoutMicros = 5_000_000;
         const ulong ident = 0xBB;
         var fixture = CreateQueue(mapEventBuffer: true);
         BinaryPrimitives.WriteUInt32LittleEndian(fixture.Timeout, timeoutMicros);
         try
         {
-            var previousGuestThread = GuestThreadExecution.EnterGuestThread(0xACE0);
-            try
-            {
-                Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, AddUserEvent(fixture, ident));
-                Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, Wait(fixture, EventAddress));
-                Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-                    out _,
-                    out _,
-                    out _,
-                    out _,
-                    out IGuestThreadBlockWaiter? waiter,
-                    out _));
-                Assert.NotNull(waiter);
+            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, AddUserEvent(fixture, ident));
+            var wait = StartGuestWait(fixture, 0xACE0, timed: true);
+            AssertWaitBlocked(0xACE0);
 
-                Assert.True(fixture.Memory.RemoveRegion(TimeoutAddress));
-                Assert.Equal(
-                    (int)OrbisGen2Result.ORBIS_GEN2_OK,
-                    TriggerUserEvent(fixture, ident, 0xBCDE));
-                Assert.True(waiter!.TryWake());
-                Assert.Equal(
-                    (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
-                    waiter!.Resume());
-            }
-            finally
-            {
-                GuestThreadExecution.RestoreGuestThread(previousGuestThread);
-            }
+            Assert.True(fixture.Memory.RemoveRegion(TimeoutAddress));
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                TriggerUserEvent(fixture, ident, 0xBCDE));
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                await wait.WaitAsync(TimeSpan.FromSeconds(1)));
 
             fixture.Memory.AddRegion(TimeoutAddress, fixture.Timeout);
             BinaryPrimitives.WriteUInt32LittleEndian(fixture.Timeout, 0);
@@ -467,6 +415,35 @@ public sealed class KernelEventQueueCompatibilityTests
         context[CpuRegister.R8] = TimeoutAddress;
         return KernelEventQueueCompatExports.KernelWaitEqueue(context);
     }
+
+    private static Task<int> StartGuestWait(
+        QueueFixture fixture,
+        ulong threadHandle,
+        bool timed = false) =>
+        Task.Run(() =>
+        {
+            var context = new CpuContext(fixture.Memory, Generation.Gen5);
+            context[CpuRegister.Rdi] = fixture.Handle;
+            context[CpuRegister.Rsi] = EventAddress;
+            context[CpuRegister.Rdx] = 1;
+            context[CpuRegister.Rcx] = CountAddress;
+            context[CpuRegister.R8] = timed ? TimeoutAddress : 0;
+            var previousGuestThread =
+                GuestThreadExecution.EnterGuestThread(threadHandle);
+            try
+            {
+                return KernelEventQueueCompatExports.KernelWaitEqueue(context);
+            }
+            finally
+            {
+                GuestThreadExecution.RestoreGuestThread(previousGuestThread);
+            }
+        });
+
+    private static void AssertWaitBlocked(ulong threadHandle) =>
+        Assert.True(SpinWait.SpinUntil(
+            () => GuestThreadBlocking.DescribeBlock(threadHandle) is not null,
+            TimeSpan.FromSeconds(1)));
 
     private static int DeleteQueue(QueueFixture fixture)
     {

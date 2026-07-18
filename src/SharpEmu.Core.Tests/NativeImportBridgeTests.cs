@@ -279,7 +279,7 @@ public sealed class NativeImportBridgeTests
     }
 
     [HostX64Fact]
-    public async Task ReusedNativeWorkerSurvivesRepeatedBlockingImportYields()
+    public async Task ReusedNativeWorkerSurvivesRepeatedInPlaceWaits()
     {
         if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
         {
@@ -472,9 +472,7 @@ public sealed class NativeImportBridgeTests
         public static int BlockingYield(CpuContext context)
         {
             Interlocked.Increment(ref BlockingYieldCalls);
-            Assert.True(GuestThreadExecution.RequestCurrentThreadBlock(
-                context,
-                "synthetic blocking yield"));
+            Thread.Sleep(1);
             return context.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
         }
     }

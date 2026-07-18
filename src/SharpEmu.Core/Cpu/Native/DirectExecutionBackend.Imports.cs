@@ -531,27 +531,6 @@ public sealed partial class DirectExecutionBackend
 					cpuContext[CpuRegister.Rax] = 18446744071562199298uL;
 				}
 			}
-			if (GuestThreadExecution.TryConsumeCurrentThreadBlock(
-					out var blockReason,
-					out var blockContinuation,
-					out var hasBlockContinuation,
-					out var blockWakeKey,
-					out IGuestThreadBlockWaiter? blockWaiter,
-					out long blockDeadlineTimestamp) &&
-				TryYieldGuestThreadToHostStub(argPackPtr, num, num7, importStubEntry.Nid, blockReason))
-			{
-				if (hasBlockContinuation)
-				{
-					RegisterBlockedGuestThreadContinuation(
-						GuestThreadExecution.CurrentGuestThreadHandle,
-						blockContinuation,
-						blockWakeKey,
-						blockWaiter,
-						blockDeadlineTimestamp);
-				}
-
-				cpuContext[CpuRegister.Rax] = 0uL;
-			}
 			if (flag || flag2 || flag3)
 			{
 				Console.Error.WriteLine($"[LOADER][TRACE] ImportRet#{num}: nid={importStubEntry.Nid} result={orbisGen2Result} rax=0x{cpuContext[CpuRegister.Rax]:X16}");
@@ -665,28 +644,6 @@ public sealed partial class DirectExecutionBackend
 					$"r8=0x{cpuContext[CpuRegister.R8]:X16} r9=0x{cpuContext[CpuRegister.R9]:X16} " +
 					$"ret=0x{returnRip:X16}");
 			}
-		}
-
-		if (GuestThreadExecution.TryConsumeCurrentThreadBlock(
-				out var blockReason,
-				out var blockContinuation,
-				out var hasBlockContinuation,
-				out var blockWakeKey,
-				out IGuestThreadBlockWaiter? blockWaiter,
-				out long blockDeadlineTimestamp) &&
-			TryYieldGuestThreadToHostStub(argPackPtr, dispatchIndex, returnRip, importStubEntry.Nid, blockReason))
-		{
-			if (hasBlockContinuation)
-			{
-				RegisterBlockedGuestThreadContinuation(
-					GuestThreadExecution.CurrentGuestThreadHandle,
-					blockContinuation,
-					blockWakeKey,
-					blockWaiter,
-					blockDeadlineTimestamp);
-			}
-
-			cpuContext[CpuRegister.Rax] = 0uL;
 		}
 
 		result = cpuContext[CpuRegister.Rax];
