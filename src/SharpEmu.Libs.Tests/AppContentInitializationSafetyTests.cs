@@ -311,6 +311,46 @@ public sealed class AppContentInitializationSafetyTests
         }
     }
 
+    [Fact]
+    public void DownloadDataReportsOneGibibyteOfAvailableSpace()
+    {
+        var output = CreateCanaryBuffer(sizeof(ulong));
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(OutputAddress, output);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rsi] = OutputAddress;
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            AppContentExports.AppContentDownloadDataGetAvailableSpaceKb(
+                context));
+        Assert.Equal(
+            1024UL * 1024UL,
+            BinaryPrimitives.ReadUInt64LittleEndian(output));
+        Assert.Equal(0UL, context[CpuRegister.Rax]);
+    }
+
+    [Theory]
+    [InlineData(0, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT)]
+    [InlineData(OutputAddress, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT)]
+    public void DownloadDataRejectsInvalidGuestOutput(
+        ulong outputAddress,
+        OrbisGen2Result expected)
+    {
+        var context = new CpuContext(
+            new FakeGuestMemory(),
+            Generation.Gen5);
+        context[CpuRegister.Rsi] = outputAddress;
+
+        Assert.Equal(
+            (int)expected,
+            AppContentExports.AppContentDownloadDataGetAvailableSpaceKb(
+                context));
+        Assert.Equal(
+            unchecked((ulong)(int)expected),
+            context[CpuRegister.Rax]);
+    }
+
     private static CpuContext CreateContext(FakeGuestMemory memory, ulong bootParamAddress)
     {
         var context = new CpuContext(memory, Generation.Gen5);

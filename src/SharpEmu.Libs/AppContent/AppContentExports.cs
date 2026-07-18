@@ -153,18 +153,19 @@ public static class AppContentExports
         var availableSpaceAddress = ctx[CpuRegister.Rsi];
         if (availableSpaceAddress == 0)
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            return ctx.SetReturn(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
         Span<byte> spaceBytes = stackalloc byte[sizeof(ulong)];
         BinaryPrimitives.WriteUInt64LittleEndian(spaceBytes, availableSpaceKb);
         if (!ctx.Memory.TryWrite(availableSpaceAddress, spaceBytes))
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            return ctx.SetReturn(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
     private static bool TryReadUserDefinedParam(uint paramId, out int value)
