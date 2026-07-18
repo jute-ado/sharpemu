@@ -239,6 +239,14 @@ internal interface IGuestGpuBackend
 
     void SubmitGuestImageWrite(ulong address, byte[] pixels);
 
+    /// <summary>
+    /// Queues an exact same-format, same-extent copy between live backend
+    /// images. Returns false before queueing when the backend cannot preserve
+    /// the copy semantics, allowing the AGC layer to use its CPU-memory
+    /// fallback.
+    /// </summary>
+    bool TrySubmitGuestImageCopy(ulong sourceAddress, ulong destinationAddress);
+
     bool TryGetGuestImageExtent(ulong address, out uint width, out uint height, out ulong byteCount);
 
     IReadOnlyList<(ulong Address, uint Width, uint Height, ulong ByteCount)> GetGuestImageExtents();

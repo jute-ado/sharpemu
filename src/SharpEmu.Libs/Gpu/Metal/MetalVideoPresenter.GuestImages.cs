@@ -472,22 +472,58 @@ internal static partial class MetalVideoPresenter
 
         lock (_gate)
         {
-            if (_closed ||
-                _thread is null ||
-                !_guestImages.TryGetValue(sourceAddress, out var source) ||
-                !source.Initialized ||
-                !_guestImages.TryGetValue(destinationAddress, out var destination) ||
-                source.Width != destination.Width ||
-                source.Height != destination.Height ||
-                source.Format != destination.Format)
-            {
-                return false;
-            }
-
-            _guestImageWorkSequences[destinationAddress] = EnqueueGuestWorkLocked(
-                new GuestImageBlit(sourceAddress, destinationAddress));
-            return true;
+            return TryEnqueueGuestImageCopyLocked(
+                sourceAddress,
+                destinationAddress);
         }
+    }
+
+    /// <summary>
+    /// Queues an exact copy of a live guest image. Unlike a translated blit,
+    /// this path is used when CP DMA aliases two image backings and therefore
+    /// accepts only resources whose native format and extent already match.
+    /// </summary>
+    public static bool TrySubmitGuestImageCopy(
+        ulong sourceAddress,
+        ulong destinationAddress)
+    {
+        lock (_gate)
+        {
+            return TryEnqueueGuestImageCopyLocked(
+                sourceAddress,
+                destinationAddress);
+        }
+    }
+
+    private static bool TryEnqueueGuestImageCopyLocked(
+        ulong sourceAddress,
+        ulong destinationAddress)
+    {
+        if (_closed ||
+            _thread is null ||
+            !_guestImages.TryGetValue(sourceAddress, out var source) ||
+            !source.Initialized ||
+            !_guestImages.TryGetValue(destinationAddress, out var destination) ||
+            !_guestImageExtents.TryGetValue(sourceAddress, out var sourceExtent) ||
+            !_guestImageExtents.TryGetValue(destinationAddress, out var destinationExtent) ||
+            !GuestImageCopyPolicy.CanCopy(
+                sourceAddress,
+                source.Width,
+                source.Height,
+                sourceExtent.ByteCount,
+                (ulong)source.Format,
+                destinationAddress,
+                destination.Width,
+                destination.Height,
+                destinationExtent.ByteCount,
+                (ulong)destination.Format))
+        {
+            return false;
+        }
+
+        _guestImageWorkSequences[destinationAddress] = EnqueueGuestWorkLocked(
+            new GuestImageBlit(sourceAddress, destinationAddress));
+        return true;
     }
 
     private static bool IsGuestWorkCompletedLocked(long sequence) =>
