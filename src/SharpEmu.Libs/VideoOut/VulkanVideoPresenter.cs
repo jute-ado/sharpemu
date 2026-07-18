@@ -7346,6 +7346,9 @@ internal static unsafe class VulkanVideoPresenter
             GuestDrawTexture texture,
             out TextureResource resource)
         {
+            var textureFormat = GetTextureFormat(
+                texture.Format,
+                texture.NumberType);
             foreach (var depth in _guestDepthImages.Values)
             {
                 if (texture.Address != depth.Address &&
@@ -7355,7 +7358,20 @@ internal static unsafe class VulkanVideoPresenter
                     continue;
                 }
 
-                if (texture.Width > depth.Width || texture.Height > depth.Height)
+                if (GuestDepthAliasPolicy.Classify(
+                        new GuestDepthAliasSurface(
+                            texture.Address,
+                            depth.Width,
+                            depth.Height,
+                            depth.GuestFormat,
+                            depth.SwizzleMode,
+                            depth.Key.StencilAddress,
+                            depth.Key.StencilSwizzleMode,
+                            depth.AttachmentFormat),
+                        texture,
+                        textureFormat,
+                        depthIsAttached: false) !=
+                    GuestDepthAliasKind.ExactSample)
                 {
                     continue;
                 }

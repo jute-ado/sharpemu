@@ -15,6 +15,14 @@ internal readonly record struct GuestDepthFormatPolicy(
     Format StencilAttachmentFormat1,
     Format StencilAttachmentFormat2)
 {
+    internal bool HasNativeDepthAspect(Format attachmentFormat) =>
+        (GuestFormat == 1 &&
+         attachmentFormat is Format.D16Unorm or
+             Format.D16UnormS8Uint) ||
+        (GuestFormat == 3 &&
+         attachmentFormat is Format.D32Sfloat or
+             Format.D32SfloatS8Uint);
+
     internal bool TryGetAttachmentCandidate(
         bool hasStencil,
         int index,
@@ -46,12 +54,7 @@ internal readonly record struct GuestDepthFormatPolicy(
             return false;
         }
 
-        if ((GuestFormat == 1 &&
-             attachmentFormat is Format.D16Unorm or
-                 Format.D16UnormS8Uint) ||
-            (GuestFormat == 3 &&
-             attachmentFormat is Format.D32Sfloat or
-                 Format.D32SfloatS8Uint))
+        if (HasNativeDepthAspect(attachmentFormat))
         {
             converted = source.ToArray();
             return true;
