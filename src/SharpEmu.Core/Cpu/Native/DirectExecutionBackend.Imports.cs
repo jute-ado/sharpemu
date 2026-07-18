@@ -751,6 +751,7 @@ public sealed partial class DirectExecutionBackend
 			"qvMUCyyaCSI" or // sceKernelAprSubmitCommandBufferAndGetId
 			"Q2V+iqvjgC0" or // vsnprintf
 			"AV6ipCNa4Rw" or // strcasecmp
+			"viiwFMaNamA" or // strstr
 			"q1cHNfGycLI" or // scePadRead
 			"xk0AcarP3V4" or // scePadOpen
 			"yH17Q6NWtVg" or // sceUserServiceGetEvent
@@ -939,6 +940,7 @@ public sealed partial class DirectExecutionBackend
 			"Ovb2dSJOAuE" or // strcmp
 			"aesyjrHVWy4" or // strncmp
 			"AV6ipCNa4Rw" or // strcasecmp
+			"viiwFMaNamA" or // strstr
 			"pNtJdE3x49E" or // wcscmp
 			"fV2xHER+bKE" or // wcscoll
 			"E8wCoUEbfzk" or // wcsncmp
