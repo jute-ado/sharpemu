@@ -1,0 +1,58 @@
+// Copyright (C) 2026 SharpEmu Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+using SharpEmu.ShaderCompiler;
+using Xunit;
+
+namespace SharpEmu.Libs.Tests;
+
+public sealed class StorageImageBindingTests
+{
+    [Fact]
+    public void ImageLoadRemainsReadOnlyWithoutMatchingWriter()
+    {
+        var load = CreateBinding("ImageLoad", [1u, 2u, 3u]);
+
+        Assert.False(Gen5ShaderTranslator.RequiresStorageImage(load, [load]));
+    }
+
+    [Fact]
+    public void ImageLoadUsesStorageRepresentationWithMatchingWriter()
+    {
+        var load = CreateBinding("ImageLoad", [1u, 2u, 3u]);
+        var store = CreateBinding("ImageStore", [1u, 2u, 3u]);
+
+        Assert.True(Gen5ShaderTranslator.RequiresStorageImage(load, [load, store]));
+        Assert.True(Gen5ShaderTranslator.RequiresStorageImage(store, [load, store]));
+    }
+
+    [Fact]
+    public void ImageLoadDoesNotAliasDifferentDescriptor()
+    {
+        var load = CreateBinding("ImageLoad", [1u, 2u, 3u]);
+        var store = CreateBinding("ImageStore", [1u, 2u, 4u]);
+
+        Assert.False(Gen5ShaderTranslator.RequiresStorageImage(load, [load, store]));
+    }
+
+    private static Gen5ImageBinding CreateBinding(
+        string opcode,
+        IReadOnlyList<uint> descriptor) =>
+        new(
+            Pc: 0,
+            opcode,
+            new Gen5ImageControl(
+                Dmask: 1,
+                VectorAddress: 0,
+                AddressRegisters: [],
+                VectorData: 0,
+                ScalarResource: 0,
+                ScalarSampler: 0,
+                Dimension: 2,
+                IsArray: false,
+                Glc: false,
+                Slc: false),
+            descriptor,
+            SamplerDescriptor: [],
+            MipLevel: null);
+}

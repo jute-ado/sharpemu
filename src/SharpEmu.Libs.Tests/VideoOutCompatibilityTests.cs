@@ -59,26 +59,4 @@ public sealed class VideoOutCompatibilityTests
             Generation.Gen4 | Generation.Gen5);
     }
 
-    [Theory]
-    [InlineData(0, 1)]
-    [InlineData(1, 0)]
-    public void OutputSupportIsLimitedToMainBus(int busType, int expected)
-    {
-        var context = new CpuContext(new FakeGuestMemory(), Generation.Gen5);
-        context[CpuRegister.Rdi] = unchecked((ulong)busType);
-        context[CpuRegister.Rsi] = uint.MaxValue;
-        context[CpuRegister.Rdx] = uint.MaxValue;
-
-        Assert.Equal(expected, VideoOutExports.VideoOutIsOutputSupported(context));
-    }
-
-    [Fact]
-    public void OutputSupportExportMetadataIsExact()
-    {
-        ExportMetadataAssert.Exact(
-            "Nv8c-Kb+DUM",
-            "sceVideoOutIsOutputSupported",
-            "libSceVideoOut",
-            Generation.Gen4 | Generation.Gen5);
-    }
 }

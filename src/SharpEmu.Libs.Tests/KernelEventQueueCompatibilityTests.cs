@@ -77,21 +77,19 @@ public sealed class KernelEventQueueCompatibilityTests
                 out _,
                 out _,
                 out var wakeKey,
-                out var resumeHandler,
-                out var wakeHandler,
+                out IGuestThreadBlockWaiter? waiter,
                 out _));
             Assert.Equal("sceKernelWaitEqueue", reason);
             Assert.Equal($"sceKernelWaitEqueue:{fixture.Handle:X16}", wakeKey);
-            Assert.NotNull(resumeHandler);
-            Assert.NotNull(wakeHandler);
+            Assert.NotNull(waiter);
 
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 DeleteQueue(fixture));
-            Assert.True(wakeHandler!());
+            Assert.True(waiter!.TryWake());
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND,
-                resumeHandler!());
+                waiter!.Resume());
             Assert.Equal(0u, ReadUInt32(fixture.Count));
         }
         finally
@@ -161,19 +159,17 @@ public sealed class KernelEventQueueCompatibilityTests
                 out _,
                 out _,
                 out _,
-                out var resumeHandler,
-                out var wakeHandler,
+                out IGuestThreadBlockWaiter? waiter,
                 out var deadlineTimestamp));
             Assert.Equal("sceKernelWaitEqueue", reason);
-            Assert.NotNull(resumeHandler);
-            Assert.NotNull(wakeHandler);
+            Assert.NotNull(waiter);
             Assert.True(deadlineTimestamp > Stopwatch.GetTimestamp());
 
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 TriggerUserEvent(fixture, ident, 0x9876));
-            Assert.True(wakeHandler!());
-            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, resumeHandler!());
+            Assert.True(waiter!.TryWake());
+            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, waiter!.Resume());
             Assert.InRange(
                 BinaryPrimitives.ReadUInt32LittleEndian(fixture.Timeout),
                 1u,
@@ -205,15 +201,13 @@ public sealed class KernelEventQueueCompatibilityTests
                 out _,
                 out _,
                 out _,
-                out var resumeHandler,
-                out var wakeHandler,
+                out IGuestThreadBlockWaiter? waiter,
                 out _));
-            Assert.NotNull(resumeHandler);
-            Assert.NotNull(wakeHandler);
-            Assert.False(wakeHandler!());
+            Assert.NotNull(waiter);
+            Assert.False(waiter!.TryWake());
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT,
-                resumeHandler!());
+                waiter!.Resume());
             Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(fixture.Timeout));
             Assert.Equal(0u, ReadUInt32(fixture.Count));
 
@@ -250,20 +244,18 @@ public sealed class KernelEventQueueCompatibilityTests
                     out _,
                     out _,
                     out _,
-                    out var resumeHandler,
-                    out var wakeHandler,
+                    out IGuestThreadBlockWaiter? waiter,
                     out _));
-                Assert.NotNull(resumeHandler);
-                Assert.NotNull(wakeHandler);
+                Assert.NotNull(waiter);
 
                 Assert.True(fixture.Memory.RemoveRegion(TimeoutAddress));
                 Assert.Equal(
                     (int)OrbisGen2Result.ORBIS_GEN2_OK,
                     TriggerUserEvent(fixture, ident, 0xBCDE));
-                Assert.True(wakeHandler!());
+                Assert.True(waiter!.TryWake());
                 Assert.Equal(
                     (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
-                    resumeHandler!());
+                    waiter!.Resume());
             }
             finally
             {

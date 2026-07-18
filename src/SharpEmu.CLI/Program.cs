@@ -211,8 +211,19 @@ internal static partial class Program
     {
         Console.Error.WriteLine($"[DEBUG] SharpEmu starting with {args.Length} args");
 
-        if (!TryParseArguments(
+        if (!TryExtractHostSurfaceDescriptor(
                 args,
+                out var emulatorArgs,
+                out var hostSurfaceDescriptor,
+                out var hostSurfaceArgumentError))
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][ERROR] {hostSurfaceArgumentError}");
+            return 1;
+        }
+
+        if (!TryParseArguments(
+                emulatorArgs,
                 out var ebootPath,
                 out var runtimeOptions,
                 out var logLevel,
@@ -277,6 +288,16 @@ internal static partial class Program
             return 5;
         }
 
+        if (!HostSurfaceSession.TryCreate(
+                hostSurfaceDescriptor,
+                out var hostSurfaceSession,
+                out var hostSurfaceError))
+        {
+            Console.Error.WriteLine($"[LOADER][ERROR] {hostSurfaceError}");
+            return 3;
+        }
+
+        using var attachedHostSurface = hostSurfaceSession;
         using var runtime = loadOnly
             ? SharpEmuRuntime.CreateForInspection(runtimeOptions)
             : SharpEmuRuntime.CreateDefault(runtimeOptions);
@@ -478,6 +499,105 @@ internal static partial class Program
         }
 
         return result == OrbisGen2Result.ORBIS_GEN2_OK ? 0 : 4;
+    }
+
+    private static bool TryExtractHostSurfaceDescriptor(
+        IReadOnlyList<string> args,
+        out string[] emulatorArgs,
+        out string? descriptor,
+        out string? error)
+    {
+        const string hostSurfacePrefix = "--host-surface=";
+        var remaining = new List<string>(args.Count);
+        descriptor = null;
+        error = null;
+        foreach (var argument in args)
+        {
+            if (!argument.StartsWith(
+                    hostSurfacePrefix,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                remaining.Add(argument);
+                continue;
+            }
+
+            if (descriptor is not null)
+            {
+                emulatorArgs = [];
+                error = "more than one GUI host surface was specified";
+                return false;
+            }
+
+            descriptor = argument[hostSurfacePrefix.Length..];
+            if (string.IsNullOrWhiteSpace(descriptor))
+            {
+                emulatorArgs = [];
+                error = "the GUI host surface descriptor is empty";
+                return false;
+            }
+        }
+
+        emulatorArgs = remaining.ToArray();
+        return true;
+    }
+
+    private sealed class HostSurfaceSession : IDisposable
+    {
+        private VulkanHostSurface? _surface;
+
+        private HostSurfaceSession(VulkanHostSurface surface)
+        {
+            _surface = surface;
+        }
+
+        public static bool TryCreate(
+            string? descriptor,
+            out HostSurfaceSession? session,
+            out string? error)
+        {
+            session = null;
+            error = null;
+            if (descriptor is null)
+            {
+                return true;
+            }
+
+            if (!VulkanHostSurface.TryCreateChildProcessSurface(
+                    descriptor,
+                    out var surface,
+                    out error) ||
+                surface is null)
+            {
+                return false;
+            }
+
+            if (!VulkanVideoHost.TryAttachSurface(surface))
+            {
+                surface.Dispose();
+                error = "the requested GUI host surface is already active";
+                return false;
+            }
+
+            HostSessionControl.SetEmbeddedHostSurface(
+                surface.WindowHandle,
+                surface.DisplayHandle);
+            session = new HostSurfaceSession(surface);
+            return true;
+        }
+
+        public void Dispose()
+        {
+            var surface = Interlocked.Exchange(ref _surface, null);
+            if (surface is null)
+            {
+                return;
+            }
+
+            HostSessionControl.SetEmbeddedHostSurface(0);
+            VulkanVideoHost.RequestClose();
+            VulkanVideoHost.DetachSurface(surface);
+            surface.Dispose();
+        }
     }
 
     private static void EnsureCliConsole()

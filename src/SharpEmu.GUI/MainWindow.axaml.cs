@@ -12,8 +12,11 @@ using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using SharpEmu.Core.Cpu;
+using SharpEmu.Core.Runtime;
 using SharpEmu.HLE.Host;
 using SharpEmu.HLE.Host.Windows;
+using SharpEmu.Libs.VideoOut;
 using SharpEmu.Logging;
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
@@ -28,6 +31,8 @@ public partial class MainWindow : Window
 {
     private const int MaxConsoleLines = 4000;
     private const int MaxConsoleLinesPerFlush = 500;
+    private const double LaunchBlurRadius = 12;
+    private const double BlurTransitionSeconds = 0.24;
 
     private static readonly IBrush DefaultLineBrush = new SolidColorBrush(Color.Parse("#C7CFDE"));
     private static readonly IBrush DimLineBrush = new SolidColorBrush(Color.Parse("#6B7488"));
@@ -48,14 +53,26 @@ public partial class MainWindow : Window
     private readonly List<LogLine> _allConsoleLines = new();
     private readonly ConcurrentQueue<(string Line, bool IsError)> _pendingLines = new();
     private readonly DispatcherTimer _consoleFlushTimer;
+    private readonly DispatcherTimer _libraryBlurTimer;
+    private BlurEffect? _libraryBlur;
+    private double _libraryBlurStartRadius;
+    private double _libraryBlurTargetRadius;
+    private long _libraryBlurStartedAt;
+    private bool _clearLibraryBlurWhenComplete;
 
     private GuiSettings _settings = new();
     private EmulatorProcess? _emulator;
+    private GameSurfaceHost? _gameSurfaceHost;
     private ConsoleWindow? _consoleWindow;
+    private GuiConsoleMirror? _consoleMirror;
     private StreamWriter? _fileLog;
     private readonly SndPreviewPlayer _sndPreview = new();
     private string? _emulatorExePath;
+    private PendingLaunch? _pendingLaunch;
+    private bool _gameFullscreen;
     private bool _isRunning;
+    private bool _isStopping;
+    private bool _awaitingFirstFrame;
     private int _autoScrollTicks;
     private int _activePageIndex;
     private Updater.UpdateInfo? _availableUpdate;
@@ -83,12 +100,22 @@ public partial class MainWindow : Window
     private static readonly HttpClient GithubHttpClient = CreateGithubHttpClient();
     private string? _latestCommitSha;
 
+    private sealed record PendingLaunch(
+        string EbootPath,
+        string DisplayName,
+        string? TitleId,
+        string LogLevel,
+        SharpEmuRuntimeOptions RuntimeOptions);
+
     public MainWindow()
     {
         InitializeComponent();
 
         GameList.ItemsSource = _visibleGames;
         ConsoleList.ItemsSource = _consoleLines;
+        _consoleMirror = GuiConsoleMirror.Install((line, isError) =>
+            _pendingLines.Enqueue((line, isError)));
+        Closed += (_, _) => _emulator?.Stop();
 
         _consoleFlushTimer = new DispatcherTimer
         {
@@ -101,6 +128,15 @@ public partial class MainWindow : Window
         };
         _consoleFlushTimer.Start();
 
+        _libraryBlurTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(16),
+        };
+        _libraryBlurTimer.Tick += (_, _) => AdvanceLibraryBlur();
+
+        Activated += (_, _) => UpdateSessionBarVisibility();
+        Deactivated += (_, _) => SessionBarPopup.IsOpen = false;
+
         TitleBar.PointerPressed += OnTitleBarPointerPressed;
         GameList.SelectionChanged += (_, _) => UpdateSelectedGame();
         GameList.DoubleTapped += (_, _) => LaunchSelected();
@@ -111,10 +147,10 @@ public partial class MainWindow : Window
         RescanButton.Click += async (_, _) => await RescanLibraryAsync();
         OpenFileButton.Click += async (_, _) => await OpenFileAsync();
         LaunchButton.Click += (_, _) => LaunchSelected();
-        StopButton.Click += (_, _) => _emulator?.Stop();
         ClearLogButton.Click += (_, _) => { _consoleLines.Clear(); _allConsoleLines.Clear(); };
         StopButton.Click += (_, _) => StopEmulator();
-        ClearLogButton.Click += (_, _) => _consoleLines.Clear();
+        SessionStopButton.Click += (_, _) => StopEmulator();
+        SessionConsoleButton.Click += (_, _) => ShowConsoleWindow();
         CopyLogButton.Click += async (_, _) => await CopyConsoleAsync();
         DetachConsoleButton.Click += (_, _) => ShowConsoleWindow();
         LibraryTabButton.Click += (_, _) => SetActivePage(0);
@@ -162,12 +198,14 @@ public partial class MainWindow : Window
         LanguageBox.SelectionChanged += (_, _) => OnLanguageChanged();
 
         GameList.AddHandler(ContextRequestedEvent, OnGameContextRequested, RoutingStrategies.Tunnel);
+        AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
         CtxLaunch.Click += (_, _) => LaunchSelected();
         CtxOpenFolder.Click += (_, _) => OpenSelectedGameFolder();
         CtxCopyPath.Click += async (_, _) =>
             await CopyToClipboardAsync((GameList.SelectedItem as GameEntry)?.Path, "Clipboard.Path");
         CtxCopyTitleId.Click += async (_, _) =>
             await CopyToClipboardAsync((GameList.SelectedItem as GameEntry)?.TitleId, "Clipboard.TitleId");
+        CtxGameSettings.Click += (_, _) => OpenSelectedGameSettings();
         CtxRemove.Click += (_, _) => RemoveSelectedFromLibrary();
 
         Opened += async (_, _) => await OnOpenedAsync();
@@ -537,6 +575,7 @@ public partial class MainWindow : Window
         CtxOpenFolder.Header = loc.Get("Library.Context.OpenFolder");
         CtxCopyPath.Header = loc.Get("Library.Context.CopyPath");
         CtxCopyTitleId.Header = loc.Get("Library.Context.CopyTitleId");
+        CtxGameSettings.Header = loc.Get("Library.Context.GameSettings");
         CtxRemove.Header = loc.Get("Library.Context.Remove");
 
         EmptyAddFolderButton.Content = loc.Get("Library.Empty.AddFolder");
@@ -546,27 +585,27 @@ public partial class MainWindow : Window
         EnvTabItem.Header = loc.Get("Options.Env.Tab");
         EnvSectionTitle.Text = loc.Get("Options.Section.Environment");
         EnvDesc.Text = loc.Get("Options.Env.Desc");
-        EnvBthidDesc.Text = loc.Get("Options.Env.Bthid.Desc");
-        EnvLoopGuardDesc.Text = loc.Get("Options.Env.LoopGuard.Desc");
-        EnvWritableApp0Desc.Text = loc.Get("Options.Env.WritableApp0.Desc");
-        EnvVkValidationDesc.Text = loc.Get("Options.Env.VkValidation.Desc");
-        EnvDumpSpirvDesc.Text = loc.Get("Options.Env.DumpSpirv.Desc");
-        EnvLogDirectMemoryDesc.Text = loc.Get("Options.Env.LogDirectMemory.Desc");
-        EnvLogIoDesc.Text = loc.Get("Options.Env.LogIo.Desc");
-        EnvLogNpDesc.Text = loc.Get("Options.Env.LogNp.Desc");
+        EnvBthidRow.Description = loc.Get("Options.Env.Bthid.Desc");
+        EnvLoopGuardRow.Description = loc.Get("Options.Env.LoopGuard.Desc");
+        EnvWritableApp0Row.Description = loc.Get("Options.Env.WritableApp0.Desc");
+        EnvVkValidationRow.Description = loc.Get("Options.Env.VkValidation.Desc");
+        EnvDumpSpirvRow.Description = loc.Get("Options.Env.DumpSpirv.Desc");
+        EnvLogDirectMemoryRow.Description = loc.Get("Options.Env.LogDirectMemory.Desc");
+        EnvLogIoRow.Description = loc.Get("Options.Env.LogIo.Desc");
+        EnvLogNpRow.Description = loc.Get("Options.Env.LogNp.Desc");
         EmulationSectionTitle.Text = loc.Get("Options.Section.Emulation");
         LoggingSectionTitle.Text = loc.Get("Options.Section.Logging");
         LauncherSectionTitle.Text = loc.Get("Options.Section.Launcher");
 
-        CpuEngineLabel.Text = loc.Get("Options.CpuEngine.Label");
-        CpuEngineDesc.Text = loc.Get("Options.CpuEngine.Desc");
+        CpuEngineRow.Label = loc.Get("Options.CpuEngine.Label");
+        CpuEngineRow.Description = loc.Get("Options.CpuEngine.Desc");
         CpuEngineNativeItem.Content = loc.Get("Options.CpuEngine.Native");
 
-        StrictLabel.Text = loc.Get("Options.Strict.Label");
-        StrictDesc.Text = loc.Get("Options.Strict.Desc");
+        StrictRow.Label = loc.Get("Options.Strict.Label");
+        StrictRow.Description = loc.Get("Options.Strict.Desc");
 
-        LogLevelLabel.Text = loc.Get("Options.LogLevel.Label");
-        LogLevelDesc.Text = loc.Get("Options.LogLevel.Desc");
+        LogLevelRow.Label = loc.Get("Options.LogLevel.Label");
+        LogLevelRow.Description = loc.Get("Options.LogLevel.Desc");
         LogLevelTraceItem.Content = loc.Get("Options.LogLevel.Trace");
         LogLevelDebugItem.Content = loc.Get("Options.LogLevel.Debug");
         LogLevelInfoItem.Content = loc.Get("Options.LogLevel.Info");
@@ -574,29 +613,29 @@ public partial class MainWindow : Window
         LogLevelErrorItem.Content = loc.Get("Options.LogLevel.Error");
         LogLevelCriticalItem.Content = loc.Get("Options.LogLevel.Critical");
 
-        TraceImportsLabel.Text = loc.Get("Options.TraceImports.Label");
-        TraceImportsDesc.Text = loc.Get("Options.TraceImports.Desc");
+        TraceImportsRow.Label = loc.Get("Options.TraceImports.Label");
+        TraceImportsRow.Description = loc.Get("Options.TraceImports.Desc");
 
-        LogToFileLabel.Text = loc.Get("Options.LogToFile.Label");
-        LogToFileDesc.Text = loc.Get("Options.LogToFile.Desc");
+        LogToFileRow.Label = loc.Get("Options.LogToFile.Label");
+        LogToFileRow.Description = loc.Get("Options.LogToFile.Desc");
 
-        LogFilePathLabel.Text = loc.Get("Options.LogFilePath.Label");
+        LogFilePathRow.Label = loc.Get("Options.LogFilePath.Label");
         SelectLogFilePathButton.Content = loc.Get("Options.LogFilePath.Select");
         UpdateLogFilePathText();
 
-        OverrideLogFileLabel.Text = loc.Get("Options.OverrideLogFile.Label");
-        OverrideLogFileDesc.Text = loc.Get("Options.OverrideLogFile.Desc");
+        OverrideLogFileRow.Label = loc.Get("Options.OverrideLogFile.Label");
+        OverrideLogFileRow.Description = loc.Get("Options.OverrideLogFile.Desc");
 
-        LanguageLabel.Text = loc.Get("Options.Language.Label");
-        LanguageDesc.Text = loc.Get("Options.Language.Desc");
+        LanguageRow.Label = loc.Get("Options.Language.Label");
+        LanguageRow.Description = loc.Get("Options.Language.Desc");
 
-        TitleMusicLabel.Text = loc.Get("Options.TitleMusic.Label");
-        TitleMusicDesc.Text = loc.Get("Options.TitleMusic.Desc");
+        TitleMusicRow.Label = loc.Get("Options.TitleMusic.Label");
+        TitleMusicRow.Description = loc.Get("Options.TitleMusic.Desc");
 
-        DiscordLabel.Text = loc.Get("Options.Discord.Label");
-        DiscordDesc.Text = loc.Get("Options.Discord.Desc");
-        AutoUpdateLabel.Text = loc.Get("Updater.Auto.Label");
-        AutoUpdateDesc.Text = loc.Get("Updater.Auto.Desc");
+        DiscordRow.Label = loc.Get("Options.Discord.Label");
+        DiscordRow.Description = loc.Get("Options.Discord.Desc");
+        AutoUpdateRow.Label = loc.Get("Updater.Auto.Label");
+        AutoUpdateRow.Description = loc.Get("Updater.Auto.Desc");
 
         foreach (var toggle in new[] { StrictToggle, LogToFileToggle, OverrideLogFileToggle, TitleMusicToggle, DiscordToggle, AutoUpdateToggle })
         {
@@ -683,14 +722,46 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnPreviewKeyDown(object? sender, KeyEventArgs args)
+    {
+        // While a session is on screen, Enter and Space are game input
+        // (Cross button). Keyboard focus stays on the launcher window, so a
+        // previously clicked, still-focused button (console toggle, session
+        // bar) would also activate and reshape the game view. Swallow the
+        // keys before button activation; the emulator process reads raw key
+        // state and is unaffected. Fullscreen hides those buttons, which is
+        // why this only manifested in windowed sessions.
+        if (_isRunning && GameView.IsVisible &&
+            args.Key is Key.Enter or Key.Space)
+        {
+            args.Handled = true;
+        }
+    }
+
     private void OnWindowFullScreen(object sender, RoutedEventArgs args)
     {
         if (WindowState == WindowState.FullScreen)
         {
-            WindowState = WindowState.Normal;
+            // Leaving F11 should restore a monitor-sized window with the
+            // launcher chrome, not fall back to the design-time window size.
+            WindowState = WindowState.Maximized;
             ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.PreferSystemChrome;
             TitleBar.IsVisible = true;
             StatusBar.IsVisible = true;
+            if (_gameFullscreen)
+            {
+                _gameFullscreen = false;
+                Grid.SetRow(MainContent, 1);
+                Grid.SetRowSpan(MainContent, 1);
+                MainContent.Margin = _isRunning
+                    ? new Thickness(0)
+                    : new Thickness(32, 24, 32, 20);
+                ContentToolbar.IsVisible = !_isRunning;
+                ConsolePanel.IsVisible = ConsoleToggle.IsChecked == true && _consoleWindow is null;
+                LaunchBar.IsVisible = true;
+                QueueGameSurfaceResize();
+                UpdateSessionBarVisibility();
+            }
         }
         else
         {
@@ -698,18 +769,45 @@ public partial class MainWindow : Window
             ExtendClientAreaChromeHints = ExtendClientAreaChromeHints.NoChrome;
             TitleBar.IsVisible = false;
             StatusBar.IsVisible = false;
+            if (_isRunning && !_isStopping && !_awaitingFirstFrame && GameView.IsVisible)
+            {
+                // The native child receives its new physical Bounds as soon
+                // as this grid spans the monitor. The presenter recreates its
+                // swapchain from that size, rather than stretching 720p.
+                _gameFullscreen = true;
+                // Re-arming restarts the idle countdown, so the cursor also
+                // hides a moment after F11 even without further mouse motion.
+                _gameSurfaceHost?.SetCursorAutoHide(true);
+                Grid.SetRow(MainContent, 0);
+                Grid.SetRowSpan(MainContent, 3);
+                MainContent.Margin = new Thickness(0);
+                ContentToolbar.IsVisible = false;
+                ConsolePanel.IsVisible = false;
+                LaunchBar.IsVisible = false;
+                QueueGameSurfaceResize();
+                UpdateSessionBarVisibility();
+            }
         }
+    }
+
+    private void QueueGameSurfaceResize()
+    {
+        Dispatcher.UIThread.Post(
+            () => _gameSurfaceHost?.RefreshSurfaceSize(),
+            DispatcherPriority.Render);
     }
 
     private void OnWindowClosing()
     {
         _settings.Save();
         _consoleFlushTimer.Stop();
+        _libraryBlurTimer.Stop();
         _gamepadTimer.Stop();
         _sndPreview.Stop();
         _discord?.Dispose();
         _consoleWindow?.Close();
         _emulator?.Dispose();
+        _consoleMirror?.Dispose();
         DropFileLog();
     }
 
@@ -857,7 +955,7 @@ public partial class MainWindow : Window
 
     private void UpdateLogFilePathText()
     {
-        LogFilePathText.Text = string.IsNullOrWhiteSpace(_settings.LogFilePath)
+        LogFilePathRow.Description = string.IsNullOrWhiteSpace(_settings.LogFilePath)
             ? Localization.Instance.Get("Options.LogFilePath.Default")
             : _settings.LogFilePath;
     }
@@ -896,8 +994,8 @@ public partial class MainWindow : Window
             candidates.Add(_settings.EmulatorPath);
         }
 
-        // The GUI and the CLI are the same executable: with arguments it runs
-        // the emulator, so the preferred child process is this process itself.
+        // The GUI and CLI share one executable. The selected path is the
+        // isolated child executable and also defines the portable data root.
         if (Environment.ProcessPath is { } selfPath &&
             Path.GetFileNameWithoutExtension(selfPath).Equals("SharpEmu", StringComparison.OrdinalIgnoreCase))
         {
@@ -1284,6 +1382,25 @@ public partial class MainWindow : Window
         GameList.SelectedItem = game;
         CtxLaunch.IsEnabled = !_isRunning;
         CtxCopyTitleId.IsEnabled = game.TitleId is not null;
+        CtxGameSettings.IsEnabled = !string.IsNullOrWhiteSpace(game.TitleId);
+    }
+
+    private void OpenSelectedGameSettings()
+    {
+        if (GameList.SelectedItem is not GameEntry game)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(game.TitleId))
+        {
+            AppendConsoleLine(
+                "[GUI][WARN] Per-game settings require a title ID, which this game does not have.",
+                WarningLineBrush);
+            return;
+        }
+
+        _ = new PerGameSettingsDialog(game.TitleId, game.Name, _settings).ShowDialog(this);
     }
 
     private void OpenSelectedGameFolder()
@@ -1576,132 +1693,73 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_emulatorExePath is null)
-        {
-            LocateEmulator();
-            if (_emulatorExePath is null)
-            {
-                AppendConsoleLine(Localization.Instance.Get("Launch.ExeNotFound"), ErrorLineBrush);
-                return;
-            }
-        }
+        var resolvedTitleId = string.IsNullOrWhiteSpace(titleId)
+            ? _allGames.FirstOrDefault(game => game.Path.Equals(ebootPath, FilePathComparison))?.TitleId
+            : titleId;
+        var effective = EffectiveLaunchSettings.Resolve(_settings, PerGameSettings.Load(resolvedTitleId));
 
         _sndPreview.Stop();
-
-        var arguments = new List<string>
-        {
-            "--cpu-engine=native",
-            $"--log-level={_settings.LogLevel.ToLowerInvariant()}",
-        };
-        if (_settings.StrictDynlibResolution)
-        {
-            arguments.Add("--strict");
-        }
-
-        if (_settings.ImportTraceLimit > 0)
-        {
-            arguments.Add($"--trace-imports={_settings.ImportTraceLimit}");
-        }
-
         _consoleLines.Clear();
+        _allConsoleLines.Clear();
 
-        // Let the CLI mirror stdout/stderr itself; it sees loader/native
-        // diagnostics before the GUI pipe reader can filter or batch them.
         DropFileLog();
-        if (_settings.LogToFile)
+        if (effective.LogToFile)
         {
-            string filePath;
-            if (!string.IsNullOrWhiteSpace(_settings.LogFilePath))
-            {
-                if (_settings.OverrideLogFile)
-                {
-                    filePath = _settings.LogFilePath;
-                }
-                else
-                {
-                    string path = _settings.LogFilePath;
-                    string id = string.IsNullOrWhiteSpace(titleId) ? "UNKNOWN" : titleId;
-                    foreach (var invalidChar in Path.GetInvalidFileNameChars())
-                    {
-                        id = id.Replace(invalidChar.ToString(), "");
-                    }
-                    string identifier = $"{id}-{DateTime.Now:yyyyMMdd-HHmmss}";
-
-                    string? dir = Path.GetDirectoryName(path);
-                    string? fileName = Path.GetFileNameWithoutExtension(path);
-                    string? extension = Path.GetExtension(path);
-
-                    string newFileName = $"{fileName}-{identifier}{extension}";
-                    filePath = string.IsNullOrEmpty(dir)
-                        ? newFileName
-                        : Path.Combine(dir, newFileName);
-                }
-            }
-            else
-            {
-                filePath = BuildLogFilePath(titleId) ?? string.Empty;
-            }
-
-            if (!string.IsNullOrEmpty(filePath))
-            {
-                arguments.Add("--log-file");
-                arguments.Add(filePath);
-                AppendConsoleLine(Localization.Instance.Format("Launch.LogFile", filePath), DimLineBrush);
-            }
+            OpenFileLog(resolvedTitleId);
         }
 
-        arguments.Add(ebootPath);
-
-        AppendConsoleLine(
-            Localization.Instance.Format("Launch.Command", string.Join(' ', arguments)),
-            DimLineBrush);
-
-        // Apply the enabled switches to this process; both emulator launch paths
-        // (CreateProcessW and Process.Start) inherit it. Clear switches turned
-        // off since the previous launch.
+        // The isolated game child inherits these diagnostics. Keep them on the
+        // launcher process so every platform receives the same launch options.
         foreach (var staleName in _appliedEnvironmentVariables)
         {
-            if (!_settings.EnvironmentToggles.Contains(staleName))
+            if (!effective.EnvironmentToggles.Contains(staleName))
             {
                 Environment.SetEnvironmentVariable(staleName, null);
             }
         }
 
         _appliedEnvironmentVariables.Clear();
-        foreach (var name in _settings.EnvironmentToggles)
+        foreach (var name in effective.EnvironmentToggles)
         {
             Environment.SetEnvironmentVariable(name, "1");
             _appliedEnvironmentVariables.Add(name);
         }
 
-        var emulator = new EmulatorProcess();
-        emulator.OutputReceived += (line, isError) => _pendingLines.Enqueue((line, isError));
-        emulator.Exited += code => Dispatcher.UIThread.Post(() => OnEmulatorExited(code));
-
-        try
+        if (SharpEmuLog.TryParseLevel(effective.LogLevel, out var logLevel))
         {
-            emulator.Start(_emulatorExePath, arguments, Path.GetDirectoryName(ebootPath));
-        }
-        catch (Exception ex)
-        {
-            emulator.Dispose();
-            AppendConsoleLine(Localization.Instance.Format("Launch.StartFailed", ex.Message), ErrorLineBrush);
-            DropFileLog();
-            return;
+            SharpEmuLog.MinimumLevel = logLevel;
         }
 
-        _emulator = emulator;
+        var runtimeOptions = new SharpEmuRuntimeOptions
+        {
+            CpuEngine = CpuExecutionEngine.NativeOnly,
+            StrictDynlibResolution = effective.StrictDynlibResolution,
+            ImportTraceLimit = Math.Max(0, effective.ImportTraceLimit),
+        };
+
         _isRunning = true;
         _runningGameName = displayName;
-        _runningGameTitleId = _allGames
-            .FirstOrDefault(game => game.Path.Equals(ebootPath, FilePathComparison))?
-            .TitleId;
+        SessionGameTitle.Text = displayName;
+        _runningGameTitleId = resolvedTitleId;
         _runningSinceUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         StatusDot.Fill = SuccessLineBrush;
         StatusText.Text = Localization.Instance.Format("Launch.Running", displayName);
         StatusBarRight.Text = Localization.Instance.Format("Status.Running", displayName);
         UpdateRunButtons();
         UpdateDiscordPresence();
+
+        ShowGameView();
+        _pendingLaunch = new PendingLaunch(
+            Path.GetFullPath(ebootPath),
+            displayName,
+            _runningGameTitleId,
+            effective.LogLevel,
+            runtimeOptions);
+
+        if (_gameSurfaceHost?.Surface is { } surface)
+        {
+            StartPendingSession(surface);
+        }
     }
 
     /// <summary>
@@ -1713,17 +1771,35 @@ public partial class MainWindow : Window
     /// </summary>
     private void StopEmulator()
     {
-        if (!_isRunning)
+        if (!_isRunning || _isStopping)
         {
             return;
         }
 
-        _emulator?.Stop();
+        if (_emulator is null)
+        {
+            // The native host can be created a moment after Launch. Do not
+            // let that delayed callback start a session the user already
+            // cancelled.
+            _pendingLaunch = null;
+            OnEmulatorExited(0);
+            return;
+        }
+
+        _isStopping = true;
+        StopButton.IsEnabled = false;
+        SessionStopButton.IsEnabled = false;
+        SessionHintText.Text = Localization.Instance.Get("Launch.Stopping");
+        SessionF11Badge.IsVisible = false;
+        ShowSessionLoading("Closing game", "Waiting for the emulation session to exit...");
+        _emulator.Stop();
         _runningGameName = null;
         _runningGameTitleId = null;
         StatusText.Text = Localization.Instance.Get("Launch.Stopping");
         StatusBarRight.Text = Localization.Instance.Get("Status.Stopping");
         UpdateDiscordPresence();
+        UpdateSessionBarVisibility();
+        ReturnToLibraryWhileStopping();
     }
 
     /// <summary>
@@ -1734,7 +1810,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            var exeDirectory = Path.GetDirectoryName(_emulatorExePath);
+            var exeDirectory = Path.GetDirectoryName(_emulatorExePath) ?? AppContext.BaseDirectory;
             if (string.IsNullOrEmpty(exeDirectory))
             {
                 return null;
@@ -1761,8 +1837,12 @@ public partial class MainWindow : Window
     {
         FlushPendingConsoleLines();
         _isRunning = false;
+        _isStopping = false;
         _emulator?.Dispose();
         _emulator = null;
+        _pendingLaunch = null;
+        DisposeGameSurfaceHost();
+        HideGameView();
 
         var meaning = exitCode switch
         {
@@ -1771,19 +1851,21 @@ public partial class MainWindow : Window
             2 => Localization.Instance.Get("Exit.EbootNotFound"),
             3 => Localization.Instance.Get("Exit.RuntimeException"),
             4 => Localization.Instance.Get("Exit.EmulationError"),
-            -1073741819 => Localization.Instance.Get("Exit.EmulationError"),
             _ => EmulatorExitCode.Describe(exitCode),
         };
-        if (string.Equals(meaning, "unknown", StringComparison.Ordinal))
-        {
-            meaning = Localization.Instance.Get("Exit.Unknown");
-        }
-        var brush = exitCode == 0 ? SuccessLineBrush : ErrorLineBrush;
-        AppendConsoleLine(Localization.Instance.Format("Launch.ProcessExited", exitCode, meaning), brush);
+        var stoppedByUser = exitCode == EmulatorProcess.HostStopExitCode;
+        var brush = exitCode == 0 || stoppedByUser ? SuccessLineBrush : ErrorLineBrush;
+        AppendConsoleLine(
+            stoppedByUser
+                ? "Game closed by the user."
+                : Localization.Instance.Format("Launch.ProcessExited", exitCode, meaning),
+            brush);
         CloseFileLogSoon();
 
-        StatusDot.Fill = exitCode == 0 ? (IBrush)SuccessLineBrush : ErrorLineBrush;
-        StatusText.Text = Localization.Instance.Format("Launch.Exited", exitCode, meaning);
+        StatusDot.Fill = exitCode == 0 || stoppedByUser ? (IBrush)SuccessLineBrush : ErrorLineBrush;
+        StatusText.Text = stoppedByUser
+            ? "Game closed by the user."
+            : Localization.Instance.Format("Launch.Exited", exitCode, meaning);
         StatusBarRight.Text = Localization.Instance.Get("Status.Idle");
         _runningGameName = null;
         _runningGameTitleId = null;
@@ -1791,11 +1873,366 @@ public partial class MainWindow : Window
         UpdateDiscordPresence();
     }
 
+    private void StartPendingSession(VulkanHostSurface surface)
+    {
+        if (_pendingLaunch is not { } launch || _emulator is not null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_emulatorExePath))
+        {
+            AppendConsoleLine(Localization.Instance.Get("Launch.ExeNotFound"), ErrorLineBrush);
+            OnEmulatorExited(3);
+            return;
+        }
+
+        var process = new EmulatorProcess();
+        process.OutputReceived += OnEmulatorOutput;
+        process.Exited += code => Dispatcher.UIThread.Post(() => OnEmulatorExited(code));
+
+        try
+        {
+            var arguments = BuildEmulatorArguments(launch, surface);
+            _emulator = process;
+            _pendingLaunch = null;
+            process.Start(
+                _emulatorExePath,
+                arguments,
+                Path.GetDirectoryName(_emulatorExePath));
+            AppendConsoleLine(
+                Localization.Instance.Format("Launch.Command", launch.EbootPath),
+                DimLineBrush);
+        }
+        catch (Exception exception)
+        {
+            _emulator = null;
+            process.Dispose();
+            AppendConsoleLine(
+                Localization.Instance.Format("Launch.StartFailed", exception.Message),
+                ErrorLineBrush);
+            OnEmulatorExited(3);
+        }
+    }
+
+    private List<string> BuildEmulatorArguments(PendingLaunch launch, VulkanHostSurface surface)
+    {
+        var arguments = new List<string>
+        {
+            "--cpu-engine=native",
+            $"--log-level={launch.LogLevel}",
+        };
+        if (launch.RuntimeOptions.StrictDynlibResolution)
+        {
+            arguments.Add("--strict");
+        }
+        if (launch.RuntimeOptions.ImportTraceLimit > 0)
+        {
+            arguments.Add($"--trace-imports={launch.RuntimeOptions.ImportTraceLimit}");
+        }
+
+        if (surface.TryGetChildProcessDescriptor(out var descriptor))
+        {
+            arguments.Add($"--host-surface={descriptor}");
+        }
+        else
+        {
+            AppendConsoleLine(
+                "[GUI][WARN] Embedded child surfaces are unavailable on this platform; opening a game window instead.",
+                WarningLineBrush);
+        }
+
+        arguments.Add(launch.EbootPath);
+        return arguments;
+    }
+
+    private void OnEmulatorOutput(string line, bool isError)
+    {
+        _pendingLines.Enqueue((line, isError));
+        if (!line.Contains("[VIDEOOUT][INFO] Hosted splash ready.", StringComparison.Ordinal) &&
+            !line.Contains("[VIDEOOUT][INFO] Hosted first frame presented.", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_isRunning && !_isStopping)
+            {
+                _awaitingFirstFrame = false;
+                ClearLibraryBlur();
+                MainContent.Margin = new Thickness(0);
+                GameView.Background = Brushes.Black;
+                GameView.IsHitTestVisible = true;
+                _gameSurfaceHost?.SetPresentationVisible(true);
+                _gameSurfaceHost?.SetCursorAutoHide(true);
+                LibraryPage.IsVisible = false;
+                OptionsPage.IsVisible = false;
+                LibraryToolbar.IsVisible = false;
+                ContentToolbar.IsVisible = false;
+                ConsolePanel.IsVisible = false;
+                LaunchBar.IsVisible = false;
+                SessionLoadingPopup.IsOpen = false;
+                UpdateSessionBarVisibility();
+            }
+        });
+    }
+
+    private GameSurfaceHost EnsureGameSurfaceHost()
+    {
+        if (_gameSurfaceHost is not null)
+        {
+            return _gameSurfaceHost;
+        }
+
+        var host = new GameSurfaceHost();
+        // Configure this before attaching it to Avalonia so its first native
+        // HWND is hidden while the child process starts.
+        host.SetPresentationVisible(false);
+        host.SurfaceAvailable += (_, surface) =>
+        {
+            if (ReferenceEquals(_gameSurfaceHost, host))
+            {
+                StartPendingSession(surface);
+            }
+        };
+        host.SurfaceDestroyed += (_, surface) => OnGameSurfaceDestroyed(host, surface);
+        _gameSurfaceHost = host;
+        GameSurfaceContainer.Children.Add(host);
+        return host;
+    }
+
+    private void DisposeGameSurfaceHost()
+    {
+        var host = _gameSurfaceHost;
+        if (host is null)
+        {
+            return;
+        }
+
+        _gameSurfaceHost = null;
+        host.SetPresentationVisible(false);
+        GameSurfaceContainer.Children.Remove(host);
+    }
+
+    private void OnGameSurfaceDestroyed(GameSurfaceHost host, VulkanHostSurface surface)
+    {
+        if (ReferenceEquals(_gameSurfaceHost, host) && _isRunning)
+        {
+            StopEmulator();
+        }
+    }
+
+    private void ShowGameView()
+    {
+        _isStopping = false;
+        _awaitingFirstFrame = true;
+        var host = EnsureGameSurfaceHost();
+        GameView.IsVisible = true;
+        GameView.Background = Brushes.Transparent;
+        GameView.IsHitTestVisible = false;
+        host.SetPresentationVisible(false);
+        AnimateLibraryBlur(LaunchBlurRadius);
+        SessionHintText.Text = "Fullscreen";
+        SessionF11Badge.IsVisible = true;
+        UpdateSessionBarVisibility();
+        ShowSessionLoading("Loading game", "Preparing the emulation session...");
+    }
+
+    private void HideGameView()
+    {
+        if (_gameFullscreen && WindowState == WindowState.FullScreen)
+        {
+            OnWindowFullScreen(this, new RoutedEventArgs());
+        }
+
+        _gameSurfaceHost?.SetCursorAutoHide(false);
+        _gameSurfaceHost?.SetPresentationVisible(false);
+        _awaitingFirstFrame = false;
+        GameView.IsVisible = false;
+        GameView.IsHitTestVisible = true;
+        SessionBarPopup.IsOpen = false;
+        SessionLoadingPopup.IsOpen = false;
+        AnimateLibraryBlur(0, clearWhenComplete: true);
+        MainContent.Margin = new Thickness(32, 24, 32, 20);
+        ContentToolbar.IsVisible = true;
+        ConsolePanel.IsVisible = ConsoleToggle.IsChecked == true && _consoleWindow is null;
+        LaunchBar.IsVisible = true;
+        LibraryPage.IsVisible = _activePageIndex == 0;
+        LibraryToolbar.IsVisible = _activePageIndex == 0;
+        OptionsPage.IsVisible = _activePageIndex == 1;
+        if (GameList.SelectedItem is GameEntry game && game.Background is not null)
+        {
+            BackdropImage.Opacity = 1;
+        }
+    }
+
+    private void AnimateLibraryBlur(double targetRadius, bool clearWhenComplete = false)
+    {
+        _libraryBlur ??= new BlurEffect();
+        MainContent.Effect = _libraryBlur;
+
+        _libraryBlurStartRadius = _libraryBlur.Radius;
+        _libraryBlurTargetRadius = Math.Max(0, targetRadius);
+        _libraryBlurStartedAt = Stopwatch.GetTimestamp();
+        _clearLibraryBlurWhenComplete = clearWhenComplete && _libraryBlurTargetRadius == 0;
+
+        if (Math.Abs(_libraryBlurStartRadius - _libraryBlurTargetRadius) < 0.01)
+        {
+            CompleteLibraryBlur();
+            return;
+        }
+
+        _libraryBlurTimer.Start();
+    }
+
+    private void AdvanceLibraryBlur()
+    {
+        if (_libraryBlur is null)
+        {
+            _libraryBlurTimer.Stop();
+            return;
+        }
+
+        var elapsed = (Stopwatch.GetTimestamp() - _libraryBlurStartedAt) /
+                      (double)Stopwatch.Frequency;
+        var progress = Math.Clamp(elapsed / BlurTransitionSeconds, 0, 1);
+        // Cubic ease-out gives the loading transition a quick response while
+        // keeping the final change of sharpness unobtrusive.
+        var easedProgress = 1 - Math.Pow(1 - progress, 3);
+        _libraryBlur.Radius = _libraryBlurStartRadius +
+                              ((_libraryBlurTargetRadius - _libraryBlurStartRadius) * easedProgress);
+
+        if (progress >= 1)
+        {
+            CompleteLibraryBlur();
+        }
+    }
+
+    private void CompleteLibraryBlur()
+    {
+        _libraryBlurTimer.Stop();
+        if (_libraryBlur is not null)
+        {
+            _libraryBlur.Radius = _libraryBlurTargetRadius;
+        }
+
+        if (_clearLibraryBlurWhenComplete)
+        {
+            MainContent.Effect = null;
+            _libraryBlur = null;
+            _clearLibraryBlurWhenComplete = false;
+        }
+    }
+
+    private void ClearLibraryBlur()
+    {
+        _libraryBlurTimer.Stop();
+        _libraryBlur = null;
+        _clearLibraryBlurWhenComplete = false;
+        MainContent.Effect = null;
+    }
+
+    private void ShowSessionLoading(string title, string detail)
+    {
+        SessionLoadingTitle.Text = title;
+        SessionLoadingDetail.Text = detail;
+        SessionLoadingPopup.IsOpen = true;
+    }
+
+    private void ReturnToLibraryWhileStopping()
+    {
+        if (_gameFullscreen && WindowState == WindowState.FullScreen)
+        {
+            OnWindowFullScreen(this, new RoutedEventArgs());
+        }
+
+        // Keep the native child alive until the session exits, but hide it
+        // immediately. Destroying it while Vulkan still owns the surface can
+        // crash the GUI; leaving it transparent lets the library recover
+        // while the native closing popup reports teardown progress.
+        _gameSurfaceHost?.SetPresentationVisible(false);
+        _awaitingFirstFrame = false;
+        GameView.Background = Brushes.Transparent;
+        GameView.IsHitTestVisible = false;
+        SessionBarPopup.IsOpen = false;
+        AnimateLibraryBlur(LaunchBlurRadius);
+        MainContent.Margin = new Thickness(32, 24, 32, 20);
+        ContentToolbar.IsVisible = true;
+        ConsolePanel.IsVisible = ConsoleToggle.IsChecked == true && _consoleWindow is null;
+        LaunchBar.IsVisible = true;
+        LibraryPage.IsVisible = _activePageIndex == 0;
+        LibraryToolbar.IsVisible = _activePageIndex == 0;
+        OptionsPage.IsVisible = _activePageIndex == 1;
+        BackdropImage.Opacity = GameList.SelectedItem is GameEntry { Background: not null } ? 1 : 0;
+        UpdateRunButtons();
+        Console.Error.WriteLine("[GUI][INFO] Library restored while embedded session is closing.");
+    }
+
+    private void OpenFileLog(string? titleId)
+    {
+        var filePath = ResolveLogFilePath(titleId);
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            return;
+        }
+
+        try
+        {
+            var directory = Path.GetDirectoryName(filePath);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            _fileLog = new StreamWriter(filePath, append: false) { AutoFlush = true };
+            AppendConsoleLine(Localization.Instance.Format("Launch.LogFile", filePath), DimLineBrush);
+        }
+        catch (Exception exception)
+        {
+            AppendConsoleLine($"[GUI][WARN] Could not open log file: {exception.Message}", WarningLineBrush);
+            DropFileLog();
+        }
+    }
+
+    private string? ResolveLogFilePath(string? titleId)
+    {
+        if (string.IsNullOrWhiteSpace(_settings.LogFilePath))
+        {
+            return BuildLogFilePath(titleId);
+        }
+
+        if (_settings.OverrideLogFile)
+        {
+            return _settings.LogFilePath;
+        }
+
+        var path = _settings.LogFilePath;
+        var id = string.IsNullOrWhiteSpace(titleId) ? "UNKNOWN" : titleId;
+        foreach (var invalid in Path.GetInvalidFileNameChars())
+        {
+            id = id.Replace(invalid.ToString(), string.Empty, StringComparison.Ordinal);
+        }
+
+        var directory = Path.GetDirectoryName(path);
+        var filename = Path.GetFileNameWithoutExtension(path);
+        var extension = Path.GetExtension(path);
+        var timestampedName = $"{filename}-{id}-{DateTime.Now:yyyyMMdd-HHmmss}{extension}";
+        return string.IsNullOrEmpty(directory) ? timestampedName : Path.Combine(directory, timestampedName);
+    }
+
     private void UpdateRunButtons()
     {
         LaunchButton.IsEnabled = !_isRunning && GameList.SelectedItem is GameEntry;
-        StopButton.IsEnabled = _isRunning;
+        StopButton.IsEnabled = _isRunning && !_isStopping;
+        SessionStopButton.IsEnabled = _isRunning && !_isStopping;
         OpenFileButton.IsEnabled = !_isRunning;
+    }
+
+    private void UpdateSessionBarVisibility()
+    {
+        SessionBarPopup.IsOpen = _isRunning && !_isStopping && !_awaitingFirstFrame && GameView.IsVisible &&
+            !_gameFullscreen && WindowState != WindowState.FullScreen;
     }
 
     // ---- Console ----

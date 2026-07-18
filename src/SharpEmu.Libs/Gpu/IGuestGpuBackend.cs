@@ -95,6 +95,7 @@ internal interface IGuestGpuBackend
         GuestIndexBuffer? indexBuffer = null,
         IReadOnlyList<GuestVertexBuffer>? vertexBuffers = null,
         GuestRenderState? renderState = null,
+        GuestDepthTarget? depthTarget = null,
         GuestShaderIdentity shaderIdentity = default,
         uint firstVertex = 0,
         int vertexOffset = 0,

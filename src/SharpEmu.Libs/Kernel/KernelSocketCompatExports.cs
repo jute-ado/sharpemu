@@ -163,7 +163,6 @@ internal static class KernelSocketCompatExports
         if (!TryParseGuestSockaddrIn(sockaddrAddress, addrlen, ctx, out var ipAddress, out var port))
         {
             LogNet($"connect sockaddr parse failed: fd={fd} addr=0x{sockaddrAddress:X} len={addrlen}");
-            RemoveEmulatedSocketFd(fd);
             ctx[CpuRegister.Rax] = unchecked((ulong)0xFFFFFFFFFFFFFFFF);
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
@@ -177,7 +176,6 @@ internal static class KernelSocketCompatExports
         if (!IsGuestTcpOutboundAllowed(ipAddress, redirectApplied))
         {
             LogNet($"connect denied by outbound policy: fd={fd} ip={ipAddress} port={port}");
-            RemoveEmulatedSocketFd(fd);
             ctx[CpuRegister.Rax] = unchecked((ulong)0xFFFFFFFFFFFFFFFF);
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
@@ -185,7 +183,6 @@ internal static class KernelSocketCompatExports
         if (!TryEstablishHostTcpConnection(ipAddress, port, out var client, out var stream))
         {
             LogNet($"connect failed: fd={fd} ip={ipAddress} port={port}");
-            RemoveEmulatedSocketFd(fd);
             ctx[CpuRegister.Rax] = unchecked((ulong)0xFFFFFFFFFFFFFFFF);
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
@@ -446,17 +443,6 @@ internal static class KernelSocketCompatExports
         state.Stream = null;
         state.Client = null;
         state.Connected = false;
-    }
-
-    private static void RemoveEmulatedSocketFd(int fd)
-    {
-        lock (Gate)
-        {
-            if (Sockets.Remove(fd, out var socketState))
-            {
-                DisposeEmulatedSocket(socketState);
-            }
-        }
     }
 
     private static void LogNet(string message)

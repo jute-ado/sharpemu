@@ -6,6 +6,7 @@ path = [
     ".gitattributes",
     "nuget.config",
     "global.json",
+    ".github/pull_request_template.md",
     ".github/coverage-baseline.json",
     "scripts/ps5_names.txt",
     "src/**/packages.lock.json",

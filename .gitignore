@@ -32,6 +32,8 @@ packages/
 .nuget/
 .dotnet-home/
 .cache/
+__pycache__/
+*.py[cod]
 
 # Local compatibility manifests point at legally owned game dumps and must
 # never be committed. The reusable harness and redacted example stay tracked.

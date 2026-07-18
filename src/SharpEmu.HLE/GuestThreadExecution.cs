@@ -372,48 +372,6 @@ public static class GuestThreadExecution
             out long _);
     }
 
-    // Compatibility inspection overload retained for tests and diagnostics that
-    // predate waiter objects. Production scheduling consumes the waiter directly,
-    // so hot blocking paths do not allocate these delegate wrappers.
-    public static bool TryConsumeCurrentThreadBlock(
-        out string reason,
-        out GuestCpuContinuation continuation,
-        out bool hasContinuation,
-        out string wakeKey,
-        out Func<int>? resumeHandler,
-        out Func<bool>? wakeHandler)
-    {
-        return TryConsumeCurrentThreadBlock(
-            out reason,
-            out continuation,
-            out hasContinuation,
-            out wakeKey,
-            out resumeHandler,
-            out wakeHandler,
-            out _);
-    }
-
-    public static bool TryConsumeCurrentThreadBlock(
-        out string reason,
-        out GuestCpuContinuation continuation,
-        out bool hasContinuation,
-        out string wakeKey,
-        out Func<int>? resumeHandler,
-        out Func<bool>? wakeHandler,
-        out long blockDeadlineTimestamp)
-    {
-        var consumed = TryConsumeCurrentThreadBlock(
-            out reason,
-            out continuation,
-            out hasContinuation,
-            out wakeKey,
-            out IGuestThreadBlockWaiter? waiter,
-            out blockDeadlineTimestamp);
-        resumeHandler = waiter is null ? null : waiter.Resume;
-        wakeHandler = waiter is null ? null : waiter.TryWake;
-        return consumed;
-    }
-
     public static bool TryConsumeCurrentThreadBlock(
         out string reason,
         out GuestCpuContinuation continuation,

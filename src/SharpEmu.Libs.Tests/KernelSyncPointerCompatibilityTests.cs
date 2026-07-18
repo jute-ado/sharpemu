@@ -211,14 +211,12 @@ public sealed class KernelSyncPointerCompatibilityTests
                 out _,
                 out var hasContinuation,
                 out var wakeKey,
-                out var resumeHandler,
-                out var wakeHandler,
+                out IGuestThreadBlockWaiter? waiter,
                 out var deadlineTimestamp));
             Assert.Equal("sceKernelWaitSema", reason);
             Assert.False(hasContinuation);
             Assert.Equal($"kernel_sema:0x{handle:X8}", wakeKey);
-            Assert.NotNull(resumeHandler);
-            Assert.NotNull(wakeHandler);
+            Assert.NotNull(waiter);
             Assert.True(deadlineTimestamp > Stopwatch.GetTimestamp());
 
             context[CpuRegister.Rdi] = handle;
@@ -226,8 +224,8 @@ public sealed class KernelSyncPointerCompatibilityTests
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 KernelSemaphoreCompatExports.KernelSignalSema(context));
-            Assert.True(wakeHandler!());
-            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, resumeHandler!());
+            Assert.True(waiter!.TryWake());
+            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, waiter!.Resume());
 
             var remainingTimeout = Marshal.ReadInt32((nint)timeoutAddress);
             Assert.InRange(remainingTimeout, 1, timeoutMicros);
@@ -290,18 +288,16 @@ public sealed class KernelSyncPointerCompatibilityTests
                 out _,
                 out _,
                 out _,
-                out var resumeHandler,
-                out var wakeHandler,
+                out IGuestThreadBlockWaiter? waiter,
                 out var deadlineTimestamp));
-            Assert.NotNull(resumeHandler);
-            Assert.NotNull(wakeHandler);
+            Assert.NotNull(waiter);
             Assert.True(SpinWait.SpinUntil(
                 () => Stopwatch.GetTimestamp() >= deadlineTimestamp,
                 TimeSpan.FromSeconds(1)));
 
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT,
-                resumeHandler!());
+                waiter!.Resume());
             Assert.Equal(0, Marshal.ReadInt32((nint)timeoutAddress));
 
             context[CpuRegister.Rdi] = handle;
@@ -309,7 +305,7 @@ public sealed class KernelSyncPointerCompatibilityTests
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 KernelSemaphoreCompatExports.KernelSignalSema(context));
-            Assert.True(wakeHandler!());
+            Assert.True(waiter!.TryWake());
 
             context[CpuRegister.Rdi] = handle;
             context[CpuRegister.Rsi] = 1;
@@ -375,11 +371,9 @@ public sealed class KernelSyncPointerCompatibilityTests
                     out _,
                     out _,
                     out _,
-                    out var resumeHandler,
-                    out var wakeHandler,
+                    out IGuestThreadBlockWaiter? waiter,
                     out _));
-                Assert.NotNull(resumeHandler);
-                Assert.NotNull(wakeHandler);
+                Assert.NotNull(waiter);
 
                 Assert.True(memory.RemoveRegion(timeoutAddress));
                 context[CpuRegister.Rdi] = handle;
@@ -387,10 +381,10 @@ public sealed class KernelSyncPointerCompatibilityTests
                 Assert.Equal(
                     (int)OrbisGen2Result.ORBIS_GEN2_OK,
                     KernelSemaphoreCompatExports.KernelSignalSema(context));
-                Assert.True(wakeHandler!());
+                Assert.True(waiter!.TryWake());
                 Assert.Equal(
                     (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
-                    resumeHandler!());
+                    waiter!.Resume());
             }
             finally
             {
