@@ -14,6 +14,16 @@ internal readonly record struct GuestBufferRangeRequest(
     GuestBufferRange Range,
     bool Writable);
 
+internal readonly record struct GuestBufferCacheEntry(
+    GuestBufferRange Range,
+    ulong LastUseSequence,
+    bool ReferencedByOpenSubmission);
+
+internal readonly record struct GuestBufferEvictionCandidate(
+    int Index,
+    ulong LastUseSequence,
+    ulong Start);
+
 /// <summary>
 /// Pure range rules for the persistent Vulkan guest-buffer cache. Keeping
 /// these rules independent of Vulkan makes aliasing and in-flight versioning
@@ -143,4 +153,86 @@ internal static class GuestBufferRangeSet
         contentsChanged &&
         (lastUseSequence > completedSequence ||
          referencedByOpenSubmission);
+
+    public static List<int> SelectEvictions(
+        IReadOnlyList<GuestBufferCacheEntry> entries,
+        IReadOnlyList<GuestBufferRange> protectedRanges,
+        ulong completedSequence,
+        ulong maximumBytes)
+    {
+        var totalBytes = 0UL;
+        foreach (var entry in entries)
+        {
+            totalBytes = AddSaturating(totalBytes, entry.Range.Length);
+        }
+
+        var evictions = new List<int>();
+        if (totalBytes <= maximumBytes)
+        {
+            return evictions;
+        }
+
+        var candidates =
+            new List<GuestBufferEvictionCandidate>(entries.Count);
+        for (var index = 0; index < entries.Count; index++)
+        {
+            var entry = entries[index];
+            if (entry.LastUseSequence > completedSequence ||
+                entry.ReferencedByOpenSubmission ||
+                IsProtected(entry.Range, protectedRanges))
+            {
+                continue;
+            }
+
+            candidates.Add(new GuestBufferEvictionCandidate(
+                index,
+                entry.LastUseSequence,
+                entry.Range.Start));
+        }
+
+        candidates.Sort(static (left, right) =>
+        {
+            var sequenceOrder =
+                left.LastUseSequence.CompareTo(right.LastUseSequence);
+            return sequenceOrder != 0
+                ? sequenceOrder
+                : left.Start.CompareTo(right.Start);
+        });
+
+        foreach (var candidate in candidates)
+        {
+            if (totalBytes <= maximumBytes)
+            {
+                break;
+            }
+
+            evictions.Add(candidate.Index);
+            var length = entries[candidate.Index].Range.Length;
+            totalBytes = length >= totalBytes
+                ? 0
+                : totalBytes - length;
+        }
+
+        return evictions;
+    }
+
+    private static bool IsProtected(
+        GuestBufferRange range,
+        IReadOnlyList<GuestBufferRange> protectedRanges)
+    {
+        foreach (var protectedRange in protectedRanges)
+        {
+            if (Overlaps(range, protectedRange))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static ulong AddSaturating(ulong left, ulong right) =>
+        right > ulong.MaxValue - left
+            ? ulong.MaxValue
+            : left + right;
 }

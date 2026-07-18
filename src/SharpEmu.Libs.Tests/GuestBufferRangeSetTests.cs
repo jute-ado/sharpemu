@@ -118,4 +118,76 @@ public sealed class GuestBufferRangeSetTests
                 open));
     }
 
+    [Fact]
+    public void EvictionUsesCompletedLeastRecentlyUsedAllocations()
+    {
+        var evictions = GuestBufferRangeSet.SelectEvictions(
+        [
+            CacheEntry(0x100, 0x40, lastUse: 3),
+            CacheEntry(0x200, 0x40, lastUse: 1),
+            CacheEntry(0x300, 0x40, lastUse: 2),
+        ],
+        [],
+        completedSequence: 3,
+        maximumBytes: 0x40);
+
+        Assert.Equal([1, 2], evictions);
+    }
+
+    [Fact]
+    public void EvictionProtectsCurrentInFlightAndOpenAllocations()
+    {
+        var evictions = GuestBufferRangeSet.SelectEvictions(
+        [
+            CacheEntry(0x100, 0x40, lastUse: 1),
+            CacheEntry(0x200, 0x40, lastUse: 4),
+            CacheEntry(0x300, 0x40, lastUse: 2, open: true),
+        ],
+        [new GuestBufferRange(0x110, 0x10)],
+        completedSequence: 3,
+        maximumBytes: 0);
+
+        Assert.Empty(evictions);
+    }
+
+    [Fact]
+    public void EvictionAllowsProtectedWorkingSetToExceedSoftBudget()
+    {
+        var evictions = GuestBufferRangeSet.SelectEvictions(
+        [
+            CacheEntry(0x100, 0x80, lastUse: 1),
+            CacheEntry(0x300, 0x20, lastUse: 2),
+        ],
+        [new GuestBufferRange(0x100, 0x80)],
+        completedSequence: 2,
+        maximumBytes: 0x40);
+
+        Assert.Equal([1], evictions);
+    }
+
+    [Fact]
+    public void EvictionDoesNothingWhileCacheIsWithinBudget()
+    {
+        var evictions = GuestBufferRangeSet.SelectEvictions(
+        [
+            CacheEntry(0x100, 0x20, lastUse: 1),
+            CacheEntry(0x200, 0x20, lastUse: 2),
+        ],
+        [],
+        completedSequence: 2,
+        maximumBytes: 0x40);
+
+        Assert.Empty(evictions);
+    }
+
+    private static GuestBufferCacheEntry CacheEntry(
+        ulong start,
+        ulong length,
+        ulong lastUse,
+        bool open = false) =>
+        new(
+            new GuestBufferRange(start, length),
+            lastUse,
+            open);
+
 }
