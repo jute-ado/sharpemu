@@ -758,6 +758,9 @@ public static class KernelPthreadCompatExports
                         return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
                     }
 
+                    // Several Gen5 runtimes layer their own owner/count
+                    // bookkeeping over these mutexes. Preserve compatibility
+                    // recursion so that bookkeeping remains synchronized.
                     state.RecursionCount++;
                     TracePthreadMutex(ctx, "lock", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_OK);
                     return (int)OrbisGen2Result.ORBIS_GEN2_OK;
@@ -886,24 +889,16 @@ public static class KernelPthreadCompatExports
         }
 
         var currentThreadId = KernelPthreadState.GetCurrentThreadHandle();
-        var lenientOwnership = state.Type is MutexTypeNormal or MutexTypeAdaptiveNp;
-
         var shouldRelease = false;
         lock (state)
         {
             if (state.RecursionCount <= 0)
             {
-                if (lenientOwnership)
-                {
-                    TracePthreadMutex(ctx, "unlock", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_OK);
-                    return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-                }
-
                 TracePthreadMutex(ctx, "unlock", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
             }
 
-            if (requireOwner && !lenientOwnership && state.OwnerThreadId != currentThreadId)
+            if (requireOwner && state.OwnerThreadId != currentThreadId)
             {
                 TracePthreadMutex(ctx, "unlock", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED);
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED;
@@ -926,11 +921,8 @@ public static class KernelPthreadCompatExports
             }
             catch (SemaphoreFullException)
             {
-                if (!lenientOwnership)
-                {
-                    TracePthreadMutex(ctx, "unlock", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
-                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
-                }
+                TracePthreadMutex(ctx, "unlock", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
             }
         }
 
