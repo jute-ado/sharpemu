@@ -273,6 +273,8 @@ public sealed record Gen5GlobalMemoryBinding(
     IReadOnlyList<uint> InstructionPcs,
     byte[] Data)
 {
+    public const ulong PortableDescriptorOffsetAlignment = 256;
+
     public bool Writable { get; set; }
 }
 

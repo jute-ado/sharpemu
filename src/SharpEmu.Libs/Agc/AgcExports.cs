@@ -3354,7 +3354,9 @@ public static partial class AgcExports
                         "draw-fallback");
                     var textures = CreateGuestDrawTextures(ctx, translatedDraw.Textures, out var fallbackTextureCount);
                     var globalMemoryBuffers =
-                        CreateGuestMemoryBuffers(translatedDraw.GlobalMemoryBindings);
+                        CreateGuestMemoryBuffers(
+                            translatedDraw.GlobalMemoryBindings,
+                            ctx.Memory);
                     GuestGpu.Current.SubmitTranslatedDraw(
                         translatedDraw.PixelShader,
                         textures,
@@ -3906,7 +3908,9 @@ public static partial class AgcExports
                     translatedDraw.Textures,
                     out _);
                 var globalMemoryBuffers =
-                    CreateGuestMemoryBuffers(translatedDraw.GlobalMemoryBindings);
+                    CreateGuestMemoryBuffers(
+                        translatedDraw.GlobalMemoryBindings,
+                        ctx.Memory);
                 var vertexBuffers =
                     CreateGuestVertexBuffers(translatedDraw.VertexInputs);
                 TraceSelectedDraw(
@@ -3951,7 +3955,9 @@ public static partial class AgcExports
                         translatedDraw.Textures,
                         out _);
                     var globalMemoryBuffers =
-                        CreateGuestMemoryBuffers(translatedDraw.GlobalMemoryBindings);
+                        CreateGuestMemoryBuffers(
+                            translatedDraw.GlobalMemoryBindings,
+                            ctx.Memory);
                     GuestGpu.Current.SubmitStorageTranslatedDraw(
                         translatedDraw.PixelShader,
                         textures,
@@ -5158,7 +5164,7 @@ public static partial class AgcExports
                 bindings[index].BaseAddress,
                 bindings[index].Data,
                 bindings[index].Writable,
-                bindings[index].Writable ? guestMemory : null);
+                guestMemory);
         }
 
         return buffers;
@@ -6017,7 +6023,11 @@ public static partial class AgcExports
                     localSizeZ,
                     out computeShader,
                     out computeError,
-                    dispatch.WaveLaneCount))
+                    dispatch.WaveLaneCount,
+                    totalGlobalBufferCount:
+                        evaluation.GlobalMemoryBindings.Count + 1,
+                    scalarRegisterBufferIndex:
+                        evaluation.GlobalMemoryBindings.Count))
             {
                 DumpCompiledShader(
                     "cs",
@@ -6035,9 +6045,21 @@ public static partial class AgcExports
                     ctx,
                     translatedBindings,
                     out _);
+                var runtimeBindings =
+                    new Gen5GlobalMemoryBinding[
+                        evaluation.GlobalMemoryBindings.Count + 1];
+                for (var index = 0;
+                     index < evaluation.GlobalMemoryBindings.Count;
+                     index++)
+                {
+                    runtimeBindings[index] =
+                        evaluation.GlobalMemoryBindings[index];
+                }
+                runtimeBindings[^1] =
+                    CreateScalarRegisterBinding(evaluation);
                 var globalMemoryBuffers =
                     CreateGuestMemoryBuffers(
-                        evaluation.GlobalMemoryBindings,
+                        runtimeBindings,
                         ctx.Memory);
                 var workSequence = GuestGpu.Current.SubmitComputeDispatch(
                     shaderAddress,

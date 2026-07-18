@@ -108,6 +108,17 @@ public sealed class Gen5SpirvAtomicTranslationTests
         Assert.Contains((ushort)SpirvOp.ImageTexelPointer, opcodes);
     }
 
+    [Fact]
+    public void RuntimeGuestBufferBiasKeepsComputeShaderReusable()
+    {
+        var first = CompileComputeWithRuntimeScalars(
+            BufferAddress + 0x20);
+        var second = CompileComputeWithRuntimeScalars(
+            BufferAddress + 0xE0);
+
+        Assert.Equal(first, second);
+    }
+
     private static Dictionary<uint, uint> BufferDescriptorRegisters() => new()
     {
         // V# in s[0:3]: base=BufferAddress, stride=0, numRecords=64 bytes, type=0.
@@ -159,6 +170,60 @@ public sealed class Gen5SpirvAtomicTranslationTests
                 out error),
             error);
         return CollectOpcodes(shader.Spirv);
+    }
+
+    private static byte[] CompileComputeWithRuntimeScalars(
+        ulong bufferAddress)
+    {
+        var memory = new FakeCpuMemory(ShaderAddress, 0x4000);
+        var ctx = new CpuContext(memory, Generation.Gen5);
+        Gen5ShaderAtomicDecodeTests.WriteProgram(
+            memory,
+            ShaderAddress,
+            [0xE0700000, 0x80000100]);
+        var shaderRegisters = new Dictionary<uint, uint>
+        {
+            [Gen5ShaderAtomicDecodeTests.ComputePgmRsrc2Register] =
+                16u << 1,
+            [Gen5ShaderAtomicDecodeTests.ComputeUserDataRegister] =
+                unchecked((uint)bufferAddress),
+            [Gen5ShaderAtomicDecodeTests.ComputeUserDataRegister + 1] =
+                (uint)(bufferAddress >> 32),
+            [Gen5ShaderAtomicDecodeTests.ComputeUserDataRegister + 2] =
+                64,
+        };
+        Assert.True(
+            Gen5ShaderTranslator.TryCreateState(
+                ctx,
+                ShaderAddress,
+                0,
+                shaderRegisters,
+                Gen5ShaderAtomicDecodeTests.ComputeUserDataRegister,
+                out var state,
+                out var error),
+            error);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out error),
+            error);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                1,
+                1,
+                1,
+                out var shader,
+                out error,
+                totalGlobalBufferCount:
+                    evaluation.GlobalMemoryBindings.Count + 1,
+                scalarRegisterBufferIndex:
+                    evaluation.GlobalMemoryBindings.Count),
+            error);
+        return shader.Spirv;
     }
 
     private static HashSet<ushort> CollectOpcodes(byte[] spirv)

@@ -30,11 +30,13 @@ public sealed class RenderTargetSamplingTests
     private const ulong ThirdDisplayAddress = 0x0038_0000;
     private const ulong CpuTextureAddress = 0x0042_0000;
     private const ulong ShaderAddress = 0x0050_0000;
-    private const ulong ConstantsAddress = 0x0060_0000;
+    private const ulong ConstantsAddress = 0x0060_00E0;
     private const ulong ComputeBufferAddress = 0x0070_0000;
     private const ulong DepthAddress = 0x0080_0000;
     private const ulong InitialDepthAddress = 0x0081_0000;
     private const ulong SeededTargetAddress = 0x0090_0000;
+    private const ulong VersionedOriginalAddress = 0x00A0_0000;
+    private const ulong VersionedMutationAddress = 0x00B0_0000;
 
     /// <summary>
     /// Verifies both GPU render-target reuse and a large CPU-backed texture
@@ -51,7 +53,7 @@ public sealed class RenderTargetSamplingTests
         Directory.CreateDirectory(captureDirectory);
         Environment.SetEnvironmentVariable(
             "SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE",
-            $"0x{FirstDisplayAddress:X}@8");
+            $"0x{FirstDisplayAddress:X}@10");
         Environment.SetEnvironmentVariable(
             "SHARPEMU_GUEST_IMAGE_DUMP_DIR",
             captureDirectory);
@@ -88,6 +90,19 @@ public sealed class RenderTargetSamplingTests
                 CreateTranslatedPassthroughVertex(),
                 globalMemoryBuffers,
                 Rgba8TextureDataFormat);
+            ComposeSourceTo(
+                VersionedOriginalAddress,
+                fragment,
+                CreateTranslatedPassthroughVertex(),
+                CreateAuthoritativeAliasedGlobalMemoryBuffers(
+                    globalMemoryBuffers),
+                Rgba8TextureDataFormat);
+            ComposeSourceTo(
+                VersionedMutationAddress,
+                fragment,
+                CreateTranslatedPassthroughVertex(),
+                CreateMutatedGlobalMemoryBuffers(globalMemoryBuffers),
+                Rgba8TextureDataFormat);
             // Cross the presenter's in-flight submission limit before the
             // CPU-backed composition, exercising fence retirement and pooled
             // vertex/index/global buffer reuse under sustained draw traffic.
@@ -102,6 +117,8 @@ public sealed class RenderTargetSamplingTests
             }
             AssertDepthCompareAndClear(FirstDisplayAddress);
             ComposeSeededTargetToLeftQuarter(FirstDisplayAddress);
+            ComposeVersionedBuffersToSecondQuarter(
+                FirstDisplayAddress);
             ComposeCpuTextureToRightHalf(
                 FirstDisplayAddress,
                 fragment,
@@ -132,10 +149,18 @@ public sealed class RenderTargetSamplingTests
             AssertRgbaRegion(
                 pixels,
                 xStart: DestinationWidth / 4,
-                xEnd: DestinationWidth / 2,
+                xEnd: DestinationWidth * 3 / 8,
                 expectedRed: 32,
                 expectedGreen: 128,
                 expectedBlue: 223,
+                expectedAlpha: 255);
+            AssertRgbaRegion(
+                pixels,
+                xStart: DestinationWidth * 3 / 8,
+                xEnd: DestinationWidth / 2,
+                expectedRed: 255,
+                expectedGreen: 255,
+                expectedBlue: 0,
                 expectedAlpha: 255);
             AssertCpuTextureQuadrants(pixels);
         }
@@ -405,6 +430,90 @@ public sealed class RenderTargetSamplingTests
                 Y: 0,
                 Width: DestinationWidth / 4,
                 Height: DestinationHeight));
+    }
+
+    private static void ComposeVersionedBuffersToSecondQuarter(
+        ulong destinationAddress)
+    {
+        ComposeTextureTo(
+            VersionedOriginalAddress,
+            DestinationWidth,
+            DestinationHeight,
+            destinationAddress,
+            SpirvFixedShaders.CreateCopyFragment(),
+            CreatePassthroughVertex(),
+            destinationRegion: new GuestRect(
+                X: checked((int)(DestinationWidth / 4)),
+                Y: 0,
+                Width: DestinationWidth / 8,
+                Height: DestinationHeight));
+        ComposeTextureTo(
+            VersionedMutationAddress,
+            DestinationWidth,
+            DestinationHeight,
+            destinationAddress,
+            SpirvFixedShaders.CreateCopyFragment(),
+            CreatePassthroughVertex(),
+            destinationRegion: new GuestRect(
+                X: checked((int)(DestinationWidth * 3 / 8)),
+                Y: 0,
+                Width: DestinationWidth / 8,
+                Height: DestinationHeight));
+    }
+
+    private static IReadOnlyList<GuestMemoryBuffer>
+        CreateMutatedGlobalMemoryBuffers(
+            IReadOnlyList<GuestMemoryBuffer> original)
+    {
+        var buffers = new GuestMemoryBuffer[original.Count];
+        for (var index = 0; index < original.Count; index++)
+        {
+            var buffer = original[index];
+            if (index != 0)
+            {
+                buffers[index] = buffer;
+                continue;
+            }
+
+            var constants = new byte[buffer.Data.Length];
+            BitConverter.TryWriteBytes(
+                constants.AsSpan(4 * sizeof(float)),
+                1f);
+            BitConverter.TryWriteBytes(
+                constants.AsSpan(5 * sizeof(float)),
+                1f);
+            BitConverter.TryWriteBytes(
+                constants.AsSpan(7 * sizeof(float)),
+                1f);
+            buffers[index] = buffer with { Data = constants };
+        }
+
+        return buffers;
+    }
+
+    private static IReadOnlyList<GuestMemoryBuffer>
+        CreateAuthoritativeAliasedGlobalMemoryBuffers(
+            IReadOnlyList<GuestMemoryBuffer> original)
+    {
+        var buffers = new GuestMemoryBuffer[original.Count];
+        var constants = original[0].Data.ToArray();
+        var memory = new ArrayCpuMemory(
+            ConstantsAddress,
+            constants);
+        buffers[0] = original[0] with
+        {
+            GuestMemory = memory,
+        };
+        buffers[1] = new GuestMemoryBuffer(
+            ConstantsAddress,
+            new byte[constants.Length],
+            GuestMemory: memory);
+        for (var index = 2; index < original.Count; index++)
+        {
+            buffers[index] = original[index];
+        }
+
+        return buffers;
     }
 
     private static void SubmitSolidWithDepth(
@@ -727,6 +836,10 @@ public sealed class RenderTargetSamplingTests
         }
 
         var scalarRegisters = new uint[256];
+        scalarRegisters[12] =
+            unchecked((uint)ConstantsAddress);
+        scalarRegisters[13] =
+            (uint)(ConstantsAddress >> 32);
         var binding = new Gen5GlobalMemoryBinding(
             ScalarAddress: 12,
             ConstantsAddress,
@@ -985,12 +1098,47 @@ public sealed class RenderTargetSamplingTests
             for (var x = xStart; x < xEnd; x++)
             {
                 var offset = checked((int)((y * DestinationWidth + x) * 4));
-                Assert.InRange(pixels[offset + 0], expectedRed - 1, expectedRed + 1);
-                Assert.InRange(pixels[offset + 1], expectedGreen - 1, expectedGreen + 1);
-                Assert.InRange(pixels[offset + 2], expectedBlue - 1, expectedBlue + 1);
-                Assert.InRange(pixels[offset + 3], expectedAlpha - 1, expectedAlpha);
+                AssertChannel(
+                    pixels[offset + 0],
+                    expectedRed,
+                    x,
+                    y,
+                    "red");
+                AssertChannel(
+                    pixels[offset + 1],
+                    expectedGreen,
+                    x,
+                    y,
+                    "green");
+                AssertChannel(
+                    pixels[offset + 2],
+                    expectedBlue,
+                    x,
+                    y,
+                    "blue");
+                AssertChannel(
+                    pixels[offset + 3],
+                    expectedAlpha,
+                    x,
+                    y,
+                    "alpha");
             }
         }
+    }
+
+    private static void AssertChannel(
+        byte actual,
+        byte expected,
+        uint x,
+        uint y,
+        string channel)
+    {
+        var minimum = Math.Max(expected - 1, byte.MinValue);
+        var maximum = Math.Min(expected + 1, byte.MaxValue);
+        Assert.True(
+            actual >= minimum && actual <= maximum,
+            $"Pixel ({x},{y}) {channel} was {actual}; " +
+            $"expected {minimum}..{maximum}.");
     }
 
     private static void AssertCpuTextureQuadrants(byte[] pixels)
