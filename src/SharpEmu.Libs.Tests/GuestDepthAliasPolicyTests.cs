@@ -29,6 +29,18 @@ public sealed class GuestDepthAliasPolicyTests
     }
 
     [Fact]
+    public void ExactD16SampleReusesCanonicalDepthImage()
+    {
+        Assert.Equal(
+            GuestDepthAliasKind.ExactSample,
+            GuestDepthAliasPolicy.Classify(
+                Depth with { GuestFormat = 1 },
+                Texture() with { Format = 2, NumberType = 0 },
+                Format.R16Unorm,
+                depthIsAttached: false));
+    }
+
+    [Fact]
     public void SameDrawDepthFeedbackIsExplicitlyUnsupported()
     {
         Assert.Equal(

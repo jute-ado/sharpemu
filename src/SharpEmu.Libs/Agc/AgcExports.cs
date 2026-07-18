@@ -4621,7 +4621,7 @@ public static partial class AgcExports
         }
 
         var guestFormat = zInfo & 0x3u;
-        if (guestFormat == 0)
+        if (guestFormat is not (1 or 3))
         {
             return null;
         }
@@ -4674,9 +4674,9 @@ public static partial class AgcExports
         uint height,
         uint guestFormat,
         uint swizzleMode,
-        out byte[] d32Pixels)
+        out byte[] pixels)
     {
-        d32Pixels = [];
+        pixels = [];
         var bytesPerElement = guestFormat switch
         {
             1 => sizeof(ushort),
@@ -4717,25 +4717,12 @@ public static partial class AgcExports
             return false;
         }
 
-        ulong outputByteCount;
-        try
-        {
-            outputByteCount = checked((ulong)width * height * sizeof(float));
-        }
-        catch (OverflowException)
-        {
-            return false;
-        }
-
         if (linearByteCount == 0 ||
             readByteCount == 0 ||
-            outputByteCount == 0 ||
             linearByteCount > MaxPresentedTextureBytes ||
             readByteCount > MaxPresentedTextureBytes ||
-            outputByteCount > MaxPresentedTextureBytes ||
             linearByteCount > int.MaxValue ||
-            readByteCount > int.MaxValue ||
-            outputByteCount > int.MaxValue)
+            readByteCount > int.MaxValue)
         {
             return false;
         }
@@ -4765,24 +4752,7 @@ public static partial class AgcExports
             }
         }
 
-        if (guestFormat == 3)
-        {
-            d32Pixels = linear;
-            return true;
-        }
-
-        d32Pixels = new byte[(int)outputByteCount];
-        var pixelCount = (int)(outputByteCount / sizeof(float));
-        for (var index = 0; index < pixelCount; index++)
-        {
-            var sourceValue = BinaryPrimitives.ReadUInt16LittleEndian(
-                linear.AsSpan(index * sizeof(ushort), sizeof(ushort)));
-            var promoted = sourceValue / (float)ushort.MaxValue;
-            BinaryPrimitives.WriteInt32LittleEndian(
-                d32Pixels.AsSpan(index * sizeof(float), sizeof(float)),
-                BitConverter.SingleToInt32Bits(promoted));
-        }
-
+        pixels = linear;
         return true;
     }
 

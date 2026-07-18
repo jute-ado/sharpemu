@@ -1872,7 +1872,6 @@ internal static unsafe class VulkanVideoPresenter
 
     private sealed class Presenter : IDisposable
     {
-        private const Format DepthFormat = Format.D32Sfloat;
         private const string FullscreenBarycentricVertexSpirv =
             "AwIjBwAAAQALAAgAMgAAAAAAAAARAAIAAQAAAAsABgABAAAAR0xTTC5zdGQuNDUwAAAAAA4AAwAAAAAAAQAAAA8ACAAAAAAABAAAAG1haW4AAAAADQAAABoAAAApAAAAAwADAAIAAADCAQAABQAEAAQAAABtYWluAAAAAAUABgALAAAAZ2xfUGVyVmVydGV4AAAAAAYABgALAAAAAAAAAGdsX1Bvc2l0aW9uAAYABwALAAAAAQAAAGdsX1BvaW50U2l6ZQAAAAAGAAcACwAAAAIAAABnbF9DbGlwRGlzdGFuY2UABgAHAAsAAAADAAAAZ2xfQ3VsbERpc3RhbmNlAAUAAwANAAAAAAAAAAUABgAaAAAAZ2xfVmVydGV4SW5kZXgAAAUABQAdAAAAaW5kZXhhYmxlAAAABQAFACkAAABiYXJ5Y2VudHJpYwAFAAUALwAAAGluZGV4YWJsZQAAAEcAAwALAAAAAgAAAEgABQALAAAAAAAAAAsAAAAAAAAASAAFAAsAAAABAAAACwAAAAEAAABIAAUACwAAAAIAAAALAAAAAwAAAEgABQALAAAAAwAAAAsAAAAEAAAARwAEABoAAAALAAAAKgAAAEcABAApAAAAHgAAAAAAAAATAAIAAgAAACEAAwADAAAAAgAAABYAAwAGAAAAIAAAABcABAAHAAAABgAAAAQAAAAVAAQACAAAACAAAAAAAAAAKwAEAAgAAAAJAAAAAQAAABwABAAKAAAABgAAAAkAAAAeAAYACwAAAAcAAAAGAAAACgAAAAoAAAAgAAQADAAAAAMAAAALAAAAOwAEAAwAAAANAAAAAwAAABUABAAOAAAAIAAAAAEAAAArAAQADgAAAA8AAAAAAAAAFwAEABAAAAAGAAAAAgAAACsABAAIAAAAEQAAAAMAAAAcAAQAEgAAABAAAAARAAAAKwAEAAYAAAATAAAAAACAvywABQAQAAAAFAAAABMAAAATAAAAKwAEAAYAAAAVAAAAAABAQCwABQAQAAAAFgAAABUAAAATAAAALAAFABAAAAAXAAAAEwAAABUAAAAsAAYAEgAAABgAAAAUAAAAFgAAABcAAAAgAAQAGQAAAAEAAAAOAAAAOwAEABkAAAAaAAAAAQAAACAABAAcAAAABwAAABIAAAAgAAQAHgAAAAcAAAAQAAAAKwAEAAYAAAAhAAAAAAAAACsABAAGAAAAIgAAAAAAgD8gAAQAJgAAAAMAAAAHAAAAIAAEACgAAAADAAAAEAAAADsABAAoAAAAKQAAAAMAAAAsAAUAEAAAACoAAAAiAAAAIQAAACwABQAQAAAAKwAAACEAAAAiAAAALAAFABAAAAAsAAAAIQAAACEAAAAsAAYAEgAAAC0AAAAqAAAAKwAAACwAAAA2AAUAAgAAAAQAAAAAAAAAAwAAAPgAAgAFAAAAOwAEABwAAAAdAAAABwAAADsABAAcAAAALwAAAAcAAAA9AAQADgAAABsAAAAaAAAAPgADAB0AAAAYAAAAQQAFAB4AAAAfAAAAHQAAABsAAAA9AAQAEAAAACAAAAAfAAAAUQAFAAYAAAAjAAAAIAAAAAAAAABRAAUABgAAACQAAAAgAAAAAQAAAFAABwAHAAAAJQAAACMAAAAkAAAAIQAAACIAAABBAAUAJgAAACcAAAANAAAADwAAAD4AAwAnAAAAJQAAAD0ABAAOAAAALgAAABoAAAA+AAMALwAAAC0AAABBAAUAHgAAADAAAAAvAAAALgAAAD0ABAAQAAAAMQAAADAAAAA+AAMAKQAAADEAAAD9AAEAOAABAA==";
 
@@ -2064,6 +2063,7 @@ internal static unsafe class VulkanVideoPresenter
             public GuestViewport? Viewport;
             public GuestDepthState Depth = GuestDepthState.Default;
             public bool HasDepthAttachment;
+            public Format DepthAttachmentFormat;
             public GuestDepthResource? DepthUpload;
             public RenderPass TransientRenderPass;
             public Framebuffer TransientFramebuffer;
@@ -2152,6 +2152,7 @@ internal static unsafe class VulkanVideoPresenter
             public bool Initialized;
             public ImageLayout Layout = ImageLayout.Undefined;
             public float ClearDepth = 1f;
+            public required GuestDepthFormatPolicy FormatPolicy;
 
             public GuestDepthAliasSurface AliasSurface => new(
                 Key.Address,
@@ -3941,6 +3942,9 @@ internal static unsafe class VulkanVideoPresenter
                 Viewport = draw.RenderState.Viewport,
                 Depth = draw.RenderState.Depth,
                 HasDepthAttachment = hasDepthAttachment,
+                DepthAttachmentFormat =
+                    depthAttachment?.FormatPolicy.AttachmentFormat ??
+                    Format.Undefined,
             };
 
             try
@@ -4305,7 +4309,8 @@ internal static unsafe class VulkanVideoPresenter
                 $"{(resources.HasDepthAttachment ? 1 : 0)}:" +
                 $"{(resources.Depth.TestEnable ? 1 : 0)}:" +
                 $"{(resources.Depth.WriteEnable ? 1 : 0)}:" +
-                $"{resources.Depth.CompareOp}",
+                $"{resources.Depth.CompareOp}:" +
+                $"{(uint)resources.DepthAttachmentFormat}",
                 GetResourceLayoutKey(resources),
                 GetVertexLayoutKey(resources));
             if (_graphicsPipelines.TryGetValue(pipelineKey, out var cachedPipeline))
@@ -6352,6 +6357,7 @@ internal static unsafe class VulkanVideoPresenter
                 (GuestFormatR16G16B16A16Uint, _) => Format.R16G16B16A16Uint,
                 (GuestFormatR16G16B16A16Sint, _) => Format.R16G16B16A16Sint,
                 (1, 0) => Format.R8Unorm,
+                (2, 0) => Format.R16Unorm,
                 (2, 7) => Format.R16Sfloat,
                 (3, 0) => Format.R8G8Unorm,
                 (4, 4) => Format.R32Uint,
@@ -7422,7 +7428,7 @@ internal static unsafe class VulkanVideoPresenter
                     (depth.Initialized || depth.NeedsUpload);
                 attachments[formats.Count] = new AttachmentDescription
                 {
-                    Format = DepthFormat,
+                    Format = depth.FormatPolicy.AttachmentFormat,
                     Samples = SampleCountFlags.Count1Bit,
                     LoadOp = loadDepth
                         ? AttachmentLoadOp.Load
@@ -7483,6 +7489,14 @@ internal static unsafe class VulkanVideoPresenter
             GuestDepthTarget target,
             bool loadInitialContents)
         {
+            if (!GuestDepthFormatPolicy.TryResolve(
+                    target.GuestFormat,
+                    out var formatPolicy))
+            {
+                throw new InvalidOperationException(
+                    $"unsupported guest depth format {target.GuestFormat}");
+            }
+
             if (_guestImages.TryGetValue(target.Address, out var colorImage))
             {
                 if (loadInitialContents && colorImage.Initialized)
@@ -7528,7 +7542,7 @@ internal static unsafe class VulkanVideoPresenter
             {
                 SType = StructureType.ImageCreateInfo,
                 ImageType = ImageType.Type2D,
-                Format = DepthFormat,
+                Format = formatPolicy.AttachmentFormat,
                 Extent = new Extent3D(target.Width, target.Height, 1),
                 MipLevels = 1,
                 ArrayLayers = 1,
@@ -7565,7 +7579,7 @@ internal static unsafe class VulkanVideoPresenter
                 SType = StructureType.ImageViewCreateInfo,
                 Image = image,
                 ViewType = ImageViewType.Type2D,
-                Format = DepthFormat,
+                Format = formatPolicy.AttachmentFormat,
                 SubresourceRange = new ImageSubresourceRange(
                     ImageAspectFlags.DepthBit,
                     0,
@@ -7584,6 +7598,7 @@ internal static unsafe class VulkanVideoPresenter
                 Memory = memory,
                 View = view,
                 ClearDepth = target.ClearDepth,
+                FormatPolicy = formatPolicy,
             };
             TryStageInitialDepth(resource, target, loadInitialContents);
             _guestDepthImages.Add(target.Address, resource);
@@ -7608,7 +7623,9 @@ internal static unsafe class VulkanVideoPresenter
             try
             {
                 expectedByteCount = checked(
-                    (ulong)target.Width * target.Height * sizeof(float));
+                    (ulong)target.Width *
+                    target.Height *
+                    resource.FormatPolicy.BytesPerElement);
             }
             catch (OverflowException)
             {
@@ -7714,6 +7731,7 @@ internal static unsafe class VulkanVideoPresenter
             {
                 Format.A2R10G10B10UnormPack32 => 9,
                 Format.R8G8B8A8Unorm => 56,
+                Format.R16Unorm => 2,
                 Format.R16G16Unorm => 5,
                 Format.R16G16B16A16Unorm => 12,
                 Format.R32Uint => GuestFormatR32Uint,
@@ -7835,6 +7853,7 @@ internal static unsafe class VulkanVideoPresenter
                 Format.R8Unorm or
                 Format.R8Uint or
                 Format.R8Sint => 8,
+                Format.R16Unorm or
                 Format.R16Sfloat => 16,
                 Format.R32Uint or
                 Format.R32Sint or
