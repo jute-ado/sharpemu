@@ -258,6 +258,14 @@ unsafe
         SetLayoutCount = 1,
         PSetLayouts = &setLayout,
     };
+    var threadLimitRange = new PushConstantRange
+    {
+        StageFlags = ShaderStageFlags.ComputeBit,
+        Offset = 0,
+        Size = 3 * sizeof(uint),
+    };
+    pipelineLayoutInfo.PushConstantRangeCount = 1;
+    pipelineLayoutInfo.PPushConstantRanges = &threadLimitRange;
     Check(
         vk.CreatePipelineLayout(device, in pipelineLayoutInfo, null, out var pipelineLayout),
         "vkCreatePipelineLayout");
@@ -360,8 +368,24 @@ unsafe
         in descriptorSet,
         0,
         null);
-    vk.CmdDispatch(
+    var threadLimits = stackalloc uint[3]
+    {
+        manifest.ThreadCountX ?? uint.MaxValue,
+        manifest.ThreadCountY ?? uint.MaxValue,
+        manifest.ThreadCountZ ?? uint.MaxValue,
+    };
+    vk.CmdPushConstants(
         commandBuffer,
+        pipelineLayout,
+        ShaderStageFlags.ComputeBit,
+        0,
+        3 * sizeof(uint),
+        threadLimits);
+    vk.CmdDispatchBase(
+        commandBuffer,
+        manifest.BaseGroupX,
+        manifest.BaseGroupY,
+        manifest.BaseGroupZ,
         manifest.GroupCountX,
         manifest.GroupCountY,
         manifest.GroupCountZ);
@@ -479,7 +503,13 @@ sealed record ConformanceManifest(
     uint LocalSizeZ,
     uint GroupCountX,
     uint GroupCountY,
-    uint GroupCountZ)
+    uint GroupCountZ,
+    uint BaseGroupX,
+    uint BaseGroupY,
+    uint BaseGroupZ,
+    uint? ThreadCountX,
+    uint? ThreadCountY,
+    uint? ThreadCountZ)
 {
     public ConformanceBuffer[] Validate()
     {

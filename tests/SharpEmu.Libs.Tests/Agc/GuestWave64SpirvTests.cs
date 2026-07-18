@@ -167,6 +167,40 @@ public sealed class GuestWave64SpirvTests
         Assert.False(ContainsWorkgroupVariable(shader.Spirv));
     }
 
+    [Fact]
+    public void ComputeShadersGuardPartialGroupsWithPushConstantThreadLimits()
+    {
+        var (state, evaluation) = CreateProgram(
+        [
+            new(
+                0,
+                Gen5ShaderEncoding.Vop1,
+                "VMovB32",
+                [0],
+                [Gen5Operand.Vector(0)],
+                [Gen5Operand.Vector(1)],
+                null),
+            EndProgram(4),
+        ]);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                8,
+                4,
+                2,
+                out var shader,
+                out var error),
+            error);
+        Assert.Equal(
+            1,
+            CountStorageClassVariables(
+                shader.Spirv,
+                SpirvStorageClass.PushConstant));
+        Assert.True(ContainsOpcode(shader.Spirv, SpirvOp.ULessThan));
+    }
+
     [Theory]
     [InlineData(32u, 4u, 1u)]
     [InlineData(128u, 1u, 1u)]
@@ -345,16 +379,25 @@ public sealed class GuestWave64SpirvTests
     }
 
     private static bool ContainsWorkgroupVariable(byte[] spirv)
-        => CountWorkgroupVariables(spirv) != 0;
+        => CountStorageClassVariables(
+            spirv,
+            SpirvStorageClass.Workgroup) != 0;
 
     private static int CountWorkgroupVariables(byte[] spirv)
+        => CountStorageClassVariables(
+            spirv,
+            SpirvStorageClass.Workgroup);
+
+    private static int CountStorageClassVariables(
+        byte[] spirv,
+        SpirvStorageClass storageClass)
     {
         var count = 0;
         foreach (var instruction in EnumerateInstructions(spirv))
         {
             if (instruction.Opcode == SpirvOp.Variable &&
                 instruction.Operands.Length >= 3 &&
-                instruction.Operands[2] == (uint)SpirvStorageClass.Workgroup)
+                instruction.Operands[2] == (uint)storageClass)
             {
                 count++;
             }

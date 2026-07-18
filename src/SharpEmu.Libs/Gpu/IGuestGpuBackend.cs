@@ -117,7 +117,13 @@ internal interface IGuestGpuBackend
         IReadOnlyList<GuestMemoryBuffer> globalMemoryBuffers,
         uint groupCountX,
         uint groupCountY,
-        uint groupCountZ);
+        uint groupCountZ,
+        uint baseGroupX = 0,
+        uint baseGroupY = 0,
+        uint baseGroupZ = 0,
+        uint threadCountX = uint.MaxValue,
+        uint threadCountY = uint.MaxValue,
+        uint threadCountZ = uint.MaxValue);
 
     bool TrySubmitGuestImage(
         ulong address,
