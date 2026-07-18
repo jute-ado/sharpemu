@@ -177,25 +177,20 @@ public sealed class ComputeBufferWritebackTests
     public void ReadOnlyBuffersDoNotMakeAComputeDispatchObservable()
     {
         Assert.False(
-            VulkanVideoPresenter.HasComputeOutput(
+            GuestComputeWorkPolicy.HasObservableOutput(
                 [],
-                [new GuestMemoryBuffer(BufferAddress, new byte[16])]));
+                writesGlobalMemory: false));
         Assert.True(
-            VulkanVideoPresenter.HasComputeOutput(
+            GuestComputeWorkPolicy.HasObservableOutput(
                 [],
-                [
-                    new GuestMemoryBuffer(
-                        BufferAddress,
-                        new byte[16],
-                        Writable: true),
-                ]));
+                writesGlobalMemory: true));
     }
 
     [Fact]
     public void StorageImagesStillMakeAComputeDispatchObservable()
     {
         Assert.True(
-            VulkanVideoPresenter.HasComputeOutput(
+            GuestComputeWorkPolicy.HasObservableOutput(
                 [
                     new GuestDrawTexture(
                         Address: BufferAddress,
@@ -207,7 +202,7 @@ public sealed class ComputeBufferWritebackTests
                         IsFallback: false,
                         IsStorage: true),
                 ],
-                []));
+                writesGlobalMemory: false));
     }
 
     [Fact]
@@ -216,7 +211,7 @@ public sealed class ComputeBufferWritebackTests
         Assert.False(
             VulkanVideoPresenter.WaitForGuestWork(
                 workSequence: 0,
-                TimeSpan.Zero));
+                timeoutMilliseconds: 0));
     }
 
     [Fact]
@@ -229,19 +224,16 @@ public sealed class ComputeBufferWritebackTests
         var output = original.ToArray();
         output[2] = 0xAA;
         output[3] = 0xBB;
-        var buffer = new GuestMemoryBuffer(
-            BufferAddress,
-            original,
-            Writable: true,
-            guest);
-
         Assert.True(
-            VulkanVideoPresenter.TryWriteBackGlobalBuffer(
-                buffer,
+            GuestBufferWriteback.TryPublishChanges(
+                guest,
+                BufferAddress,
+                original,
                 output,
+                enabled: true,
                 out var changedBytes));
 
-        Assert.Equal(2, changedBytes);
+        Assert.Equal(2UL, changedBytes);
         var actual = new byte[original.Length];
         Assert.True(guest.TryRead(BufferAddress, actual));
         Assert.Equal([0, 0xEE, 0xAA, 0xBB, 4, 5], actual);
@@ -258,19 +250,16 @@ public sealed class ComputeBufferWritebackTests
         guest.AddRegion(BufferAddress, original.ToArray());
         Assert.True(guest.TryWrite(BufferAddress, [0x11]));
         Assert.True(guest.TryWrite(BufferAddress + 4097, [0x22]));
-        var buffer = new GuestMemoryBuffer(
-            BufferAddress,
-            original,
-            Writable: true,
-            guest);
-
         Assert.True(
-            VulkanVideoPresenter.TryWriteBackGlobalBuffer(
-                buffer,
+            GuestBufferWriteback.TryPublishChanges(
+                guest,
+                BufferAddress,
+                original,
                 output,
+                enabled: true,
                 out var changedBytes));
 
-        Assert.Equal(2, changedBytes);
+        Assert.Equal(2UL, changedBytes);
         var actual = new byte[original.Length];
         Assert.True(guest.TryRead(BufferAddress, actual));
         Assert.Equal(0x11, actual[0]);
@@ -285,19 +274,16 @@ public sealed class ComputeBufferWritebackTests
         var original = new byte[] { 1, 2, 3, 4 };
         var guest = new FakeGuestMemory();
         guest.AddRegion(BufferAddress, original.ToArray());
-        var buffer = new GuestMemoryBuffer(
-            BufferAddress,
-            original,
-            Writable: false,
-            guest);
-
         Assert.True(
-            VulkanVideoPresenter.TryWriteBackGlobalBuffer(
-                buffer,
+            GuestBufferWriteback.TryPublishChanges(
+                guest,
+                BufferAddress,
+                original,
                 [9, 9, 9, 9],
+                enabled: false,
                 out var changedBytes));
 
-        Assert.Equal(0, changedBytes);
+        Assert.Equal(0UL, changedBytes);
         var actual = new byte[original.Length];
         Assert.True(guest.TryRead(BufferAddress, actual));
         Assert.Equal(original, actual);
@@ -312,30 +298,28 @@ public sealed class ComputeBufferWritebackTests
         guest.AddRegion(BufferAddress, original.ToArray());
 
         Assert.False(
-            VulkanVideoPresenter.TryWriteBackGlobalBuffer(
-                new GuestMemoryBuffer(
-                    BufferAddress,
-                    original,
-                    Writable: true),
+            GuestBufferWriteback.TryPublishChanges(
+                guest,
+                guestAddress: BufferAddress + 0x1000,
+                original,
                 output,
+                enabled: true,
                 out _));
         Assert.False(
-            VulkanVideoPresenter.TryWriteBackGlobalBuffer(
-                new GuestMemoryBuffer(
-                    BufferAddress,
-                    original,
-                    Writable: true,
-                    guest),
+            GuestBufferWriteback.TryPublishChanges(
+                guest,
+                BufferAddress,
+                original,
                 output.AsSpan(0, output.Length - 1),
+                enabled: true,
                 out _));
         Assert.False(
-            VulkanVideoPresenter.TryWriteBackGlobalBuffer(
-                new GuestMemoryBuffer(
-                    BaseAddress: 0,
-                    original,
-                    Writable: true,
-                    guest),
+            GuestBufferWriteback.TryPublishChanges(
+                guest,
+                guestAddress: 0,
+                original,
                 output,
+                enabled: true,
                 out _));
 
         var actual = new byte[original.Length];

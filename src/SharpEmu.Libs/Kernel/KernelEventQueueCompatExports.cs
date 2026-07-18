@@ -710,6 +710,53 @@ public static class KernelEventQueueCompatExports
         return triggeredCount;
     }
 
+    public static int TriggerRegisteredEventsDistinct(short filter)
+    {
+        HashSet<ulong>? wakeHandles = null;
+        var triggeredCount = 0;
+        lock (_eventQueueGate)
+        {
+            foreach (var (handle, registrations) in _registeredEvents)
+            {
+                foreach (var registration in registrations.Values)
+                {
+                    if (registration.Filter != filter)
+                    {
+                        continue;
+                    }
+
+                    if (!_pendingEvents.TryGetValue(handle, out var queue))
+                    {
+                        queue = new KernelEventDeque();
+                        _pendingEvents[handle] = queue;
+                    }
+
+                    QueueOrUpdateEvent(
+                        queue,
+                        new KernelQueuedEvent(
+                            registration.Ident,
+                            registration.Filter,
+                            0,
+                            1,
+                            registration.Ident,
+                            registration.UserData));
+                    (wakeHandles ??= []).Add(handle);
+                    triggeredCount++;
+                }
+            }
+        }
+
+        if (wakeHandles is not null)
+        {
+            foreach (var handle in wakeHandles)
+            {
+                WakeEventQueue(handle);
+            }
+        }
+
+        return triggeredCount;
+    }
+
     /// <summary>
     /// Triggers a registered event on each queue matching <paramref name="filter"/>,
     /// regardless of its identifier. AGC event-write packets carry a hardware event

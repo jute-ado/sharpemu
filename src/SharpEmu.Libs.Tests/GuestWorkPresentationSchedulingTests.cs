@@ -1,7 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using SharpEmu.Libs.VideoOut;
+using SharpEmu.Libs.Gpu;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests;
@@ -12,29 +12,34 @@ public sealed class GuestWorkPresentationSchedulingTests
     public void ReadyPresentationStopsNewerGuestWorkAtFrameBoundary()
     {
         Assert.False(
-            VulkanVideoPresenter.ShouldProcessGuestWorkBeforePresentation(
+            GuestWorkPresentationPolicy.ShouldProcessGuestWork(
                 hasReadyPresentation: true,
-                completedWork: 0));
+                completedWork: 0,
+                maxGuestWork: 128));
         Assert.False(
-            VulkanVideoPresenter.ShouldProcessGuestWorkBeforePresentation(
+            GuestWorkPresentationPolicy.ShouldProcessGuestWork(
                 hasReadyPresentation: true,
-                completedWork: 64));
+                completedWork: 64,
+                maxGuestWork: 128));
     }
 
     [Fact]
     public void GuestWorkContinuesUntilPresentationIsReadyOrBatchIsFull()
     {
         Assert.True(
-            VulkanVideoPresenter.ShouldProcessGuestWorkBeforePresentation(
+            GuestWorkPresentationPolicy.ShouldProcessGuestWork(
                 hasReadyPresentation: false,
-                completedWork: 0));
+                completedWork: 0,
+                maxGuestWork: 128));
         Assert.True(
-            VulkanVideoPresenter.ShouldProcessGuestWorkBeforePresentation(
+            GuestWorkPresentationPolicy.ShouldProcessGuestWork(
                 hasReadyPresentation: false,
-                completedWork: 127));
+                completedWork: 127,
+                maxGuestWork: 128));
         Assert.False(
-            VulkanVideoPresenter.ShouldProcessGuestWorkBeforePresentation(
+            GuestWorkPresentationPolicy.ShouldProcessGuestWork(
                 hasReadyPresentation: false,
-                completedWork: 128));
+                completedWork: 128,
+                maxGuestWork: 128));
     }
 }

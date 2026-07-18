@@ -18,6 +18,7 @@ public static class SaveDataExports
     private const int OrbisSaveDataErrorNotFound = unchecked((int)0x809F0008);
     private const int OrbisSaveDataErrorInternal = unchecked((int)0x809F000B);
     private const int OrbisSaveDataErrorMemoryNotReady = unchecked((int)0x809F0012);
+    private const int OrbisSaveDataErrorNoEvent = unchecked((int)0x809F0008);
     private const int SaveDataTitleIdSize = 10;
     private const int SaveDataDirNameSize = 32;
     private const int SaveDataParamSize = 0x530;
@@ -61,8 +62,14 @@ public static class SaveDataExports
     private static readonly HashSet<int> _preparedTransactionResources = [];
     private static readonly Dictionary<string, string> _mountedSavePaths =
         new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Queue<SaveDataEvent> _events = new();
     private static string? _titleId;
     private static int _nextTransactionResource;
+    private readonly record struct SaveDataEvent(
+        uint Type,
+        int ErrorCode,
+        int UserId,
+        string DirName);
 
     public static void ConfigureApplicationInfo(string? titleId)
     {
@@ -74,6 +81,7 @@ public static class SaveDataExports
             _preparedTransactionResources.Clear();
             mountedSavePoints = _mountedSavePaths.Keys.ToArray();
             _mountedSavePaths.Clear();
+            _events.Clear();
             _nextTransactionResource = 0;
         }
 
@@ -81,6 +89,68 @@ public static class SaveDataExports
         {
             _ = KernelMemoryCompatExports.TryUnregisterGuestPathMount(mountPoint);
         }
+    }
+
+    [SysAbiExport(
+        Nid = "j8xKtiFj0SY",
+        ExportName = "sceSaveDataGetEventResult",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceSaveData")]
+    public static int SaveDataGetEventResult(CpuContext ctx)
+    {
+        const int eventSize = 0x60;
+        var eventAddress = ctx[CpuRegister.Rsi];
+        if (eventAddress == 0)
+        {
+            return ctx.SetReturn(OrbisSaveDataErrorParameter);
+        }
+
+        SaveDataEvent pending;
+        lock (_stateGate)
+        {
+            if (_events.Count == 0)
+            {
+                return ctx.SetReturn(OrbisSaveDataErrorNoEvent);
+            }
+
+            pending = _events.Dequeue();
+        }
+
+        Span<byte> data = stackalloc byte[eventSize];
+        data.Clear();
+        BinaryPrimitives.WriteUInt32LittleEndian(data, pending.Type);
+        BinaryPrimitives.WriteInt32LittleEndian(data[0x04..], pending.ErrorCode);
+        BinaryPrimitives.WriteInt32LittleEndian(data[0x08..], pending.UserId);
+        WriteAscii(data.Slice(0x10, SaveDataDirNameSize), pending.DirName);
+        return ctx.Memory.TryWrite(eventAddress, data)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    [SysAbiExport(
+        Nid = "ieP6jP138Qo",
+        ExportName = "sceSaveDataIsMounted",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceSaveData")]
+    public static int SaveDataIsMounted(CpuContext ctx)
+    {
+        var outputAddress = ctx[CpuRegister.Rsi];
+        if (outputAddress == 0)
+        {
+            return ctx.SetReturn(OrbisSaveDataErrorParameter);
+        }
+
+        uint mounted;
+        lock (_stateGate)
+        {
+            mounted = _mountedSavePaths.Count == 0 ? 0u : 1u;
+        }
+
+        return ctx.TryWriteUInt32(outputAddress, mounted)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
 
     [SysAbiExport(
@@ -322,7 +392,18 @@ public static class SaveDataExports
         ExportName = "sceSaveDataSetParam",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libSceSaveData")]
-    public static int SaveDataSetParam(CpuContext ctx)
+    public static int SaveDataSetParam(CpuContext ctx) =>
+        TransferParam(ctx, write: true);
+
+    [SysAbiExport(
+        Nid = "XgvSuIdnMlw",
+        ExportName = "sceSaveDataGetParam",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceSaveData")]
+    public static int SaveDataGetParam(CpuContext ctx) =>
+        TransferParam(ctx, write: false);
+
+    private static int TransferParam(CpuContext ctx, bool write)
     {
         var mountPointAddress = ctx[CpuRegister.Rdi];
         var rawParamType = ctx[CpuRegister.Rsi];
@@ -376,16 +457,22 @@ public static class SaveDataExports
             var param = TryReadStoredParam(savePath, out var storedParam)
                 ? storedParam
                 : CreateDefaultParam(Path.GetFileName(savePath), Directory.GetLastWriteTimeUtc(savePath));
-            if (!ctx.Memory.TryRead(
-                    paramBufferAddress,
-                    param.AsSpan(fieldOffset, fieldSize)))
+            var field = param.AsSpan(fieldOffset, fieldSize);
+            var transferred = write
+                ? ctx.Memory.TryRead(paramBufferAddress, field)
+                : ctx.Memory.TryWrite(paramBufferAddress, field);
+            if (!transferred)
             {
                 return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
 
-            WriteStoredParam(savePath, param);
+            if (write)
+            {
+                WriteStoredParam(savePath, param);
+            }
             TraceSaveData(
-                $"set_param mount_point={mountPoint} type={paramType} size=0x{paramBufferSize:X} root='{savePath}'");
+                $"{(write ? "set" : "get")}_param mount_point={mountPoint} " +
+                $"type={paramType} size=0x{paramBufferSize:X} root='{savePath}'");
             return ctx.SetReturn(0);
         }
         catch (IOException)
@@ -672,8 +759,21 @@ public static class SaveDataExports
             return ctx.SetReturn(OrbisSaveDataErrorParameter);
         }
 
-        return ctx.SetReturn(
-            File.Exists(ResolveSaveDataMemoryPath(userId)) ? 0 : OrbisSaveDataErrorMemoryNotReady);
+        if (!File.Exists(ResolveSaveDataMemoryPath(userId)))
+        {
+            return ctx.SetReturn(OrbisSaveDataErrorMemoryNotReady);
+        }
+
+        lock (_stateGate)
+        {
+            _events.Enqueue(new SaveDataEvent(
+                Type: 3,
+                ErrorCode: 0,
+                userId,
+                DirName: string.Empty));
+        }
+
+        return ctx.SetReturn(0);
     }
 
     private static int TransferSaveDataMemory(CpuContext ctx, bool write)

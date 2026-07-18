@@ -212,7 +212,8 @@ public sealed class AgcIndirectCommandBufferTests
     {
         var packet = new byte[5 * sizeof(uint)];
         BinaryPrimitives.WriteUInt32LittleEndian(packet, Pm4(5, 0x37));
-        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(4), 1);
+        // GFX10 WRITE_DATA encodes DST_SEL in bits 11:8. Select memory.
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(4), 1u << 8);
         BinaryPrimitives.WriteUInt64LittleEndian(packet.AsSpan(8), address);
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(16), value);
         return packet;

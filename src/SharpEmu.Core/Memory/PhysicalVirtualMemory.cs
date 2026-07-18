@@ -1238,6 +1238,13 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
     public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source)
     {
         ThrowIfDisposed();
+        // Managed writes cannot resume through the native page-fault bridge.
+        // Pre-visit tracked image pages so their owners are dirtied and the
+        // pages become writable before the copy.
+        GuestImageWriteTracker.NotifyManagedWrite(
+            virtualAddress,
+            (ulong)source.Length);
+
         var requiresExclusiveAccess = false;
         _gate.EnterReadLock();
         try

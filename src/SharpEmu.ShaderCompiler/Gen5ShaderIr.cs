@@ -177,6 +177,9 @@ public sealed record Gen5ImageControl(
     bool Glc,
     bool Slc) : Gen5InstructionControl
 {
+    public bool A16 { get; init; }
+    public bool D16 { get; init; }
+
     public uint GetAddressRegister(int component) =>
         component < AddressRegisters.Count
             ? AddressRegisters[component]
@@ -221,7 +224,10 @@ public sealed record Gen5Vop3Control(
     uint NegateMask,
     uint OutputModifier,
     bool Clamp,
-    uint? ScalarDestination) : Gen5InstructionControl;
+    uint? ScalarDestination) : Gen5InstructionControl
+{
+    public uint OperandSelect => OpSelectMask;
+}
 
 public sealed record Gen5Vop3pControl(
     uint OpSelectMask,
@@ -237,7 +243,13 @@ public sealed record Gen5SdwaControl(
     uint AbsoluteMask,
     uint NegateMask,
     uint OutputModifier,
-    bool Clamp) : Gen5InstructionControl;
+    bool Clamp) : Gen5InstructionControl
+{
+    public uint DestinationUnused { get; init; }
+    public bool Source0SignExtend { get; init; }
+    public bool Source1SignExtend { get; init; }
+    public uint? ScalarDestination { get; init; }
+}
 
 public sealed record Gen5DppControl(
     uint Control,
@@ -247,6 +259,10 @@ public sealed record Gen5DppControl(
     uint NegateMask,
     uint BankMask,
     uint RowMask) : Gen5InstructionControl;
+
+public sealed record Gen5Dpp8Control(
+    uint LaneSelectors,
+    bool FetchInactive) : Gen5InstructionControl;
 
 public sealed record Gen5ScalarMemoryControl(
     uint DestinationCount,
@@ -276,6 +292,22 @@ public sealed record Gen5GlobalMemoryBinding(
     public const ulong PortableDescriptorOffsetAlignment = 256;
 
     public bool Writable { get; set; }
+    public bool WriteBackToGuest { get; set; } = true;
+    public int DataLength { get; init; } = Data.Length;
+    public bool DataPooled { get; init; }
+
+    public Gen5GlobalMemoryBinding(
+        uint ScalarAddress,
+        ulong BaseAddress,
+        IReadOnlyList<uint> InstructionPcs,
+        byte[] Data,
+        int DataLength,
+        bool DataPooled) :
+        this(ScalarAddress, BaseAddress, InstructionPcs, Data)
+    {
+        this.DataLength = DataLength;
+        this.DataPooled = DataPooled;
+    }
 }
 
 public sealed record Gen5BufferFormatBinding(
@@ -292,7 +324,38 @@ public sealed record Gen5VertexInputBinding(
     ulong BaseAddress,
     uint Stride,
     uint OffsetBytes,
-    byte[] Data);
+    byte[] Data)
+{
+    public int DataLength { get; init; } = Data.Length;
+    public bool DataPooled { get; init; }
+
+    public Gen5VertexInputBinding(
+        uint Pc,
+        uint Location,
+        uint ComponentCount,
+        uint DataFormat,
+        uint NumberFormat,
+        ulong BaseAddress,
+        uint Stride,
+        uint OffsetBytes,
+        byte[] Data,
+        int DataLength,
+        bool DataPooled) :
+        this(
+            Pc,
+            Location,
+            ComponentCount,
+            DataFormat,
+            NumberFormat,
+            BaseAddress,
+            Stride,
+            OffsetBytes,
+            Data)
+    {
+        this.DataLength = DataLength;
+        this.DataPooled = DataPooled;
+    }
+}
 
 public sealed record Gen5ShaderEvaluation(
     IReadOnlyList<uint> InitialScalarRegisters,

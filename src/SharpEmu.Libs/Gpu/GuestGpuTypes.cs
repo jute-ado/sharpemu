@@ -24,6 +24,8 @@ internal sealed record GuestDrawTexture(
     bool IsStorage,
     uint MipLevels = 1,
     uint MipLevel = 0,
+    uint BaseMipLevel = 0,
+    uint ResourceMipLevels = 1,
     uint Pitch = 0,
     uint TileMode = 0,
     uint DstSelect = 0xFAC,
@@ -36,23 +38,31 @@ internal readonly record struct GuestSampler(
     uint Word2,
     uint Word3);
 
+/// <summary>Identity of a texture's content in a backend texture cache, keyed
+/// entirely on raw guest descriptor values; the AGC layer uses it to skip texel
+/// copies for content the backend already holds.</summary>
+internal readonly record struct TextureContentIdentity(
+    ulong Address,
+    uint Width,
+    uint Height,
+    uint Format,
+    uint NumberType,
+    uint DstSelect,
+    uint TileMode,
+    uint Pitch,
+    GuestSampler Sampler);
+
 internal sealed record GuestMemoryBuffer(
     ulong BaseAddress,
     byte[] Data,
+    int Length,
+    bool Pooled,
     bool Writable = false,
-    ICpuMemory? GuestMemory = null)
+    bool WriteBackToGuest = true)
 {
-    public static bool HasWritable(IReadOnlyList<GuestMemoryBuffer> buffers)
+    public GuestMemoryBuffer(ulong BaseAddress, byte[] Data) :
+        this(BaseAddress, Data, Data.Length, Pooled: false)
     {
-        foreach (var buffer in buffers)
-        {
-            if (buffer.Writable)
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 }
 
@@ -65,15 +75,45 @@ internal sealed record GuestVertexBuffer(
     ulong BaseAddress,
     uint Stride,
     uint OffsetBytes,
-    byte[] Data);
+    byte[] Data,
+    int Length,
+    bool Pooled)
+{
+    public GuestVertexBuffer(
+        uint Location,
+        uint ComponentCount,
+        uint DataFormat,
+        uint NumberFormat,
+        ulong BaseAddress,
+        uint Stride,
+        uint OffsetBytes,
+        byte[] Data) :
+        this(
+            Location,
+            ComponentCount,
+            DataFormat,
+            NumberFormat,
+            BaseAddress,
+            Stride,
+            OffsetBytes,
+            Data,
+            Data.Length,
+            Pooled: false)
+    {
+    }
+}
 
 internal sealed record GuestIndexBuffer(
     byte[] Data,
-    bool Is32Bit);
-
-internal readonly record struct GuestShaderIdentity(
-    ulong ExportShaderAddress,
-    ulong PixelShaderAddress);
+    int Length,
+    bool Is32Bit,
+    bool Pooled)
+{
+    public GuestIndexBuffer(byte[] Data, bool Is32Bit) :
+        this(Data, Data.Length, Is32Bit, Pooled: false)
+    {
+    }
+}
 
 internal enum GuestDisplayCompression
 {
@@ -83,10 +123,6 @@ internal enum GuestDisplayCompression
     Unsupported,
 }
 
-/// <summary>
-/// A display surface registered by the guest. Format and DccControl retain raw
-/// guest values; Compression records only the VideoOut modes validated by HLE.
-/// </summary>
 internal readonly record struct GuestDisplayBuffer(
     ulong Address,
     ulong MetadataAddress,
@@ -108,6 +144,15 @@ internal readonly record struct GuestViewport(
     float Height,
     float MinDepth,
     float MaxDepth);
+
+internal readonly record struct GuestRasterState(
+    bool CullFront,
+    bool CullBack,
+    bool FrontFaceClockwise,
+    bool Wireframe)
+{
+    public static GuestRasterState Default { get; } = new(false, false, false, false);
+}
 
 // CompareOp uses the GCN DB_DEPTH_CONTROL ZFUNC encoding, which matches the
 // Vulkan CompareOp ordering (0=Never through 7=Always).
@@ -185,17 +230,29 @@ internal readonly record struct GuestBlendState(
         WriteMask: 0xFu);
 }
 
+/// <summary>CB_BLEND_RED..ALPHA: the constant color referenced by the
+/// CONSTANT_COLOR / CONSTANT_ALPHA blend factors. One constant serves every
+/// render target of a draw; the hardware reset value is transparent black.</summary>
+internal readonly record struct GuestBlendConstant(
+    float Red,
+    float Green,
+    float Blue,
+    float Alpha);
+
 internal sealed record GuestRenderState(
     IReadOnlyList<GuestBlendState> Blends,
     GuestRect? Scissor,
-    GuestViewport? Viewport)
+    GuestViewport? Viewport,
+    GuestRasterState Raster,
+    GuestDepthState Depth,
+    GuestBlendConstant BlendConstant = default)
 {
-    public GuestDepthState Depth { get; init; } = GuestDepthState.Default;
-
     public static GuestRenderState Default { get; } = new(
         [GuestBlendState.Default],
         Scissor: null,
-        Viewport: null);
+        Viewport: null,
+        GuestRasterState.Default,
+        GuestDepthState.Default);
 
     public GuestBlendState Blend =>
         Blends.Count == 0 ? GuestBlendState.Default : Blends[0];
@@ -230,6 +287,6 @@ internal sealed record GuestDepthTarget(
     public ulong Address => WriteAddress != 0 ? WriteAddress : ReadAddress;
 
     public bool HasStencil =>
-        StencilFormat == 1 &&
+        StencilFormat != 0 &&
         (StencilReadAddress != 0 || StencilWriteAddress != 0);
 }

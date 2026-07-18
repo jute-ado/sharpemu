@@ -355,7 +355,9 @@ public static partial class KernelMemoryCompatExports
 
     internal static void RegisterReservedVirtualRange(ulong address, ulong length)
     {
-        if (address == 0 || length == 0)
+        if (address == 0 ||
+            length == 0 ||
+            !GuestAddress.IsRangeValid(address, length))
         {
             return;
         }
@@ -3684,7 +3686,9 @@ public static partial class KernelMemoryCompatExports
     {
         var address = ctx[CpuRegister.Rdi];
         var length = ctx[CpuRegister.Rsi];
-        if (address == 0 || length == 0)
+        if (address == 0 ||
+            length == 0 ||
+            !GuestAddress.IsRangeValid(address, length))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
