@@ -69,6 +69,47 @@ public sealed class GuestBufferRangeSetTests
     }
 
     [Fact]
+    public void MergeOrdersAndCoalescesTouchingRanges()
+    {
+        var merged = GuestBufferRangeSet.Merge(
+        [
+            new GuestBufferRange(0x300, 0x20),
+            new GuestBufferRange(0x100, 0x40),
+            new GuestBufferRange(0x140, 0x20),
+            new GuestBufferRange(0x130, 0x40),
+            new GuestBufferRange(0x500, 0),
+        ]);
+
+        Assert.Equal(
+        [
+            new GuestBufferRange(0x100, 0x70),
+            new GuestBufferRange(0x300, 0x20),
+        ],
+        merged);
+    }
+
+    [Theory]
+    [InlineData(false, 4UL, 3UL, false, false)]
+    [InlineData(true, 3UL, 3UL, false, false)]
+    [InlineData(true, 4UL, 3UL, false, true)]
+    [InlineData(true, 3UL, 3UL, true, true)]
+    public void ReadOnlyMutationVersionsOnlyWhenPriorStorageIsLive(
+        bool contentsChanged,
+        ulong lastUse,
+        ulong completed,
+        bool open,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            GuestBufferRangeSet.MustVersionReadOnlyMutation(
+                contentsChanged,
+                lastUse,
+                completed,
+                open));
+    }
+
+    [Fact]
     public void EvictionUsesCompletedLeastRecentlyUsedAllocations()
     {
         var evictions = GuestBufferRangeSet.SelectEvictions(
