@@ -245,8 +245,10 @@ public static class Gen5ShaderScalarEvaluator
                 }
 
                 var key = (globalMemory.ScalarAddress, baseAddress);
+                var writable = IsGlobalMemoryWrite(instruction.Opcode);
                 if (globalMemoryByAddress.TryGetValue(key, out var existingBinding))
                 {
+                    existingBinding.Writable |= writable;
                     if (existingBinding.InstructionPcs is List<uint> instructionPcs)
                     {
                         instructionPcs.Add(instruction.Pc);
@@ -267,7 +269,10 @@ public static class Gen5ShaderScalarEvaluator
                         globalMemory.ScalarAddress,
                         baseAddress,
                         new List<uint> { instruction.Pc },
-                        data);
+                        data)
+                    {
+                        Writable = writable,
+                    };
                     globalMemoryByAddress.Add(key, binding);
                     globalMemoryBindings.Add(binding);
                 }
@@ -368,8 +373,10 @@ public static class Gen5ShaderScalarEvaluator
                 }
 
                 var key = (bufferMemory.ScalarResource, bufferDescriptor.BaseAddress);
+                var writable = IsBufferMemoryWrite(instruction.Opcode);
                 if (globalMemoryByAddress.TryGetValue(key, out var existingBinding))
                 {
+                    existingBinding.Writable |= writable;
                     if (existingBinding.InstructionPcs is List<uint> instructionPcs)
                     {
                         instructionPcs.Add(instruction.Pc);
@@ -400,7 +407,10 @@ public static class Gen5ShaderScalarEvaluator
                         bufferMemory.ScalarResource,
                         bufferDescriptor.BaseAddress,
                         new List<uint> { instruction.Pc },
-                        data);
+                        data)
+                    {
+                        Writable = writable,
+                    };
                     globalMemoryByAddress.Add(key, binding);
                     globalMemoryBindings.Add(binding);
                 }
@@ -524,6 +534,15 @@ public static class Gen5ShaderScalarEvaluator
         opcode.StartsWith("TBufferLoadFormat", StringComparison.Ordinal) ||
         opcode.StartsWith("BufferStoreFormat", StringComparison.Ordinal) ||
         opcode.StartsWith("TBufferStoreFormat", StringComparison.Ordinal);
+
+    private static bool IsGlobalMemoryWrite(string opcode) =>
+        opcode.StartsWith("GlobalStore", StringComparison.Ordinal) ||
+        opcode.StartsWith("GlobalAtomic", StringComparison.Ordinal);
+
+    private static bool IsBufferMemoryWrite(string opcode) =>
+        opcode.StartsWith("BufferStore", StringComparison.Ordinal) ||
+        opcode.StartsWith("TBufferStore", StringComparison.Ordinal) ||
+        opcode.StartsWith("BufferAtomic", StringComparison.Ordinal);
 
     private static HashSet<uint> CollectRuntimeScalarRegisters(Gen5ShaderProgram program)
     {

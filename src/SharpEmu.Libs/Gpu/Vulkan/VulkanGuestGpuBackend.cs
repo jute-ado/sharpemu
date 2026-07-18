@@ -202,7 +202,7 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
             width,
             height);
 
-    public void SubmitComputeDispatch(
+    public long SubmitComputeDispatch(
         ulong shaderAddress,
         IGuestCompiledShader computeShader,
         IReadOnlyList<GuestDrawTexture> textures,
@@ -230,6 +230,9 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
             threadCountX,
             threadCountY,
             threadCountZ);
+
+    public bool WaitForGuestWork(long workSequence, TimeSpan timeout) =>
+        VulkanVideoPresenter.WaitForGuestWork(workSequence, timeout);
 
     public bool TrySubmitGuestImage(
         ulong address,

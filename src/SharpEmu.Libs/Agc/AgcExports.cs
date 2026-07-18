@@ -5022,14 +5022,17 @@ public static partial class AgcExports
     }
 
     private static IReadOnlyList<GuestMemoryBuffer> CreateGuestMemoryBuffers(
-        IReadOnlyList<Gen5GlobalMemoryBinding> bindings)
+        IReadOnlyList<Gen5GlobalMemoryBinding> bindings,
+        ICpuMemory? guestMemory = null)
     {
         var buffers = new GuestMemoryBuffer[bindings.Count];
         for (var index = 0; index < bindings.Count; index++)
         {
             buffers[index] = new GuestMemoryBuffer(
                 bindings[index].BaseAddress,
-                bindings[index].Data);
+                bindings[index].Data,
+                bindings[index].Writable,
+                bindings[index].Writable ? guestMemory : null);
         }
 
         return buffers;
@@ -5907,8 +5910,10 @@ public static partial class AgcExports
                     translatedBindings,
                     out _);
                 var globalMemoryBuffers =
-                    CreateGuestMemoryBuffers(evaluation.GlobalMemoryBindings);
-                GuestGpu.Current.SubmitComputeDispatch(
+                    CreateGuestMemoryBuffers(
+                        evaluation.GlobalMemoryBindings,
+                        ctx.Memory);
+                var workSequence = GuestGpu.Current.SubmitComputeDispatch(
                     shaderAddress,
                     computeShader,
                     textures,
@@ -5922,7 +5927,15 @@ public static partial class AgcExports
                     dispatch.ThreadCountX,
                     dispatch.ThreadCountY,
                     dispatch.ThreadCountZ);
-                gpuDispatch = true;
+                gpuDispatch = workSequence > 0;
+                if (GuestMemoryBuffer.HasWritable(globalMemoryBuffers) &&
+                    !GuestGpu.Current.WaitForGuestWork(
+                        workSequence,
+                        TimeSpan.FromSeconds(10)))
+                {
+                    computeError =
+                        $"global-write-sync-timeout sequence={workSequence}";
+                }
             }
         }
 

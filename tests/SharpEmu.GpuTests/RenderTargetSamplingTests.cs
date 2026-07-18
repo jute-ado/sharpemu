@@ -30,6 +30,7 @@ public sealed class RenderTargetSamplingTests
     private const ulong CpuTextureAddress = 0x0042_0000;
     private const ulong ShaderAddress = 0x0050_0000;
     private const ulong ConstantsAddress = 0x0060_0000;
+    private const ulong ComputeBufferAddress = 0x0070_0000;
 
     /// <summary>
     /// Verifies both GPU render-target reuse and a large CPU-backed texture
@@ -57,6 +58,7 @@ public sealed class RenderTargetSamplingTests
                 DestinationWidth,
                 DestinationHeight);
             VulkanVideoPresenter.HideSplashScreen();
+            AssertComputeBufferWriteback();
 
             SubmitSolid(SourceAddress, red: 1f, green: 0f, blue: 0f);
             ComposeSourceTo(FirstDisplayAddress);
@@ -126,6 +128,111 @@ public sealed class RenderTargetSamplingTests
                 null);
             Directory.Delete(captureDirectory, recursive: true);
         }
+    }
+
+    private static void AssertComputeBufferWriteback()
+    {
+        uint[] words =
+        [
+            0x7E080200,             // v_mov_b32 v4, s0 (workgroup X)
+            0x7E0A0201,             // v_mov_b32 v5, s1 (threadgroup size)
+            0xD5690006, 0x00020B04, // v_mul_lo_u32 v6, v4, v5
+            0xD77F0007, 0x00020D00, // v_add_nc_i32 v7, v0, v6
+            0x34100E82,             // v_lshlrev_b32 v8, 2, v7
+            0xE0701000, 0x80020708, // buffer_store_dword v7, v8, s[8:11], 0 offen
+            0xBF810000,             // s_endpgm
+        ];
+        var bytes = new byte[words.Length * sizeof(uint)];
+        for (var index = 0; index < words.Length; index++)
+        {
+            BitConverter.TryWriteBytes(
+                bytes.AsSpan(index * sizeof(uint)),
+                words[index]);
+        }
+
+        var context = new CpuContext(
+            new ArrayCpuMemory(ShaderAddress, bytes),
+            Generation.Gen5);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                context,
+                ShaderAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Gen5ShaderInstruction? store = null;
+        foreach (var instruction in program.Instructions)
+        {
+            if (instruction.Opcode == "BufferStoreDword")
+            {
+                store = instruction;
+                break;
+            }
+        }
+
+        Assert.NotNull(store);
+        var scalarRegisters = new uint[256];
+        var bindingData = new byte[4 * sizeof(uint)];
+        var binding = new Gen5GlobalMemoryBinding(
+            ScalarAddress: 8,
+            ComputeBufferAddress,
+            [store.Pc],
+            bindingData)
+        {
+            Writable = true,
+        };
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [binding],
+            ComputeSystemRegisters: new Gen5ComputeSystemRegisters(
+                WorkGroupXRegister: 0,
+                WorkGroupYRegister: null,
+                WorkGroupZRegister: null,
+                ThreadGroupSizeRegister: 1));
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 4,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+
+        var guestMemory = new ArrayCpuMemory(
+            ComputeBufferAddress,
+            bindingData.ToArray());
+        var workSequence = VulkanVideoPresenter.SubmitComputeDispatch(
+            ShaderAddress,
+            shader.Spirv,
+            [],
+            [
+                new GuestMemoryBuffer(
+                    ComputeBufferAddress,
+                    bindingData,
+                    Writable: true,
+                    guestMemory),
+            ],
+            groupCountX: 1,
+            groupCountY: 1,
+            groupCountZ: 1);
+
+        Assert.True(
+            VulkanVideoPresenter.WaitForGuestWork(
+                workSequence,
+                TimeSpan.FromSeconds(10)),
+            $"Compute dispatch {workSequence} did not reach CPU visibility.");
+        var output = new byte[bindingData.Length];
+        Assert.True(guestMemory.TryRead(ComputeBufferAddress, output));
+        Assert.Equal(0u, BitConverter.ToUInt32(output, 0));
+        Assert.Equal(1u, BitConverter.ToUInt32(output, 4));
+        Assert.Equal(2u, BitConverter.ToUInt32(output, 8));
+        Assert.Equal(3u, BitConverter.ToUInt32(output, 12));
     }
 
     private static void SubmitSolid(
@@ -719,6 +826,22 @@ public sealed class RenderTargetSamplingTests
 
         public bool TryWrite(
             ulong virtualAddress,
-            ReadOnlySpan<byte> source) => false;
+            ReadOnlySpan<byte> source)
+        {
+            if (virtualAddress < baseAddress)
+            {
+                return false;
+            }
+
+            var offset = virtualAddress - baseAddress;
+            if (offset > (ulong)data.Length ||
+                (ulong)source.Length > (ulong)data.Length - offset)
+            {
+                return false;
+            }
+
+            source.CopyTo(data.AsSpan((int)offset, source.Length));
+            return true;
+        }
     }
 }

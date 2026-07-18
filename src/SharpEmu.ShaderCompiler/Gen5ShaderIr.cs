@@ -271,7 +271,10 @@ public sealed record Gen5GlobalMemoryBinding(
     uint ScalarAddress,
     ulong BaseAddress,
     IReadOnlyList<uint> InstructionPcs,
-    byte[] Data);
+    byte[] Data)
+{
+    public bool Writable { get; set; }
+}
 
 public sealed record Gen5BufferFormatBinding(
     uint Pc,
