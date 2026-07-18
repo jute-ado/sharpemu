@@ -1077,28 +1077,16 @@ public static partial class KernelMemoryCompatExports
 
     private static int WcschrCore(CpuContext ctx, ulong address, ushort needle)
     {
-        for (ulong index = 0; index < 1_048_576; index++)
+        if (!TryFindWideCStringCharacter(
+                ctx,
+                address,
+                needle,
+                out var matchAddress))
         {
-            var offset = index * WideCharSize;
-            if (!TryAddU64(address, offset, out var currentAddress) ||
-                !TryReadUInt16Compat(ctx, currentAddress, out var unit))
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-            }
-
-            if (unit == needle)
-            {
-                ctx[CpuRegister.Rax] = currentAddress;
-                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-            }
-
-            if (unit == 0)
-            {
-                break;
-            }
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        ctx[CpuRegister.Rax] = 0;
+        ctx[CpuRegister.Rax] = matchAddress;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -1646,35 +1634,17 @@ public static partial class KernelMemoryCompatExports
     {
         var address = ctx[CpuRegister.Rdi];
         var needle = unchecked((byte)ctx[CpuRegister.Rsi]);
-        if (address == 0)
+        if (!TryFindCStringCharacter(
+                ctx,
+                address,
+                needle,
+                findLast: false,
+                out var match))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        // The terminator counts as part of the scanned range, so strchr(s, '\0')
-        // returns a pointer to the string's null byte just like a native libc.
-        Span<byte> current = stackalloc byte[1];
-        for (ulong index = 0; index < 1_048_576; index++)
-        {
-            if (!TryAddU64(address, index, out var currentAddress) ||
-                !TryReadCompat(ctx, currentAddress, current))
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-            }
-
-            if (current[0] == needle)
-            {
-                ctx[CpuRegister.Rax] = currentAddress;
-                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-            }
-
-            if (current[0] == 0)
-            {
-                break;
-            }
-        }
-
-        ctx[CpuRegister.Rax] = 0;
+        ctx[CpuRegister.Rax] = match;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -1687,35 +1657,17 @@ public static partial class KernelMemoryCompatExports
     {
         var address = ctx[CpuRegister.Rdi];
         var needle = unchecked((byte)ctx[CpuRegister.Rsi]);
-        if (address == 0)
+        if (!TryFindCStringCharacter(
+                ctx,
+                address,
+                needle,
+                findLast: true,
+                out var match))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        ulong match = 0;
-        var found = false;
-        Span<byte> current = stackalloc byte[1];
-        for (ulong index = 0; index < 1_048_576; index++)
-        {
-            if (!TryAddU64(address, index, out var currentAddress) ||
-                !TryReadCompat(ctx, currentAddress, current))
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-            }
-
-            if (current[0] == needle)
-            {
-                match = currentAddress;
-                found = true;
-            }
-
-            if (current[0] == 0)
-            {
-                break;
-            }
-        }
-
-        ctx[CpuRegister.Rax] = found ? match : 0;
+        ctx[CpuRegister.Rax] = match;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -5598,6 +5550,73 @@ public static partial class KernelMemoryCompatExports
         return TryReadBytesUntilNull(ctx, address, maxLength, 1_048_576, out bytes);
     }
 
+    private static bool TryFindCStringCharacter(
+        CpuContext ctx,
+        ulong address,
+        byte needle,
+        bool findLast,
+        out ulong matchAddress)
+    {
+        matchAddress = 0;
+        if (address == 0)
+        {
+            return false;
+        }
+
+        const int pageSize = 4096;
+        const ulong maxLength = 1_048_576;
+        Span<byte> chunk = stackalloc byte[pageSize];
+        var offset = 0UL;
+        while (offset < maxLength)
+        {
+            if (!TryAddU64(address, offset, out var current))
+            {
+                return false;
+            }
+
+            var pageRemaining =
+                pageSize - (int)(current & (pageSize - 1));
+            var requestLimit = offset == 0 ? 256 : pageSize;
+            var length = (int)Math.Min(
+                maxLength - offset,
+                (ulong)Math.Min(pageRemaining, requestLimit));
+            if (!TryReadLargestPrefix(
+                    ctx,
+                    current,
+                    chunk[..length],
+                    unitSize: 1,
+                    out length))
+            {
+                return false;
+            }
+
+            var span = chunk[..length];
+            for (var index = 0; index < span.Length; index++)
+            {
+                var value = span[index];
+                if (value == needle)
+                {
+                    matchAddress = current + (ulong)index;
+                    if (!findLast)
+                    {
+                        return true;
+                    }
+                }
+
+                // The terminator is part of the scanned range, which makes a
+                // zero needle return its address for both strchr and strrchr.
+                if (value == 0)
+                {
+                    return true;
+                }
+            }
+
+            offset += (ulong)span.Length;
+        }
+
+        return true;
+    }
+
     private static bool TryFindCString(
         CpuContext ctx,
         ulong address,
@@ -5618,6 +5637,7 @@ public static partial class KernelMemoryCompatExports
                 .AsSpan(0, needle.Length);
         try
         {
+            prefix.Clear();
             var prefixLength = 0;
             for (var index = 1; index < needle.Length; index++)
             {
@@ -5652,56 +5672,39 @@ public static partial class KernelMemoryCompatExports
                 var remaining = (int)Math.Min(
                     (ulong)maxLength - offset,
                     (ulong)Math.Min(pageRemaining, requestLimit));
-                var span = chunk[..remaining];
-                if (TryReadCompat(ctx, current, span))
-                {
-                    for (var index = 0; index < span.Length; index++)
-                    {
-                        var value = span[index];
-                        if (value == 0)
-                        {
-                            return true;
-                        }
-
-                        if (AdvanceCStringSearch(
-                                value,
-                                needle,
-                                prefix,
-                                ref matched))
-                        {
-                            matchAddress = current +
-                                (ulong)index + 1 -
-                                (ulong)needle.Length;
-                            return true;
-                        }
-                    }
-
-                    offset += (ulong)span.Length;
-                    continue;
-                }
-
-                var one = span[..1];
-                if (!TryReadCompat(ctx, current, one))
+                if (!TryReadLargestPrefix(
+                        ctx,
+                        current,
+                        chunk[..remaining],
+                        unitSize: 1,
+                        out remaining))
                 {
                     return false;
                 }
 
-                if (one[0] == 0)
+                var span = chunk[..remaining];
+                for (var index = 0; index < span.Length; index++)
                 {
-                    return true;
+                    var value = span[index];
+                    if (value == 0)
+                    {
+                        return true;
+                    }
+
+                    if (AdvanceCStringSearch(
+                            value,
+                            needle,
+                            prefix,
+                            ref matched))
+                    {
+                        matchAddress = current +
+                            (ulong)index + 1 -
+                            (ulong)needle.Length;
+                        return true;
+                    }
                 }
 
-                if (AdvanceCStringSearch(
-                        one[0],
-                        needle,
-                        prefix,
-                        ref matched))
-                {
-                    matchAddress = current + 1 - (ulong)needle.Length;
-                    return true;
-                }
-
-                offset++;
+                offset += (ulong)span.Length;
             }
 
             return true;
@@ -5790,42 +5793,32 @@ public static partial class KernelMemoryCompatExports
 
             var pageRemaining = maxChunkSize - (int)(current & (maxChunkSize - 1));
             var remaining = (int)Math.Min((ulong)limit - offset, (ulong)Math.Min(chunk.Length, pageRemaining));
-            var span = chunk.AsSpan(0, remaining);
-            if (TryReadCompat(ctx, current, span))
-            {
-                var nulIndex = span.IndexOf((byte)0);
-                var copyLength = nulIndex >= 0 ? nulIndex : remaining;
-                if (copyLength > 0)
-                {
-                    span[..copyLength].CopyTo(writer.GetSpan(copyLength));
-                    writer.Advance(copyLength);
-                }
-
-                if (nulIndex >= 0)
-                {
-                    bytes = writer.WrittenSpan.ToArray();
-                    return true;
-                }
-
-                offset += (ulong)remaining;
-                continue;
-            }
-
-            var one = chunk.AsSpan(0, 1);
-            if (!TryReadCompat(ctx, current, one))
+            if (!TryReadLargestPrefix(
+                    ctx,
+                    current,
+                    chunk.AsSpan(0, remaining),
+                    unitSize: 1,
+                    out remaining))
             {
                 return false;
             }
 
-            if (one[0] == 0)
+            var span = chunk.AsSpan(0, remaining);
+            var nulIndex = span.IndexOf((byte)0);
+            var copyLength = nulIndex >= 0 ? nulIndex : remaining;
+            if (copyLength > 0)
+            {
+                span[..copyLength].CopyTo(writer.GetSpan(copyLength));
+                writer.Advance(copyLength);
+            }
+
+            if (nulIndex >= 0)
             {
                 bytes = writer.WrittenSpan.ToArray();
                 return true;
             }
 
-            one.CopyTo(writer.GetSpan(1));
-            writer.Advance(1);
-            offset++;
+            offset += (ulong)remaining;
         }
 
         bytes = writer.WrittenSpan.ToArray();
@@ -5887,20 +5880,20 @@ public static partial class KernelMemoryCompatExports
                     Math.Min(leftPageRemaining, rightPageRemaining)));
             var leftSpan = leftChunk[..length];
             var rightSpan = rightChunk[..length];
-            if (!TryReadCompat(ctx, leftAddress, leftSpan) ||
-                !TryReadCompat(ctx, rightAddress, rightSpan))
+            if (!TryReadLargestCommonPrefix(
+                    ctx,
+                    leftAddress,
+                    leftSpan,
+                    rightAddress,
+                    rightSpan,
+                    unitSize: 1,
+                    out length))
             {
-                leftSpan = leftChunk[..1];
-                rightSpan = rightChunk[..1];
-                if (!TryReadCompat(ctx, leftAddress, leftSpan) ||
-                    !TryReadCompat(ctx, rightAddress, rightSpan))
-                {
-                    return false;
-                }
-
-                length = 1;
+                return false;
             }
 
+            leftSpan = leftChunk[..length];
+            rightSpan = rightChunk[..length];
             for (var index = 0; index < length; index++)
             {
                 var leftValue = leftSpan[index];
@@ -5925,39 +5918,111 @@ public static partial class KernelMemoryCompatExports
         return true;
     }
 
-    private static bool TryReadWideCString(CpuContext ctx, ulong address, ulong maxLength, out ushort[] units)
+    private static bool TryReadLargestPrefix(
+        CpuContext ctx,
+        ulong address,
+        Span<byte> destination,
+        int unitSize,
+        out int length)
     {
-        units = Array.Empty<ushort>();
-        if (address == 0)
+        length = destination.Length;
+        while (length >= unitSize)
         {
-            return false;
-        }
-
-        var limit = (int)Math.Min(maxLength, 1_048_576UL);
-        var buffer = new List<ushort>(Math.Min(limit, 256));
-        for (var i = 0; i < limit; i++)
-        {
-            var offset = (ulong)i * WideCharSize;
-            if (!TryAddU64(address, offset, out var currentAddress) ||
-                !TryReadUInt16Compat(ctx, currentAddress, out var unit))
+            if (TryReadCompat(ctx, address, destination[..length]))
             {
-                return false;
-            }
-
-            if (unit == 0)
-            {
-                units = buffer.ToArray();
                 return true;
             }
 
-            buffer.Add(unit);
+            if (length == unitSize)
+            {
+                break;
+            }
+
+            length = Math.Max(
+                unitSize,
+                (length / 2 / unitSize) * unitSize);
         }
 
-        units = buffer.ToArray();
-        return true;
+        length = 0;
+        return false;
     }
 
-    private static bool TryReadWideCStringBounded(CpuContext ctx, ulong address, ulong maxLength, out ushort[] units, out bool terminated)
+    private static bool TryReadLargestCommonPrefix(
+        CpuContext ctx,
+        ulong leftAddress,
+        Span<byte> leftDestination,
+        ulong rightAddress,
+        Span<byte> rightDestination,
+        int unitSize,
+        out int length)
+    {
+        length = Math.Min(
+            leftDestination.Length,
+            rightDestination.Length);
+        length = (length / unitSize) * unitSize;
+        while (length >= unitSize)
+        {
+            if (TryReadCompat(
+                    ctx,
+                    leftAddress,
+                    leftDestination[..length]) &&
+                TryReadCompat(
+                    ctx,
+                    rightAddress,
+                    rightDestination[..length]))
+            {
+                return true;
+            }
+
+            if (length == unitSize)
+            {
+                break;
+            }
+
+            length = Math.Max(
+                unitSize,
+                (length / 2 / unitSize) * unitSize);
+        }
+
+        length = 0;
+        return false;
+    }
+
+    private static bool TryReadWideCString(
+        CpuContext ctx,
+        ulong address,
+        ulong maxLength,
+        out ushort[] units)
+    {
+        return TryReadWideCStringCore(
+            ctx,
+            address,
+            maxLength,
+            out units,
+            out _);
+    }
+
+    private static bool TryReadWideCStringBounded(
+        CpuContext ctx,
+        ulong address,
+        ulong maxLength,
+        out ushort[] units,
+        out bool terminated)
+    {
+        return TryReadWideCStringCore(
+            ctx,
+            address,
+            maxLength,
+            out units,
+            out terminated);
+    }
+
+    private static bool TryReadWideCStringCore(
+        CpuContext ctx,
+        ulong address,
+        ulong maxLength,
+        out ushort[] units,
+        out bool terminated)
     {
         units = Array.Empty<ushort>();
         terminated = false;
@@ -5966,32 +6031,62 @@ public static partial class KernelMemoryCompatExports
             return false;
         }
 
-        var limit = (int)Math.Min(maxLength, 1_048_576UL);
-        var buffer = new List<ushort>(Math.Min(limit, 256));
-        for (var i = 0; i < limit; i++)
+        var limit = Math.Min(maxLength, 1_048_576UL);
+        var values = new List<ushort>((int)Math.Min(limit, 256));
+        const int pageSize = 4096;
+        Span<byte> chunk = stackalloc byte[pageSize];
+        var unitOffset = 0UL;
+        while (unitOffset < limit)
         {
-            var offset = (ulong)i * WideCharSize;
-            if (!TryAddU64(address, offset, out var currentAddress) ||
-                !TryReadUInt16Compat(ctx, currentAddress, out var unit))
+            if (!TryGetWideAddress(address, unitOffset, out var currentAddress))
             {
                 return false;
             }
 
-            if (unit == 0)
+            var unitCount = GetWideChunkUnitCount(
+                currentAddress,
+                limit - unitOffset,
+                unitOffset == 0);
+            var byteCount = checked(unitCount * WideCharSize);
+            if (!TryReadLargestPrefix(
+                    ctx,
+                    currentAddress,
+                    chunk[..byteCount],
+                    WideCharSize,
+                    out byteCount))
             {
-                terminated = true;
-                units = buffer.ToArray();
-                return true;
+                return false;
             }
 
-            buffer.Add(unit);
+            unitCount = byteCount / WideCharSize;
+            var span = chunk[..byteCount];
+            for (var index = 0; index < unitCount; index++)
+            {
+                var unit = BinaryPrimitives.ReadUInt16LittleEndian(
+                    span.Slice(index * WideCharSize, WideCharSize));
+                if (unit == 0)
+                {
+                    terminated = true;
+                    units = values.ToArray();
+                    return true;
+                }
+
+                values.Add(unit);
+            }
+
+            unitOffset += (ulong)unitCount;
         }
 
-        units = buffer.ToArray();
+        units = values.ToArray();
         return true;
     }
 
-    private static bool TryCompareWideStrings(CpuContext ctx, ulong left, ulong right, ulong limit, out int compare)
+    private static bool TryCompareWideStrings(
+        CpuContext ctx,
+        ulong left,
+        ulong right,
+        ulong limit,
+        out int compare)
     {
         compare = 0;
         var max = limit == ulong.MaxValue ? 1_048_576UL : Math.Min(limit, 1_048_576UL);
@@ -6005,26 +6100,285 @@ public static partial class KernelMemoryCompatExports
             return false;
         }
 
-        for (ulong i = 0; i < max; i++)
+        const int pageSize = 4096;
+        Span<byte> leftChunk = stackalloc byte[pageSize];
+        Span<byte> rightChunk = stackalloc byte[pageSize];
+        var unitOffset = 0UL;
+        while (unitOffset < max)
         {
-            var offset = i * WideCharSize;
-            if (!TryAddU64(left, offset, out var leftAddress) ||
-                !TryAddU64(right, offset, out var rightAddress) ||
-                !TryReadUInt16Compat(ctx, leftAddress, out var leftUnit) ||
-                !TryReadUInt16Compat(ctx, rightAddress, out var rightUnit))
+            if (!TryGetWideAddress(left, unitOffset, out var leftAddress) ||
+                !TryGetWideAddress(right, unitOffset, out var rightAddress))
             {
                 return false;
             }
 
-            compare = leftUnit == rightUnit ? 0 : leftUnit < rightUnit ? -1 : 1;
-            if (compare != 0 || leftUnit == 0 || rightUnit == 0)
+            var unitCount = Math.Min(
+                GetWideChunkUnitCount(
+                    leftAddress,
+                    max - unitOffset,
+                    unitOffset == 0),
+                GetWideChunkUnitCount(
+                    rightAddress,
+                    max - unitOffset,
+                    unitOffset == 0));
+            var byteCount = checked(unitCount * WideCharSize);
+            var leftSpan = leftChunk[..byteCount];
+            var rightSpan = rightChunk[..byteCount];
+            if (!TryReadLargestCommonPrefix(
+                    ctx,
+                    leftAddress,
+                    leftSpan,
+                    rightAddress,
+                    rightSpan,
+                    WideCharSize,
+                    out byteCount))
             {
-                return true;
+                return false;
             }
+
+            unitCount = byteCount / WideCharSize;
+            leftSpan = leftChunk[..byteCount];
+            rightSpan = rightChunk[..byteCount];
+            for (var index = 0; index < unitCount; index++)
+            {
+                var byteOffset = index * WideCharSize;
+                var leftUnit = BinaryPrimitives.ReadUInt16LittleEndian(
+                    leftSpan.Slice(byteOffset, WideCharSize));
+                var rightUnit = BinaryPrimitives.ReadUInt16LittleEndian(
+                    rightSpan.Slice(byteOffset, WideCharSize));
+                compare = leftUnit == rightUnit
+                    ? 0
+                    : leftUnit < rightUnit
+                        ? -1
+                        : 1;
+                if (compare != 0 || leftUnit == 0 || rightUnit == 0)
+                {
+                    return true;
+                }
+            }
+
+            unitOffset += (ulong)unitCount;
         }
 
         compare = 0;
         return true;
+    }
+
+    private static bool TryFindWideCString(
+        CpuContext ctx,
+        ulong address,
+        ReadOnlySpan<ushort> needle,
+        int maxLength,
+        out ulong matchAddress)
+    {
+        matchAddress = 0;
+        if (address == 0)
+        {
+            return false;
+        }
+
+        int[]? rentedPrefix = null;
+        Span<int> prefix = needle.Length <= 256
+            ? stackalloc int[needle.Length]
+            : (rentedPrefix = ArrayPool<int>.Shared.Rent(needle.Length))
+                .AsSpan(0, needle.Length);
+        try
+        {
+            prefix.Clear();
+            var prefixLength = 0;
+            for (var index = 1; index < needle.Length; index++)
+            {
+                while (prefixLength > 0 &&
+                    needle[index] != needle[prefixLength])
+                {
+                    prefixLength = prefix[prefixLength - 1];
+                }
+
+                if (needle[index] == needle[prefixLength])
+                {
+                    prefixLength++;
+                }
+
+                prefix[index] = prefixLength;
+            }
+
+            const int pageSize = 4096;
+            Span<byte> chunk = stackalloc byte[pageSize];
+            var unitOffset = 0UL;
+            var matched = 0;
+            while (unitOffset < (ulong)maxLength)
+            {
+                if (!TryGetWideAddress(
+                        address,
+                        unitOffset,
+                        out var currentAddress))
+                {
+                    return false;
+                }
+
+                var unitCount = GetWideChunkUnitCount(
+                    currentAddress,
+                    (ulong)maxLength - unitOffset,
+                    unitOffset == 0);
+                var byteCount = checked(unitCount * WideCharSize);
+                if (!TryReadLargestPrefix(
+                        ctx,
+                        currentAddress,
+                        chunk[..byteCount],
+                        WideCharSize,
+                        out byteCount))
+                {
+                    return false;
+                }
+
+                unitCount = byteCount / WideCharSize;
+                var span = chunk[..byteCount];
+                for (var index = 0; index < unitCount; index++)
+                {
+                    var unit = BinaryPrimitives.ReadUInt16LittleEndian(
+                        span.Slice(
+                            index * WideCharSize,
+                            WideCharSize));
+                    if (unit == 0)
+                    {
+                        return true;
+                    }
+
+                    while (matched > 0 && unit != needle[matched])
+                    {
+                        matched = prefix[matched - 1];
+                    }
+
+                    if (unit == needle[matched])
+                    {
+                        matched++;
+                    }
+
+                    if (matched == needle.Length)
+                    {
+                        var endUnit = unitOffset + (ulong)index + 1;
+                        var matchUnit = endUnit - (ulong)needle.Length;
+                        return TryGetWideAddress(
+                            address,
+                            matchUnit,
+                            out matchAddress);
+                    }
+                }
+
+                unitOffset += (ulong)unitCount;
+            }
+
+            return true;
+        }
+        finally
+        {
+            if (rentedPrefix is not null)
+            {
+                ArrayPool<int>.Shared.Return(rentedPrefix);
+            }
+        }
+    }
+
+    private static bool TryFindWideCStringCharacter(
+        CpuContext ctx,
+        ulong address,
+        ushort needle,
+        out ulong matchAddress)
+    {
+        matchAddress = 0;
+        if (address == 0)
+        {
+            return false;
+        }
+
+        const int pageSize = 4096;
+        const ulong maxLength = 1_048_576;
+        Span<byte> chunk = stackalloc byte[pageSize];
+        var unitOffset = 0UL;
+        while (unitOffset < maxLength)
+        {
+            if (!TryGetWideAddress(
+                    address,
+                    unitOffset,
+                    out var currentAddress))
+            {
+                return false;
+            }
+
+            var unitCount = GetWideChunkUnitCount(
+                currentAddress,
+                maxLength - unitOffset,
+                unitOffset == 0);
+            var byteCount = checked(unitCount * WideCharSize);
+            if (!TryReadLargestPrefix(
+                    ctx,
+                    currentAddress,
+                    chunk[..byteCount],
+                    WideCharSize,
+                    out byteCount))
+            {
+                return false;
+            }
+
+            unitCount = byteCount / WideCharSize;
+            var span = chunk[..byteCount];
+            for (var index = 0; index < unitCount; index++)
+            {
+                var unit = BinaryPrimitives.ReadUInt16LittleEndian(
+                    span.Slice(
+                        index * WideCharSize,
+                        WideCharSize));
+                if (unit == needle)
+                {
+                    return TryGetWideAddress(
+                        currentAddress,
+                        (ulong)index,
+                        out matchAddress);
+                }
+
+                if (unit == 0)
+                {
+                    return true;
+                }
+            }
+
+            unitOffset += (ulong)unitCount;
+        }
+
+        return true;
+    }
+
+    private static bool TryGetWideAddress(
+        ulong address,
+        ulong unitOffset,
+        out ulong currentAddress)
+    {
+        currentAddress = 0;
+        if (unitOffset > ulong.MaxValue / WideCharSize)
+        {
+            return false;
+        }
+
+        return TryAddU64(
+            address,
+            unitOffset * WideCharSize,
+            out currentAddress);
+    }
+
+    private static int GetWideChunkUnitCount(
+        ulong address,
+        ulong remainingUnits,
+        bool firstRead)
+    {
+        const int pageSize = 4096;
+        var pageRemaining =
+            pageSize - (int)(address & (pageSize - 1));
+        var requestLimit = firstRead ? 256 : pageSize;
+        var byteLimit = Math.Min(pageRemaining, requestLimit);
+        var unitLimit = Math.Max(1, byteLimit / WideCharSize);
+        return (int)Math.Min(
+            remainingUnits,
+            (ulong)unitLimit);
     }
 
     private static byte[] EncodeWideUnits(ReadOnlySpan<ushort> units)
