@@ -106,6 +106,16 @@ public static partial class AgcExports
     private const uint CbColor0Attrib3 = 0x3B8;
     private const uint CbBlend0Control = 0x1E0;
     private const uint PaScModeCntl0 = 0x292;
+    private const uint DbRenderControl = 0x000;
+    private const uint DbDepthView = 0x002;
+    private const uint DbDepthSizeXy = 0x007;
+    private const uint DbDepthClear = 0x00B;
+    private const uint DbZInfo = 0x010;
+    private const uint DbZReadBase = 0x012;
+    private const uint DbZWriteBase = 0x014;
+    private const uint DbZReadBaseHi = 0x01A;
+    private const uint DbZWriteBaseHi = 0x01C;
+    private const uint DbDepthControl = 0x200;
     private const int ColorTargetCount = 8;
     private const uint PsTextureUserDataRegister = 0xC;
     private const uint VsUserDataRegister = 0x4C;
@@ -364,6 +374,7 @@ public static partial class AgcExports
         // The seam-shaped view of RenderTargets, built once here so the per-frame
         // submit path does not rebuild it for every draw of a cached translation.
         IReadOnlyList<GuestRenderTarget> GuestTargets,
+        GuestDepthTarget? DepthTarget,
         GuestRenderState RenderState);
 
     private sealed record TranslatedImageBinding(
@@ -3879,6 +3890,7 @@ public static partial class AgcExports
                         translatedDraw.IndexBuffer,
                         vertexBuffers,
                         translatedDraw.RenderState,
+                        translatedDraw.DepthTarget,
                         new GuestShaderIdentity(
                             translatedDraw.ExportShaderAddress,
                             translatedDraw.PixelShaderAddress),
@@ -4132,17 +4144,30 @@ public static partial class AgcExports
             _graphicsShaderCache.TryAdd(shaderKey, compiled);
         }
 
-        var textures = new List<TranslatedImageBinding>(
+        var imageBindings = new Gen5ImageBinding[
             pixelEvaluation.ImageBindings.Count +
-            exportEvaluation.ImageBindings.Count);
+            exportEvaluation.ImageBindings.Count];
+        var imageBindingIndex = 0;
+        foreach (var binding in pixelEvaluation.ImageBindings)
+        {
+            imageBindings[imageBindingIndex++] = binding;
+        }
+        foreach (var binding in exportEvaluation.ImageBindings)
+        {
+            imageBindings[imageBindingIndex++] = binding;
+        }
+
+        var textures = new List<TranslatedImageBinding>(imageBindings.Length);
         if (!TryAppendTranslatedImageBindings(
                 pixelEvaluation.ImageBindings,
+                imageBindings,
                 textures,
                 pixelShaderAddress,
                 exportShaderAddress,
                 out error) ||
             !TryAppendTranslatedImageBindings(
                 exportEvaluation.ImageBindings,
+                imageBindings,
                 textures,
                 pixelShaderAddress,
                 exportShaderAddress,
@@ -4197,6 +4222,7 @@ public static partial class AgcExports
             vertexInputs,
             renderTargets,
             guestTargets,
+            DecodeDepthTarget(state.CxRegisters),
             ApplyTransparentPremultipliedFillClear(
                 CreateRenderState(state.CxRegisters, renderTargets, pixelState),
                 textures,
@@ -4207,6 +4233,7 @@ public static partial class AgcExports
 
     private static bool TryAppendTranslatedImageBindings(
         IReadOnlyList<Gen5ImageBinding> bindings,
+        IReadOnlyList<Gen5ImageBinding> stageBindings,
         List<TranslatedImageBinding> textures,
         ulong pixelShaderAddress,
         ulong exportShaderAddress,
@@ -4220,7 +4247,9 @@ public static partial class AgcExports
                 return false;
             }
 
-            var isStorage = Gen5ShaderTranslator.IsStorageImageOperation(binding.Opcode);
+            var isStorage = Gen5ShaderTranslator.RequiresStorageImage(
+                binding,
+                stageBindings);
             if (_traceAgcShader)
             {
                 TraceAgcShader(
@@ -4505,7 +4534,87 @@ public static partial class AgcExports
         return new GuestRenderState(
             blends,
             scissor,
-            DecodeViewport(registers, target.Width, target.Height, scissor));
+            DecodeViewport(registers, target.Width, target.Height, scissor))
+        {
+            Depth = DecodeDepthState(registers),
+        };
+    }
+
+    internal static GuestDepthState DecodeDepthState(
+        IReadOnlyDictionary<uint, uint> registers)
+    {
+        var hasDepthControl = registers.TryGetValue(DbDepthControl, out var control);
+        registers.TryGetValue(DbRenderControl, out var renderControl);
+        return new GuestDepthState(
+            TestEnable: (control & 0x2u) != 0,
+            WriteEnable: (control & 0x4u) != 0,
+            CompareOp: hasDepthControl
+                ? (control >> 4) & 0x7u
+                : GuestDepthState.Default.CompareOp,
+            ClearEnable: (renderControl & 0x1u) != 0);
+    }
+
+    internal static GuestDepthTarget? DecodeDepthTarget(
+        IReadOnlyDictionary<uint, uint> registers)
+    {
+        var depthState = DecodeDepthState(registers);
+        if (!depthState.TestEnable &&
+            !depthState.WriteEnable &&
+            !depthState.ClearEnable)
+        {
+            return null;
+        }
+
+        if (!registers.TryGetValue(DbZInfo, out var zInfo) ||
+            !registers.TryGetValue(DbDepthSizeXy, out var sizeXy))
+        {
+            return null;
+        }
+
+        var guestFormat = zInfo & 0x3u;
+        if (guestFormat == 0)
+        {
+            return null;
+        }
+
+        registers.TryGetValue(DbZReadBase, out var readBase);
+        registers.TryGetValue(DbZWriteBase, out var writeBase);
+        registers.TryGetValue(DbZReadBaseHi, out var readBaseHi);
+        registers.TryGetValue(DbZWriteBaseHi, out var writeBaseHi);
+        var readAddress =
+            ((ulong)(readBaseHi & 0xFFu) << 40) | ((ulong)readBase << 8);
+        var writeAddress =
+            ((ulong)(writeBaseHi & 0xFFu) << 40) | ((ulong)writeBase << 8);
+        if (readAddress == 0 && writeAddress == 0)
+        {
+            return null;
+        }
+
+        var width = (sizeXy & 0x3FFFu) + 1;
+        var height = ((sizeXy >> 16) & 0x3FFFu) + 1;
+        if (width > 16384 || height > 16384)
+        {
+            return null;
+        }
+
+        registers.TryGetValue(DbDepthView, out var depthView);
+        var clearDepth = registers.TryGetValue(DbDepthClear, out var clearBits)
+            ? BitConverter.UInt32BitsToSingle(clearBits)
+            : 1f;
+        if (!float.IsFinite(clearDepth) || clearDepth < 0f || clearDepth > 1f)
+        {
+            clearDepth = 1f;
+        }
+
+        return new GuestDepthTarget(
+            readAddress,
+            writeAddress,
+            width,
+            height,
+            guestFormat,
+            (zInfo >> 4) & 0x1Fu,
+            clearDepth,
+            ReadOnly: (depthView & (1u << 24)) != 0 || writeAddress == 0);
     }
 
     private static GuestBlendState DecodeBlendState(
@@ -5490,7 +5599,9 @@ public static partial class AgcExports
         var hasStorageBinding = false;
         foreach (var binding in bindings)
         {
-            var isStorage = Gen5ShaderTranslator.IsStorageImageOperation(binding.Opcode);
+            var isStorage = Gen5ShaderTranslator.RequiresStorageImage(binding, bindings);
+            var writesStorage =
+                Gen5ShaderTranslator.IsStorageImageOperation(binding.Opcode);
             var descriptorValid = TryDecodeTextureDescriptor(binding.ResourceDescriptor, out var texture);
             if (!descriptorValid)
             {
@@ -5511,7 +5622,7 @@ public static partial class AgcExports
                 $"0x{texture.Address:X16}:{texture.Width}x{texture.Height}:" +
                 $"fmt{texture.Format}/num{texture.NumberType}/tile{texture.TileMode}" +
                 $"{descriptorState}/{ProbeTexture(ctx, texture)}");
-            if (isStorage && descriptorValid && texture.Address != 0)
+            if (writesStorage && descriptorValid && texture.Address != 0)
             {
                 gpuState.ComputeImageWriters[texture.Address] = new ComputeImageWriter(
                     sequence,

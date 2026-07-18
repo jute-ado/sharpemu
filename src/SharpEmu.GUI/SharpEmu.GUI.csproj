@@ -24,6 +24,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <!-- The GUI owns the native presentation control while each game runs in
          an isolated emulator process. -->
     <ProjectReference Include="..\SharpEmu.Core\SharpEmu.Core.csproj" />
+    <ProjectReference Include="..\SharpEmu.HLE\SharpEmu.HLE.csproj" />
     <ProjectReference Include="..\SharpEmu.Libs\SharpEmu.Libs.csproj" />
     <ProjectReference Include="..\SharpEmu.Logging\SharpEmu.Logging.csproj" />
   </ItemGroup>

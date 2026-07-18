@@ -32,16 +32,14 @@ public sealed class KernelSleepCompatibilityTests
                 out _,
                 out _,
                 out var wakeKey,
-                out var resumeHandler,
-                out var wakeHandler,
+                out IGuestThreadBlockWaiter? waiter,
                 out var deadlineTimestamp));
             Assert.Equal("sceKernelUsleep", reason);
             Assert.Equal("sceKernelUsleep:0000000000001234", wakeKey);
-            Assert.NotNull(resumeHandler);
-            Assert.NotNull(wakeHandler);
-            Assert.False(wakeHandler!());
+            Assert.NotNull(waiter);
+            Assert.False(waiter!.TryWake());
             Assert.True(deadlineTimestamp > startedAt);
-            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, resumeHandler!());
+            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, waiter!.Resume());
         }
         finally
         {
@@ -75,18 +73,16 @@ public sealed class KernelSleepCompatibilityTests
                 out _,
                 out _,
                 out var wakeKey,
-                out var resumeHandler,
-                out var wakeHandler,
+                out IGuestThreadBlockWaiter? waiter,
                 out var deadlineTimestamp));
             Assert.Equal("sceKernelNanosleep", reason);
             Assert.Equal("sceKernelNanosleep:0000000000005678", wakeKey);
-            Assert.NotNull(resumeHandler);
-            Assert.NotNull(wakeHandler);
-            Assert.False(wakeHandler!());
+            Assert.NotNull(waiter);
+            Assert.False(waiter!.TryWake());
             Assert.True(deadlineTimestamp > startedAt);
             Assert.All(remain, value => Assert.Equal(0xA5, value));
 
-            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, resumeHandler!());
+            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, waiter!.Resume());
             Assert.All(remain, value => Assert.Equal(0, value));
         }
         finally
@@ -112,9 +108,17 @@ public sealed class KernelSleepCompatibilityTests
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 KernelRuntimeCompatExports.KernelUsleep(context));
             Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-                out _, out _, out _, out _, out var usleepResume, out _, out var usleepDeadline));
+                out _,
+                out _,
+                out _,
+                out _,
+                out IGuestThreadBlockWaiter? usleepWaiter,
+                out var usleepDeadline));
             Assert.Equal(long.MaxValue, usleepDeadline);
-            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, usleepResume!());
+            Assert.NotNull(usleepWaiter);
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                usleepWaiter.Resume());
 
             context[CpuRegister.Rdi] = RequestAddress;
             context[CpuRegister.Rsi] = 0;
@@ -122,9 +126,17 @@ public sealed class KernelSleepCompatibilityTests
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 KernelRuntimeCompatExports.KernelNanosleep(context));
             Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-                out _, out _, out _, out _, out var nanosleepResume, out _, out var nanosleepDeadline));
+                out _,
+                out _,
+                out _,
+                out _,
+                out IGuestThreadBlockWaiter? nanosleepWaiter,
+                out var nanosleepDeadline));
             Assert.Equal(long.MaxValue, nanosleepDeadline);
-            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, nanosleepResume!());
+            Assert.NotNull(nanosleepWaiter);
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                nanosleepWaiter.Resume());
         }
         finally
         {

@@ -71,6 +71,17 @@ internal readonly record struct GuestViewport(
     float MinDepth,
     float MaxDepth);
 
+// CompareOp uses the GCN DB_DEPTH_CONTROL ZFUNC encoding, which matches the
+// Vulkan CompareOp ordering (0=Never through 7=Always).
+internal readonly record struct GuestDepthState(
+    bool TestEnable,
+    bool WriteEnable,
+    uint CompareOp,
+    bool ClearEnable = false)
+{
+    public static GuestDepthState Default { get; } = new(false, false, 7, false);
+}
+
 /// <summary>Factors/funcs are raw guest CB_BLEND*_CONTROL register bitfields; the
 /// defaults (1/0) are the guest ONE/ZERO codes.</summary>
 internal readonly record struct GuestBlendState(
@@ -101,6 +112,8 @@ internal sealed record GuestRenderState(
     GuestRect? Scissor,
     GuestViewport? Viewport)
 {
+    public GuestDepthState Depth { get; init; } = GuestDepthState.Default;
+
     public static GuestRenderState Default { get; } = new(
         [GuestBlendState.Default],
         Scissor: null,
@@ -118,3 +131,17 @@ internal sealed record GuestRenderTarget(
     uint Format,
     uint NumberType,
     uint MipLevels = 1);
+
+/// <summary>Guest DB surface bound alongside a color render target.</summary>
+internal sealed record GuestDepthTarget(
+    ulong ReadAddress,
+    ulong WriteAddress,
+    uint Width,
+    uint Height,
+    uint GuestFormat,
+    uint SwizzleMode,
+    float ClearDepth,
+    bool ReadOnly)
+{
+    public ulong Address => WriteAddress != 0 ? WriteAddress : ReadAddress;
+}

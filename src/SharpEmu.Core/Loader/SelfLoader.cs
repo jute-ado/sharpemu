@@ -369,7 +369,7 @@ public sealed class SelfLoader : ISelfLoader
         if (magic is Ps4SelfMagic or Ps5SelfMagic)
         {
             var selfHeader = ReadUnmanaged<SelfHeader>(imageData, 0);
-            if (!selfHeader.HasKnownLayout || selfHeader.Unknown != 0x22)
+            if (!selfHeader.HasKnownLayout)
             {
                 throw new InvalidDataException("SELF header signature is not recognized.");
             }
@@ -2957,12 +2957,10 @@ public sealed class SelfLoader : ISelfLoader
         private readonly ushort _size2;
         private readonly ulong _fileSize;
         private readonly ushort _segmentCount;
-        private readonly ushort _unknown;
+        private readonly ushort _flags;
         private readonly uint _padding;
 
         public ushort SegmentCount => _segmentCount;
-
-        public ushort Unknown => _unknown;
 
         public ulong FileSize => _fileSize;
 
@@ -2975,14 +2973,9 @@ public sealed class SelfLoader : ISelfLoader
               _ident1 == 0x14 &&
               _ident2 == 0xF5 &&
               _ident3 == 0xEE)) &&
-            _ident4 == 0x00 &&
             _ident5 == 0x01 &&
             _ident6 == 0x01 &&
-            _ident7 == 0x12 &&
-            _ident8 == 0x01 &&
-            _ident9 == 0x01 &&
-            _ident10 == 0x00 &&
-            _ident11 == 0x00;
+            _ident7 == 0x12;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]

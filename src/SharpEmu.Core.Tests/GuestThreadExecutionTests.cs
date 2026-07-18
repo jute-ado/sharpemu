@@ -125,7 +125,7 @@ public sealed class GuestThreadExecutionTests : IDisposable
     }
 
     [Fact]
-    public void DelegateWaiterCompatibilityRoundTripsHandlers()
+    public void DelegateWaiterRoundTripsThroughCanonicalWaiter()
     {
         _ = GuestThreadExecution.EnterGuestThread(0x4567);
         var resumeCalls = 0;
@@ -151,15 +151,13 @@ public sealed class GuestThreadExecutionTests : IDisposable
             out _,
             out _,
             out var wakeKey,
-            out var resume,
-            out var wake,
+            out IGuestThreadBlockWaiter? waiter,
             out var deadline));
         Assert.Equal("delegate-key", wakeKey);
         Assert.Equal(99, deadline);
-        Assert.NotNull(resume);
-        Assert.NotNull(wake);
-        Assert.Equal(17, resume());
-        Assert.True(wake());
+        Assert.NotNull(waiter);
+        Assert.Equal(17, waiter.Resume());
+        Assert.True(waiter.TryWake());
         Assert.Equal(1, resumeCalls);
         Assert.Equal(1, wakeCalls);
     }

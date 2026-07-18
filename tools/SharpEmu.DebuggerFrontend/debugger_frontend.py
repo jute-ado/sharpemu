@@ -988,7 +988,10 @@ class FrontendRequestHandler(BaseHTTPRequestHandler):
 
 class FrontendHttpServer(ThreadingHTTPServer):
     daemon_threads = True
-    allow_reuse_address = True
+    # Windows SO_REUSEADDR allows another listener to take over an active port,
+    # bypassing the verified shutdown handshake below. Unix uses it only to
+    # avoid a restart being delayed by sockets in TIME_WAIT.
+    allow_reuse_address = os.name != "nt"
 
 
 def create_frontend_server(

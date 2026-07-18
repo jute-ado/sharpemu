@@ -1822,6 +1822,57 @@ public static class Gen5ShaderTranslator
         name.StartsWith("ImageStore", StringComparison.Ordinal) ||
         name.StartsWith("ImageAtomic", StringComparison.Ordinal);
 
+    public static bool RequiresStorageImage(
+        Gen5ImageBinding binding,
+        IReadOnlyList<Gen5ImageBinding> stageBindings)
+    {
+        if (IsStorageImageOperation(binding.Opcode))
+        {
+            return true;
+        }
+
+        if (!binding.Opcode.StartsWith("ImageLoad", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // Keep a read and write of the same resolved descriptor coherent through
+        // one storage-image representation. A read-only image load remains a
+        // sampled/fetched image, which also permits block-compressed formats.
+        foreach (var candidate in stageBindings)
+        {
+            if (IsStorageImageOperation(candidate.Opcode) &&
+                DescriptorsEqual(
+                    binding.ResourceDescriptor,
+                    candidate.ResourceDescriptor))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool DescriptorsEqual(
+        IReadOnlyList<uint> left,
+        IReadOnlyList<uint> right)
+    {
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < left.Count; index++)
+        {
+            if (left[index] != right[index])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static Gen5ShaderInstruction CreateInstruction(
         uint pc,
         Gen5ShaderEncoding encoding,

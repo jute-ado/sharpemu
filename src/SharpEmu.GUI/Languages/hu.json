@@ -15,6 +15,7 @@
   "Library.Context.OpenFolder": "Játékmappa megnyitása",
   "Library.Context.CopyPath": "Elérési út másolása",
   "Library.Context.CopyTitleId": "Cím ID másolása",
+  "Library.Context.GameSettings": "Játékbeállítások…",
   "Library.Context.Remove": "Eltávolítás a Könyvtárból",
 
   "Library.Empty.Title": "A könyvtárad üres",
@@ -79,6 +80,13 @@
 
   "Common.On": "Be",
   "Common.Off": "Ki",
+  "Common.Save": "Mentés",
+  "Common.Cancel": "Mégse",
+
+  "PerGame.Title": "Játékonkénti beállítások — {0} ({1})",
+  "PerGame.InheritNote": "A kijelöletlen sorok a globális alapbeállításokat öröklik.",
+  "PerGame.EnvToggles.Label": "Környezeti kapcsolók",
+  "PerGame.EnvToggles.Desc": "A globális SHARPEMU_* kapcsolók felülírása ennél a játéknál.",
 
   "Console.Title": "KONZOL",
   "Console.SearchWatermark": "Keresés...",

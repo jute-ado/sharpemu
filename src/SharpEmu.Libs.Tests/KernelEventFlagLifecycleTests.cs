@@ -54,22 +54,20 @@ public sealed class KernelEventFlagLifecycleTests
                 out _,
                 out _,
                 out var wakeKey,
-                out var resumeHandler,
-                out var wakeHandler,
+                out IGuestThreadBlockWaiter? waiter,
                 out _));
             Assert.Equal("sceKernelWaitEventFlag", reason);
             Assert.Equal($"event_flag:0x{handle:X16}", wakeKey);
-            Assert.NotNull(resumeHandler);
-            Assert.NotNull(wakeHandler);
+            Assert.NotNull(waiter);
 
             context[CpuRegister.Rdi] = handle;
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 KernelEventFlagCompatExports.KernelDeleteEventFlag(context));
-            Assert.True(wakeHandler!());
+            Assert.True(waiter!.TryWake());
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED,
-                resumeHandler!());
+                waiter!.Resume());
             Assert.Equal(0UL, BinaryPrimitives.ReadUInt64LittleEndian(resultBytes));
         }
         finally
@@ -118,11 +116,9 @@ public sealed class KernelEventFlagLifecycleTests
                 out _,
                 out _,
                 out _,
-                out var resumeHandler,
-                out var wakeHandler,
+                out IGuestThreadBlockWaiter? waiter,
                 out _));
-            Assert.NotNull(resumeHandler);
-            Assert.NotNull(wakeHandler);
+            Assert.NotNull(waiter);
 
             context[CpuRegister.Rdi] = handle;
             context[CpuRegister.Rsi] = 0x80;
@@ -131,10 +127,10 @@ public sealed class KernelEventFlagLifecycleTests
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 KernelEventFlagCompatExports.KernelCancelEventFlag(context));
             Assert.Equal(1u, BinaryPrimitives.ReadUInt32LittleEndian(waiterCountBytes));
-            Assert.True(wakeHandler!());
+            Assert.True(waiter!.TryWake());
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_ERROR_CANCELED,
-                resumeHandler!());
+                waiter!.Resume());
         }
         finally
         {
@@ -158,12 +154,10 @@ public sealed class KernelEventFlagLifecycleTests
                 out _,
                 out _,
                 out _,
-                out var resumeHandler,
-                out var wakeHandler,
+                out IGuestThreadBlockWaiter? waiter,
                 out var deadlineTimestamp));
             Assert.Equal("sceKernelWaitEventFlag", reason);
-            Assert.NotNull(resumeHandler);
-            Assert.NotNull(wakeHandler);
+            Assert.NotNull(waiter);
             Assert.True(deadlineTimestamp > Stopwatch.GetTimestamp());
 
             fixture.Context[CpuRegister.Rdi] = fixture.Handle;
@@ -171,8 +165,8 @@ public sealed class KernelEventFlagLifecycleTests
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 KernelEventFlagCompatExports.KernelSetEventFlag(fixture.Context));
-            Assert.True(wakeHandler!());
-            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, resumeHandler!());
+            Assert.True(waiter!.TryWake());
+            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, waiter!.Resume());
             Assert.InRange(
                 BinaryPrimitives.ReadUInt32LittleEndian(fixture.Timeout),
                 1u,
@@ -199,15 +193,13 @@ public sealed class KernelEventFlagLifecycleTests
                 out _,
                 out _,
                 out _,
-                out var resumeHandler,
-                out var wakeHandler,
+                out IGuestThreadBlockWaiter? waiter,
                 out _));
-            Assert.NotNull(resumeHandler);
-            Assert.NotNull(wakeHandler);
-            Assert.False(wakeHandler!());
+            Assert.NotNull(waiter);
+            Assert.False(waiter!.TryWake());
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT,
-                resumeHandler!());
+                waiter!.Resume());
             Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(fixture.Timeout));
             Assert.Equal(0UL, BinaryPrimitives.ReadUInt64LittleEndian(fixture.Result));
 
@@ -246,11 +238,9 @@ public sealed class KernelEventFlagLifecycleTests
                     out _,
                     out _,
                     out _,
-                    out var resumeHandler,
-                    out var wakeHandler,
+                    out IGuestThreadBlockWaiter? waiter,
                     out _));
-                Assert.NotNull(resumeHandler);
-                Assert.NotNull(wakeHandler);
+                Assert.NotNull(waiter);
 
                 Assert.True(fixture.Memory.RemoveRegion(TimeoutAddress));
                 fixture.Context[CpuRegister.Rdi] = fixture.Handle;
@@ -258,10 +248,10 @@ public sealed class KernelEventFlagLifecycleTests
                 Assert.Equal(
                     (int)OrbisGen2Result.ORBIS_GEN2_OK,
                     KernelEventFlagCompatExports.KernelSetEventFlag(fixture.Context));
-                Assert.True(wakeHandler!());
+                Assert.True(waiter!.TryWake());
                 Assert.Equal(
                     (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
-                    resumeHandler!());
+                    waiter!.Resume());
             }
             finally
             {

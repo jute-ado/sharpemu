@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import socket
 import sys
@@ -239,8 +240,8 @@ class FrontendHttpTests(unittest.TestCase):
             root = Path(temporary_directory)
             eboot = root / "eboot.bin"
             eboot.write_bytes(b"test")
-            emulator = root / "fake-sharpemu"
-            emulator.write_text(textwrap.dedent("""\
+            emulator_script = root / "fake-sharpemu.py"
+            emulator_script.write_text(textwrap.dedent("""\
                 #!/usr/bin/env python3
                 import json
                 import socket
@@ -255,19 +256,30 @@ class FrontendHttpTests(unittest.TestCase):
                 print("Fake SharpEmu debug server ready", flush=True)
                 while True:
                     client, _ = listener.accept()
-                    with client:
-                        reader = client.makefile("r", encoding="utf-8")
-                        writer = client.makefile("w", encoding="utf-8")
-                        writer.write(json.dumps({"event": "hello", "protocol": "json-lines/1", "state": "Paused"}) + "\\n")
-                        writer.flush()
-                        for line in reader:
-                            request = json.loads(line)
-                            command = request["command"]
-                            data = {"state": "Paused", "breakpoints": 0} if command == "status" else {"breakpoints": []}
-                            writer.write(json.dumps({"ok": True, "command": command, "data": data}) + "\\n")
+                    try:
+                        with client:
+                            reader = client.makefile("r", encoding="utf-8")
+                            writer = client.makefile("w", encoding="utf-8")
+                            writer.write(json.dumps({"event": "hello", "protocol": "json-lines/1", "state": "Paused"}) + "\\n")
                             writer.flush()
+                            for line in reader:
+                                request = json.loads(line)
+                                command = request["command"]
+                                data = {"state": "Paused", "breakpoints": 0} if command == "status" else {"breakpoints": []}
+                                writer.write(json.dumps({"ok": True, "command": command, "data": data}) + "\\n")
+                                writer.flush()
+                    except OSError:
+                        pass
                 """), encoding="utf-8")
-            emulator.chmod(0o755)
+            emulator_script.chmod(0o755)
+            if os.name == "nt":
+                emulator = root / "fake-sharpemu.cmd"
+                emulator.write_text(
+                    f'@"{sys.executable}" "{emulator_script}" %*\n',
+                    encoding="utf-8",
+                )
+            else:
+                emulator = emulator_script
 
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
                 reservation.bind(("127.0.0.1", 0))
