@@ -449,12 +449,10 @@ public sealed partial class DirectExecutionBackend
 			{
 				GuestThreadExecution.RestoreImportCallFrame(previousImportCallFrame);
 			}
-			DeliverPendingGuestExceptionAtSafePoint(
+			DeliverPendingGuestExceptionAtImportSafePoint(
 				cpuContext,
-				CaptureImportBoundaryContinuation(
-					cpuContext,
-					argPackPtr,
-					num7));
+				argPackPtr,
+				num7);
 			if (dispatchResolved &&
 				orbisGen2Result == OrbisGen2Result.ORBIS_GEN2_OK &&
 				string.Equals(importStubEntry.Nid, "BohYr-F7-is", StringComparison.Ordinal))
@@ -638,12 +636,10 @@ public sealed partial class DirectExecutionBackend
 			}
 		}
 
-		DeliverPendingGuestExceptionAtSafePoint(
+		DeliverPendingGuestExceptionAtImportSafePoint(
 			cpuContext,
-			CaptureImportBoundaryContinuation(
-				cpuContext,
-				argPackPtr,
-				returnRip));
+			argPackPtr,
+			returnRip);
 		if (returnValue != (int)OrbisGen2Result.ORBIS_GEN2_OK)
 		{
 			var returnResult = (OrbisGen2Result)returnValue;
