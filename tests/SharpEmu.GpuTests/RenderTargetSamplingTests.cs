@@ -27,11 +27,13 @@ public sealed class RenderTargetSamplingTests
     private const ulong SourceAddress = 0x0010_0000;
     private const ulong FirstDisplayAddress = 0x0020_0000;
     private const ulong SecondDisplayAddress = 0x0030_0000;
+    private const ulong ThirdDisplayAddress = 0x0038_0000;
     private const ulong CpuTextureAddress = 0x0042_0000;
     private const ulong ShaderAddress = 0x0050_0000;
     private const ulong ConstantsAddress = 0x0060_0000;
     private const ulong ComputeBufferAddress = 0x0070_0000;
     private const ulong DepthAddress = 0x0080_0000;
+    private const ulong InitialDepthAddress = 0x0081_0000;
 
     /// <summary>
     /// Verifies both GPU render-target reuse and a large CPU-backed texture
@@ -48,7 +50,7 @@ public sealed class RenderTargetSamplingTests
         Directory.CreateDirectory(captureDirectory);
         Environment.SetEnvironmentVariable(
             "SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE",
-            $"0x{FirstDisplayAddress:X}@6");
+            $"0x{FirstDisplayAddress:X}@7");
         Environment.SetEnvironmentVariable(
             "SHARPEMU_GUEST_IMAGE_DUMP_DIR",
             captureDirectory);
@@ -112,14 +114,14 @@ public sealed class RenderTargetSamplingTests
             AssertRgbaRegion(
                 pixels,
                 xStart: 0,
-                xEnd: DestinationWidth / 8,
+                xEnd: DestinationWidth / 4,
                 expectedRed: 255,
                 expectedGreen: 0,
                 expectedBlue: 0,
                 expectedAlpha: 255);
             AssertRgbaRegion(
                 pixels,
-                xStart: DestinationWidth / 8,
+                xStart: DestinationWidth / 4,
                 xEnd: DestinationWidth / 2,
                 expectedRed: 32,
                 expectedGreen: 128,
@@ -266,7 +268,20 @@ public sealed class RenderTargetSamplingTests
             red: 0.125f,
             green: 0.5f,
             blue: 0.875f,
-            clearDepth: true);
+            clearDepth: false,
+            depthAddress: InitialDepthAddress,
+            guestMemory: new ArrayCpuMemory(
+                InitialDepthAddress,
+                new byte[SourceWidth * SourceHeight * sizeof(float)]));
+        Assert.True(CopySourceTo(ThirdDisplayAddress));
+
+        SubmitSolidWithDepth(
+            SourceAddress,
+            red: 0.125f,
+            green: 0.5f,
+            blue: 0.875f,
+            clearDepth: true,
+            depthAddress: InitialDepthAddress);
 
         ComposeTextureTo(
             SecondDisplayAddress,
@@ -281,6 +296,18 @@ public sealed class RenderTargetSamplingTests
                 Width: DestinationWidth / 8,
                 Height: DestinationHeight));
         ComposeTextureTo(
+            ThirdDisplayAddress,
+            DestinationWidth,
+            DestinationHeight,
+            destinationAddress,
+            SpirvFixedShaders.CreateCopyFragment(),
+            CreatePassthroughVertex(),
+            destinationRegion: new GuestRect(
+                X: checked((int)(DestinationWidth / 8)),
+                Y: 0,
+                Width: DestinationWidth / 8,
+                Height: DestinationHeight));
+        ComposeTextureTo(
             SourceAddress,
             SourceWidth,
             SourceHeight,
@@ -288,7 +315,7 @@ public sealed class RenderTargetSamplingTests
             SpirvFixedShaders.CreateCopyFragment(),
             CreatePassthroughVertex(),
             destinationRegion: new GuestRect(
-                X: checked((int)(DestinationWidth / 8)),
+                X: checked((int)(DestinationWidth / 4)),
                 Y: 0,
                 Width: DestinationWidth / 8,
                 Height: DestinationHeight));
@@ -318,7 +345,9 @@ public sealed class RenderTargetSamplingTests
         float red,
         float green,
         float blue,
-        bool clearDepth)
+        bool clearDepth,
+        ulong depthAddress = DepthAddress,
+        ICpuMemory? guestMemory = null)
     {
         VulkanVideoPresenter.SubmitOffscreenTranslatedDraw(
             SpirvFixedShaders.CreateSolidFragment(red, green, blue, alpha: 1f),
@@ -343,14 +372,15 @@ public sealed class RenderTargetSamplingTests
                     ClearEnable: clearDepth),
             },
             depthTarget: new GuestDepthTarget(
-                ReadAddress: DepthAddress,
-                WriteAddress: DepthAddress,
+                ReadAddress: depthAddress,
+                WriteAddress: depthAddress,
                 Width: SourceWidth,
                 Height: SourceHeight,
                 GuestFormat: 3,
                 SwizzleMode: 0,
                 ClearDepth: 1f,
-                ReadOnly: false));
+                ReadOnly: false,
+                guestMemory));
     }
 
     private static bool CopySourceTo(ulong destinationAddress) =>

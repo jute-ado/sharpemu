@@ -159,7 +159,8 @@ internal sealed record GuestDepthTarget(
     uint GuestFormat,
     uint SwizzleMode,
     float ClearDepth,
-    bool ReadOnly)
+    bool ReadOnly,
+    ICpuMemory? GuestMemory = null)
 {
     public ulong Address => WriteAddress != 0 ? WriteAddress : ReadAddress;
 }
