@@ -103,41 +103,6 @@ public static class KernelEventQueueCompatExports
         }
     }
 
-    private sealed class EqueueWaiter : IGuestThreadBlockWaiter
-    {
-        public required CpuContext Ctx { get; init; }
-        public required ulong Handle { get; init; }
-        public required ulong EventsAddress { get; init; }
-        public required int EventCapacity { get; init; }
-        public required ulong OutCountAddress { get; init; }
-
-        public int Resume() => ResumeWaitEqueue(Ctx, Handle, EventsAddress, EventCapacity, OutCountAddress);
-
-        public bool TryWake() => !IsValidEqueue(Handle) || HasPendingEvents(Handle);
-    }
-
-    private sealed class TimedEqueueWaiter : IGuestThreadBlockWaiter
-    {
-        public required CpuContext Ctx { get; init; }
-        public required ulong Handle { get; init; }
-        public required ulong EventsAddress { get; init; }
-        public required int EventCapacity { get; init; }
-        public required ulong OutCountAddress { get; init; }
-        public required ulong TimeoutAddress { get; init; }
-        public required long DeadlineTimestamp { get; init; }
-
-        public int Resume() => ResumeTimedWaitEqueue(
-            Ctx,
-            Handle,
-            EventsAddress,
-            EventCapacity,
-            OutCountAddress,
-            TimeoutAddress,
-            DeadlineTimestamp);
-
-        public bool TryWake() => !IsValidEqueue(Handle) || HasPendingEvents(Handle);
-    }
-
     [SysAbiExport(
         Nid = "D0OdFMjp46I",
         ExportName = "sceKernelCreateEqueue",
@@ -181,8 +146,6 @@ public static class KernelEventQueueCompatExports
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
         }
-
-        _wakeKeys.TryRemove(handle, out _);
 
         TraceEventQueue(ctx, "delete", handle);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
@@ -465,96 +428,93 @@ public static class KernelEventQueueCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        if (timeoutAddress == 0 &&
-            GuestThreadExecution.RequestCurrentThreadBlock(
-                ctx,
-                "sceKernelWaitEqueue",
-                GetEventQueueWakeKey(handle),
-                new EqueueWaiter
-                {
-                    Ctx = ctx,
-                    Handle = handle,
-                    EventsAddress = eventsAddress,
-                    EventCapacity = eventCapacity,
-                    OutCountAddress = outCountAddress,
-                }))
+        var deadlineTimestamp = timeoutAddress == 0
+            ? long.MaxValue
+            : GuestThreadExecution.ComputeDeadlineTimestamp(
+                TimeSpan.FromTicks((long)timeoutUsec * 10L));
+        var guestThreadHandle = GuestThreadExecution.CurrentGuestThreadHandle;
+        TraceEventQueue(ctx, "wait-block", handle);
+        GuestThreadBlocking.NoteBlocked(guestThreadHandle, "sceKernelWaitEqueue");
+        try
         {
-            TraceEventQueue(ctx, "wait-block", handle);
-            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+            lock (_eventQueueGate)
+            {
+                while (_eventQueues.Contains(handle) &&
+                       (!_pendingEvents.TryGetValue(handle, out var pending) ||
+                        pending.Count == 0) &&
+                       !GuestThreadBlocking.ShutdownRequested)
+                {
+                    var waitMilliseconds = GuestThreadBlocking.WaitSliceMilliseconds;
+                    if (timeoutAddress != 0)
+                    {
+                        var remainingTicks = deadlineTimestamp - Stopwatch.GetTimestamp();
+                        if (remainingTicks <= 0)
+                        {
+                            break;
+                        }
+
+                        waitMilliseconds =
+                            GuestThreadBlocking.GetWaitMilliseconds(deadlineTimestamp);
+                    }
+
+                    GuestThreadBlocking.Checkpoint(guestThreadHandle, _eventQueueGate);
+                    _ = Monitor.Wait(_eventQueueGate, waitMilliseconds);
+                }
+
+                if (!_eventQueues.Contains(handle))
+                {
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+                }
+
+                if (timeoutAddress != 0)
+                {
+                    var remainingTicks = Math.Max(
+                        0L,
+                        deadlineTimestamp - Stopwatch.GetTimestamp());
+                    var remainingMicros = (uint)Math.Min(
+                        uint.MaxValue,
+                        remainingTicks * 1_000_000d / Stopwatch.Frequency);
+                    if (!ctx.TryWriteUInt32(timeoutAddress, remainingMicros))
+                    {
+                        return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                    }
+                }
+
+                deliveredCount = DequeueEvents(
+                    ctx,
+                    handle,
+                    eventsAddress,
+                    eventCapacity,
+                    outCountAddress,
+                    out eventCopyFaulted);
+            }
+        }
+        finally
+        {
+            GuestThreadBlocking.NoteUnblocked(guestThreadHandle);
         }
 
-        if (timeoutAddress != 0 && timeoutUsec > 0)
+        if (eventCopyFaulted)
         {
-            var deadlineTimestamp = GuestThreadExecution.ComputeDeadlineTimestamp(
-                TimeSpan.FromTicks((long)timeoutUsec * 10L));
-            if (GuestThreadExecution.RequestCurrentThreadBlock(
-                    ctx,
-                    "sceKernelWaitEqueue",
-                    GetEventQueueWakeKey(handle),
-                    new TimedEqueueWaiter
-                    {
-                        Ctx = ctx,
-                        Handle = handle,
-                        EventsAddress = eventsAddress,
-                        EventCapacity = eventCapacity,
-                        OutCountAddress = outCountAddress,
-                        TimeoutAddress = timeoutAddress,
-                        DeadlineTimestamp = deadlineTimestamp,
-                    },
-                    blockDeadlineTimestamp: deadlineTimestamp))
-            {
-                TraceEventQueue(ctx, "wait-block-timed", handle);
-                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-            }
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        if (deliveredCount > 0)
+        {
+            TraceEventQueue(ctx, "wait-deliver", handle);
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
         if (timeoutAddress != 0)
         {
-            var deadline = Environment.TickCount64 +
-                Math.Max(1L, Math.Min((long)timeoutUsec / 1000, int.MaxValue));
-            lock (_eventQueueGate)
-            {
-                while (IsValidEqueue(handle) && !HasPendingEvents(handle))
-                {
-                    var remaining = deadline - Environment.TickCount64;
-                    if (remaining <= 0)
-                    {
-                        break;
-                    }
-
-                    Monitor.Wait(_eventQueueGate, (int)Math.Min(remaining, 100));
-                }
-            }
-
-            deliveredCount = DequeueEvents(
-                ctx,
-                handle,
-                eventsAddress,
-                eventCapacity,
-                outCountAddress,
-                out eventCopyFaulted);
-            if (eventCopyFaulted)
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-            }
-
-            if (!IsValidEqueue(handle))
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
-            }
-
-            if (deliveredCount > 0)
-            {
-                TraceEventQueue(ctx, "wait-timed-deliver", handle);
-                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
-            }
-
             TraceEventQueue(ctx, "wait-timeout", handle);
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
         }
 
         TraceEventQueue(ctx, "wait", handle);
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        return GuestThreadBlocking.ShutdownRequested
+            ? (int)OrbisGen2Result.ORBIS_GEN2_ERROR_CANCELED
+            : (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
     public static bool IsValidEqueue(ulong handle)
@@ -907,86 +867,6 @@ public static class KernelEventQueueCompatExports
         return triggered;
     }
 
-    private static int ResumeWaitEqueue(
-        CpuContext ctx,
-        ulong handle,
-        ulong eventsAddress,
-        int eventCapacity,
-        ulong outCountAddress)
-    {
-        var deliveredCount = DequeueEvents(
-            ctx,
-            handle,
-            eventsAddress,
-            eventCapacity,
-            outCountAddress,
-            out var eventCopyFaulted);
-        if (eventCopyFaulted)
-        {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-        }
-
-        if (!IsValidEqueue(handle))
-        {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
-        }
-
-        return deliveredCount > 0
-            ? (int)OrbisGen2Result.ORBIS_GEN2_OK
-            : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
-    }
-
-    private static int ResumeTimedWaitEqueue(
-        CpuContext ctx,
-        ulong handle,
-        ulong eventsAddress,
-        int eventCapacity,
-        ulong outCountAddress,
-        ulong timeoutAddress,
-        long deadlineTimestamp)
-    {
-        lock (_eventQueueGate)
-        {
-            var hasPendingEvent =
-                _eventQueues.Contains(handle) &&
-                _pendingEvents.TryGetValue(handle, out var events) &&
-                events.Count != 0;
-            var remainingMicros = 0u;
-            if (hasPendingEvent)
-            {
-                var remainingTicks = deadlineTimestamp - Stopwatch.GetTimestamp();
-                remainingMicros = remainingTicks <= 0
-                    ? 0u
-                    : (uint)Math.Min(
-                        uint.MaxValue,
-                        remainingTicks / (double)Stopwatch.Frequency * 1_000_000d);
-            }
-
-            // Commit the timeout copyout before dequeuing. If guest memory changed
-            // while this thread was parked, the caller can retry without losing
-            // the pending event.
-            if (!ctx.TryWriteUInt32(timeoutAddress, remainingMicros))
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-            }
-
-            return ResumeWaitEqueue(
-                ctx,
-                handle,
-                eventsAddress,
-                eventCapacity,
-                outCountAddress);
-        }
-    }
-
-    private static bool HasPendingEvents(ulong handle)
-    {
-        lock (_eventQueueGate)
-        {
-            return _pendingEvents.TryGetValue(handle, out var events) && events.Count != 0;
-        }
-    }
-
     private static void QueueOrUpdateEvent(
         KernelEventDeque queue,
         KernelQueuedEvent queuedEvent)
@@ -1004,21 +884,13 @@ public static class KernelEventQueueCompatExports
         };
     }
 
-    // Wake keys are formatted once per handle: WakeEventQueue runs on every event
-    // enqueue (vblank/flip edges included), so formatting there is steady string churn.
-    private static readonly ConcurrentDictionary<ulong, string> _wakeKeys = new();
-
-    private static string GetEventQueueWakeKey(ulong handle) =>
-        _wakeKeys.GetOrAdd(handle, static h => $"sceKernelWaitEqueue:{h:X16}");
-
     private static void WakeEventQueue(ulong handle)
     {
+        _ = handle;
         lock (_eventQueueGate)
         {
             Monitor.PulseAll(_eventQueueGate);
         }
-
-        _ = GuestThreadExecution.Scheduler?.WakeBlockedThreads(GetEventQueueWakeKey(handle));
     }
 
     private static int DequeueEvents(

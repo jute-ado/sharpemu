@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Diagnostics;
-using SharpEmu.Core.Memory;
 using SharpEmu.HLE;
 using Xunit;
 
@@ -13,154 +12,6 @@ public sealed class GuestThreadExecutionTests : IDisposable
     public GuestThreadExecutionTests() => ResetAmbientState();
 
     public void Dispose() => ResetAmbientState();
-
-    [Fact]
-    public void BlockRequestsRequireGuestThreadAndConsumeOnce()
-    {
-        Assert.False(GuestThreadExecution.RequestCurrentThreadBlock("outside"));
-
-        _ = GuestThreadExecution.EnterGuestThread(0x1234);
-        var waiter = new RecordingWaiter();
-        Assert.True(GuestThreadExecution.RequestCurrentThreadBlock(
-            context: null,
-            reason: " ",
-            wakeKey: "",
-            waiter,
-            blockDeadlineTimestamp: 12345));
-
-        Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-            out var reason,
-            out var continuation,
-            out var hasContinuation,
-            out var wakeKey,
-            out IGuestThreadBlockWaiter? consumedWaiter,
-            out var deadline));
-        Assert.Equal("guest_thread_blocked", reason);
-        Assert.Equal(reason, wakeKey);
-        Assert.False(hasContinuation);
-        Assert.Equal(default, continuation);
-        Assert.Same(waiter, consumedWaiter);
-        Assert.Equal(12345, deadline);
-
-        Assert.False(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-            out reason,
-            out continuation,
-            out hasContinuation,
-            out wakeKey,
-            out consumedWaiter,
-            out deadline));
-        Assert.Empty(reason);
-        Assert.Empty(wakeKey);
-        Assert.False(hasContinuation);
-        Assert.Null(consumedWaiter);
-        Assert.Equal(0, deadline);
-    }
-
-    [Fact]
-    public void BlockContinuationCapturesImportReturnAndCpuState()
-    {
-        _ = GuestThreadExecution.EnterGuestThread(0x2345);
-        var context = CreateContext();
-        var previousFrame = GuestThreadExecution.EnterImportCallFrame(
-            returnRip: 0x1_2345,
-            resumeRsp: 0x2_0000,
-            returnSlotAddress: 0x1_FFF8);
-        try
-        {
-            Assert.True(GuestThreadExecution.RequestCurrentThreadBlock(context, "wait"));
-            Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-                out var reason,
-                out var continuation,
-                out var hasContinuation));
-
-            Assert.Equal("wait", reason);
-            Assert.True(hasContinuation);
-            Assert.Equal(0x1_2345UL, continuation.Rip);
-            Assert.Equal(0x2_0000UL, continuation.Rsp);
-            Assert.Equal(0x1_FFF8UL, continuation.ReturnSlotAddress);
-            Assert.Equal(context.Rflags, continuation.Rflags);
-            Assert.Equal(context.FsBase, continuation.FsBase);
-            Assert.Equal(context.GsBase, continuation.GsBase);
-            Assert.Equal(0UL, continuation.Rax);
-            Assert.Equal(context[CpuRegister.Rcx], continuation.Rcx);
-            Assert.Equal(context[CpuRegister.R15], continuation.R15);
-            Assert.Equal(context.FpuControlWord, continuation.FpuControlWord);
-            Assert.Equal(context.Mxcsr, continuation.Mxcsr);
-            Assert.False(continuation.RestoreFullFpuState);
-        }
-        finally
-        {
-            GuestThreadExecution.RestoreImportCallFrame(previousFrame);
-        }
-    }
-
-    [Theory]
-    [InlineData(0xFFFFUL, 0x20000UL, 0x1FFF8UL)]
-    [InlineData(0x10000UL, 0UL, 0x1FFF8UL)]
-    [InlineData(0x10000UL, 0x20000UL, 0UL)]
-    public void InvalidImportFramesDoNotProduceBlockContinuation(
-        ulong returnRip,
-        ulong resumeRsp,
-        ulong returnSlotAddress)
-    {
-        _ = GuestThreadExecution.EnterGuestThread(0x3456);
-        var previousFrame = GuestThreadExecution.EnterImportCallFrame(
-            returnRip,
-            resumeRsp,
-            returnSlotAddress);
-        try
-        {
-            Assert.True(GuestThreadExecution.RequestCurrentThreadBlock(CreateContext(), "wait"));
-            Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-                out _,
-                out var continuation,
-                out var hasContinuation));
-            Assert.False(hasContinuation);
-            Assert.Equal(default, continuation);
-        }
-        finally
-        {
-            GuestThreadExecution.RestoreImportCallFrame(previousFrame);
-        }
-    }
-
-    [Fact]
-    public void DelegateWaiterRoundTripsThroughCanonicalWaiter()
-    {
-        _ = GuestThreadExecution.EnterGuestThread(0x4567);
-        var resumeCalls = 0;
-        var wakeCalls = 0;
-        Assert.True(GuestThreadExecution.RequestCurrentThreadBlock(
-            context: null,
-            reason: "delegate-wait",
-            wakeKey: "delegate-key",
-            resumeHandler: () =>
-            {
-                resumeCalls++;
-                return 17;
-            },
-            wakeHandler: () =>
-            {
-                wakeCalls++;
-                return true;
-            },
-            blockDeadlineTimestamp: 99));
-
-        Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-            out _,
-            out _,
-            out _,
-            out var wakeKey,
-            out IGuestThreadBlockWaiter? waiter,
-            out var deadline));
-        Assert.Equal("delegate-key", wakeKey);
-        Assert.Equal(99, deadline);
-        Assert.NotNull(waiter);
-        Assert.Equal(17, waiter.Resume());
-        Assert.True(waiter.TryWake());
-        Assert.Equal(1, resumeCalls);
-        Assert.Equal(1, wakeCalls);
-    }
 
     [Fact]
     public void EntryExitAndContextTransferAreOneShotSignals()
@@ -220,7 +71,6 @@ public sealed class GuestThreadExecutionTests : IDisposable
     public void EnteringGuestThreadResetsPendingSignals()
     {
         _ = GuestThreadExecution.EnterGuestThread(0x6789);
-        Assert.True(GuestThreadExecution.RequestCurrentThreadBlock("old-block"));
         GuestThreadExecution.RequestCurrentEntryExit("old-exit", 1UL);
         GuestThreadExecution.RequestCurrentContextTransfer(
             default(GuestCpuContinuation) with { Rip = 0x1234 });
@@ -230,7 +80,6 @@ public sealed class GuestThreadExecutionTests : IDisposable
 
         Assert.Equal(0x6789UL, previous);
         Assert.Equal(0x789AUL, GuestThreadExecution.CurrentGuestThreadHandle);
-        Assert.False(GuestThreadExecution.TryConsumeCurrentThreadBlock(out _));
         Assert.False(GuestThreadExecution.TryConsumeCurrentEntryExit(out _, out _));
         Assert.False(GuestThreadExecution.TryConsumeCurrentContextTransfer(out _));
         Assert.False(GuestThreadExecution.TryGetCurrentImportCallFrame(out _));
@@ -250,35 +99,10 @@ public sealed class GuestThreadExecutionTests : IDisposable
         Assert.Equal(long.MaxValue, GuestThreadExecution.ComputeDeadlineTimestamp(TimeSpan.MaxValue));
     }
 
-    private static CpuContext CreateContext()
-    {
-        var context = new CpuContext(new VirtualMemory(), Generation.Gen5)
-        {
-            Rflags = 0x202,
-            FsBase = 0x1111,
-            GsBase = 0x2222,
-            FpuControlWord = 0x027F,
-            Mxcsr = 0x1FA0,
-        };
-        foreach (var register in Enum.GetValues<CpuRegister>())
-        {
-            context[register] = 0x1000UL + (ulong)register;
-        }
-
-        return context;
-    }
-
     private static void ResetAmbientState()
     {
         GuestThreadExecution.RestoreGuestThread(0);
         GuestThreadExecution.RestoreFiber(0);
         GuestThreadExecution.Scheduler = null;
-    }
-
-    private sealed class RecordingWaiter : IGuestThreadBlockWaiter
-    {
-        public int Resume() => 0;
-
-        public bool TryWake() => false;
     }
 }

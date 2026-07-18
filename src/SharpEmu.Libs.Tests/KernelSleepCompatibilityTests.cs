@@ -15,31 +15,22 @@ public sealed class KernelSleepCompatibilityTests
     private const ulong RemainAddress = 0x2000;
 
     [Fact]
-    public void UsleepParksGuestThreadUntilDeadline()
+    public void UsleepBlocksInPlaceUntilDeadline()
     {
+        GuestThreadBlocking.BeginExecution();
         var context = new CpuContext(new FakeGuestMemory(), Generation.Gen5);
-        context[CpuRegister.Rdi] = 100_000;
+        context[CpuRegister.Rdi] = 20_000;
         var previousGuestThread = GuestThreadExecution.EnterGuestThread(0x1234);
         try
         {
-            var startedAt = Stopwatch.GetTimestamp();
+            var stopwatch = Stopwatch.StartNew();
 
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 KernelRuntimeCompatExports.KernelUsleep(context));
-            Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-                out var reason,
-                out _,
-                out _,
-                out var wakeKey,
-                out IGuestThreadBlockWaiter? waiter,
-                out var deadlineTimestamp));
-            Assert.Equal("sceKernelUsleep", reason);
-            Assert.Equal("sceKernelUsleep:0000000000001234", wakeKey);
-            Assert.NotNull(waiter);
-            Assert.False(waiter!.TryWake());
-            Assert.True(deadlineTimestamp > startedAt);
-            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, waiter!.Resume());
+
+            Assert.True(stopwatch.Elapsed >= TimeSpan.FromMilliseconds(10));
+            Assert.Null(GuestThreadBlocking.DescribeBlock(0x1234));
         }
         finally
         {
@@ -48,12 +39,15 @@ public sealed class KernelSleepCompatibilityTests
     }
 
     [Fact]
-    public void NanosleepParksGuestThreadAndClearsRemainderOnResume()
+    public void NanosleepBlocksInPlaceAndClearsRemainder()
     {
+        GuestThreadBlocking.BeginExecution();
         var memory = new FakeGuestMemory();
         var request = new byte[16];
         var remain = new byte[16];
-        BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), 100_000_000);
+        BinaryPrimitives.WriteInt64LittleEndian(
+            request.AsSpan(sizeof(long)),
+            20_000_000);
         remain.AsSpan().Fill(0xA5);
         memory.AddRegion(RequestAddress, request);
         memory.AddRegion(RemainAddress, remain);
@@ -63,27 +57,15 @@ public sealed class KernelSleepCompatibilityTests
         var previousGuestThread = GuestThreadExecution.EnterGuestThread(0x5678);
         try
         {
-            var startedAt = Stopwatch.GetTimestamp();
+            var stopwatch = Stopwatch.StartNew();
 
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 KernelRuntimeCompatExports.KernelNanosleep(context));
-            Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-                out var reason,
-                out _,
-                out _,
-                out var wakeKey,
-                out IGuestThreadBlockWaiter? waiter,
-                out var deadlineTimestamp));
-            Assert.Equal("sceKernelNanosleep", reason);
-            Assert.Equal("sceKernelNanosleep:0000000000005678", wakeKey);
-            Assert.NotNull(waiter);
-            Assert.False(waiter!.TryWake());
-            Assert.True(deadlineTimestamp > startedAt);
-            Assert.All(remain, value => Assert.Equal(0xA5, value));
 
-            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, waiter!.Resume());
+            Assert.True(stopwatch.Elapsed >= TimeSpan.FromMilliseconds(10));
             Assert.All(remain, value => Assert.Equal(0, value));
+            Assert.Null(GuestThreadBlocking.DescribeBlock(0x5678));
         }
         finally
         {
@@ -92,55 +74,33 @@ public sealed class KernelSleepCompatibilityTests
     }
 
     [Fact]
-    public void VeryLongGuestSleepsSaturateSchedulerDeadlines()
+    public async Task ShutdownUnwindsLongSleep()
     {
-        var memory = new FakeGuestMemory();
-        var request = new byte[16];
-        BinaryPrimitives.WriteInt64LittleEndian(request, long.MaxValue);
-        BinaryPrimitives.WriteInt64LittleEndian(request.AsSpan(sizeof(long)), 999_999_999);
-        memory.AddRegion(RequestAddress, request);
-        var context = new CpuContext(memory, Generation.Gen5);
-        var previousGuestThread = GuestThreadExecution.EnterGuestThread(0x9ABC);
-        try
+        GuestThreadBlocking.BeginExecution();
+        var context = new CpuContext(new FakeGuestMemory(), Generation.Gen5);
+        context[CpuRegister.Rdi] = ulong.MaxValue;
+        var waitTask = Task.Run(() =>
         {
-            context[CpuRegister.Rdi] = ulong.MaxValue;
-            Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_OK,
-                KernelRuntimeCompatExports.KernelUsleep(context));
-            Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-                out _,
-                out _,
-                out _,
-                out _,
-                out IGuestThreadBlockWaiter? usleepWaiter,
-                out var usleepDeadline));
-            Assert.Equal(long.MaxValue, usleepDeadline);
-            Assert.NotNull(usleepWaiter);
-            Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_OK,
-                usleepWaiter.Resume());
+            var previous = GuestThreadExecution.EnterGuestThread(0x9ABC);
+            try
+            {
+                return KernelRuntimeCompatExports.KernelUsleep(context);
+            }
+            finally
+            {
+                GuestThreadExecution.RestoreGuestThread(previous);
+            }
+        });
 
-            context[CpuRegister.Rdi] = RequestAddress;
-            context[CpuRegister.Rsi] = 0;
-            Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_OK,
-                KernelRuntimeCompatExports.KernelNanosleep(context));
-            Assert.True(GuestThreadExecution.TryConsumeCurrentThreadBlock(
-                out _,
-                out _,
-                out _,
-                out _,
-                out IGuestThreadBlockWaiter? nanosleepWaiter,
-                out var nanosleepDeadline));
-            Assert.Equal(long.MaxValue, nanosleepDeadline);
-            Assert.NotNull(nanosleepWaiter);
-            Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_OK,
-                nanosleepWaiter.Resume());
-        }
-        finally
-        {
-            GuestThreadExecution.RestoreGuestThread(previousGuestThread);
-        }
+        Assert.True(SpinWait.SpinUntil(
+            () => GuestThreadBlocking.DescribeBlock(0x9ABC) is not null,
+            TimeSpan.FromSeconds(1)));
+        GuestThreadBlocking.RequestShutdown();
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            await waitTask.WaitAsync(TimeSpan.FromSeconds(1)));
+        Assert.Null(GuestThreadBlocking.DescribeBlock(0x9ABC));
+        GuestThreadBlocking.BeginExecution();
     }
 }
