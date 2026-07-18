@@ -13,6 +13,7 @@ public static partial class Gen5SpirvTranslator
     private const uint LdsDwordCount = 8192;
     private const uint ScratchDwordCount = 4096;
     private const uint RdnaWaveLaneCount = 32;
+    private const uint GraphicsWaveLaneCount = 64;
 
     public static SpirvImageFormat DecodeStorageImageFormat(
         uint dataFormat,
@@ -132,7 +133,8 @@ public static partial class Gen5SpirvTranslator
             globalBufferBase,
             totalGlobalBufferCount,
             imageBindingBase,
-            scalarRegisterBufferIndex);
+            scalarRegisterBufferIndex,
+            GraphicsWaveLaneCount);
         return context.TryCompile(out shader, out error);
     }
 
@@ -157,7 +159,8 @@ public static partial class Gen5SpirvTranslator
             globalBufferBase,
             totalGlobalBufferCount,
             imageBindingBase,
-            scalarRegisterBufferIndex);
+            scalarRegisterBufferIndex,
+            GraphicsWaveLaneCount);
         return context.TryCompile(out shader, out error);
     }
 
@@ -205,6 +208,7 @@ public static partial class Gen5SpirvTranslator
         private readonly IReadOnlyList<Gen5PixelOutputBinding> _pixelOutputBindings;
         private readonly uint _waveLaneCount;
         private readonly bool _emulateWave64;
+        private readonly bool _perInvocationGraphicsMasks;
         private readonly uint _localSizeX;
         private readonly uint _localSizeY;
         private readonly uint _localSizeZ;
@@ -319,6 +323,12 @@ public static partial class Gen5SpirvTranslator
             _evaluation = evaluation;
             _pixelOutputBindings = pixelOutputBindings;
             _waveLaneCount = waveLaneCount;
+            // Graphics EXEC/VCC are invocation-local state. Reconstructing a
+            // guest wave from the host subgroup couples masks to the host's
+            // lane/pixel layout, which is not GCN-compatible on AMD RDNA.
+            _perInvocationGraphicsMasks =
+                stage is Gen5SpirvStage.Vertex or Gen5SpirvStage.Pixel &&
+                waveLaneCount == GraphicsWaveLaneCount;
             _emulateWave64 =
                 stage == Gen5SpirvStage.Compute &&
                 waveLaneCount == 64 &&
@@ -503,16 +513,20 @@ public static partial class Gen5SpirvTranslator
             if (UsesSubgroupOperations() && !_emulateWave64)
             {
                 _module.AddCapability(SpirvCapability.GroupNonUniform);
-                // Native wave32 initializes EXEC/VCC from a subgroup ballot,
-                // even when the guest instruction itself only shuffles lanes.
-                _module.AddCapability(SpirvCapability.GroupNonUniformBallot);
+                if (!_perInvocationGraphicsMasks ||
+                    UsesReadFirstLane())
+                {
+                    _module.AddCapability(
+                        SpirvCapability.GroupNonUniformBallot);
+                }
 
                 if (UsesSubgroupShuffle())
                 {
                     _module.AddCapability(SpirvCapability.GroupNonUniformShuffle);
                 }
 
-                if (UsesWaveControl())
+                if (UsesWaveControl() &&
+                    !_perInvocationGraphicsMasks)
                 {
                     _module.AddCapability(SpirvCapability.GroupNonUniformVote);
                 }
@@ -5933,6 +5947,7 @@ public static partial class Gen5SpirvTranslator
             _module.AddInstruction(SpirvOp.LogicalNot, _boolType, value);
 
         private uint SubgroupAny(uint condition) =>
+            _perInvocationGraphicsMasks ||
             !HasGuestWaveLanes()
                 ? condition
                 : _emulateWave64
@@ -5956,7 +5971,7 @@ public static partial class Gen5SpirvTranslator
             {
                 return BitwiseAnd(
                     Load(_uintType, _subgroupInvocationIdInput),
-                    UInt(31));
+                    UInt(_waveLaneCount - 1));
             }
 
             return UInt(0);
@@ -6009,6 +6024,16 @@ public static partial class Gen5SpirvTranslator
 
         private uint BooleanToWaveMask(uint condition)
         {
+            if (_perInvocationGraphicsMasks)
+            {
+                return _module.AddInstruction(
+                    SpirvOp.Select,
+                    _ulongType,
+                    condition,
+                    _module.Constant64(_ulongType, 1),
+                    _module.Constant64(_ulongType, 0));
+            }
+
             if (!HasGuestWaveLanes())
             {
                 return BooleanToLaneMask(condition);
@@ -6114,17 +6139,25 @@ public static partial class Gen5SpirvTranslator
         }
 
         private uint IsWaveMaskActive(uint mask) =>
+            _perInvocationGraphicsMasks ||
             !HasGuestWaveLanes()
                 ? IsNotZero64(mask)
                 : IsCurrentLaneSet(mask);
 
-        private uint IsCurrentLaneSet(uint mask) =>
-            IsNotZero64(
+        private uint IsCurrentLaneSet(uint mask)
+        {
+            if (_perInvocationGraphicsMasks)
+            {
+                return IsNotZero64(mask);
+            }
+
+            return IsNotZero64(
                 _module.AddInstruction(
                     SpirvOp.BitwiseAnd,
                     _ulongType,
                     mask,
                     CurrentLaneBit()));
+        }
 
         private void StoreWaveMask(uint register, uint condition) =>
             StoreS64(register, BooleanToWaveMask(condition));
@@ -6182,6 +6215,19 @@ public static partial class Gen5SpirvTranslator
                     "DsPermuteB32" or
                     "DsBpermuteB32" or
                     "DsSwizzleB32");
+
+        private bool UsesReadFirstLane()
+        {
+            foreach (var instruction in _state.Program.Instructions)
+            {
+                if (instruction.Opcode == "VReadfirstlaneB32")
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         private bool UsesLaneOperations() =>
             _state.Program.Instructions.Any(instruction =>
