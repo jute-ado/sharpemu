@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright (C) 2026 SharpEmu Emulator Project
+SPDX-License-Identifier: GPL-2.0-or-later
+
+Linux CI measures portable emulator logic. Native Metal/AppKit integration and
+the Vulkan presenter require real platform GPU surfaces and are covered by
+platform builds plus the opt-in GPU/game suites. Their independently testable
+policies, formats, shader compilers, and command models live in separate files
+and remain part of this coverage gate.
+-->
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat Code Coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <ExcludeByFile>
+            **/SharpEmu.Libs/Gpu/Metal/*.cs,
+            **/SharpEmu.Libs/VideoOut/VulkanVideoPresenter.cs
+          </ExcludeByFile>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>
