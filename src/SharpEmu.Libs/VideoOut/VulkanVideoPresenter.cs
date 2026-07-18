@@ -355,6 +355,8 @@ internal static unsafe class VulkanVideoPresenter
             ? pendingGuestWorkItems
             : OperatingSystem.IsMacOS() ? 64 : 512;
     private const ulong MaximumCachedHostBufferBytes = 128UL * 1024 * 1024;
+    private const ulong MaximumPersistentGuestBufferBytes =
+        256UL * 1024 * 1024;
     // A captured 4K flip can consume tens of MiB of device-local memory.
     // Retain only a short presentation queue while always preserving the
     // newest generation; older immutable versions are retired immediately.
@@ -8660,7 +8662,8 @@ internal static unsafe class VulkanVideoPresenter
                 return;
             }
 
-            foreach (var request in GuestBufferRangeSet.MergeRequests(requests))
+            var merged = GuestBufferRangeSet.MergeRequests(requests);
+            foreach (var request in merged)
             {
                 EnsureGuestBufferAllocation(
                     request.Range.Start,
@@ -8668,6 +8671,86 @@ internal static unsafe class VulkanVideoPresenter
                     request.Writable
                         ? _activeGuestQueue.Name
                         : SharedReadOnlyGuestBufferQueue);
+            }
+
+            var protectedRanges = new List<GuestBufferRange>(merged.Count);
+            foreach (var request in merged)
+            {
+                protectedRanges.Add(request.Range);
+            }
+
+            TrimGuestBufferAllocations(protectedRanges);
+        }
+
+        private void TrimGuestBufferAllocations(
+            IReadOnlyList<GuestBufferRange> protectedRanges)
+        {
+            var cachedBytes = 0UL;
+            foreach (var allocation in _guestBufferAllocations)
+            {
+                cachedBytes = allocation.Size >
+                    ulong.MaxValue - cachedBytes
+                    ? ulong.MaxValue
+                    : cachedBytes + allocation.Size;
+            }
+
+            if (cachedBytes <= MaximumPersistentGuestBufferBytes)
+            {
+                return;
+            }
+
+            var entries =
+                new GuestBufferCacheEntry[_guestBufferAllocations.Count];
+            for (var index = 0;
+                 index < _guestBufferAllocations.Count;
+                 index++)
+            {
+                var allocation = _guestBufferAllocations[index];
+                entries[index] = new GuestBufferCacheEntry(
+                    new GuestBufferRange(
+                        allocation.BaseAddress,
+                        allocation.Size),
+                    allocation.LastUseTimeline,
+                    IsGuestBufferAllocationReferencedByOpenBatch(allocation));
+            }
+
+            var evictionIndices = GuestBufferRangeSet.SelectEvictions(
+                entries,
+                protectedRanges,
+                _completedTimeline,
+                MaximumPersistentGuestBufferBytes);
+            if (evictionIndices.Count == 0)
+            {
+                return;
+            }
+
+            // Completed writable allocations may still contain dirty guest
+            // bytes. Publish them before destroying their mapped storage.
+            WriteBackAllDirtyGuestBuffers();
+            var evictions =
+                new List<GuestBufferAllocation>(evictionIndices.Count);
+            var reclaimedBytes = 0UL;
+            foreach (var index in evictionIndices)
+            {
+                var allocation = _guestBufferAllocations[index];
+                evictions.Add(allocation);
+                reclaimedBytes = allocation.Size >
+                    ulong.MaxValue - reclaimedBytes
+                    ? ulong.MaxValue
+                    : reclaimedBytes + allocation.Size;
+            }
+
+            foreach (var allocation in evictions)
+            {
+                _guestBufferAllocations.Remove(allocation);
+                DestroyGuestBufferAllocation(allocation);
+            }
+
+            if (ShouldTraceVulkanResources())
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][TRACE] vk.global_buffer_cache_trim " +
+                    $"allocations={evictions.Count} bytes={reclaimedBytes}");
             }
         }
 
