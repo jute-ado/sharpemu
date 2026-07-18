@@ -105,6 +105,8 @@ internal static unsafe class VulkanVideoPresenter
     private static bool _presenterCloseRequested;
     private const string DebugUtilsExtensionName = "VK_EXT_debug_utils";
     private const uint NvidiaVendorId = 0x10DE;
+    private const uint AmdVendorId = 0x1002;
+    private const int LastResortPenalty = 1000;
     private const string PortabilityEnumerationExtensionName = "VK_KHR_portability_enumeration";
     private const string PortabilitySubsetExtensionName = "VK_KHR_portability_subset";
     private static bool _splashHidden;
@@ -115,6 +117,44 @@ internal static unsafe class VulkanVideoPresenter
     private static readonly GuestImageWriteCaptureRequest
         _guestImageWriteCaptureRequest =
             LoadGuestImageWriteCaptureRequest();
+
+    internal static int ScorePhysicalDevice(
+        PhysicalDeviceProperties properties,
+        string name,
+        string? deviceOverride)
+    {
+        if (!string.IsNullOrWhiteSpace(deviceOverride))
+        {
+            return name.Contains(deviceOverride, StringComparison.OrdinalIgnoreCase) ? 1000 : -1000;
+        }
+
+        var score = properties.DeviceType switch
+        {
+            PhysicalDeviceType.DiscreteGpu => 300,
+            PhysicalDeviceType.VirtualGpu => 100,
+            PhysicalDeviceType.IntegratedGpu => 50,
+            PhysicalDeviceType.Cpu => 20,
+            _ => 10,
+        };
+
+        if (properties.VendorID == NvidiaVendorId)
+        {
+            score += 500;
+        }
+
+        return score - ComputeDevicePenalty(properties, OperatingSystem.IsWindows());
+    }
+
+    internal static int ComputeDevicePenalty(
+        PhysicalDeviceProperties properties,
+        bool isWindows)
+    {
+        return isWindows &&
+               properties.DeviceType == PhysicalDeviceType.IntegratedGpu &&
+               properties.VendorID == AmdVendorId
+            ? LastResortPenalty
+            : 0;
+    }
 
     private static PresentedGuestImageCaptureRequest
         LoadPresentedGuestImageCaptureRequest()

@@ -51,6 +51,7 @@ public sealed class Gen5VertexInputSpirvTests
         var evaluation = new Gen5ShaderEvaluation(
             registers,
             registers,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
             [],
             [],
             VertexInputs:
@@ -64,9 +65,7 @@ public sealed class Gen5VertexInputSpirvTests
                     0x1000,
                     4,
                     0,
-                    data,
-                    data.Length,
-                    DataPooled: false),
+                    data),
             ]);
 
         Assert.True(

@@ -10,6 +10,7 @@ namespace SharpEmu.Libs.Tests;
 public sealed class AjmLifecycleTests
 {
     private const int InvalidParameter = unchecked((int)0x806A0001);
+    private const int InvalidContext = unchecked((int)0x80930002);
     private const ulong FirstContextAddress = 0x1000;
     private const ulong SecondContextAddress = 0x2000;
 
@@ -46,7 +47,7 @@ public sealed class AjmLifecycleTests
         Finalize(context, contextId);
 
         context[CpuRegister.Rdi] = contextId;
-        Assert.Equal(InvalidParameter, AjmExports.AjmModuleRegister(context));
+        Assert.Equal(InvalidContext, AjmExports.AjmModuleRegister(context));
     }
 
     [Fact]

@@ -3,7 +3,7 @@
 
 using System.Buffers.Binary;
 using SharpEmu.HLE;
-using SharpEmu.Libs.Audio;
+using SharpEmu.Libs.Ajm;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests.Audio;
