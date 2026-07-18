@@ -53,6 +53,20 @@ uint[] dispatchTopologyWords =
         0xD56C0005, 0x00020501, // v_mul_hi_i32 v5, v1, v2
         0xBF810000,             // s_endpgm
     ]),
+    // Packed f16 fused multiply-add conformance. The exact positive-addend
+    // result lies just above an f16 midpoint, while the negated-addend result
+    // lies just below it. A double-rounded f32 implementation incorrectly
+    // produces 0x7A6A for both.
+    ("pk-f16", true, [
+        0x7E0002FF, 0x41004100, // v_mov_b32 v0, 0x41004100 (2.5 packed)
+        0x7E0202FF, 0x75227522, // v_mov_b32 v1, 0x75227522 (21024 packed)
+        0x7E0402FF, 0x04EA04EA, // v_mov_b32 v2, 0x04EA04EA (~7.496e-5 packed)
+        0xCC0E4003, 0x1C0A0300, // v_pk_fma_f16 v3, v0, v1, v2
+        0xCC0E4404, 0x9C0A0300, // v_pk_fma_f16 v4, v0, v1, neg_lo/neg_hi v2
+        0xE0700000, 0x80020300, // buffer_store_dword v3, off, s[8:11], 0
+        0xE0700004, 0x80020400, // buffer_store_dword v4, off, s[8:11], 0 offset:4
+        0xBF810000,             // s_endpgm
+    ]),
     ("mrt", true, [
         0x7E0002FF, 0x3F800000, // v_mov_b32 v0, 1.0f
         0x7E0202FF, 0x00000000, // v_mov_b32 v1, 0.0f
@@ -932,6 +946,12 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
 
     switch (name)
     {
+        case "pk-f16":
+            expectedWords[0] = 0x7A6B_7A6B;
+            expectedWords[1] = 0x7A6A_7A6A;
+            labels[0] = "v_pk_fma_f16 fused rounds above midpoint";
+            labels[1] = "v_pk_fma_f16 negated addend rounds below midpoint";
+            break;
         case "exec":
             expectedWords[0] = 0x41560000; // fma(1.5f, 2.25f, 10.0f)
             expectedWords[1] = 0x00008001; // high signed product word

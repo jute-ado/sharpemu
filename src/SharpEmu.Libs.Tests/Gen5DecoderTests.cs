@@ -563,6 +563,72 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesPackedF16FmaWithSingleRoundingSequence()
+    {
+        var ctx = CreateContext(
+        [
+            0xCC0E400Eu, 0x1C46210Fu,
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal("VPkFmaF16", program.Instructions[0].Opcode);
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+
+        Assert.False(ContainsGlslExtInst(shader.Spirv, 50));
+        Assert.True(
+            ContainsSpirvOpcode(
+                shader.Spirv,
+                (ushort)SpirvOp.FMul));
+        Assert.True(
+            ContainsSpirvOpcode(
+                shader.Spirv,
+                (ushort)SpirvOp.FAdd));
+        Assert.True(
+            ContainsSpirvOpcode(
+                shader.Spirv,
+                (ushort)SpirvOp.FSub));
+        Assert.True(
+            ContainsSpirvOpcode(
+                shader.Spirv,
+                (ushort)SpirvOp.FOrdNotEqual));
+        Assert.True(
+            ContainsSpirvOpcode(
+                shader.Spirv,
+                (ushort)SpirvOp.Select));
+        Assert.Equal(
+            14,
+            CountSpirvInstructionsWithOperand(
+                shader.Spirv,
+                SpirvOp.Decorate,
+                operandIndex: 2,
+                operand: (uint)SpirvDecoration.NoContraction));
+    }
+
+    [Fact]
     public void CompilesCommonVectorIntegerOperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
