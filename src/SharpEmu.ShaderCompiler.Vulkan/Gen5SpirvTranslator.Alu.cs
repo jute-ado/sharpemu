@@ -5279,7 +5279,8 @@ public static partial class Gen5SpirvTranslator
             var third = GetPackedFloatSource(instruction, control, 2, high);
             var result = instruction.Opcode switch
             {
-                "VPkFmaF16" => Ext(50, _floatType, left, right, third),
+                "VPkFmaF16" =>
+                    EmitPackedF16FusedMultiplyAdd(left, right, third),
                 "VPkAddF16" => _module.AddInstruction(
                     SpirvOp.FAdd,
                     _floatType,
@@ -5298,6 +5299,101 @@ public static partial class Gen5SpirvTranslator
             return control.Clamp
                 ? Ext(43, _floatType, result, Float(0), Float(1))
                 : result;
+        }
+
+        /// <summary>
+        /// Emulates a single-rounded f16 fused multiply-add using f32
+        /// operations. A widened f16 product is exact in f32. Knuth 2Sum
+        /// recovers the addition residual, then an inexact even result is
+        /// stepped one f32 ULP toward the exact value. The following f16 RNE
+        /// pack therefore produces the true fused result without requiring
+        /// the Float16 capability.
+        /// </summary>
+        private uint EmitPackedF16FusedMultiplyAdd(
+            uint left,
+            uint right,
+            uint addend)
+        {
+            var product =
+                EmitNonContractedFloat(SpirvOp.FMul, left, right);
+            var sum =
+                EmitNonContractedFloat(SpirvOp.FAdd, product, addend);
+
+            var productPart =
+                EmitNonContractedFloat(SpirvOp.FSub, sum, addend);
+            var addendPart =
+                EmitNonContractedFloat(SpirvOp.FSub, sum, productPart);
+            var productError =
+                EmitNonContractedFloat(
+                    SpirvOp.FSub,
+                    product,
+                    productPart);
+            var addendError =
+                EmitNonContractedFloat(
+                    SpirvOp.FSub,
+                    addend,
+                    addendPart);
+            var residual =
+                EmitNonContractedFloat(
+                    SpirvOp.FAdd,
+                    productError,
+                    addendError);
+
+            var sumBits = Bitcast(_uintType, sum);
+            var residualBits = Bitcast(_uintType, residual);
+            var inexact = _module.AddInstruction(
+                SpirvOp.FOrdNotEqual,
+                _boolType,
+                residual,
+                Float(0));
+            var evenSignificand = _module.AddInstruction(
+                SpirvOp.IEqual,
+                _boolType,
+                BitwiseAnd(sumBits, UInt(1)),
+                UInt(0));
+            var adjust = _module.AddInstruction(
+                SpirvOp.LogicalAnd,
+                _boolType,
+                inexact,
+                evenSignificand);
+
+            var towardZero = IsNotZero(
+                BitwiseAnd(
+                    BitwiseXor(sumBits, residualBits),
+                    UInt(0x8000_0000)));
+            var stepped = _module.AddInstruction(
+                SpirvOp.Select,
+                _uintType,
+                towardZero,
+                _module.AddInstruction(
+                    SpirvOp.ISub,
+                    _uintType,
+                    sumBits,
+                    UInt(1)),
+                IAdd(sumBits, UInt(1)));
+            var adjusted = _module.AddInstruction(
+                SpirvOp.Select,
+                _uintType,
+                adjust,
+                stepped,
+                sumBits);
+            return Bitcast(_floatType, adjusted);
+        }
+
+        private uint EmitNonContractedFloat(
+            SpirvOp operation,
+            uint left,
+            uint right)
+        {
+            var value = _module.AddInstruction(
+                operation,
+                _floatType,
+                left,
+                right);
+            _module.AddDecoration(
+                value,
+                SpirvDecoration.NoContraction);
+            return value;
         }
 
         private uint GetPackedFloatSource(
