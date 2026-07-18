@@ -76,7 +76,8 @@ internal sealed record VulkanComputeGuestDispatch(
 
 internal sealed record VulkanOrderedGuestAction(
     Action Action,
-    string DebugName);
+    string DebugName,
+    bool BlockForCpuVisibility = false);
 
 internal sealed record VulkanOrderedGuestFlip(
     long Version,
@@ -1555,12 +1556,55 @@ internal static unsafe class VulkanVideoPresenter
                 System.Threading.Monitor.Wait(_gate, 1_000);
             }
 
-            var completed = IsGuestWorkCompletedLocked(workSequence);
+            if (_closed || !IsGuestWorkCompletedLocked(workSequence))
+            {
+                return false;
+            }
+
+            // Logical work completion means the render thread submitted the
+            // command buffer; it does not mean shader writes are CPU-visible.
+            // Only explicit waiters pay for that stronger guarantee. Queue an
+            // ordered visibility marker behind the requested work so normal
+            // GPU-only dispatch chains remain fully asynchronous.
+            var visibilitySequence = EnqueueGuestWorkLocked(
+                new VulkanOrderedGuestAction(
+                    static () => { },
+                    $"wait-for-guest-work:{workSequence}",
+                    BlockForCpuVisibility: true));
+            while (!_closed &&
+                   !IsGuestWorkCompletedLocked(visibilitySequence))
+            {
+                if (!waitIndefinitely)
+                {
+                    var remaining = deadline - Environment.TickCount64;
+                    if (remaining <= 0)
+                    {
+                        Console.Error.WriteLine(
+                            $"[LOADER][WARN] Vulkan guest visibility wait timed out " +
+                            $"sequence={workSequence} marker={visibilitySequence} " +
+                            $"contiguous_completed={_completedGuestWorkSequence} " +
+                            $"out_of_order={_completedGuestWorkOutOfOrder.Count}");
+                        return false;
+                    }
+
+                    System.Threading.Monitor.Wait(
+                        _gate,
+                        checked((int)Math.Min(remaining, 1_000)));
+                    continue;
+                }
+
+                System.Threading.Monitor.Wait(_gate, 1_000);
+            }
+
+            var completed =
+                !_closed &&
+                IsGuestWorkCompletedLocked(visibilitySequence);
             if (_traceGuestWorkCompletion)
             {
                 Console.Error.WriteLine(
                     $"[LOADER][TRACE] vk.guest_work_wait_exit sequence={workSequence} " +
-                    $"completed={completed} contiguous_completed={_completedGuestWorkSequence} " +
+                    $"visibility={visibilitySequence} completed={completed} " +
+                    $"contiguous_completed={_completedGuestWorkSequence} " +
                     $"out_of_order={_completedGuestWorkOutOfOrder.Count}");
             }
             return completed;
@@ -5237,7 +5281,8 @@ internal static unsafe class VulkanVideoPresenter
             }
         }
 
-        private bool TryMakeActiveGuestQueueSubmissionsCpuVisible()
+        private bool MakeActiveGuestQueueSubmissionsCpuVisible(
+            bool waitForCompletion)
         {
             FlushBatchedGuestCommands();
             if (!_lastSubmittedTimelineByGuestQueue.TryGetValue(
@@ -5266,7 +5311,14 @@ internal static unsafe class VulkanVideoPresenter
             }
 
             var fence = target.Fence;
-            var status = _vk.GetFenceStatus(_device, fence);
+            var status = waitForCompletion
+                ? _vk.WaitForFences(
+                    _device,
+                    1,
+                    &fence,
+                    true,
+                    ulong.MaxValue)
+                : _vk.GetFenceStatus(_device, fence);
             if (status == Result.NotReady)
             {
                 return false;
@@ -5331,7 +5383,8 @@ internal static unsafe class VulkanVideoPresenter
 
         private bool TryExecuteOrderedGuestAction(VulkanOrderedGuestAction work)
         {
-            if (!TryMakeActiveGuestQueueSubmissionsCpuVisible())
+            if (!MakeActiveGuestQueueSubmissionsCpuVisible(
+                    work.BlockForCpuVisibility))
             {
                 return false;
             }
