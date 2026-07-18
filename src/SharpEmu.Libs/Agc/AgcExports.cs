@@ -112,12 +112,21 @@ public static partial class AgcExports
     private const uint DbRenderControl = 0x000;
     private const uint DbDepthView = 0x002;
     private const uint DbDepthSizeXy = 0x007;
+    private const uint DbStencilClear = 0x00A;
     private const uint DbDepthClear = 0x00B;
     private const uint DbZInfo = 0x010;
+    private const uint DbStencilInfo = 0x011;
     private const uint DbZReadBase = 0x012;
+    private const uint DbStencilReadBase = 0x013;
     private const uint DbZWriteBase = 0x014;
+    private const uint DbStencilWriteBase = 0x015;
     private const uint DbZReadBaseHi = 0x01A;
+    private const uint DbStencilReadBaseHi = 0x01B;
     private const uint DbZWriteBaseHi = 0x01C;
+    private const uint DbStencilWriteBaseHi = 0x01D;
+    private const uint DbStencilControl = 0x10B;
+    private const uint DbStencilRefMask = 0x10C;
+    private const uint DbStencilRefMaskBack = 0x10D;
     private const uint DbDepthControl = 0x200;
     private const int ColorTargetCount = 8;
     private const uint PsTextureUserDataRegister = 0xC;
@@ -4593,14 +4602,53 @@ public static partial class AgcExports
     {
         var hasDepthControl = registers.TryGetValue(DbDepthControl, out var control);
         registers.TryGetValue(DbRenderControl, out var renderControl);
+        registers.TryGetValue(DbStencilControl, out var stencilControl);
+        registers.TryGetValue(DbStencilRefMask, out var stencilRefMask);
+        registers.TryGetValue(DbStencilRefMaskBack, out var stencilRefMaskBack);
+        registers.TryGetValue(DbStencilClear, out var stencilClear);
+        var front = DecodeStencilFace(
+            stencilControl,
+            stencilRefMask,
+            compareOp: (control >> 8) & 0x7u,
+            operationShift: 0);
+        var back = (control & (1u << 7)) != 0
+            ? DecodeStencilFace(
+                stencilControl,
+                stencilRefMaskBack,
+                compareOp: (control >> 20) & 0x7u,
+                operationShift: 12)
+            : front;
         return new GuestDepthState(
             TestEnable: (control & 0x2u) != 0,
             WriteEnable: (control & 0x4u) != 0,
             CompareOp: hasDepthControl
                 ? (control >> 4) & 0x7u
                 : GuestDepthState.Default.CompareOp,
-            ClearEnable: (renderControl & 0x1u) != 0);
+            ClearEnable: (renderControl & 0x1u) != 0)
+        {
+            Stencil = new GuestStencilState(
+                TestEnable: (control & 0x1u) != 0,
+                ClearEnable: (renderControl & 0x2u) != 0,
+                ClearValue: stencilClear & byte.MaxValue,
+                front,
+                back),
+        };
     }
+
+    private static GuestStencilFaceState DecodeStencilFace(
+        uint control,
+        uint refMask,
+        uint compareOp,
+        int operationShift) =>
+        new(
+            FailOp: (control >> operationShift) & 0xFu,
+            PassOp: (control >> (operationShift + 4)) & 0xFu,
+            DepthFailOp: (control >> (operationShift + 8)) & 0xFu,
+            CompareOp: compareOp,
+            CompareMask: (refMask >> 8) & byte.MaxValue,
+            WriteMask: (refMask >> 16) & byte.MaxValue,
+            Reference: refMask & byte.MaxValue,
+            OperationValue: (refMask >> 24) & byte.MaxValue);
 
     internal static GuestDepthTarget? DecodeDepthTarget(
         IReadOnlyDictionary<uint, uint> registers,
@@ -4609,7 +4657,8 @@ public static partial class AgcExports
         var depthState = DecodeDepthState(registers);
         if (!depthState.TestEnable &&
             !depthState.WriteEnable &&
-            !depthState.ClearEnable)
+            !depthState.ClearEnable &&
+            !depthState.Stencil.IsActive)
         {
             return null;
         }
@@ -4647,6 +4696,41 @@ public static partial class AgcExports
         }
 
         registers.TryGetValue(DbDepthView, out var depthView);
+        ulong stencilReadAddress = 0;
+        ulong stencilWriteAddress = 0;
+        uint stencilFormat = 0;
+        uint stencilSwizzleMode = 0;
+        if (depthState.Stencil.IsActive)
+        {
+            if (!registers.TryGetValue(DbStencilInfo, out var stencilInfo))
+            {
+                return null;
+            }
+
+            stencilFormat = stencilInfo & 0x1u;
+            if (stencilFormat != 1)
+            {
+                return null;
+            }
+
+            registers.TryGetValue(DbStencilReadBase, out var stencilReadBase);
+            registers.TryGetValue(DbStencilWriteBase, out var stencilWriteBase);
+            registers.TryGetValue(DbStencilReadBaseHi, out var stencilReadBaseHi);
+            registers.TryGetValue(DbStencilWriteBaseHi, out var stencilWriteBaseHi);
+            stencilReadAddress =
+                ((ulong)(stencilReadBaseHi & 0xFFu) << 40) |
+                ((ulong)stencilReadBase << 8);
+            stencilWriteAddress =
+                ((ulong)(stencilWriteBaseHi & 0xFFu) << 40) |
+                ((ulong)stencilWriteBase << 8);
+            if (stencilReadAddress == 0 && stencilWriteAddress == 0)
+            {
+                return null;
+            }
+
+            stencilSwizzleMode = (stencilInfo >> 20) & 0x7u;
+        }
+
         var clearDepth = registers.TryGetValue(DbDepthClear, out var clearBits)
             ? BitConverter.UInt32BitsToSingle(clearBits)
             : 1f;
@@ -4664,7 +4748,12 @@ public static partial class AgcExports
             (zInfo >> 4) & 0x1Fu,
             clearDepth,
             ReadOnly: (depthView & (1u << 24)) != 0 || writeAddress == 0,
-            guestMemory);
+            guestMemory,
+            stencilReadAddress,
+            stencilWriteAddress,
+            stencilFormat,
+            stencilSwizzleMode,
+            depthState.Stencil.ClearValue);
     }
 
     internal static bool TryReadDepthPixels(
@@ -4676,13 +4765,49 @@ public static partial class AgcExports
         uint swizzleMode,
         out byte[] pixels)
     {
-        pixels = [];
         var bytesPerElement = guestFormat switch
         {
             1 => sizeof(ushort),
             3 => sizeof(float),
             _ => 0,
         };
+        return TryReadSurfacePixels(
+            guestMemory,
+            address,
+            width,
+            height,
+            bytesPerElement,
+            swizzleMode,
+            out pixels);
+    }
+
+    internal static bool TryReadStencilPixels(
+        ICpuMemory guestMemory,
+        ulong address,
+        uint width,
+        uint height,
+        uint guestFormat,
+        uint swizzleMode,
+        out byte[] pixels) =>
+        TryReadSurfacePixels(
+            guestMemory,
+            address,
+            width,
+            height,
+            guestFormat == 1 ? sizeof(byte) : 0,
+            swizzleMode,
+            out pixels);
+
+    private static bool TryReadSurfacePixels(
+        ICpuMemory guestMemory,
+        ulong address,
+        uint width,
+        uint height,
+        int bytesPerElement,
+        uint swizzleMode,
+        out byte[] pixels)
+    {
+        pixels = [];
         if (address == 0 ||
             width == 0 ||
             height == 0 ||

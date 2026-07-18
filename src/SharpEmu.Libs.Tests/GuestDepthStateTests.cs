@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.Libs.Agc;
+using SharpEmu.Libs.Gpu;
 using System.Buffers.Binary;
 using Xunit;
 
@@ -28,6 +29,64 @@ public sealed class GuestDepthStateTests
         Assert.True(state.WriteEnable);
         Assert.Equal(7u, state.CompareOp);
         Assert.Equal(clearEnable, state.ClearEnable);
+    }
+
+    [Fact]
+    public void DecodeDepthStatePreservesFrontAndBackStencilContracts()
+    {
+        var registers = new Dictionary<uint, uint>
+        {
+            [0x000] = 0x2,
+            [0x00A] = 0x0000017F,
+            [0x10B] = 0x00497565,
+            [0x10C] = 0x78563412,
+            [0x10D] = 0xEFCDAB90,
+            [0x200] = 0x00600581,
+        };
+
+        var state = AgcExports.DecodeDepthState(registers);
+
+        Assert.True(state.Stencil.TestEnable);
+        Assert.True(state.Stencil.ClearEnable);
+        Assert.Equal(0x7Fu, state.Stencil.ClearValue);
+        Assert.Equal(
+            new GuestStencilFaceState(
+                FailOp: 5,
+                PassOp: 6,
+                DepthFailOp: 5,
+                CompareOp: 5,
+                CompareMask: 0x34,
+                WriteMask: 0x56,
+                Reference: 0x12,
+                OperationValue: 0x78),
+            state.Stencil.Front);
+        Assert.Equal(
+            new GuestStencilFaceState(
+                FailOp: 7,
+                PassOp: 9,
+                DepthFailOp: 4,
+                CompareOp: 6,
+                CompareMask: 0xAB,
+                WriteMask: 0xCD,
+                Reference: 0x90,
+                OperationValue: 0xEF),
+            state.Stencil.Back);
+    }
+
+    [Fact]
+    public void DecodeDepthStateReusesFrontStencilStateWhenBackfaceIsDisabled()
+    {
+        var registers = new Dictionary<uint, uint>
+        {
+            [0x10B] = 0x00000675,
+            [0x10C] = 0x78563412,
+            [0x10D] = 0xEFCDAB90,
+            [0x200] = 0x00000301,
+        };
+
+        var state = AgcExports.DecodeDepthState(registers);
+
+        Assert.Equal(state.Stencil.Front, state.Stencil.Back);
     }
 
     [Fact]
@@ -58,6 +117,56 @@ public sealed class GuestDepthStateTests
         Assert.Equal(0.25f, target.ClearDepth);
         Assert.False(target.ReadOnly);
         Assert.Same(memory, target.GuestMemory);
+    }
+
+    [Fact]
+    public void DecodeDepthTargetPreservesSeparateStencilPlane()
+    {
+        var registers = new Dictionary<uint, uint>
+        {
+            [0x007] = 31u | (15u << 16),
+            [0x010] = 3,
+            [0x011] = 1u | (4u << 20),
+            [0x012] = 0x1234,
+            [0x013] = 0x2234,
+            [0x014] = 0x1234,
+            [0x015] = 0x2234,
+            [0x01A] = 0x12,
+            [0x01B] = 0x34,
+            [0x01C] = 0x12,
+            [0x01D] = 0x34,
+            [0x200] = 0x1,
+        };
+
+        var target = Assert.IsType<GuestDepthTarget>(
+            AgcExports.DecodeDepthTarget(registers));
+
+        Assert.True(target.HasStencil);
+        Assert.Equal(0x120000123400UL, target.ReadAddress);
+        Assert.Equal(0x340000223400UL, target.StencilReadAddress);
+        Assert.Equal(target.StencilReadAddress, target.StencilWriteAddress);
+        Assert.Equal(1u, target.StencilFormat);
+        Assert.Equal(4u, target.StencilSwizzleMode);
+        Assert.Equal(0u, target.ClearStencil);
+    }
+
+    [Theory]
+    [InlineData(0u)]
+    [InlineData(2u)]
+    public void DecodeDepthTargetRejectsActiveStencilWithoutS8Format(
+        uint stencilFormat)
+    {
+        var registers = new Dictionary<uint, uint>
+        {
+            [0x007] = 15u | (15u << 16),
+            [0x010] = 3,
+            [0x011] = stencilFormat,
+            [0x012] = 0x1234,
+            [0x013] = 0x2234,
+            [0x200] = 0x1,
+        };
+
+        Assert.Null(AgcExports.DecodeDepthTarget(registers));
     }
 
     [Theory]
@@ -127,6 +236,44 @@ public sealed class GuestDepthStateTests
             out var pixels));
 
         Assert.Equal(source, pixels);
+    }
+
+    [Fact]
+    public void ReadLinearS8StencilPreservesNativeBytes()
+    {
+        const ulong address = 0x0041_8000;
+        byte[] source = [0, 0x7F, byte.MaxValue];
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(address, source);
+
+        Assert.True(AgcExports.TryReadStencilPixels(
+            memory,
+            address,
+            width: (uint)source.Length,
+            height: 1,
+            guestFormat: 1,
+            swizzleMode: 0,
+            out var pixels));
+
+        Assert.Equal(source, pixels);
+    }
+
+    [Fact]
+    public void ReadStencilRejectsUnknownFormat()
+    {
+        const ulong address = 0x0041_9000;
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(address, new byte[4]);
+
+        Assert.False(AgcExports.TryReadStencilPixels(
+            memory,
+            address,
+            width: 2,
+            height: 2,
+            guestFormat: 0,
+            swizzleMode: 0,
+            out var pixels));
+        Assert.Empty(pixels);
     }
 
     [Fact]
