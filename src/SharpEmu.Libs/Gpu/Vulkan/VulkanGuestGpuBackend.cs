@@ -209,7 +209,13 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
         IReadOnlyList<GuestMemoryBuffer> globalMemoryBuffers,
         uint groupCountX,
         uint groupCountY,
-        uint groupCountZ) =>
+        uint groupCountZ,
+        uint baseGroupX = 0,
+        uint baseGroupY = 0,
+        uint baseGroupZ = 0,
+        uint threadCountX = uint.MaxValue,
+        uint threadCountY = uint.MaxValue,
+        uint threadCountZ = uint.MaxValue) =>
         VulkanVideoPresenter.SubmitComputeDispatch(
             shaderAddress,
             Spirv(computeShader),
@@ -217,7 +223,13 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
             globalMemoryBuffers,
             groupCountX,
             groupCountY,
-            groupCountZ);
+            groupCountZ,
+            baseGroupX,
+            baseGroupY,
+            baseGroupZ,
+            threadCountX,
+            threadCountY,
+            threadCountZ);
 
     public bool TrySubmitGuestImage(
         ulong address,

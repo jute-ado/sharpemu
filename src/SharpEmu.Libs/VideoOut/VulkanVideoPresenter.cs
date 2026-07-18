@@ -78,7 +78,13 @@ internal sealed record VulkanComputeGuestDispatch(
     IReadOnlyList<GuestMemoryBuffer> GlobalMemoryBuffers,
     uint GroupCountX,
     uint GroupCountY,
-    uint GroupCountZ);
+    uint GroupCountZ,
+    uint BaseGroupX,
+    uint BaseGroupY,
+    uint BaseGroupZ,
+    uint ThreadCountX,
+    uint ThreadCountY,
+    uint ThreadCountZ);
 
 internal static unsafe class VulkanVideoPresenter
 {
@@ -865,7 +871,13 @@ internal static unsafe class VulkanVideoPresenter
         IReadOnlyList<GuestMemoryBuffer> globalMemoryBuffers,
         uint groupCountX,
         uint groupCountY,
-        uint groupCountZ)
+        uint groupCountZ,
+        uint baseGroupX = 0,
+        uint baseGroupY = 0,
+        uint baseGroupZ = 0,
+        uint threadCountX = uint.MaxValue,
+        uint threadCountY = uint.MaxValue,
+        uint threadCountZ = uint.MaxValue)
     {
         if (computeSpirv.Length == 0 ||
             groupCountX == 0 ||
@@ -891,7 +903,13 @@ internal static unsafe class VulkanVideoPresenter
                     globalMemoryBuffers.ToArray(),
                     groupCountX,
                     groupCountY,
-                    groupCountZ));
+                    groupCountZ,
+                    baseGroupX,
+                    baseGroupY,
+                    baseGroupZ,
+                    threadCountX,
+                    threadCountY,
+                    threadCountZ));
         }
     }
 
@@ -4172,6 +4190,18 @@ internal static unsafe class VulkanVideoPresenter
             {
                 SType = StructureType.PipelineLayoutCreateInfo,
             };
+            var computeThreadLimitRange = new PushConstantRange
+            {
+                StageFlags = ShaderStageFlags.ComputeBit,
+                Offset = 0,
+                Size = 3 * sizeof(uint),
+            };
+            if ((stageFlags & ShaderStageFlags.ComputeBit) != 0)
+            {
+                pipelineInfo.PushConstantRangeCount = 1;
+                pipelineInfo.PPushConstantRanges = &computeThreadLimitRange;
+            }
+
             if (descriptorSetLayout.Handle != 0)
             {
                 pipelineInfo.SetLayoutCount = 1;
@@ -5678,6 +5708,12 @@ internal static unsafe class VulkanVideoPresenter
                 var batchCount = Math.Max(
                     1u,
                     (uint)Math.Ceiling(work.GroupCountZ / (double)MaxComputeZSlicesPerSubmission));
+                var threadLimits = stackalloc uint[3]
+                {
+                    work.ThreadCountX,
+                    work.ThreadCountY,
+                    work.ThreadCountZ,
+                };
 
                 for (var batchIndex = 0u; batchIndex < batchCount; batchIndex++)
                 {
@@ -5722,6 +5758,14 @@ internal static unsafe class VulkanVideoPresenter
                             null);
                     }
 
+                    _vk.CmdPushConstants(
+                        _commandBuffer,
+                        resources.PipelineLayout,
+                        ShaderStageFlags.ComputeBit,
+                        0,
+                        3 * sizeof(uint),
+                        threadLimits);
+
                     RecordChunkedComputeDispatch(_commandBuffer, work, zStart, zCount);
 
                     if (isLastBatch)
@@ -5755,6 +5799,7 @@ internal static unsafe class VulkanVideoPresenter
                 TraceVulkanShader(
                     $"vk.compute_dispatch groups={work.GroupCountX}x" +
                     $"{work.GroupCountY}x{work.GroupCountZ} " +
+                    $"base={work.BaseGroupX}x{work.BaseGroupY}x{work.BaseGroupZ} " +
                     $"textures={work.Textures.Count} cs=0x{work.ShaderAddress:X16} " +
                     $"batches={batchCount}");
             }
@@ -5809,9 +5854,9 @@ internal static unsafe class VulkanVideoPresenter
                     var countY = Math.Min(yChunk, work.GroupCountY - y);
                     _vk.CmdDispatchBase(
                         commandBuffer,
-                        0,
-                        y,
-                        z,
+                        work.BaseGroupX,
+                        checked(work.BaseGroupY + y),
+                        checked(work.BaseGroupZ + z),
                         work.GroupCountX,
                         countY,
                         1);

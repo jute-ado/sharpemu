@@ -26,6 +26,16 @@ using SharpEmu.ShaderCompiler;
 using SharpEmu.ShaderCompiler.Vulkan;
 
 const ulong ProgramAddress = 0x100000;
+uint[] dispatchTopologyWords =
+[
+    0x7E080200,             // v_mov_b32 v4, s0 (workgroup X)
+    0x7E0A0201,             // v_mov_b32 v5, s1 (threadgroup size)
+    0xD5690006, 0x00020B04, // v_mul_lo_u32 v6, v4, v5
+    0xD77F0007, 0x00020D00, // v_add_nc_i32 v7, v0, v6
+    0x34100E82,             // v_lshlrev_b32 v8, 2, v7
+    0xE0701000, 0x80020708, // buffer_store_dword v7, v8, s[8:11], 0 offen
+    0xBF810000,             // s_endpgm
+];
 
 (string Name, bool ExpectTranslate, uint[] Words)[] testPrograms =
 [
@@ -470,15 +480,11 @@ const ulong ProgramAddress = 0x100000;
     // Two workgroups of four invocations synthesize a global X index from the
     // local invocation ID (v0), workgroup X (s0), and threadgroup size (s1).
     // An offen store lets every invocation write its own deterministic slot.
-    ("exec-dispatch-topology", true, [
-        0x7E080200,             // v_mov_b32 v4, s0 (workgroup X)
-        0x7E0A0201,             // v_mov_b32 v5, s1 (threadgroup size)
-        0xD5690006, 0x00020B04, // v_mul_lo_u32 v6, v4, v5
-        0xD77F0007, 0x00020D00, // v_add_nc_i32 v7, v0, v6
-        0x34100E82,             // v_lshlrev_b32 v8, 2, v7
-        0xE0701000, 0x80020708, // buffer_store_dword v7, v8, s[8:11], 0 offen
-        0xBF810000,             // s_endpgm
-    ]),
+    ("exec-dispatch-topology", true, dispatchTopologyWords),
+    ("exec-dispatch-base", true, dispatchTopologyWords),
+    // Two complete Vulkan workgroups are launched, but the guest's exact
+    // thread bound stops lanes 6 and 7 before they execute the store.
+    ("exec-dispatch-partial", true, dispatchTopologyWords),
     // A 2x2 local size dispatched over a 2x2 workgroup grid combines local
     // invocation X/Y (v0/v1) with workgroup X/Y (s0/s1) into a 4x4 index.
     ("exec-dispatch-2d", true, [
@@ -828,6 +834,12 @@ foreach (var (name, expectTranslate, words) in testPrograms)
                 conformanceCase.GroupCountX,
                 conformanceCase.GroupCountY,
                 conformanceCase.GroupCountZ,
+                conformanceCase.BaseGroupX,
+                conformanceCase.BaseGroupY,
+                conformanceCase.BaseGroupZ,
+                conformanceCase.ThreadCountX,
+                conformanceCase.ThreadCountY,
+                conformanceCase.ThreadCountZ,
             };
             File.WriteAllText(
                 manifestPath,
@@ -1359,6 +1371,41 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
                 GroupCountX: 2,
                 WorkGroupXRegister: 0,
                 ThreadGroupSizeRegister: 1);
+        case "exec-dispatch-partial":
+            for (uint index = 0; index < 6; index++)
+            {
+                expectedWords[index] = index;
+                labels[index] =
+                    $"in-bounds global invocation X {index} writes its indexed slot";
+            }
+
+            labels[6] = "out-of-bounds invocation 6 leaves its slot untouched";
+            labels[7] = "out-of-bounds invocation 7 leaves its slot untouched";
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                LocalSizeX: 4,
+                GroupCountX: 2,
+                ThreadCountX: 6,
+                WorkGroupXRegister: 0,
+                ThreadGroupSizeRegister: 1);
+        case "exec-dispatch-base":
+            for (uint index = 8; index < 12; index++)
+            {
+                expectedWords[index] = index;
+                labels[index] =
+                    $"base workgroup global invocation X {index} writes its indexed slot";
+            }
+
+            return new SyntheticConformanceCase(
+                initialWords,
+                expectedWords,
+                labels,
+                LocalSizeX: 4,
+                BaseGroupX: 2,
+                WorkGroupXRegister: 0,
+                ThreadGroupSizeRegister: 1);
         case "exec-dispatch-2d":
             for (uint index = 0; index < 16; index++)
             {
@@ -1547,6 +1594,12 @@ internal sealed record SyntheticConformanceCase(
     uint GroupCountX = 1,
     uint GroupCountY = 1,
     uint GroupCountZ = 1,
+    uint BaseGroupX = 0,
+    uint BaseGroupY = 0,
+    uint BaseGroupZ = 0,
+    uint? ThreadCountX = null,
+    uint? ThreadCountY = null,
+    uint? ThreadCountZ = null,
     uint? WorkGroupXRegister = null,
     uint? WorkGroupYRegister = null,
     uint? WorkGroupZRegister = null,

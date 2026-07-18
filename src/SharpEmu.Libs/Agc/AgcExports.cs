@@ -72,6 +72,9 @@ public static partial class AgcExports
     private const uint ComputePgmLo = 0x20C;
     private const uint ComputePgmHi = 0x20D;
     private const uint ComputePgmRsrc2 = 0x213;
+    private const uint ComputeStartX = 0x204;
+    private const uint ComputeStartY = 0x205;
+    private const uint ComputeStartZ = 0x206;
     private const uint ComputeNumThreadX = 0x207;
     private const uint ComputeNumThreadY = 0x208;
     private const uint ComputeNumThreadZ = 0x209;
@@ -395,11 +398,44 @@ public static partial class AgcExports
         ulong ShaderAddress,
         string Opcode);
 
-    private readonly record struct ComputeDispatch(
+    internal readonly record struct ComputeDispatchArguments(
+        uint EndX,
+        uint EndY,
+        uint EndZ,
+        uint Initiator,
+        uint ProgrammedBaseX,
+        uint ProgrammedBaseY,
+        uint ProgrammedBaseZ,
+        uint LocalSizeX,
+        uint LocalSizeY,
+        uint LocalSizeZ,
+        uint PartialSizeX,
+        uint PartialSizeY,
+        uint PartialSizeZ,
+        bool IsIndirect);
+
+    internal readonly record struct ComputeDispatchTopology(
         uint GroupCountX,
         uint GroupCountY,
         uint GroupCountZ,
-        uint WaveLaneCount);
+        uint BaseGroupX,
+        uint BaseGroupY,
+        uint BaseGroupZ,
+        uint WaveLaneCount,
+        bool IsIndirect,
+        uint ThreadCountX,
+        uint ThreadCountY,
+        uint ThreadCountZ)
+    {
+        public (uint X, uint Y, uint Z) GroupCounts =>
+            (GroupCountX, GroupCountY, GroupCountZ);
+
+        public (uint X, uint Y, uint Z) BaseGroups =>
+            (BaseGroupX, BaseGroupY, BaseGroupZ);
+
+        public (uint X, uint Y, uint Z) ThreadLimits =>
+            (ThreadCountX, ThreadCountY, ThreadCountZ);
+    }
 
     private sealed class SubmittedDcbState
     {
@@ -5493,7 +5529,7 @@ public static partial class AgcExports
         ulong packetAddress,
         uint packetLength,
         uint opcode,
-        out ComputeDispatch dispatch)
+        out ComputeDispatchTopology dispatch)
     {
         dispatch = default;
         ulong dimensionsAddress;
@@ -5529,24 +5565,202 @@ public static partial class AgcExports
             dimensionsAddress = state.IndirectArgsAddress + dataOffset;
         }
 
-        if ((initiator & 1) == 0 ||
-            !ctx.TryReadUInt32(dimensionsAddress, out var groupCountX) ||
-            !ctx.TryReadUInt32(dimensionsAddress + 4, out var groupCountY) ||
-            !ctx.TryReadUInt32(dimensionsAddress + 8, out var groupCountZ) ||
-            groupCountX == 0 ||
-            groupCountY == 0 ||
-            groupCountZ == 0)
+        if (!ctx.TryReadUInt32(dimensionsAddress, out var endX) ||
+            !ctx.TryReadUInt32(dimensionsAddress + 4, out var endY) ||
+            !ctx.TryReadUInt32(dimensionsAddress + 8, out var endZ))
         {
             return false;
         }
 
-        dispatch = new ComputeDispatch(
-            groupCountX,
-            groupCountY,
-            groupCountZ,
-            DecodeComputeWaveLaneCount(initiator));
-        return true;
+        state.ShRegisters.TryGetValue(ComputeStartX, out var baseX);
+        state.ShRegisters.TryGetValue(ComputeStartY, out var baseY);
+        state.ShRegisters.TryGetValue(ComputeStartZ, out var baseZ);
+        return TryResolveComputeDispatchTopology(
+            new ComputeDispatchArguments(
+                endX,
+                endY,
+                endZ,
+                initiator,
+                baseX,
+                baseY,
+                baseZ,
+                GetComputeLocalSize(state.ShRegisters, ComputeNumThreadX),
+                GetComputeLocalSize(state.ShRegisters, ComputeNumThreadY),
+                GetComputeLocalSize(state.ShRegisters, ComputeNumThreadZ),
+                GetComputePartialSize(state.ShRegisters, ComputeNumThreadX),
+                GetComputePartialSize(state.ShRegisters, ComputeNumThreadY),
+                GetComputePartialSize(state.ShRegisters, ComputeNumThreadZ),
+                IsIndirect: opcode == ItDispatchIndirect),
+            out dispatch,
+            out _);
     }
+
+    internal static bool TryResolveComputeDispatchTopology(
+        ComputeDispatchArguments arguments,
+        out ComputeDispatchTopology topology,
+        out string error)
+    {
+        const uint partialThreadGroupEnabled = 1u << 1;
+        const uint forceStartAtZero = 1u << 2;
+        const uint useThreadDimensions = 1u << 5;
+
+        topology = default;
+        error = string.Empty;
+        if ((arguments.Initiator & 1) == 0)
+        {
+            error = "dispatch initiator is disabled";
+            return false;
+        }
+
+        if (arguments.LocalSizeX == 0 ||
+            arguments.LocalSizeY == 0 ||
+            arguments.LocalSizeZ == 0)
+        {
+            error = "local size must be nonzero";
+            return false;
+        }
+
+        var baseX = (arguments.Initiator & forceStartAtZero) != 0
+            ? 0u
+            : arguments.ProgrammedBaseX;
+        var baseY = (arguments.Initiator & forceStartAtZero) != 0
+            ? 0u
+            : arguments.ProgrammedBaseY;
+        var baseZ = (arguments.Initiator & forceStartAtZero) != 0
+            ? 0u
+            : arguments.ProgrammedBaseZ;
+        var hasPartialGroup =
+            (arguments.Initiator & partialThreadGroupEnabled) != 0;
+        if (hasPartialGroup &&
+            (!IsValidPartialSize(arguments.PartialSizeX, arguments.LocalSizeX) ||
+             !IsValidPartialSize(arguments.PartialSizeY, arguments.LocalSizeY) ||
+             !IsValidPartialSize(arguments.PartialSizeZ, arguments.LocalSizeZ)))
+        {
+            error =
+                "partial group sizes must be nonzero and no larger than the local size";
+            return false;
+        }
+
+        try
+        {
+            uint groupCountX;
+            uint groupCountY;
+            uint groupCountZ;
+            var threadCountX = uint.MaxValue;
+            var threadCountY = uint.MaxValue;
+            var threadCountZ = uint.MaxValue;
+            if ((arguments.Initiator & useThreadDimensions) != 0)
+            {
+                var startX = (ulong)baseX * arguments.LocalSizeX;
+                var startY = (ulong)baseY * arguments.LocalSizeY;
+                var startZ = (ulong)baseZ * arguments.LocalSizeZ;
+                if (arguments.EndX <= startX ||
+                    arguments.EndY <= startY ||
+                    arguments.EndZ <= startZ)
+                {
+                    error = "thread end must be after the base thread";
+                    return false;
+                }
+
+                var remainingX = (ulong)arguments.EndX - startX;
+                var remainingY = (ulong)arguments.EndY - startY;
+                var remainingZ = (ulong)arguments.EndZ - startZ;
+                groupCountX = CeilDivide(remainingX, arguments.LocalSizeX);
+                groupCountY = CeilDivide(remainingY, arguments.LocalSizeY);
+                groupCountZ = CeilDivide(remainingZ, arguments.LocalSizeZ);
+                threadCountX = arguments.EndX;
+                threadCountY = arguments.EndY;
+                threadCountZ = arguments.EndZ;
+
+                if (hasPartialGroup &&
+                    (arguments.PartialSizeX != FinalGroupSize(
+                         remainingX,
+                         arguments.LocalSizeX) ||
+                     arguments.PartialSizeY != FinalGroupSize(
+                         remainingY,
+                         arguments.LocalSizeY) ||
+                     arguments.PartialSizeZ != FinalGroupSize(
+                         remainingZ,
+                         arguments.LocalSizeZ)))
+                {
+                    error = "partial group sizes do not match the exact thread dimensions";
+                    return false;
+                }
+            }
+            else
+            {
+                if (arguments.EndX <= baseX ||
+                    arguments.EndY <= baseY ||
+                    arguments.EndZ <= baseZ)
+                {
+                    error = "group end must be after the base group";
+                    return false;
+                }
+
+                groupCountX = arguments.EndX - baseX;
+                groupCountY = arguments.EndY - baseY;
+                groupCountZ = arguments.EndZ - baseZ;
+                if (hasPartialGroup)
+                {
+                    threadCountX = ExactPartialThreadLimit(
+                        baseX,
+                        groupCountX,
+                        arguments.LocalSizeX,
+                        arguments.PartialSizeX);
+                    threadCountY = ExactPartialThreadLimit(
+                        baseY,
+                        groupCountY,
+                        arguments.LocalSizeY,
+                        arguments.PartialSizeY);
+                    threadCountZ = ExactPartialThreadLimit(
+                        baseZ,
+                        groupCountZ,
+                        arguments.LocalSizeZ,
+                        arguments.PartialSizeZ);
+                }
+            }
+
+            topology = new ComputeDispatchTopology(
+                groupCountX,
+                groupCountY,
+                groupCountZ,
+                baseX,
+                baseY,
+                baseZ,
+                DecodeComputeWaveLaneCount(arguments.Initiator),
+                arguments.IsIndirect,
+                threadCountX,
+                threadCountY,
+                threadCountZ);
+            return true;
+        }
+        catch (OverflowException)
+        {
+            error = "dispatch topology overflow";
+            return false;
+        }
+    }
+
+    private static bool IsValidPartialSize(uint partialSize, uint localSize) =>
+        partialSize != 0 && partialSize <= localSize;
+
+    private static uint FinalGroupSize(ulong threadCount, uint localSize)
+    {
+        var remainder = (uint)(threadCount % localSize);
+        return remainder == 0 ? localSize : remainder;
+    }
+
+    private static uint ExactPartialThreadLimit(
+        uint baseGroup,
+        uint groupCount,
+        uint localSize,
+        uint partialSize) =>
+        checked((uint)(
+            ((ulong)baseGroup + groupCount - 1) * localSize +
+            partialSize));
+
+    private static uint CeilDivide(ulong value, uint divisor) =>
+        checked((uint)((value + divisor - 1) / divisor));
 
     // GFX10 COMPUTE_DISPATCH_INITIATOR.CS_W32_EN is bit 15. Keep the
     // per-dispatch value authoritative: it is what the command processor uses
@@ -5558,7 +5772,7 @@ public static partial class AgcExports
         CpuContext ctx,
         SubmittedGpuState gpuState,
         SubmittedDcbState state,
-        ComputeDispatch dispatch)
+        ComputeDispatchTopology dispatch)
     {
         if (!TryGetShaderAddress(
                 state.ShRegisters,
@@ -5701,7 +5915,13 @@ public static partial class AgcExports
                     globalMemoryBuffers,
                     dispatch.GroupCountX,
                     dispatch.GroupCountY,
-                    dispatch.GroupCountZ);
+                    dispatch.GroupCountZ,
+                    dispatch.BaseGroupX,
+                    dispatch.BaseGroupY,
+                    dispatch.BaseGroupZ,
+                    dispatch.ThreadCountX,
+                    dispatch.ThreadCountY,
+                    dispatch.ThreadCountZ);
                 gpuDispatch = true;
             }
         }
@@ -5715,6 +5935,7 @@ public static partial class AgcExports
                 TraceAgcShader(
                     $"agc.compute_shader cs=0x{shaderAddress:X16} " +
                     $"groups={dispatch.GroupCountX}x{dispatch.GroupCountY}x{dispatch.GroupCountZ} " +
+                    $"base={dispatch.BaseGroupX}x{dispatch.BaseGroupY}x{dispatch.BaseGroupZ} " +
                     $"local={localSizeX}x{localSizeY}x{localSizeZ} " +
                     $"wave={dispatch.WaveLaneCount} " +
                     $"sys={DescribeComputeSystemRegisters(computeSystemRegisters)} " +
@@ -5833,9 +6054,16 @@ public static partial class AgcExports
         uint register)
     {
         return registers.TryGetValue(register, out var value)
-            ? Math.Max(value & 0x3FFu, 1u)
+            ? Math.Max(value & 0xFFFFu, 1u)
             : 1u;
     }
+
+    private static uint GetComputePartialSize(
+        IReadOnlyDictionary<uint, uint> registers,
+        uint register) =>
+        registers.TryGetValue(register, out var value)
+            ? value >> 16
+            : 0u;
 
     private static int TryApplySoftwareComputeBlits(
         CpuContext ctx,
