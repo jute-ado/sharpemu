@@ -17,17 +17,31 @@ public static partial class KernelMemoryCompatExports
         var haystackAddress = ctx[CpuRegister.Rdi];
         var needleAddress = ctx[CpuRegister.Rsi];
 
-        if (!TryReadWideCString(ctx, haystackAddress, 1_048_576, out var haystack) ||
+        if (haystackAddress == 0 ||
             !TryReadWideCString(ctx, needleAddress, 1_048_576, out var needle))
         {
             ctx[CpuRegister.Rax] = 0;
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        var index = haystack.AsSpan().IndexOf(needle);
-        ctx[CpuRegister.Rax] = index < 0
-            ? 0
-            : haystackAddress + (unchecked((ulong)index) * WideCharSize);
+        if (needle.Length == 0)
+        {
+            ctx[CpuRegister.Rax] = haystackAddress;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        if (!TryFindWideCString(
+                ctx,
+                haystackAddress,
+                needle,
+                1_048_576,
+                out var matchAddress))
+        {
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        ctx[CpuRegister.Rax] = matchAddress;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 }
