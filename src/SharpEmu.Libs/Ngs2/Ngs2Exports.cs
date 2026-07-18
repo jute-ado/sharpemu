@@ -30,6 +30,22 @@ public static class Ngs2Exports
     private sealed record VoiceState(ulong RackHandle, uint VoiceIndex);
 
     [SysAbiExport(
+        Nid = "koBbCMvOKWw",
+        ExportName = "sceNgs2SystemCreate",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNgs2")]
+    public static int Ngs2SystemCreate(CpuContext ctx)
+    {
+        var bufferInfoAddress = ctx[CpuRegister.Rsi];
+        if (!TryReadContextBuffer(ctx, bufferInfoAddress, out var hostBuffer))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        return CreateSystem(ctx, ctx[CpuRegister.Rdx], hostBuffer);
+    }
+
+    [SysAbiExport(
         Nid = "mPYgU4oYpuY",
         ExportName = "sceNgs2SystemCreateWithAllocator",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -42,18 +58,12 @@ public static class Ngs2Exports
             return SetReturn(ctx, OrbisNgs2ErrorInvalidOutAddress);
         }
 
-        if (!TryCreateHandle(ctx, type: 1, ownerHandle: 0, out var handle) ||
-            !ctx.TryWriteUInt64(outHandleAddress, handle))
+        if (!TryCreateHandle(ctx, type: 1, ownerHandle: 0, out var handle))
         {
             return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
-        lock (StateGate)
-        {
-            Systems[handle] = new SystemState(unchecked((uint)Interlocked.Increment(ref _nextUid)));
-        }
-
-        return SetReturn(ctx, 0);
+        return CreateSystem(ctx, outHandleAddress, handle);
     }
 
     [SysAbiExport(
@@ -85,6 +95,27 @@ public static class Ngs2Exports
     }
 
     [SysAbiExport(
+        Nid = "cLV4aiT9JpA",
+        ExportName = "sceNgs2RackCreate",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNgs2")]
+    public static int Ngs2RackCreate(CpuContext ctx)
+    {
+        var bufferInfoAddress = ctx[CpuRegister.Rcx];
+        if (!TryReadContextBuffer(ctx, bufferInfoAddress, out var hostBuffer))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        return CreateRack(
+            ctx,
+            ctx[CpuRegister.Rdi],
+            unchecked((uint)ctx[CpuRegister.Rsi]),
+            ctx[CpuRegister.R8],
+            hostBuffer);
+    }
+
+    [SysAbiExport(
         Nid = "U546k6orxQo",
         ExportName = "sceNgs2RackCreateWithAllocator",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -107,18 +138,12 @@ public static class Ngs2Exports
             return SetReturn(ctx, OrbisNgs2ErrorInvalidOutAddress);
         }
 
-        if (!TryCreateHandle(ctx, type: 2, systemHandle, out var handle) ||
-            !ctx.TryWriteUInt64(outHandleAddress, handle))
+        if (!TryCreateHandle(ctx, type: 2, systemHandle, out var handle))
         {
             return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
-        lock (StateGate)
-        {
-            Racks[handle] = new RackState(systemHandle, rackId);
-        }
-
-        return SetReturn(ctx, 0);
+        return CreateRack(ctx, systemHandle, rackId, outHandleAddress, handle);
     }
 
     [SysAbiExport(
@@ -385,6 +410,67 @@ public static class Ngs2Exports
                 ctx,
                 Systems.ContainsKey(ctx[CpuRegister.Rdi]) ? 0 : OrbisNgs2ErrorInvalidSystemHandle);
         }
+    }
+
+    private static int CreateSystem(CpuContext ctx, ulong outHandleAddress, ulong handle)
+    {
+        if (outHandleAddress == 0)
+        {
+            return SetReturn(ctx, OrbisNgs2ErrorInvalidOutAddress);
+        }
+
+        if (handle == 0 || !ctx.TryWriteUInt64(outHandleAddress, handle))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        lock (StateGate)
+        {
+            Systems[handle] = new SystemState(unchecked((uint)Interlocked.Increment(ref _nextUid)));
+        }
+
+        return SetReturn(ctx, 0);
+    }
+
+    private static int CreateRack(
+        CpuContext ctx,
+        ulong systemHandle,
+        uint rackId,
+        ulong outHandleAddress,
+        ulong handle)
+    {
+        lock (StateGate)
+        {
+            if (!Systems.ContainsKey(systemHandle))
+            {
+                return SetReturn(ctx, OrbisNgs2ErrorInvalidSystemHandle);
+            }
+        }
+
+        if (outHandleAddress == 0)
+        {
+            return SetReturn(ctx, OrbisNgs2ErrorInvalidOutAddress);
+        }
+
+        if (handle == 0 || !ctx.TryWriteUInt64(outHandleAddress, handle))
+        {
+            return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        lock (StateGate)
+        {
+            Racks[handle] = new RackState(systemHandle, rackId);
+        }
+
+        return SetReturn(ctx, 0);
+    }
+
+    private static bool TryReadContextBuffer(CpuContext ctx, ulong address, out ulong hostBuffer)
+    {
+        hostBuffer = 0;
+        return address != 0 &&
+            ctx.TryReadUInt64(address, out hostBuffer) &&
+            hostBuffer != 0;
     }
 
     private static bool TryCreateHandle(CpuContext ctx, uint type, ulong ownerHandle, out ulong handle)

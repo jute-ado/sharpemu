@@ -34,6 +34,7 @@ public sealed class RenderTargetSamplingTests
     private const ulong ComputeBufferAddress = 0x0070_0000;
     private const ulong DepthAddress = 0x0080_0000;
     private const ulong InitialDepthAddress = 0x0081_0000;
+    private const ulong SeededTargetAddress = 0x0090_0000;
 
     /// <summary>
     /// Verifies both GPU render-target reuse and a large CPU-backed texture
@@ -50,7 +51,7 @@ public sealed class RenderTargetSamplingTests
         Directory.CreateDirectory(captureDirectory);
         Environment.SetEnvironmentVariable(
             "SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE",
-            $"0x{FirstDisplayAddress:X}@7");
+            $"0x{FirstDisplayAddress:X}@8");
         Environment.SetEnvironmentVariable(
             "SHARPEMU_GUEST_IMAGE_DUMP_DIR",
             captureDirectory);
@@ -100,6 +101,7 @@ public sealed class RenderTargetSamplingTests
                     Rgba8TextureDataFormat);
             }
             AssertDepthCompareAndClear(FirstDisplayAddress);
+            ComposeSeededTargetToLeftQuarter(FirstDisplayAddress);
             ComposeCpuTextureToRightHalf(
                 FirstDisplayAddress,
                 fragment,
@@ -114,10 +116,18 @@ public sealed class RenderTargetSamplingTests
             AssertRgbaRegion(
                 pixels,
                 xStart: 0,
-                xEnd: DestinationWidth / 4,
+                xEnd: DestinationWidth / 8,
                 expectedRed: 255,
                 expectedGreen: 0,
                 expectedBlue: 0,
+                expectedAlpha: 255);
+            AssertRgbaRegion(
+                pixels,
+                xStart: DestinationWidth / 8,
+                xEnd: DestinationWidth / 4,
+                expectedRed: 0,
+                expectedGreen: 0,
+                expectedBlue: 255,
                 expectedAlpha: 255);
             AssertRgbaRegion(
                 pixels,
@@ -338,6 +348,63 @@ public sealed class RenderTargetSamplingTests
                 SourceHeight,
                 Rgba8DataFormat,
                 UnormNumberType));
+    }
+
+    private static void ComposeSeededTargetToLeftQuarter(
+        ulong destinationAddress)
+    {
+        var seed = new byte[SourceWidth * SourceHeight * 4];
+        for (var offset = 0; offset < seed.Length; offset += 4)
+        {
+            seed[offset + 2] = 255;
+            seed[offset + 3] = 255;
+        }
+
+        VulkanVideoPresenter.ProvideGuestImageInitialData(
+            SeededTargetAddress,
+            seed);
+        VulkanVideoPresenter.SubmitOffscreenTranslatedDraw(
+            SpirvFixedShaders.CreateSolidFragment(
+                red: 1f,
+                green: 0f,
+                blue: 0f,
+                alpha: 1f),
+            [],
+            [],
+            attributeCount: 0,
+            new GuestRenderTarget(
+                SeededTargetAddress,
+                SourceWidth,
+                SourceHeight,
+                Rgba8DataFormat,
+                UnormNumberType),
+            renderState: new GuestRenderState(
+                [GuestBlendState.Default],
+                new GuestRect(
+                    X: 0,
+                    Y: 0,
+                    Width: SourceWidth / 2,
+                    Height: SourceHeight),
+                new GuestViewport(
+                    X: 0,
+                    Y: SourceHeight,
+                    Width: SourceWidth,
+                    Height: -(float)SourceHeight,
+                    MinDepth: 0,
+                    MaxDepth: 1)));
+
+        ComposeTextureTo(
+            SeededTargetAddress,
+            SourceWidth,
+            SourceHeight,
+            destinationAddress,
+            SpirvFixedShaders.CreateCopyFragment(),
+            CreatePassthroughVertex(),
+            destinationRegion: new GuestRect(
+                X: 0,
+                Y: 0,
+                Width: DestinationWidth / 4,
+                Height: DestinationHeight));
     }
 
     private static void SubmitSolidWithDepth(

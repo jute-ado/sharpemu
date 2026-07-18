@@ -3914,6 +3914,11 @@ public static partial class AgcExports
                     textures,
                     globalMemoryBuffers,
                     vertexBuffers);
+                foreach (var renderTarget in translatedDraw.RenderTargets)
+                {
+                    ProvideRenderTargetInitialData(ctx, renderTarget);
+                }
+
                 GuestGpu.Current.SubmitOffscreenTranslatedDraw(
                     translatedDraw.PixelShader,
                     textures,
@@ -6460,6 +6465,40 @@ public static partial class AgcExports
             (ulong)elementsWide *
             (ulong)elementsHigh *
             (ulong)bytesPerElement);
+    }
+
+    /// <summary>
+    /// PS5 render targets alias guest memory. Preserve bytes written by the CPU
+    /// before the first GPU draw by seeding the presenter's canonical image.
+    /// </summary>
+    private static void ProvideRenderTargetInitialData(
+        CpuContext ctx,
+        RenderTargetDescriptor target)
+    {
+        if (!VulkanVideoPresenter.GuestImageWantsInitialData(target.Address))
+        {
+            return;
+        }
+
+        var byteCount = VulkanVideoPresenter.GetGuestImageByteCount(
+            target.Format,
+            target.Width,
+            target.Height);
+        if (byteCount == 0 ||
+            byteCount > MaxPresentedTextureBytes ||
+            byteCount > int.MaxValue)
+        {
+            return;
+        }
+
+        var initialData = new byte[(int)byteCount];
+        if (ctx.Memory.TryRead(target.Address, initialData) &&
+            initialData.AsSpan().IndexOfAnyExcept((byte)0) >= 0)
+        {
+            VulkanVideoPresenter.ProvideGuestImageInitialData(
+                target.Address,
+                initialData);
+        }
     }
 
     private static bool TryGetTextureElementLayout(
