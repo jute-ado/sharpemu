@@ -10,15 +10,9 @@ internal readonly record struct GuestBufferRange(ulong Start, ulong Length)
     public ulong End => checked(Start + Length);
 }
 
-internal readonly record struct GuestBufferCacheEntry(
+internal readonly record struct GuestBufferRangeRequest(
     GuestBufferRange Range,
-    ulong LastUseSequence,
-    ulong LastWriteSequence);
-
-internal readonly record struct GuestBufferEvictionCandidate(
-    int Index,
-    ulong LastUseSequence,
-    ulong Start);
+    bool Writable);
 
 /// <summary>
 /// Pure range rules for the persistent Vulkan guest-buffer cache. Keeping
@@ -58,35 +52,37 @@ internal static class GuestBufferRangeSet
         return true;
     }
 
-    public static List<GuestBufferRange> Merge(
-        IReadOnlyList<GuestBufferRange> ranges)
+    public static List<GuestBufferRangeRequest> MergeRequests(
+        IReadOnlyList<GuestBufferRangeRequest> requests)
     {
-        var ordered = new List<GuestBufferRange>(ranges.Count);
-        foreach (var range in ranges)
+        var ordered = new List<GuestBufferRangeRequest>(requests.Count);
+        foreach (var request in requests)
         {
-            if (range.Length != 0)
+            if (request.Range.Length != 0)
             {
-                ordered.Add(range);
+                ordered.Add(request);
             }
         }
 
         ordered.Sort(static (left, right) =>
-            left.Start.CompareTo(right.Start));
-        var merged = new List<GuestBufferRange>(ordered.Count);
-        foreach (var range in ordered)
+            left.Range.Start.CompareTo(right.Range.Start));
+        var merged = new List<GuestBufferRangeRequest>(ordered.Count);
+        foreach (var request in ordered)
         {
             if (merged.Count == 0 ||
-                range.Start > merged[^1].End)
+                request.Range.Start > merged[^1].Range.End)
             {
-                merged.Add(range);
+                merged.Add(request);
                 continue;
             }
 
             var previous = merged[^1];
-            var end = Math.Max(previous.End, range.End);
-            merged[^1] = new GuestBufferRange(
-                previous.Start,
-                end - previous.Start);
+            var end = Math.Max(previous.Range.End, request.Range.End);
+            merged[^1] = new GuestBufferRangeRequest(
+                new GuestBufferRange(
+                    previous.Range.Start,
+                    end - previous.Range.Start),
+                previous.Writable || request.Writable);
         }
 
         return merged;
@@ -147,96 +143,4 @@ internal static class GuestBufferRangeSet
         contentsChanged &&
         (lastUseSequence > completedSequence ||
          referencedByOpenSubmission);
-
-    public static bool MustWaitForPersistentAccess(
-        ulong lastUseSequence,
-        ulong lastWriteSequence,
-        ulong completedSequence,
-        bool writable) =>
-        lastWriteSequence > completedSequence ||
-        (writable && lastUseSequence > completedSequence);
-
-    public static List<int> SelectEvictions(
-        IReadOnlyList<GuestBufferCacheEntry> entries,
-        IReadOnlyList<GuestBufferRange> protectedRanges,
-        ulong completedSequence,
-        ulong maximumBytes)
-    {
-        var totalBytes = 0UL;
-        foreach (var entry in entries)
-        {
-            totalBytes = AddSaturating(
-                totalBytes,
-                entry.Range.Length);
-        }
-
-        var evictions = new List<int>();
-        if (totalBytes <= maximumBytes)
-        {
-            return evictions;
-        }
-
-        var candidates =
-            new List<GuestBufferEvictionCandidate>(entries.Count);
-        for (var index = 0; index < entries.Count; index++)
-        {
-            var entry = entries[index];
-            if (entry.LastUseSequence > completedSequence ||
-                entry.LastWriteSequence > completedSequence ||
-                IsProtected(entry.Range, protectedRanges))
-            {
-                continue;
-            }
-
-            candidates.Add(new GuestBufferEvictionCandidate(
-                index,
-                entry.LastUseSequence,
-                entry.Range.Start));
-        }
-
-        candidates.Sort(static (left, right) =>
-        {
-            var sequenceOrder =
-                left.LastUseSequence.CompareTo(right.LastUseSequence);
-            return sequenceOrder != 0
-                ? sequenceOrder
-                : left.Start.CompareTo(right.Start);
-        });
-
-        foreach (var candidate in candidates)
-        {
-            if (totalBytes <= maximumBytes)
-            {
-                break;
-            }
-
-            evictions.Add(candidate.Index);
-            var length = entries[candidate.Index].Range.Length;
-            totalBytes = length >= totalBytes
-                ? 0
-                : totalBytes - length;
-        }
-
-        return evictions;
-    }
-
-    private static bool IsProtected(
-        GuestBufferRange range,
-        IReadOnlyList<GuestBufferRange> protectedRanges)
-    {
-        foreach (var protectedRange in protectedRanges)
-        {
-            if (Overlaps(range, protectedRange))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static ulong AddSaturating(ulong left, ulong right) =>
-        right > ulong.MaxValue - left
-            ? ulong.MaxValue
-            : left + right;
 }
