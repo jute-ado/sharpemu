@@ -110,7 +110,7 @@ internal interface IGuestGpuBackend
         uint width,
         uint height);
 
-    void SubmitComputeDispatch(
+    long SubmitComputeDispatch(
         ulong shaderAddress,
         IGuestCompiledShader computeShader,
         IReadOnlyList<GuestDrawTexture> textures,
@@ -124,6 +124,8 @@ internal interface IGuestGpuBackend
         uint threadCountX = uint.MaxValue,
         uint threadCountY = uint.MaxValue,
         uint threadCountZ = uint.MaxValue);
+
+    bool WaitForGuestWork(long workSequence, TimeSpan timeout);
 
     bool TrySubmitGuestImage(
         ulong address,

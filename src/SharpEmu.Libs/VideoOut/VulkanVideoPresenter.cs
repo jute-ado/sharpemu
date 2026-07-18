@@ -864,7 +864,7 @@ internal static unsafe class VulkanVideoPresenter
         }
     }
 
-    public static void SubmitComputeDispatch(
+    public static long SubmitComputeDispatch(
         ulong shaderAddress,
         byte[] computeSpirv,
         IReadOnlyList<GuestDrawTexture> textures,
@@ -883,19 +883,19 @@ internal static unsafe class VulkanVideoPresenter
             groupCountX == 0 ||
             groupCountY == 0 ||
             groupCountZ == 0 ||
-            textures.All(texture => !texture.IsStorage))
+            !HasComputeOutput(textures, globalMemoryBuffers))
         {
-            return;
+            return 0;
         }
 
         lock (_gate)
         {
             if (_closed)
             {
-                return;
+                return 0;
             }
 
-            EnqueueGuestWorkLocked(
+            return EnqueueGuestWorkLocked(
                 new VulkanComputeGuestDispatch(
                     shaderAddress,
                     computeSpirv,
@@ -911,6 +911,129 @@ internal static unsafe class VulkanVideoPresenter
                     threadCountY,
                     threadCountZ));
         }
+    }
+
+    public static bool WaitForGuestWork(long workSequence, TimeSpan timeout)
+    {
+        if (workSequence <= 0)
+        {
+            return false;
+        }
+
+        return _guestWork.WaitUntilCompleted(workSequence, timeout);
+    }
+
+    internal static bool HasComputeOutput(
+        IReadOnlyList<GuestDrawTexture> textures,
+        IReadOnlyList<GuestMemoryBuffer> buffers)
+    {
+        foreach (var texture in textures)
+        {
+            if (texture.IsStorage)
+            {
+                return true;
+            }
+        }
+
+        return GuestMemoryBuffer.HasWritable(buffers);
+    }
+
+    internal static bool TryWriteBackGlobalBuffer(
+        GuestMemoryBuffer buffer,
+        ReadOnlySpan<byte> mappedBytes,
+        out int changedBytes)
+    {
+        const int pageSize = 4096;
+
+        changedBytes = 0;
+        if (!buffer.Writable)
+        {
+            return true;
+        }
+
+        if (buffer.BaseAddress == 0 ||
+            buffer.GuestMemory is not { } guestMemory ||
+            mappedBytes.Length < buffer.Data.Length)
+        {
+            return false;
+        }
+
+        Span<byte> livePage = stackalloc byte[pageSize];
+        for (var pageOffset = 0;
+             pageOffset < buffer.Data.Length;
+             pageOffset += pageSize)
+        {
+            var length = Math.Min(pageSize, buffer.Data.Length - pageOffset);
+            var original = buffer.Data.AsSpan(pageOffset, length);
+            var output = mappedBytes.Slice(pageOffset, length);
+            var pageChanged = false;
+            for (var index = 0; index < length; index++)
+            {
+                if (original[index] != output[index])
+                {
+                    pageChanged = true;
+                    changedBytes++;
+                }
+            }
+
+            if (!pageChanged)
+            {
+                continue;
+            }
+
+            ulong pageAddress;
+            try
+            {
+                pageAddress = checked(buffer.BaseAddress + (ulong)pageOffset);
+            }
+            catch (OverflowException)
+            {
+                return false;
+            }
+
+            var current = livePage[..length];
+            if (guestMemory.TryRead(pageAddress, current))
+            {
+                for (var index = 0; index < length; index++)
+                {
+                    if (original[index] != output[index])
+                    {
+                        current[index] = output[index];
+                    }
+                }
+
+                if (!guestMemory.TryWrite(pageAddress, current))
+                {
+                    return false;
+                }
+
+                continue;
+            }
+
+            for (var index = 0; index < length;)
+            {
+                while (index < length && original[index] == output[index])
+                {
+                    index++;
+                }
+
+                var runStart = index;
+                while (index < length && original[index] != output[index])
+                {
+                    index++;
+                }
+
+                if (runStart != index &&
+                    !guestMemory.TryWrite(
+                        pageAddress + (ulong)runStart,
+                        output[runStart..index]))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     public static bool TrySubmitGuestImage(
@@ -1540,7 +1663,7 @@ internal static unsafe class VulkanVideoPresenter
             presentation.RequiredGuestWorkSequence,
             replacePending);
 
-    private static void EnqueueGuestWorkLocked(object work)
+    private static long EnqueueGuestWorkLocked(object work)
     {
         while (!_closed &&
                _thread is not null &&
@@ -1551,12 +1674,13 @@ internal static unsafe class VulkanVideoPresenter
 
         if (_closed)
         {
-            return;
+            return 0;
         }
 
         _pendingGuestWork.Enqueue(work);
-        _guestWork.MarkEnqueued();
+        var sequence = _guestWork.MarkEnqueued();
         System.Threading.Monitor.PulseAll(_gate);
+        return sequence;
     }
 
     private static bool TryTakeGuestWork(out object work)
@@ -1824,7 +1948,9 @@ internal static unsafe class VulkanVideoPresenter
         {
             public VkBuffer Buffer;
             public DeviceMemory Memory;
+            public nint Mapped;
             public ulong Size;
+            public GuestMemoryBuffer? GuestBuffer;
         }
 
         private sealed class VertexBufferResource
@@ -3102,7 +3228,7 @@ internal static unsafe class VulkanVideoPresenter
             return commandBuffer;
         }
 
-        private void SubmitGuestCommandBuffer(
+        private Fence SubmitGuestCommandBuffer(
             CommandBuffer commandBuffer,
             TranslatedDrawResources resources,
             IReadOnlyList<GuestImageResource> traceImages)
@@ -3140,6 +3266,7 @@ internal static unsafe class VulkanVideoPresenter
                     resources,
                     traceImages,
                     resources.DebugName));
+            return fence;
         }
 
         private void SubmitGuestCommandBufferAndWait(CommandBuffer commandBuffer)
@@ -3285,6 +3412,8 @@ internal static unsafe class VulkanVideoPresenter
                     {
                         TraceGuestImageContents(image);
                     }
+
+                    WriteBackGlobalBuffers(submission.Resources);
                 }
 
                 DestroyTranslatedDrawResources(submission.Resources);
@@ -3296,6 +3425,21 @@ internal static unsafe class VulkanVideoPresenter
                     &commandBuffer);
                 _vk.DestroyFence(_device, submission.Fence, null);
             }
+        }
+
+        private void WaitForGuestSubmissionForCpuVisibility(
+            Fence fence,
+            string debugName)
+        {
+            Check(
+                _vk.WaitForFences(
+                    _device,
+                    1,
+                    &fence,
+                    true,
+                    ulong.MaxValue),
+                $"vkWaitForFences(cpu visibility: {debugName})");
+            CollectCompletedGuestSubmissions(waitForOldest: false);
         }
 
         private IReadOnlyList<GuestImageResource> GetTraceImages(
@@ -5046,7 +5190,8 @@ internal static unsafe class VulkanVideoPresenter
             var buffer = CreateHostBuffer(
                 guestBuffer.Data,
                 BufferUsageFlags.StorageBufferBit,
-                out var memory);
+                out var memory,
+                out var mapped);
             var size = (ulong)Math.Max(guestBuffer.Data.Length, sizeof(uint));
 
             if (ShouldTraceVulkanResources() &&
@@ -5065,7 +5210,9 @@ internal static unsafe class VulkanVideoPresenter
             {
                 Buffer = buffer,
                 Memory = memory,
+                Mapped = mapped,
                 Size = size,
+                GuestBuffer = guestBuffer,
             };
         }
 
@@ -5111,6 +5258,15 @@ internal static unsafe class VulkanVideoPresenter
             BufferUsageFlags usage,
             out DeviceMemory memory)
         {
+            return CreateHostBuffer(data, usage, out memory, out _);
+        }
+
+        private VkBuffer CreateHostBuffer(
+            ReadOnlySpan<byte> data,
+            BufferUsageFlags usage,
+            out DeviceMemory memory,
+            out nint mapped)
+        {
             var size = (ulong)Math.Max(data.Length, sizeof(uint));
             var capacity = BitOperations.RoundUpToPowerOf2(size);
             var key = new VulkanHostBufferPoolKey(usage, capacity);
@@ -5140,6 +5296,7 @@ internal static unsafe class VulkanVideoPresenter
             }
 
             memory = allocation.Memory;
+            mapped = allocation.Mapped;
             fixed (byte* source = data)
             {
                 System.Buffer.MemoryCopy(
@@ -5767,6 +5924,9 @@ internal static unsafe class VulkanVideoPresenter
                         threadLimits);
 
                     RecordChunkedComputeDispatch(_commandBuffer, work, zStart, zCount);
+                    RecordGlobalBufferHostReadBarrier(
+                        _commandBuffer,
+                        resources.GlobalMemoryBuffers);
 
                     if (isLastBatch)
                     {
@@ -5781,11 +5941,17 @@ internal static unsafe class VulkanVideoPresenter
                         $"batch={batchIndex}/{batchCount} z={zStart}..{zStart + zCount}");
                     if (isLastBatch)
                     {
-                        SubmitGuestCommandBuffer(
+                        var fence = SubmitGuestCommandBuffer(
                             commandBuffer,
                             resources,
                             GetTraceImages(resources));
                         submitted = true;
+                        if (GuestMemoryBuffer.HasWritable(work.GlobalMemoryBuffers))
+                        {
+                            WaitForGuestSubmissionForCpuVisibility(
+                                fence,
+                                resources.DebugName);
+                        }
                     }
                     else
                     {
@@ -5831,6 +5997,44 @@ internal static unsafe class VulkanVideoPresenter
                     DestroyTranslatedDrawResources(resources);
                 }
             }
+        }
+
+        private void RecordGlobalBufferHostReadBarrier(
+            CommandBuffer commandBuffer,
+            IReadOnlyList<GlobalBufferResource> buffers)
+        {
+            var hasWritableBuffer = false;
+            foreach (var buffer in buffers)
+            {
+                if (buffer.GuestBuffer is { Writable: true })
+                {
+                    hasWritableBuffer = true;
+                    break;
+                }
+            }
+
+            if (!hasWritableBuffer)
+            {
+                return;
+            }
+
+            var barrier = new MemoryBarrier
+            {
+                SType = StructureType.MemoryBarrier,
+                SrcAccessMask = AccessFlags.ShaderWriteBit,
+                DstAccessMask = AccessFlags.HostReadBit,
+            };
+            _vk.CmdPipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.ComputeShaderBit,
+                PipelineStageFlags.HostBit,
+                0,
+                1,
+                &barrier,
+                0,
+                null,
+                0,
+                null);
         }
 
         private void RecordChunkedComputeDispatch(
@@ -8294,6 +8498,38 @@ internal static unsafe class VulkanVideoPresenter
                     resources.FirstInstance);
             }
             _vk.CmdEndRenderPass(_commandBuffer);
+        }
+
+        private static void WriteBackGlobalBuffers(
+            TranslatedDrawResources resources)
+        {
+            foreach (var globalBuffer in resources.GlobalMemoryBuffers)
+            {
+                if (globalBuffer?.GuestBuffer is not { Writable: true } guestBuffer)
+                {
+                    continue;
+                }
+
+                var mapped = new ReadOnlySpan<byte>(
+                    (void*)globalBuffer.Mapped,
+                    guestBuffer.Data.Length);
+                if (!TryWriteBackGlobalBuffer(
+                        guestBuffer,
+                        mapped,
+                        out var changedBytes))
+                {
+                    Console.Error.WriteLine(
+                        $"[LOADER][WARN] Vulkan global buffer writeback failed " +
+                        $"base=0x{guestBuffer.BaseAddress:X16} " +
+                        $"bytes={guestBuffer.Data.Length}");
+                }
+                else if (changedBytes != 0)
+                {
+                    TraceVulkanShader(
+                        $"vk.global_writeback base=0x{guestBuffer.BaseAddress:X16} " +
+                        $"changed_bytes={changedBytes}");
+                }
+            }
         }
 
         private void DestroyTranslatedDrawResources(TranslatedDrawResources resources)

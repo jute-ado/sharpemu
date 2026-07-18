@@ -1,6 +1,8 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using SharpEmu.HLE;
+
 namespace SharpEmu.Libs.Gpu;
 
 // The types that cross the guest-GPU backend seam. Every field is either a neutral
@@ -36,7 +38,23 @@ internal readonly record struct GuestSampler(
 
 internal sealed record GuestMemoryBuffer(
     ulong BaseAddress,
-    byte[] Data);
+    byte[] Data,
+    bool Writable = false,
+    ICpuMemory? GuestMemory = null)
+{
+    public static bool HasWritable(IReadOnlyList<GuestMemoryBuffer> buffers)
+    {
+        foreach (var buffer in buffers)
+        {
+            if (buffer.Writable)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
 
 /// <summary>DataFormat/NumberFormat are raw guest vertex-attribute codes.</summary>
 internal sealed record GuestVertexBuffer(
