@@ -27,6 +27,7 @@ public sealed unsafe partial class DirectExecutionBackend
         _externalGuestThreads = [];
     private readonly Dictionary<ulong, PendingGuestException>
         _pendingGuestExceptions = [];
+    private int _pendingGuestExceptionCount;
     private readonly HashSet<ulong> _activeGuestExceptionDeliveries = [];
 
     public void RegisterGuestThreadContext(
@@ -139,11 +140,12 @@ public sealed unsafe partial class DirectExecutionBackend
             // next target-thread safe point.
             if (!_pendingGuestExceptions.ContainsKey(threadHandle))
             {
-                _pendingGuestExceptions[threadHandle] =
+                SetPendingGuestExceptionLocked(
+                    threadHandle,
                     new PendingGuestException(
                         handler,
                         exceptionType,
-                        exceptionStackBase);
+                        exceptionStackBase));
                 GuestThreadBlocking.RequestInterrupt(threadHandle);
             }
 
@@ -213,10 +215,33 @@ public sealed unsafe partial class DirectExecutionBackend
         }
     }
 
+    private void DeliverPendingGuestExceptionAtImportSafePoint(
+        CpuContext currentContext,
+        nint argPackPtr,
+        ulong returnRip)
+    {
+        if (Volatile.Read(ref _pendingGuestExceptionCount) == 0)
+        {
+            return;
+        }
+
+        DeliverPendingGuestExceptionAtSafePoint(
+            currentContext,
+            CaptureImportBoundaryContinuation(
+                currentContext,
+                argPackPtr,
+                returnRip));
+    }
+
     private void DeliverPendingGuestExceptionAtSafePoint(
         CpuContext currentContext,
         GuestCpuContinuation interruptedContinuation)
     {
+        if (Volatile.Read(ref _pendingGuestExceptionCount) == 0)
+        {
+            return;
+        }
+
         var threadHandle = GuestThreadExecution.CurrentGuestThreadHandle;
         if (threadHandle == 0)
         {
@@ -227,7 +252,7 @@ public sealed unsafe partial class DirectExecutionBackend
         using (LockGate("TakePendingGuestException"))
         {
             if (threadHandle == 0 ||
-                !_pendingGuestExceptions.Remove(
+                !TryTakePendingGuestExceptionLocked(
                     threadHandle,
                     out pending))
             {
@@ -404,10 +429,38 @@ public sealed unsafe partial class DirectExecutionBackend
         return context.Memory.TryWrite(address, bytes);
     }
 
+    private void SetPendingGuestExceptionLocked(
+        ulong threadHandle,
+        PendingGuestException pending)
+    {
+        _pendingGuestExceptions[threadHandle] = pending;
+        Volatile.Write(
+            ref _pendingGuestExceptionCount,
+            _pendingGuestExceptions.Count);
+    }
+
+    private bool TryTakePendingGuestExceptionLocked(
+        ulong threadHandle,
+        out PendingGuestException pending)
+    {
+        if (!_pendingGuestExceptions.Remove(
+                threadHandle,
+                out pending))
+        {
+            return false;
+        }
+
+        Volatile.Write(
+            ref _pendingGuestExceptionCount,
+            _pendingGuestExceptions.Count);
+        return true;
+    }
+
     private void ClearGuestExceptionState()
     {
         _externalGuestThreads.Clear();
         _pendingGuestExceptions.Clear();
+        Volatile.Write(ref _pendingGuestExceptionCount, 0);
         _activeGuestExceptionDeliveries.Clear();
         _currentExternalGuestThreadHandle = 0;
     }
