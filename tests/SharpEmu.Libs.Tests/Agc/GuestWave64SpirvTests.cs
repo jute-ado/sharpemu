@@ -57,6 +57,21 @@ public sealed class GuestWave64SpirvTests
         Assert.False(ContainsOpcode(shader, SpirvOp.GroupNonUniformShuffle));
     }
 
+    [Fact]
+    public void Wave64LaneOperationsAllowA32LanePartialGuestWave()
+    {
+        var shader = CompileLaneProgram(64, 32, 1, 1);
+
+        Assert.True(ContainsOpcode(shader, SpirvOp.ControlBarrier));
+        Assert.True(ContainsBuiltIn(shader, SpirvBuiltIn.LocalInvocationIndex));
+        Assert.True(ContainsWorkgroupVariable(shader));
+        Assert.False(
+            ContainsCapability(
+                shader,
+                SpirvCapability.GroupNonUniformBallot));
+        Assert.False(ContainsOpcode(shader, SpirvOp.GroupNonUniformShuffle));
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -298,10 +313,10 @@ public sealed class GuestWave64SpirvTests
     }
 
     [Theory]
-    [InlineData(32u, 4u, 1u)]
+    [InlineData(65u, 1u, 1u)]
     [InlineData(128u, 1u, 1u)]
     [InlineData(8u, 8u, 2u)]
-    public void Wave64RejectsWorkgroupsThatContainAnythingOtherThanOneGuestWave(
+    public void Wave64RejectsWorkgroupsLargerThanOneGuestWave(
         uint localSizeX,
         uint localSizeY,
         uint localSizeZ)
@@ -318,7 +333,7 @@ public sealed class GuestWave64SpirvTests
                 out _,
                 out var error,
                 waveLaneCount: 64));
-        Assert.Contains("exactly 64 local invocations", error, StringComparison.Ordinal);
+        Assert.Contains("at most 64 local invocations", error, StringComparison.Ordinal);
     }
 
     [Theory]

@@ -422,10 +422,10 @@ public static partial class Gen5SpirvTranslator
             error = string.Empty;
             var localInvocationCount =
                 (ulong)_localSizeX * _localSizeY * _localSizeZ;
-            if (_emulateWave64 && localInvocationCount != 64)
+            if (_emulateWave64 && localInvocationCount > 64)
             {
                 error =
-                    "wave64 translation currently requires exactly 64 local invocations " +
+                    "wave64 translation currently requires at most 64 local invocations " +
                     "when the shader uses guest-wave coordination";
                 return false;
             }
@@ -6224,6 +6224,7 @@ public static partial class Gen5SpirvTranslator
                     BitwiseAnd(lane, UInt(31)));
             }
 
+            InitializeInactiveWave64Lanes();
             Store(WaveScratchPointer(GuestWaveLane()), value);
             EmitWave64Barrier();
             var result = Load(
@@ -6231,6 +6232,34 @@ public static partial class Gen5SpirvTranslator
                 WaveScratchPointer(BitwiseAnd(lane, UInt(63))));
             EmitWave64Barrier();
             return result;
+        }
+
+        private void InitializeInactiveWave64Lanes()
+        {
+            var localInvocationCount = checked(
+                (uint)((ulong)_localSizeX * _localSizeY * _localSizeZ));
+            if (localInvocationCount >= 64)
+            {
+                return;
+            }
+
+            var currentLane = GuestWaveLane();
+            for (var offset = localInvocationCount;
+                 offset < 64;
+                 offset += localInvocationCount)
+            {
+                var inactiveLane = IAdd(currentLane, UInt(offset));
+                var isInsideWave = _module.AddInstruction(
+                    SpirvOp.ULessThan,
+                    _boolType,
+                    inactiveLane,
+                    UInt(64));
+                EmitConditional(
+                    isInsideWave,
+                    () => Store(WaveScratchPointer(inactiveLane), UInt(0)));
+            }
+
+            EmitWave64Barrier();
         }
 
         private uint WaveScratchPointer(uint index) =>
