@@ -3705,14 +3705,14 @@ public static partial class Gen5SpirvTranslator
 
         private uint ConvertShortToHalfFloat(uint shortValue)
         {
-            var halfType = _module.TypeFloat(16);
-            var halfValue = Bitcast(halfType, shortValue);
+            var unpacked = Ext(62, _vec2Type, shortValue);
             return Bitcast(
                 _uintType,
                 _module.AddInstruction(
-                    SpirvOp.FConvert,
+                    SpirvOp.CompositeExtract,
                     _floatType,
-                    halfValue));
+                    unpacked,
+                    0));
         }
 
         private uint ConvertShortToUnorm(uint shortValue)
@@ -3959,9 +3959,9 @@ public static partial class Gen5SpirvTranslator
             {
                 return componentIndex switch
                 {
-                    0 => ExtractAndConvert11Bit(rawDword, 0),
-                    1 => ExtractAndConvert11Bit(rawDword, 11),
-                    2 => ExtractAndConvert11Bit(rawDword, 22),
+                    0 => ExtractAndConvertUnsignedFloat(rawDword, 0, 11),
+                    1 => ExtractAndConvertUnsignedFloat(rawDword, 11, 11),
+                    2 => ExtractAndConvertUnsignedFloat(rawDword, 22, 10),
                     _ => rawDword,
                 };
             }
@@ -4058,26 +4058,23 @@ public static partial class Gen5SpirvTranslator
             };
         }
 
-        private uint ExtractAndConvert11Bit(
+        private uint ExtractAndConvertUnsignedFloat(
             uint rawDword,
-            uint bitOffset)
+            uint bitOffset,
+            uint bitCount)
         {
-            var raw11 = BitwiseAnd(
+            var raw = BitwiseAnd(
                 ShiftRightLogical(rawDword, UInt(bitOffset)),
-                UInt(0x7FF));
-            var float11Type = _module.TypeFloat(16);
-            var float11 = _module.AddInstruction(
-                SpirvOp.ExtInst,
-                float11Type,
-                _glsl,
-                64,
-                raw11);
+                UInt((1u << checked((int)bitCount)) - 1));
+            var halfBits = ShiftLeftLogical(raw, UInt(15 - bitCount));
+            var unpacked = Ext(62, _vec2Type, halfBits);
             return Bitcast(
                 _uintType,
                 _module.AddInstruction(
-                    SpirvOp.FConvert,
+                    SpirvOp.CompositeExtract,
                     _floatType,
-                    float11));
+                    unpacked,
+                    0));
         }
 
         private uint ExtractAndConvert2Bit(
@@ -4296,13 +4293,13 @@ public static partial class Gen5SpirvTranslator
                 return componentIndex switch
                 {
                     0 => ShiftLeftLogical(
-                        Pack11BitFloatForStore(componentValue),
+                        PackUnsignedFloatForStore(componentValue, 11),
                         UInt(0)),
                     1 => ShiftLeftLogical(
-                        Pack11BitFloatForStore(componentValue),
+                        PackUnsignedFloatForStore(componentValue, 11),
                         UInt(11)),
                     2 => ShiftLeftLogical(
-                        Pack11BitFloatForStore(componentValue),
+                        PackUnsignedFloatForStore(componentValue, 10),
                         UInt(22)),
                     _ => componentValue,
                 };
@@ -4396,13 +4393,9 @@ public static partial class Gen5SpirvTranslator
             var floatVal = Bitcast(_floatType, componentValue);
             return numberFormat switch
             {
-                7 =>
-                    Bitcast(
-                        _uintType,
-                        _module.AddInstruction(
-                            SpirvOp.FConvert,
-                            _module.TypeFloat(16),
-                            floatVal)),
+                7 => BitwiseAnd(
+                    PackHalf2(floatVal, Float(0)),
+                    UInt(0xFFFF)),
                 0 or 6 =>
                     BitwiseAnd(
                         _module.AddInstruction(
@@ -4546,18 +4539,17 @@ public static partial class Gen5SpirvTranslator
             };
         }
 
-        private uint Pack11BitFloatForStore(uint componentValue)
+        private uint PackUnsignedFloatForStore(
+            uint componentValue,
+            uint bitCount)
         {
             var floatVal = Bitcast(_floatType, componentValue);
-            var halfType = _module.TypeFloat(16);
-            var halfVal = _module.AddInstruction(
-                SpirvOp.FConvert,
-                halfType,
-                floatVal);
-            return _module.AddInstruction(
-                SpirvOp.Bitcast,
-                _uintType,
-                halfVal);
+            var halfBits = BitwiseAnd(
+                PackHalf2(floatVal, Float(0)),
+                UInt(0xFFFF));
+            return BitwiseAnd(
+                ShiftRightLogical(halfBits, UInt(15 - bitCount)),
+                UInt((1u << checked((int)bitCount)) - 1));
         }
 
         private uint Pack565ComponentForStore(

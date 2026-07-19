@@ -2601,7 +2601,133 @@ public sealed class Gen5DecoderTests
                 out var shader,
                 out var compileError),
             compileError);
-        Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FConvert) >= 1);
+        Assert.False(ContainsSpirvFloatType(shader.Spirv, width: 16));
+        Assert.True(
+            CountSpirvInstructionsWithOperand(
+                shader.Spirv,
+                SpirvOp.ExtInst,
+                operandIndex: 4,
+                operand: 62) >= 1);
+    }
+
+    [Fact]
+    public void FormatBufferStoreR16FloatUsesPortableHalfPacking()
+    {
+        var ctx = CreateContext(
+        [
+            0xE0140000u, 0x80000800u, // buffer_store_format_xy v[8:9], off, s[0:3], 0
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[0] = 0x2000_0000;
+        scalarRegisters[2] = 0x0000_0100;
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    [program.Instructions[0].Pc],
+                    new byte[64]),
+            ],
+            BufferFormatBindings:
+            [
+                new Gen5BufferFormatBinding(
+                    program.Instructions[0].Pc,
+                    DataFormat: 2,
+                    NumberFormat: 7),
+            ]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.False(ContainsSpirvFloatType(shader.Spirv, width: 16));
+        Assert.True(
+            CountSpirvInstructionsWithOperand(
+                shader.Spirv,
+                SpirvOp.ExtInst,
+                operandIndex: 4,
+                operand: 58) >= 2);
+    }
+
+    [Theory]
+    [InlineData(0xE00C0000u, 62u)] // buffer_load_format_xyzw
+    [InlineData(0xE01C0000u, 58u)] // buffer_store_format_xyzw
+    public void FormatBufferR11G11B10FloatUsesPortableHalfConversions(
+        uint opcode,
+        uint expectedExtInstruction)
+    {
+        var ctx = CreateContext(
+        [
+            opcode, 0x80000800u,
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[0] = 0x2000_0000;
+        scalarRegisters[2] = 0x0000_0100;
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    [program.Instructions[0].Pc],
+                    new byte[64]),
+            ],
+            BufferFormatBindings:
+            [
+                new Gen5BufferFormatBinding(
+                    program.Instructions[0].Pc,
+                    DataFormat: 7,
+                    NumberFormat: 7),
+            ]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.False(ContainsSpirvFloatType(shader.Spirv, width: 16));
+        Assert.True(
+            CountSpirvInstructionsWithOperand(
+                shader.Spirv,
+                SpirvOp.ExtInst,
+                operandIndex: 4,
+                operand: expectedExtInstruction) >= 3);
     }
 
     [Fact]
@@ -7632,6 +7758,30 @@ public sealed class Gen5DecoderTests
             if ((ushort)instruction == (ushort)SpirvOp.Capability &&
                 wordCount >= 2 &&
                 BitConverter.ToUInt32(spirv, offset + sizeof(uint)) == (uint)capability)
+            {
+                return true;
+            }
+
+            if (wordCount == 0)
+            {
+                return false;
+            }
+
+            offset += checked((int)wordCount * sizeof(uint));
+        }
+
+        return false;
+    }
+
+    private static bool ContainsSpirvFloatType(byte[] spirv, uint width)
+    {
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var instruction = BitConverter.ToUInt32(spirv, offset);
+            var wordCount = instruction >> 16;
+            if ((ushort)instruction == (ushort)SpirvOp.TypeFloat &&
+                wordCount == 3 &&
+                BitConverter.ToUInt32(spirv, offset + (2 * sizeof(uint))) == width)
             {
                 return true;
             }
