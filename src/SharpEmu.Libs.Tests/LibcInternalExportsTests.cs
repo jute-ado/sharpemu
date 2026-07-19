@@ -8,7 +8,7 @@ using SharpEmu.Libs.LibcInternal;
 
 using Xunit;
 
-namespace SharpEmu.Libs.Tests.LibcInternal;
+namespace SharpEmu.Libs.Tests;
 
 public sealed class LibcInternalExportsTests
 {

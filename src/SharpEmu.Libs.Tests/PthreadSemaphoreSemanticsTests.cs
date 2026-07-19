@@ -5,7 +5,7 @@ using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
 using Xunit;
 
-namespace SharpEmu.Libs.Tests.Pthread;
+namespace SharpEmu.Libs.Tests;
 
 public sealed class PthreadSemaphoreSemanticsTests
 {
@@ -45,6 +45,40 @@ public sealed class PthreadSemaphoreSemanticsTests
         Assert.Equal(0, KernelSemaphoreCompatExports.PthreadSemWait(context));
         Assert.Equal(0UL, context[CpuRegister.Rax]);
         Assert.Equal(0, ReadSemaphoreValue(context));
+
+        DestroySemaphore(context);
+    }
+
+    [Fact]
+    public async Task PthreadSemWaitBlocksInPlaceUntilPost()
+    {
+        var memory = new FakeCpuMemory(MemoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        InitializeSemaphore(context, initialCount: 0);
+        var entered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var waiter = Task.Run(
+            () =>
+            {
+                var waitContext = new CpuContext(
+                    memory,
+                    Generation.Gen5);
+                waitContext[CpuRegister.Rdi] = SemaphoreAddress;
+                entered.SetResult();
+                return KernelSemaphoreCompatExports
+                    .PthreadSemWait(waitContext);
+            });
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(50);
+        Assert.False(waiter.IsCompleted);
+
+        context[CpuRegister.Rdi] = SemaphoreAddress;
+        Assert.Equal(
+            0,
+            KernelSemaphoreCompatExports.PthreadSemPost(context));
+        Assert.Equal(
+            0,
+            await waiter.WaitAsync(TimeSpan.FromSeconds(2)));
 
         DestroySemaphore(context);
     }

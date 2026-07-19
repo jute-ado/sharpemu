@@ -1,7 +1,6 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
@@ -405,9 +404,20 @@ public static class KernelSemaphoreCompatExports
             MaxCount = int.MaxValue,
             Count = initialCount,
         };
-        if (!TryWriteUInt32(ctx, semaphoreAddress, handle))
+        if (!KernelMemoryCompatExports.TryWriteUInt32Compat(
+                ctx,
+                semaphoreAddress,
+                handle))
         {
-            _semaphores.TryRemove(handle, out _);
+            if (_semaphores.TryRemove(handle, out var published))
+            {
+                lock (published.Gate)
+                {
+                    published.Deleted = true;
+                    Monitor.PulseAll(published.Gate);
+                }
+            }
+
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
@@ -473,7 +483,7 @@ public static class KernelSemaphoreCompatExports
 
         ctx[CpuRegister.Rdi] = handle;
         ctx[CpuRegister.Rsi] = 1;
-        return KernelPollSema(ctx, handle, 1);
+        return KernelPollSema(ctx);
     }
 
     [SysAbiExport(
@@ -522,7 +532,7 @@ public static class KernelSemaphoreCompatExports
 
         ctx[CpuRegister.Rdi] = handle;
         ctx[CpuRegister.Rsi] = 1;
-        return KernelSignalSema(ctx, handle, 1);
+        return KernelSignalSema(ctx);
     }
 
     [SysAbiExport(
@@ -554,7 +564,10 @@ public static class KernelSemaphoreCompatExports
             count = semaphore.Count;
         }
 
-        return TryWriteUInt32(ctx, valueAddress, unchecked((uint)count))
+        return KernelMemoryCompatExports.TryWriteUInt32Compat(
+                ctx,
+                valueAddress,
+                unchecked((uint)count))
             ? SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK)
             : SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -576,7 +589,10 @@ public static class KernelSemaphoreCompatExports
         var result = KernelDeleteSema(ctx);
         if (result == (int)OrbisGen2Result.ORBIS_GEN2_OK)
         {
-            _ = TryWriteUInt32(ctx, semaphoreAddress, 0);
+            _ = KernelMemoryCompatExports.TryWriteUInt32Compat(
+                ctx,
+                semaphoreAddress,
+                0);
         }
 
         return result;
@@ -593,7 +609,10 @@ public static class KernelSemaphoreCompatExports
     {
         handle = 0;
         return semaphoreAddress != 0 &&
-               TryReadUInt32(ctx, semaphoreAddress, out handle) &&
+               KernelMemoryCompatExports.TryReadUInt32Compat(
+                   ctx,
+                   semaphoreAddress,
+                   out handle) &&
                handle != 0;
     }
 
@@ -602,56 +621,6 @@ public static class KernelSemaphoreCompatExports
         var value = (int)result;
         ctx[CpuRegister.Rax] = unchecked((ulong)value);
         return value;
-    }
-
-    private static bool TryReadUInt32(CpuContext ctx, ulong address, out uint value)
-    {
-        Span<byte> buffer = stackalloc byte[sizeof(uint)];
-        if (!ctx.Memory.TryRead(address, buffer))
-        {
-            value = 0;
-            return false;
-        }
-
-        value = BinaryPrimitives.ReadUInt32LittleEndian(buffer);
-        return true;
-    }
-
-    private static bool TryWriteUInt32(CpuContext ctx, ulong address, uint value)
-    {
-        Span<byte> buffer = stackalloc byte[sizeof(uint)];
-        BinaryPrimitives.WriteUInt32LittleEndian(buffer, value);
-        return ctx.Memory.TryWrite(address, buffer);
-    }
-
-    private static bool TryReadNullTerminatedUtf8(CpuContext ctx, ulong address, int maxLength, out string value)
-    {
-        value = string.Empty;
-        if (address == 0 || maxLength <= 0)
-        {
-            return false;
-        }
-
-        var bytes = new byte[Math.Min(maxLength, 4096)];
-        Span<byte> current = stackalloc byte[1];
-        for (var i = 0; i < bytes.Length; i++)
-        {
-            if (!ctx.Memory.TryRead(address + (ulong)i, current))
-            {
-                return false;
-            }
-
-            if (current[0] == 0)
-            {
-                value = Encoding.UTF8.GetString(bytes, 0, i);
-                return true;
-            }
-
-            bytes[i] = current[0];
-        }
-
-        value = Encoding.UTF8.GetString(bytes);
-        return true;
     }
 
     // Call sites must check this before building the interpolated message; the trace

@@ -50,4 +50,13 @@ public sealed class ImportResultLoggingTests
                 "B+vc2AO2Zrc",
                 OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN));
     }
+
+    [Fact]
+    public void PthreadSemaphoreTryAgainIsExpectedControlFlow()
+    {
+        Assert.True(
+            DirectExecutionBackend.IsExpectedImportResult(
+                "H2a+IN9TP0E",
+                OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN));
+    }
 }
