@@ -71,7 +71,7 @@ public sealed class GuiSettings
             if (File.Exists(SettingsPath))
             {
                 var json = File.ReadAllText(SettingsPath);
-                return JsonSerializer.Deserialize<GuiSettings>(json, SerializerOptions) ?? new GuiSettings();
+                return NormalizeFromJson(json);
             }
         }
         catch (Exception)
@@ -80,6 +80,53 @@ public sealed class GuiSettings
         }
 
         return new GuiSettings();
+    }
+
+    /// <summary>
+    /// Deserializes settings while restoring the non-null invariants that
+    /// JSON input can bypass.
+    /// </summary>
+    internal static GuiSettings NormalizeFromJson(string json)
+    {
+        var settings =
+            JsonSerializer.Deserialize<GuiSettings>(json, SerializerOptions) ??
+            new GuiSettings();
+
+        settings.GameFolders = RemoveNullOrEmptyEntries(settings.GameFolders);
+        settings.ExcludedGames = RemoveNullOrEmptyEntries(settings.ExcludedGames);
+        settings.EnvironmentToggles =
+            RemoveNullOrEmptyEntries(settings.EnvironmentToggles);
+        settings.LogLevel ??= "Info";
+        settings.Language ??= "en";
+        settings.DiscordClientId ??= "1525606762248540221";
+        return settings;
+    }
+
+    private static List<string> RemoveNullOrEmptyEntries(List<string>? values)
+    {
+        if (values is null)
+        {
+            return [];
+        }
+
+        var retainedCount = 0;
+        for (var index = 0; index < values.Count; index++)
+        {
+            var value = values[index];
+            if (string.IsNullOrEmpty(value))
+            {
+                continue;
+            }
+
+            values[retainedCount++] = value;
+        }
+
+        if (retainedCount != values.Count)
+        {
+            values.RemoveRange(retainedCount, values.Count - retainedCount);
+        }
+
+        return values;
     }
 
     public void Save()
