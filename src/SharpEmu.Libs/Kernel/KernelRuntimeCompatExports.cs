@@ -1385,6 +1385,50 @@ public static class KernelRuntimeCompatExports
                 $"[LOADER][TRACE] load_start_module path='{modulePath}' handle={handle}");
         }
 
+        if (KernelModuleRegistry.TryBeginModuleStart(
+                handle,
+                out var moduleToStart,
+                out var initializers))
+        {
+            var succeeded = false;
+            try
+            {
+                var scheduler = GuestThreadExecution.Scheduler;
+                if (scheduler is null)
+                {
+                    ctx[CpuRegister.Rax] = unchecked(
+                        (ulong)(int)OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP);
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP;
+                }
+
+                for (var index = 0; index < initializers.Count; index++)
+                {
+                    if (!scheduler.TryCallGuestFunction(
+                            ctx,
+                            initializers[index],
+                            0,
+                            0,
+                            0,
+                            0,
+                            0,
+                            $"module initializer {moduleToStart.Name}[{index}]",
+                            out _,
+                            out _))
+                    {
+                        ctx[CpuRegister.Rax] = unchecked(
+                            (ulong)(int)OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP);
+                        return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP;
+                    }
+                }
+
+                succeeded = true;
+            }
+            finally
+            {
+                KernelModuleRegistry.CompleteModuleStart(handle, succeeded);
+            }
+        }
+
         ctx[CpuRegister.Rax] = unchecked((uint)handle);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }

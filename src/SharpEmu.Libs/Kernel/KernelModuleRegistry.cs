@@ -18,6 +18,7 @@ public static class KernelModuleRegistry
 
     private static readonly object _gate = new();
     private static readonly Dictionary<int, ModuleEntry> _modulesByHandle = new();
+    private static readonly Dictionary<int, ulong[]> _initializersByHandle = new();
     private static readonly Dictionary<int, Dictionary<string, ulong>> _symbolsByHandle = new();
     private static readonly Dictionary<string, int> _handleByPath = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, int> _handleByName = new(StringComparer.OrdinalIgnoreCase);
@@ -53,6 +54,7 @@ public static class KernelModuleRegistry
         lock (_gate)
         {
             _modulesByHandle.Clear();
+            _initializersByHandle.Clear();
             _symbolsByHandle.Clear();
             _handleByPath.Clear();
             _handleByName.Clear();
@@ -255,14 +257,24 @@ public static class KernelModuleRegistry
     }
 
     /// <summary>
-    /// Atomically claims a module initializer. A module can be observed while
-    /// it is starting (for recursive loader calls), but its DT_INIT routine is
-    /// executed at most once after a successful start.
+    /// Atomically claims a module initializer lifecycle. A module can be
+    /// observed while it is starting (for recursive loader calls), but its
+    /// initializer list is executed at most once after a successful start.
     /// </summary>
-    public static bool TryBeginModuleStart(int handle, out ModuleEntry module)
+    public static bool TryBeginModuleStart(int handle, out ModuleEntry module) =>
+        TryBeginModuleStart(handle, out module, out _);
+
+    /// <summary>
+    /// Atomically claims a module's ordered initializer list for execution.
+    /// </summary>
+    public static bool TryBeginModuleStart(
+        int handle,
+        out ModuleEntry module,
+        out IReadOnlyList<ulong> initializers)
     {
         lock (_gate)
         {
+            initializers = [];
             if (!_modulesByHandle.TryGetValue(handle, out module))
             {
                 return false;
@@ -273,7 +285,14 @@ public static class KernelModuleRegistry
                 return false;
             }
 
-            if (module.InitEntryPoint < 0x10000)
+            if (!_initializersByHandle.TryGetValue(handle, out var registeredInitializers))
+            {
+                registeredInitializers = module.InitEntryPoint >= 0x10000
+                    ? [module.InitEntryPoint]
+                    : [];
+            }
+
+            if (registeredInitializers.Length == 0)
             {
                 module = module with { StartState = ModuleStartState.Started };
                 _modulesByHandle[handle] = module;
@@ -282,6 +301,7 @@ public static class KernelModuleRegistry
 
             module = module with { StartState = ModuleStartState.Starting };
             _modulesByHandle[handle] = module;
+            initializers = registeredInitializers;
             return true;
         }
     }
@@ -300,6 +320,24 @@ public static class KernelModuleRegistry
             {
                 StartState = succeeded ? ModuleStartState.Started : ModuleStartState.NotStarted,
             };
+        }
+    }
+
+    public static void RegisterModuleInitializers(
+        int handle,
+        IReadOnlyList<ulong> initializers)
+    {
+        ArgumentNullException.ThrowIfNull(initializers);
+        lock (_gate)
+        {
+            if (!_modulesByHandle.ContainsKey(handle))
+            {
+                return;
+            }
+
+            _initializersByHandle[handle] = initializers
+                .Where(entryPoint => entryPoint >= 0x10000)
+                .ToArray();
         }
     }
 

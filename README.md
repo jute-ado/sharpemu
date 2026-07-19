@@ -27,15 +27,20 @@ validate behavior, and keep generated code grounded in observable results. AI
 assistance is a development tool here, not evidence that a change is correct.
 
 The fork is kept synchronized with upstream while experimenting with a more
-test-driven workflow. Its current emphasis includes:
+test-driven workflow. Major downstream differences include:
 
-- regression tests for CPU execution, memory, loading, HLE, shaders, and Vulkan
-- synthetic guest programs and shader workloads that require no copyrighted
-  games, firmware, or proprietary assets
+- broader regression coverage for CPU execution, memory, loading, HLE, shaders,
+  Vulkan, and compatibility milestones
+- synthetic guest programs and executable shader-conformance workloads that
+  require no copyrighted games, firmware, or proprietary assets
 - generated HLE export registration instead of runtime reflection discovery
-- one canonical implementation path for each subsystem rather than parallel
-  compatibility implementations
-- stronger Windows, Linux, and macOS x64 build and runtime validation
+- a guest-thread scheduler with callback, synchronization, and lifecycle
+  behavior exercised through native guest-code tests
+- application plugin discovery and symbol resolution, including deferred module
+  initializers that start once and can be retried after a guest failure
+- a bounded, local-only game regression harness with redacted manifests suitable
+  for source control
+- Windows, Linux, and macOS x64 build, test, packaging, and release validation
 - small, focused branches whose changes are merged only after relevant tests
   and hosted CI pass
 
@@ -113,21 +118,21 @@ release includes the MoltenVK Vulkan implementation.
 
 ## Games Tested
 
-* **Demon's Souls Remake**
-  * [Demon's Souls [PPSA01341]](https://github.com/sharpemu/sharpemu/issues/2)
-  * Demon's Souls is now video loop. Shaders are ready to be converted to SPIR-V/Vulkan. We are continuing our work on this.
-  ![DeS videoOut submit first frame](./.github/images/des-videoout-shaders.jpg)
+The following table records recent results from this fork's local regression
+harness. A timeout means execution remained alive for the configured test
+window; it does not imply the game is playable.
 
-* **Poppy Playtime Chapter 1**
-  * [Poppy Playtime Chapter 1 [PPSA20591]](https://github.com/sharpemu/sharpemu/issues/3)
+| Game | Title ID | Current observed progress |
+| --- | --- | --- |
+| Dreaming Sarah | PPSA02929 | Loads and sustains execution for a 90-second automated input run. Vulkan presents a non-black, multi-color guest frame; gameplay is not yet validated. |
+| Jusant | PPSA10264 | Loads seven modules and sustains a 90-second UE5 execution run without a CPU trap. No gameplay or rendered frame is validated yet. |
+| Poppy Playtime: Chapter 1 | PPSA20591 | Loads seven modules and sustains the execution-survival window without a CPU trap. No gameplay is validated yet. |
+| SILENT HILL: The Short Message | PPSA10112 | Loads six modules and sustains the execution-survival window without a CPU trap. No gameplay is validated yet. |
+| SUPER BOMBERMAN R 2 | PPSA07190 | Loads thirteen modules and reaches deferred plugin initialization; execution currently ends in a CPU trap. |
+| Demon's Souls | PPSA01342 | Loads the main image and one module; execution currently ends in a CPU trap after module initialization. |
 
-* **SILENT HILL: The Short Message**
-  * [SILENT HILL: The Short Message [PPSA10112]](https://github.com/sharpemu/sharpemu/issues/4)
-
-* **Dreaming Sarah**
-  * [Dreaming Sarah [PPSA02929]](https://github.com/sharpemu/sharpemu/issues/9)
-  * Real texture rendering for this game;
-  ![Splash texture](./.github/images/dreaming-sarah.jpg)
+These results are observations, not compatibility promises. Exact progress can
+change with the game revision, operating system, GPU driver, and test duration.
 
 
 > [!IMPORTANT]
@@ -166,16 +171,3 @@ Provided valuable references for filesystem handling and low-level C# implementa
 # License
 
 - [**GPL-2.0 license**](./LICENSE)
-
-## Contributing
-
-Before opening an issue or pull request, please read our contribution guidelines:
-
-**[CONTRIBUTING.md](./CONTRIBUTING.md)**
-
-The guide covers:
-- Coding style and formatting
-- AI-assisted contributions
-- Pull request expectations
-- Testing guidelines
-- Legal and reverse engineering policy
