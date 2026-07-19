@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers.Binary;
 using SharpEmu.Core.Cpu;
 using SharpEmu.HLE;
 using Xunit;
@@ -17,11 +18,16 @@ public sealed class NativeImportBridgeTests
     private const string FloatAddNid = "test-float-add-nid";
     private const string ColdHandlerNid = "test-cold-handler-nid";
     private const string BlockingYieldNid = "test-blocking-yield-nid";
+    private const string MemalignNid = "Ujf3KzMvRmI";
     private const ulong CodeAddress = 0x0000_0008_1000_0000;
     private const ulong ImportAddress = CodeAddress + 0x100;
     private const ulong SecondImportAddress = ImportAddress + 0x10;
     private const ulong FallbackImportAddress = 0x0000_6FFF_FF00_0000;
+    private const ulong DlsymImportAddress = 0x0000_7000_0000_0000;
+    private const ulong DlsymResultAddress = CodeAddress + 0x280;
+    private const ulong DlsymSymbolAddress = CodeAddress + 0x200;
     private const ulong NonvolatileSentinel = 0x1122_3344_5566_7788;
+    private const ulong ApplicationHeapAllocationSentinel = 0x1234_5678_9ABC_0000;
 
     [HostX64Fact]
     public async Task GuestCallDispatchesHleExportAndReturnsValue()
@@ -132,6 +138,85 @@ public sealed class NativeImportBridgeTests
             "synthetic-fallback-import-roundtrip",
             FallbackImportAddress);
         AssertSuccessful(execution);
+    }
+
+    [HostX64Fact]
+    public async Task DlsymApplicationHeapAllocatorPreservesAlignmentSizeAbi()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
+        var code = new byte[0x288];
+        byte[] instructions =
+        [
+            0xBF, 0x00, 0x00, 0x00, 0x00,             // mov edi, 0 (main module)
+            0x48, 0xBE, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,                   // mov rsi, DlsymSymbolAddress
+            0x48, 0xBA, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,                   // mov rdx, DlsymResultAddress
+            0x48, 0xB8, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,                   // mov rax, DlsymImportAddress
+            0xFF, 0xD0,                               // call rax
+            0x85, 0xC0,                               // test eax, eax
+            0x75, 0x30,                               // jne failure
+            0x48, 0xBB, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,                   // mov rbx, DlsymResultAddress
+            0x48, 0x8B, 0x03,                         // mov rax, [rbx]
+            0x48, 0x85, 0xC0,                         // test rax, rax
+            0x74, 0x1E,                               // jz failure
+            0xBF, 0x00, 0x10, 0x00, 0x00,             // mov edi, 0x1000 (alignment)
+            0xBE, 0x00, 0x00, 0x04, 0x00,             // mov esi, 0x40000 (size)
+            0xFF, 0xD0,                               // call rax
+            0x48, 0xB9, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,                   // mov rcx, allocation sentinel
+            0x48, 0x39, 0xC8,                         // cmp rax, rcx
+            0x75, 0x03,                               // jne failure
+            0x31, 0xC0,                               // xor eax, eax
+            0xC3,                                     // ret
+            0xB8, 0x01, 0x00, 0x00, 0x00,             // failure: mov eax, 1
+            0xC3,                                     // ret
+        ];
+        BinaryPrimitives.WriteUInt64LittleEndian(instructions.AsSpan(7, 8), DlsymSymbolAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(instructions.AsSpan(17, 8), DlsymResultAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(instructions.AsSpan(27, 8), DlsymImportAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(instructions.AsSpan(43, 8), DlsymResultAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            instructions.AsSpan(73, 8),
+            ApplicationHeapAllocationSentinel);
+        instructions.CopyTo(code, 0);
+        "scriptingGetMem\0"u8.CopyTo(code.AsSpan(0x200));
+
+        SyntheticExports.ApplicationHeapAlignment = 0;
+        SyntheticExports.ApplicationHeapSize = 0;
+        var execution = SyntheticNativeGuest.ExecuteModuleInitializer(
+            code,
+            Generation.Gen5,
+            "synthetic-dlsym-application-heap",
+            new Dictionary<ulong, string>
+            {
+                [DlsymImportAddress] = "LwG8g3niqwA",
+            },
+            moduleManager =>
+            {
+                Assert.Equal(
+                    1,
+                    moduleManager.RegisterExports(
+                    [
+                        new ExportedFunction(
+                            "libc",
+                            MemalignNid,
+                            "memalign",
+                            Generation.Gen5,
+                            SyntheticExports.ApplicationHeapAllocate),
+                    ]));
+            },
+            CodeAddress);
+
+        AssertSuccessful(execution);
+        Assert.Equal(0x1000UL, SyntheticExports.ApplicationHeapAlignment);
+        Assert.Equal(0x40000UL, SyntheticExports.ApplicationHeapSize);
     }
 
     [HostX64Fact]
@@ -354,6 +439,18 @@ public sealed class NativeImportBridgeTests
 
     internal static class SyntheticExports
     {
+        public static ulong ApplicationHeapAlignment { get; set; }
+
+        public static ulong ApplicationHeapSize { get; set; }
+
+        public static int ApplicationHeapAllocate(CpuContext context)
+        {
+            ApplicationHeapAlignment = context[CpuRegister.Rdi];
+            ApplicationHeapSize = context[CpuRegister.Rsi];
+            context[CpuRegister.Rax] = ApplicationHeapAllocationSentinel;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
         [SysAbiExport(
             Nid = AddNid,
             ExportName = "syntheticAdd",
