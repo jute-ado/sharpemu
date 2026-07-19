@@ -3,19 +3,23 @@
 
 using SharpEmu.HLE;
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 
 namespace SharpEmu.Libs.Audio;
 
 public static class AudioOut2Exports
 {
-    // Sized from guest evidence, not SDK headers: Quake keeps its
-    // SceAudioOut2ContextParam on the stack with the frame canary at param+0x60,
-    // and an earlier 0x80-byte ResetParam write zeroed that canary
-    // (__stack_chk_fail right after sceAudioOut2UserCreate, which silently killed
-    // the whole audio init). Stay well below 0x60 and only write the prefix we
-    // populate.
-    private const int AudioOut2ContextParamSize = 0x30;
-    private const int AudioOut2ContextMemorySize = 0x10000;
+    // Guest evidence places the caller's stack canary at param+0x60. The
+    // structure is 0x40 bytes; writing the previously assumed 0x80 bytes
+    // corrupted that canary and silently killed audio initialization.
+    private const int AudioOut2ContextParamSize = 0x40;
+    private const ulong AudioOut2ContextMemoryBaseSize = 0x10000;
+    private const ulong AudioOut2QueueMemorySize = 0x590;
+    private const uint DefaultQueueDepth = 4;
+    private const uint DefaultNumGrains = 512;
+    private const int AudioOut2ErrorNotReady = unchecked((int)0x80268008);
+    private static readonly ConcurrentDictionary<ulong, ContextState> Contexts = new();
+    private static readonly ConcurrentDictionary<ulong, PortState> Ports = new();
     private static long _nextContextHandle = 1;
     private static long _nextUserHandle = 1;
     private static int _nextPortId;
@@ -46,10 +50,11 @@ public static class AudioOut2Exports
 
         Span<byte> param = stackalloc byte[AudioOut2ContextParamSize];
         param.Clear();
-        BinaryPrimitives.WriteUInt32LittleEndian(param[0x00..], AudioOut2ContextParamSize);
-        BinaryPrimitives.WriteUInt32LittleEndian(param[0x04..], 2);
-        BinaryPrimitives.WriteUInt32LittleEndian(param[0x08..], 48000);
-        BinaryPrimitives.WriteUInt32LittleEndian(param[0x0C..], 0x400);
+        BinaryPrimitives.WriteUInt32LittleEndian(param[0x00..], 256);
+        BinaryPrimitives.WriteUInt32LittleEndian(param[0x04..], 256);
+        BinaryPrimitives.WriteUInt32LittleEndian(param[0x0C..], DefaultQueueDepth);
+        BinaryPrimitives.WriteUInt32LittleEndian(param[0x10..], DefaultNumGrains);
+        BinaryPrimitives.WriteUInt32LittleEndian(param[0x14..], 1);
 
         return ctx.Memory.TryWrite(paramAddress, param)
             ? ctx.SetReturn(0)
@@ -70,7 +75,17 @@ public static class AudioOut2Exports
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        return ctx.TryWriteUInt64(outMemorySizeAddress, AudioOut2ContextMemorySize)
+        if (!TryReadContextParameters(
+                ctx,
+                paramAddress,
+                out var queueDepth,
+                out _))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var requiredSize = RequiredContextMemorySize(queueDepth);
+        return ctx.TryWriteUInt64(outMemorySizeAddress, requiredSize)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
@@ -87,15 +102,32 @@ public static class AudioOut2Exports
         var memorySize = ctx[CpuRegister.Rdx];
         var outContextAddress = ctx[CpuRegister.Rcx];
         if (paramAddress == 0 || memoryAddress == 0 ||
-            memorySize < AudioOut2ContextMemorySize || outContextAddress == 0)
+            memorySize == 0 || outContextAddress == 0)
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        if (!TryReadContextParameters(
+                ctx,
+                paramAddress,
+                out var queueDepth,
+                out var numGrains))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+        if (memorySize < RequiredContextMemorySize(queueDepth))
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
         var handle = (ulong)Interlocked.Increment(ref _nextContextHandle);
-        return ctx.TryWriteUInt64(outContextAddress, handle)
-            ? ctx.SetReturn(0)
-            : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        if (!ctx.TryWriteUInt64(outContextAddress, handle))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        Contexts[handle] = new ContextState(queueDepth, numGrains);
+        return ctx.SetReturn(0);
     }
 
     [SysAbiExport(
@@ -103,7 +135,90 @@ public static class AudioOut2Exports
         ExportName = "sceAudioOut2ContextDestroy",
         Target = Generation.Gen5,
         LibraryName = "libSceAudioOut2")]
-    public static int AudioOut2ContextDestroy(CpuContext ctx) => ctx.SetReturn(0);
+    public static int AudioOut2ContextDestroy(CpuContext ctx)
+    {
+        var contextHandle = ctx[CpuRegister.Rdi];
+        if (contextHandle == 0 || !Contexts.TryRemove(contextHandle, out _))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        foreach (var pair in Ports)
+        {
+            if (pair.Value.ContextHandle == contextHandle)
+            {
+                Ports.TryRemove(pair.Key, out _);
+            }
+        }
+
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "PE2zHMqLSHs",
+        ExportName = "sceAudioOut2ContextAdvance",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2ContextAdvance(CpuContext ctx)
+    {
+        var contextHandle = ctx[CpuRegister.Rdi];
+        if (contextHandle == 0 ||
+            !Contexts.TryGetValue(contextHandle, out var state))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        state.Advance();
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "aII9h5nli9U",
+        ExportName = "sceAudioOut2ContextPush",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2ContextPush(CpuContext ctx)
+    {
+        var contextHandle = ctx[CpuRegister.Rdi];
+        var blocking = ctx[CpuRegister.Rsi] != 0;
+        if (contextHandle == 0 ||
+            !Contexts.TryGetValue(contextHandle, out var state))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        return state.TryPush(blocking)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn(AudioOut2ErrorNotReady);
+    }
+
+    [SysAbiExport(
+        Nid = "R7d0F1g2qsU",
+        ExportName = "sceAudioOut2ContextGetQueueLevel",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2ContextGetQueueLevel(CpuContext ctx)
+    {
+        var contextHandle = ctx[CpuRegister.Rdi];
+        var queueLevelAddress = ctx[CpuRegister.Rsi];
+        var availableQueuesAddress = ctx[CpuRegister.Rdx];
+        if (contextHandle == 0 ||
+            !Contexts.TryGetValue(contextHandle, out var state))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        state.GetQueueLevel(out var queueLevel, out var availableQueues);
+        if ((queueLevelAddress != 0 &&
+             !ctx.TryWriteUInt32(queueLevelAddress, queueLevel)) ||
+            (availableQueuesAddress != 0 &&
+             !ctx.TryWriteUInt32(availableQueuesAddress, availableQueues)))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        return ctx.SetReturn(0);
+    }
 
     [SysAbiExport(
         Nid = "JK2wamZPzwM",
@@ -112,20 +227,38 @@ public static class AudioOut2Exports
         LibraryName = "libSceAudioOut2")]
     public static int AudioOut2PortCreate(CpuContext ctx)
     {
-        var type = unchecked((int)ctx[CpuRegister.Rdi]);
+        var contextHandle = ctx[CpuRegister.Rdi];
         var paramAddress = ctx[CpuRegister.Rsi];
         var outPortAddress = ctx[CpuRegister.Rdx];
-        var contextAddress = ctx[CpuRegister.Rcx];
-        if (type < 0 || type > 255 || paramAddress == 0 || outPortAddress == 0 || contextAddress == 0)
+        if (contextHandle == 0 || paramAddress == 0 || outPortAddress == 0)
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
+        if (!Contexts.ContainsKey(contextHandle))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+        if (!TryReadPortParameters(
+                ctx,
+                paramAddress,
+                out var portType,
+                out var dataFormat,
+                out var samplingFrequency))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+        var handle = unchecked((ulong)(uint)Interlocked.Increment(ref _nextPortId));
+        if (!ctx.TryWriteUInt64(outPortAddress, handle))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
 
-        var portId = unchecked((uint)Interlocked.Increment(ref _nextPortId)) & 0xFF;
-        var handle = 0x2000_0000UL | ((ulong)(uint)type << 16) | portId;
-        return ctx.TryWriteUInt64(outPortAddress, handle)
-            ? ctx.SetReturn(0)
-            : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        Ports[handle] = new PortState(
+            contextHandle,
+            portType,
+            dataFormat,
+            samplingFrequency);
+        return ctx.SetReturn(0);
     }
 
     [SysAbiExport(
@@ -141,15 +274,18 @@ public static class AudioOut2Exports
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
+        if (!Ports.TryGetValue(handle, out var port))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
 
-        var type = (int)((handle >> 16) & 0xFF);
-        Span<byte> state = stackalloc byte[0x20];
+        Span<byte> state = stackalloc byte[0x40];
         state.Clear();
-        var output = type == 2 ? 0x40 : 0x01;
-        var channels = type == 2 ? 1 : 2;
+        var output = port.PortType == 2 ? 0x40 : 0x01;
+        var channels = GetChannelCount(port.DataFormat);
         BinaryPrimitives.WriteUInt16LittleEndian(state[0x00..], unchecked((ushort)output));
         state[0x02] = unchecked((byte)channels);
-        BinaryPrimitives.WriteInt16LittleEndian(state[0x04..], -1);
+        BinaryPrimitives.WriteInt16LittleEndian(state[0x04..], 127);
 
         return ctx.Memory.TryWrite(stateAddress, state)
             ? ctx.SetReturn(0)
@@ -185,7 +321,66 @@ public static class AudioOut2Exports
         ExportName = "sceAudioOut2PortDestroy",
         Target = Generation.Gen5,
         LibraryName = "libSceAudioOut2")]
-    public static int AudioOut2PortDestroy(CpuContext ctx) => ctx.SetReturn(0);
+    public static int AudioOut2PortDestroy(CpuContext ctx)
+    {
+        var handle = ctx[CpuRegister.Rdi];
+        return handle != 0 && Ports.TryRemove(handle, out _)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+    }
+
+    [SysAbiExport(
+        Nid = "8XTArSPyWHk",
+        ExportName = "sceAudioOut2PortSetAttributes",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2PortSetAttributes(CpuContext ctx)
+    {
+        var handle = ctx[CpuRegister.Rdi];
+        var attributesAddress = ctx[CpuRegister.Rsi];
+        var attributeCount = unchecked((uint)ctx[CpuRegister.Rdx]);
+        if (handle == 0 || !Ports.TryGetValue(handle, out var port) ||
+            (attributeCount != 0 && attributesAddress == 0) ||
+            attributeCount > 1024)
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        for (var index = 0U; index < attributeCount; index++)
+        {
+            if (!GuestAddress.TryAdd(
+                    attributesAddress,
+                    index * 0x18UL,
+                    out var attributeAddress) ||
+                !GuestAddress.TryAdd(
+                    attributeAddress,
+                    0x08,
+                    out var valueAddressAddress) ||
+                !GuestAddress.TryAdd(
+                    attributeAddress,
+                    0x10,
+                    out var valueSizeAddress) ||
+                !ctx.TryReadUInt32(attributeAddress, out var attributeId) ||
+                !ctx.TryReadUInt64(valueAddressAddress, out var valueAddress) ||
+                !ctx.TryReadUInt64(valueSizeAddress, out var valueSize))
+            {
+                return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            if (attributeId == 0 && valueAddress != 0 &&
+                valueSize >= sizeof(ulong))
+            {
+                if (!ctx.TryReadUInt64(valueAddress, out var pcmDataAddress))
+                {
+                    return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
+                port.SetPcmData(pcmDataAddress);
+            }
+        }
+
+        return ctx.SetReturn(0);
+    }
 
     [SysAbiExport(
         Nid = "IaZXJ9M79uo",
@@ -212,5 +407,158 @@ public static class AudioOut2Exports
         return ctx.TryWriteUInt64(outUserAddress, handle)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    [SysAbiExport(
+        Nid = "XHl38ZNknbs",
+        ExportName = "sceAudioOut2MasteringInit",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2MasteringInit(CpuContext ctx)
+        => ctx.SetReturn(0);
+
+    [SysAbiExport(
+        Nid = "v8iOE+j8a5o",
+        ExportName = "sceAudioOut2MasteringSetParam",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2MasteringSetParam(CpuContext ctx)
+    {
+        var parameterAddress = ctx[CpuRegister.Rdi];
+        var output = unchecked((uint)ctx[CpuRegister.Rsi]);
+        if (parameterAddress == 0 || output > 2)
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+        if (!ctx.TryReadUInt32(parameterAddress, out _))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        return ctx.SetReturn(0);
+    }
+
+    private static bool TryReadContextParameters(
+        CpuContext ctx,
+        ulong address,
+        out uint queueDepth,
+        out uint numGrains)
+    {
+        queueDepth = 0;
+        numGrains = 0;
+        if (!GuestAddress.TryAdd(address, 0x0C, out var queueDepthAddress) ||
+            !GuestAddress.TryAdd(address, 0x10, out var numGrainsAddress) ||
+            !ctx.TryReadUInt32(queueDepthAddress, out queueDepth) ||
+            !ctx.TryReadUInt32(numGrainsAddress, out numGrains))
+        {
+            return false;
+        }
+
+        queueDepth = queueDepth == 0 ? DefaultQueueDepth : queueDepth;
+        numGrains = numGrains == 0 ? DefaultNumGrains : numGrains;
+        return true;
+    }
+
+    private static bool TryReadPortParameters(
+        CpuContext ctx,
+        ulong address,
+        out ushort portType,
+        out uint dataFormat,
+        out uint samplingFrequency)
+    {
+        portType = 0;
+        dataFormat = 0;
+        samplingFrequency = 0;
+        return GuestAddress.TryAdd(address, 0x04, out var dataFormatAddress) &&
+            GuestAddress.TryAdd(address, 0x08, out var samplingFrequencyAddress) &&
+            ctx.TryReadUInt16(address, out portType) &&
+            ctx.TryReadUInt32(dataFormatAddress, out dataFormat) &&
+            ctx.TryReadUInt32(samplingFrequencyAddress, out samplingFrequency);
+    }
+
+    private static ulong RequiredContextMemorySize(uint queueDepth) =>
+        AudioOut2ContextMemoryBaseSize + (queueDepth * AudioOut2QueueMemorySize);
+
+    private static byte GetChannelCount(uint dataFormat)
+    {
+        var channels = (dataFormat >> 8) & 0xFF;
+        return unchecked((byte)(channels == 0 ? 2 : Math.Min(channels, 16)));
+    }
+
+    private sealed class ContextState(uint queueDepth, uint numGrains)
+    {
+        private readonly object _sync = new();
+        private uint _queued;
+
+        public uint QueueDepth { get; } = queueDepth;
+
+        public uint NumGrains { get; } = numGrains;
+
+        public void Advance()
+        {
+            lock (_sync)
+            {
+                if (_queued != 0)
+                {
+                    _queued--;
+                }
+            }
+        }
+
+        public bool TryPush(bool blocking)
+        {
+            lock (_sync)
+            {
+                if (_queued >= QueueDepth)
+                {
+                    if (!blocking)
+                    {
+                        return false;
+                    }
+
+                    // There is no host audio sink yet. A blocking push models
+                    // one grain being consumed before accepting the next one.
+                    _queued--;
+                }
+
+                _queued++;
+                return true;
+            }
+        }
+
+        public void GetQueueLevel(
+            out uint queueLevel,
+            out uint availableQueues)
+        {
+            lock (_sync)
+            {
+                queueLevel = _queued;
+                availableQueues = _queued < QueueDepth
+                    ? QueueDepth - _queued
+                    : 0;
+            }
+        }
+    }
+
+    private sealed class PortState(
+        ulong contextHandle,
+        ushort portType,
+        uint dataFormat,
+        uint samplingFrequency)
+    {
+        public ulong ContextHandle { get; } = contextHandle;
+
+        public ushort PortType { get; } = portType;
+
+        public uint DataFormat { get; } = dataFormat;
+
+        public uint SamplingFrequency { get; } = samplingFrequency;
+
+        public ulong PcmDataAddress { get; private set; }
+
+        public void SetPcmData(ulong address)
+        {
+            PcmDataAddress = address;
+        }
     }
 }

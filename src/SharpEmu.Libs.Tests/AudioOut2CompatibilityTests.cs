@@ -13,13 +13,20 @@ public sealed class AudioOut2CompatibilityTests
     private const ulong BufferAddress = 0x1000;
     private const ulong ParameterAddress = 0x2000;
     private const ulong ContextMemoryAddress = 0x3000;
+    private const ulong ContextHandleAddress = 0x20000;
+    private const ulong ContextParameterAddress = 0x21000;
+    private const ulong PortHandleAddress = 0x22000;
+    private const ulong AttributeAddress = 0x23000;
+    private const ulong AttributeValueAddress = 0x24000;
+    private const ulong ContextMemorySize = 0x11640;
+    private const int AudioOut2ErrorNotReady = unchecked((int)0x80268008);
     private const byte Canary = 0xA5;
 
     [Fact]
     public void ContextResetParamWritesExactStructureWithoutTouchingCanaries()
     {
         var memory = new FakeGuestMemory();
-        var allocation = FilledBuffer(0x50);
+        var allocation = FilledBuffer(0x60);
         memory.AddRegion(BufferAddress, allocation);
         var context = CreateContext(memory);
         context[CpuRegister.Rdi] = BufferAddress + 8;
@@ -27,13 +34,15 @@ public sealed class AudioOut2CompatibilityTests
         AssertSuccess(AudioOut2Exports.AudioOut2ContextResetParam(context), context);
 
         Assert.All(allocation.AsSpan(0, 8).ToArray(), value => Assert.Equal(Canary, value));
-        var parameter = allocation.AsSpan(8, 0x30);
-        Assert.Equal(0x30U, BinaryPrimitives.ReadUInt32LittleEndian(parameter[0x00..]));
-        Assert.Equal(2U, BinaryPrimitives.ReadUInt32LittleEndian(parameter[0x04..]));
-        Assert.Equal(48_000U, BinaryPrimitives.ReadUInt32LittleEndian(parameter[0x08..]));
-        Assert.Equal(0x400U, BinaryPrimitives.ReadUInt32LittleEndian(parameter[0x0C..]));
-        Assert.All(parameter[0x10..].ToArray(), value => Assert.Equal(0, value));
-        Assert.All(allocation.AsSpan(0x38).ToArray(), value => Assert.Equal(Canary, value));
+        var parameter = allocation.AsSpan(8, 0x40);
+        Assert.Equal(256U, BinaryPrimitives.ReadUInt32LittleEndian(parameter[0x00..]));
+        Assert.Equal(256U, BinaryPrimitives.ReadUInt32LittleEndian(parameter[0x04..]));
+        Assert.Equal(0U, BinaryPrimitives.ReadUInt32LittleEndian(parameter[0x08..]));
+        Assert.Equal(4U, BinaryPrimitives.ReadUInt32LittleEndian(parameter[0x0C..]));
+        Assert.Equal(512U, BinaryPrimitives.ReadUInt32LittleEndian(parameter[0x10..]));
+        Assert.Equal(1U, BinaryPrimitives.ReadUInt32LittleEndian(parameter[0x14..]));
+        Assert.All(parameter[0x18..].ToArray(), value => Assert.Equal(0, value));
+        Assert.All(allocation.AsSpan(0x48).ToArray(), value => Assert.Equal(Canary, value));
     }
 
     [Fact]
@@ -58,7 +67,9 @@ public sealed class AudioOut2CompatibilityTests
     {
         var memory = new FakeGuestMemory();
         var allocation = FilledBuffer(24);
+        var parameter = CreateContextParameter(queueDepth: 6);
         memory.AddRegion(BufferAddress, allocation);
+        memory.AddRegion(ParameterAddress, parameter);
         var context = CreateContext(memory);
         context[CpuRegister.Rdi] = ParameterAddress;
         context[CpuRegister.Rsi] = BufferAddress + 8;
@@ -67,7 +78,7 @@ public sealed class AudioOut2CompatibilityTests
 
         Assert.All(allocation.AsSpan(0, 8).ToArray(), value => Assert.Equal(Canary, value));
         Assert.Equal(
-            0x1_0000UL,
+            0x1_2160UL,
             BinaryPrimitives.ReadUInt64LittleEndian(allocation.AsSpan(8, 8)));
         Assert.All(allocation.AsSpan(16).ToArray(), value => Assert.Equal(Canary, value));
     }
@@ -106,8 +117,9 @@ public sealed class AudioOut2CompatibilityTests
         var memory = new FakeGuestMemory();
         var allocation = FilledBuffer(24);
         memory.AddRegion(BufferAddress, allocation);
+        memory.AddRegion(ParameterAddress, CreateContextParameter());
         var context = CreateContext(memory);
-        ConfigureContextCreate(context, memorySize: 0x1_0000, BufferAddress + 8);
+        ConfigureContextCreate(context, ContextMemorySize, BufferAddress + 8);
 
         AssertSuccess(AudioOut2Exports.AudioOut2ContextCreate(context), context);
         var firstHandle = BinaryPrimitives.ReadUInt64LittleEndian(allocation.AsSpan(8, 8));
@@ -125,8 +137,9 @@ public sealed class AudioOut2CompatibilityTests
     {
         var memory = new FakeGuestMemory();
         memory.AddRegion(BufferAddress, new byte[8]);
+        memory.AddRegion(ParameterAddress, CreateContextParameter());
         var context = CreateContext(memory);
-        ConfigureContextCreate(context, memorySize: 0xFFFF, BufferAddress);
+        ConfigureContextCreate(context, ContextMemorySize - 1, BufferAddress);
 
         AssertError(
             AudioOut2Exports.AudioOut2ContextCreate(context),
@@ -135,10 +148,10 @@ public sealed class AudioOut2CompatibilityTests
     }
 
     [Theory]
-    [InlineData(0, ContextMemoryAddress, 0x1_0000, BufferAddress)]
-    [InlineData(ParameterAddress, 0, 0x1_0000, BufferAddress)]
+    [InlineData(0, ContextMemoryAddress, ContextMemorySize, BufferAddress)]
+    [InlineData(ParameterAddress, 0, ContextMemorySize, BufferAddress)]
     [InlineData(ParameterAddress, ContextMemoryAddress, 0, BufferAddress)]
-    [InlineData(ParameterAddress, ContextMemoryAddress, 0x1_0000, 0)]
+    [InlineData(ParameterAddress, ContextMemoryAddress, ContextMemorySize, 0)]
     public void ContextCreateRejectsNullRequiredArguments(
         ulong parameter,
         ulong memory,
@@ -160,8 +173,10 @@ public sealed class AudioOut2CompatibilityTests
     [Fact]
     public void ContextCreateReportsUnmappedOutput()
     {
-        var context = CreateContext(new FakeGuestMemory());
-        ConfigureContextCreate(context, memorySize: 0x1_0000, BufferAddress);
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(ParameterAddress, CreateContextParameter());
+        var context = CreateContext(memory);
+        ConfigureContextCreate(context, ContextMemorySize, BufferAddress);
 
         AssertError(
             AudioOut2Exports.AudioOut2ContextCreate(context),
@@ -170,51 +185,50 @@ public sealed class AudioOut2CompatibilityTests
     }
 
     [Fact]
-    public void PortCreateWritesEncodedHandleWithoutTouchingCanaries()
+    public void PortCreateUsesContextFirstAbiAndPreservesOutputCanaries()
     {
         var memory = new FakeGuestMemory();
         var allocation = FilledBuffer(24);
         memory.AddRegion(BufferAddress, allocation);
+        memory.AddRegion(ParameterAddress, CreatePortParameter(portType: 2));
+        var contextHandle = CreateAudioContext(memory);
         var context = CreateContext(memory);
-        ConfigurePortCreate(context, type: 2, BufferAddress + 8);
+        ConfigurePortCreate(context, contextHandle, BufferAddress + 8);
 
         AssertSuccess(AudioOut2Exports.AudioOut2PortCreate(context), context);
 
         var handle = BinaryPrimitives.ReadUInt64LittleEndian(allocation.AsSpan(8, 8));
-        Assert.Equal(0x2000_0000UL, handle & 0xFF00_0000UL);
-        Assert.Equal(2UL, (handle >> 16) & 0xFF);
+        Assert.NotEqual(0UL, handle);
         Assert.All(allocation.AsSpan(0, 8).ToArray(), value => Assert.Equal(Canary, value));
         Assert.All(allocation.AsSpan(16).ToArray(), value => Assert.Equal(Canary, value));
     }
 
-    [Theory]
-    [InlineData(-1)]
-    [InlineData(256)]
-    public void PortCreateRejectsUnsupportedTypes(int type)
+    [Fact]
+    public void PortCreateAcceptsObjectPortType()
     {
-        var context = CreateContext(new FakeGuestMemory());
-        ConfigurePortCreate(context, type, BufferAddress);
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(ParameterAddress, CreatePortParameter(portType: 0x0100));
+        memory.AddRegion(BufferAddress, new byte[8]);
+        var contextHandle = CreateAudioContext(memory);
+        var context = CreateContext(memory);
+        ConfigurePortCreate(context, contextHandle, BufferAddress);
 
-        AssertError(
-            AudioOut2Exports.AudioOut2PortCreate(context),
-            context,
-            OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        AssertSuccess(AudioOut2Exports.AudioOut2PortCreate(context), context);
     }
 
     [Theory]
-    [InlineData(0, BufferAddress, ContextMemoryAddress)]
-    [InlineData(ParameterAddress, 0, ContextMemoryAddress)]
-    [InlineData(ParameterAddress, BufferAddress, 0)]
-    public void PortCreateRejectsNullRequiredPointers(
+    [InlineData(0, ParameterAddress, BufferAddress)]
+    [InlineData(1, 0, BufferAddress)]
+    [InlineData(1, ParameterAddress, 0)]
+    public void PortCreateRejectsNullRequiredArguments(
+        ulong contextHandle,
         ulong parameter,
-        ulong output,
-        ulong contextHandle)
+        ulong output)
     {
         var context = CreateContext(new FakeGuestMemory());
-        context[CpuRegister.Rdi] = 0;
+        context[CpuRegister.Rdi] = contextHandle;
         context[CpuRegister.Rsi] = parameter;
         context[CpuRegister.Rdx] = output;
-        context[CpuRegister.Rcx] = contextHandle;
 
         AssertError(
             AudioOut2Exports.AudioOut2PortCreate(context),
@@ -225,8 +239,11 @@ public sealed class AudioOut2CompatibilityTests
     [Fact]
     public void PortCreateReportsUnmappedOutput()
     {
-        var context = CreateContext(new FakeGuestMemory());
-        ConfigurePortCreate(context, type: 0, BufferAddress);
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(ParameterAddress, CreatePortParameter(portType: 0));
+        var contextHandle = CreateAudioContext(memory);
+        var context = CreateContext(memory);
+        ConfigurePortCreate(context, contextHandle, BufferAddress);
 
         AssertError(
             AudioOut2Exports.AudioOut2PortCreate(context),
@@ -235,16 +252,19 @@ public sealed class AudioOut2CompatibilityTests
     }
 
     [Theory]
-    [InlineData(0x2000_0001UL, 1, 2)]
-    [InlineData(0x2002_0001UL, 0x40, 1)]
+    [InlineData(0, 0x0001U, 1, 2)]
+    [InlineData(2, 0x0101U, 0x40, 1)]
+    [InlineData(0, 0x0801U, 1, 8)]
     public void PortGetStateWritesExactLayoutAndPreservesTail(
-        ulong handle,
+        ushort portType,
+        uint dataFormat,
         ushort expectedOutput,
         byte expectedChannels)
     {
         var memory = new FakeGuestMemory();
-        var allocation = FilledBuffer(0x30);
+        var allocation = FilledBuffer(0x50);
         memory.AddRegion(BufferAddress, allocation);
+        var handle = CreateAudioPort(memory, portType, dataFormat);
         var context = CreateContext(memory);
         context[CpuRegister.Rdi] = handle;
         context[CpuRegister.Rsi] = BufferAddress;
@@ -254,9 +274,9 @@ public sealed class AudioOut2CompatibilityTests
         Assert.Equal(expectedOutput, BinaryPrimitives.ReadUInt16LittleEndian(allocation));
         Assert.Equal(expectedChannels, allocation[0x02]);
         Assert.Equal(0, allocation[0x03]);
-        Assert.Equal(-1, BinaryPrimitives.ReadInt16LittleEndian(allocation.AsSpan(0x04)));
-        Assert.All(allocation.AsSpan(0x06, 0x1A).ToArray(), value => Assert.Equal(0, value));
-        Assert.All(allocation.AsSpan(0x20).ToArray(), value => Assert.Equal(Canary, value));
+        Assert.Equal(127, BinaryPrimitives.ReadInt16LittleEndian(allocation.AsSpan(0x04)));
+        Assert.All(allocation.AsSpan(0x06, 0x3A).ToArray(), value => Assert.Equal(0, value));
+        Assert.All(allocation.AsSpan(0x40).ToArray(), value => Assert.Equal(Canary, value));
     }
 
     [Theory]
@@ -277,14 +297,142 @@ public sealed class AudioOut2CompatibilityTests
     [Fact]
     public void PortGetStateReportsUnmappedOutput()
     {
-        var context = CreateContext(new FakeGuestMemory());
-        context[CpuRegister.Rdi] = 0x2000_0001;
+        var memory = new FakeGuestMemory();
+        var handle = CreateAudioPort(memory, portType: 0);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = handle;
         context[CpuRegister.Rsi] = BufferAddress;
 
         AssertError(
             AudioOut2Exports.AudioOut2PortGetState(context),
             context,
             OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    [Fact]
+    public void PortSetAttributesReadsPcmDescriptor()
+    {
+        var memory = new FakeGuestMemory();
+        var handle = CreateAudioPort(memory, portType: 0);
+        var attribute = new byte[0x18];
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            attribute.AsSpan(0x08),
+            AttributeValueAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(attribute.AsSpan(0x10), 8);
+        memory.AddRegion(AttributeAddress, attribute);
+        var pcm = new byte[8];
+        BinaryPrimitives.WriteUInt64LittleEndian(pcm, BufferAddress);
+        memory.AddRegion(AttributeValueAddress, pcm);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = handle;
+        context[CpuRegister.Rsi] = AttributeAddress;
+        context[CpuRegister.Rdx] = 1;
+
+        AssertSuccess(AudioOut2Exports.AudioOut2PortSetAttributes(context), context);
+    }
+
+    [Fact]
+    public void PortSetAttributesReportsInvalidAndUnmappedInputs()
+    {
+        var memory = new FakeGuestMemory();
+        var handle = CreateAudioPort(memory, portType: 0);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = handle;
+        context[CpuRegister.Rdx] = 1;
+
+        AssertError(
+            AudioOut2Exports.AudioOut2PortSetAttributes(context),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+
+        context[CpuRegister.Rsi] = AttributeAddress;
+        AssertError(
+            AudioOut2Exports.AudioOut2PortSetAttributes(context),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    [Fact]
+    public void ContextAdvanceAcceptsCreatedContext()
+    {
+        var memory = new FakeGuestMemory();
+        var handle = CreateAudioContext(memory, queueDepth: 6);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = handle;
+
+        AssertSuccess(AudioOut2Exports.AudioOut2ContextAdvance(context), context);
+    }
+
+    [Fact]
+    public void ContextQueueLevelWritesConfiguredCapacityAndPreservesCanaries()
+    {
+        var memory = new FakeGuestMemory();
+        var allocation = FilledBuffer(24);
+        memory.AddRegion(BufferAddress, allocation);
+        var handle = CreateAudioContext(memory, queueDepth: 6);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = handle;
+        context[CpuRegister.Rsi] = BufferAddress + 8;
+        context[CpuRegister.Rdx] = BufferAddress + 12;
+
+        AssertSuccess(AudioOut2Exports.AudioOut2ContextGetQueueLevel(context), context);
+
+        Assert.Equal(0U, BinaryPrimitives.ReadUInt32LittleEndian(allocation.AsSpan(8)));
+        Assert.Equal(6U, BinaryPrimitives.ReadUInt32LittleEndian(allocation.AsSpan(12)));
+        Assert.All(allocation.AsSpan(0, 8).ToArray(), value => Assert.Equal(Canary, value));
+        Assert.All(allocation.AsSpan(16).ToArray(), value => Assert.Equal(Canary, value));
+    }
+
+    [Fact]
+    public void ContextQueueLevelAllowsEitherOptionalOutput()
+    {
+        var memory = new FakeGuestMemory();
+        var output = new byte[4];
+        memory.AddRegion(BufferAddress, output);
+        var handle = CreateAudioContext(memory);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = handle;
+        context[CpuRegister.Rsi] = 0;
+        context[CpuRegister.Rdx] = BufferAddress;
+
+        AssertSuccess(AudioOut2Exports.AudioOut2ContextGetQueueLevel(context), context);
+        Assert.Equal(4U, BinaryPrimitives.ReadUInt32LittleEndian(output));
+
+        context[CpuRegister.Rsi] = BufferAddress;
+        context[CpuRegister.Rdx] = 0;
+
+        AssertSuccess(AudioOut2Exports.AudioOut2ContextGetQueueLevel(context), context);
+        Assert.Equal(0U, BinaryPrimitives.ReadUInt32LittleEndian(output));
+    }
+
+    [Fact]
+    public void ContextPushAndAdvanceShareOneQueueState()
+    {
+        var memory = new FakeGuestMemory();
+        var queueLevel = new byte[8];
+        memory.AddRegion(BufferAddress, queueLevel);
+        var handle = CreateAudioContext(memory, queueDepth: 2);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = handle;
+        context[CpuRegister.Rsi] = 0;
+
+        AssertSuccess(AudioOut2Exports.AudioOut2ContextPush(context), context);
+        AssertSuccess(AudioOut2Exports.AudioOut2ContextPush(context), context);
+        Assert.Equal(
+            AudioOut2ErrorNotReady,
+            AudioOut2Exports.AudioOut2ContextPush(context));
+        Assert.Equal(unchecked((ulong)AudioOut2ErrorNotReady), context[CpuRegister.Rax]);
+
+        context[CpuRegister.Rsi] = BufferAddress;
+        context[CpuRegister.Rdx] = BufferAddress + 4;
+        AssertSuccess(AudioOut2Exports.AudioOut2ContextGetQueueLevel(context), context);
+        Assert.Equal(2U, BinaryPrimitives.ReadUInt32LittleEndian(queueLevel));
+        Assert.Equal(0U, BinaryPrimitives.ReadUInt32LittleEndian(queueLevel.AsSpan(4)));
+
+        AssertSuccess(AudioOut2Exports.AudioOut2ContextAdvance(context), context);
+        AssertSuccess(AudioOut2Exports.AudioOut2ContextGetQueueLevel(context), context);
+        Assert.Equal(1U, BinaryPrimitives.ReadUInt32LittleEndian(queueLevel));
+        Assert.Equal(1U, BinaryPrimitives.ReadUInt32LittleEndian(queueLevel.AsSpan(4)));
     }
 
     [Fact]
@@ -375,15 +523,75 @@ public sealed class AudioOut2CompatibilityTests
             OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
 
+    [Fact]
+    public void MasteringInitAcceptsCurrentFlags()
+    {
+        var context = CreateContext(new FakeGuestMemory());
+        context[CpuRegister.Rdi] = 1;
+
+        AssertSuccess(AudioOut2Exports.AudioOut2MasteringInit(context), context);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void MasteringSetParamAcceptsValidOutputs(uint output)
+    {
+        var memory = new FakeGuestMemory();
+        var parameter = new byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(parameter, 7);
+        memory.AddRegion(ParameterAddress, parameter);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = ParameterAddress;
+        context[CpuRegister.Rsi] = output;
+        context[CpuRegister.Rdx] = 0x10;
+
+        AssertSuccess(AudioOut2Exports.AudioOut2MasteringSetParam(context), context);
+    }
+
+    [Fact]
+    public void MasteringSetParamReportsInvalidAndUnmappedInputs()
+    {
+        var context = CreateContext(new FakeGuestMemory());
+
+        AssertError(
+            AudioOut2Exports.AudioOut2MasteringSetParam(context),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+
+        context[CpuRegister.Rdi] = ParameterAddress;
+        AssertError(
+            AudioOut2Exports.AudioOut2MasteringSetParam(context),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(ParameterAddress, new byte[4]);
+        context = CreateContext(memory);
+        context[CpuRegister.Rdi] = ParameterAddress;
+        context[CpuRegister.Rsi] = 3;
+        AssertError(
+            AudioOut2Exports.AudioOut2MasteringSetParam(context),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+    }
+
     [Theory]
     [InlineData("g2tViFIohHE", "sceAudioOut2Initialize")]
     [InlineData("t5YrizufpQc", "sceAudioOut2ContextResetParam")]
     [InlineData("pDmme7Bgm6E", "sceAudioOut2ContextQueryMemory")]
     [InlineData("0x6o1VVAYSY", "sceAudioOut2ContextCreate")]
+    [InlineData("PE2zHMqLSHs", "sceAudioOut2ContextAdvance")]
+    [InlineData("aII9h5nli9U", "sceAudioOut2ContextPush")]
+    [InlineData("R7d0F1g2qsU", "sceAudioOut2ContextGetQueueLevel")]
     [InlineData("JK2wamZPzwM", "sceAudioOut2PortCreate")]
+    [InlineData("8XTArSPyWHk", "sceAudioOut2PortSetAttributes")]
     [InlineData("gatEUKG+Ea4", "sceAudioOut2PortGetState")]
     [InlineData("DImz2Ft9E2g", "sceAudioOut2GetSpeakerInfo")]
     [InlineData("xywYcRB7nbQ", "sceAudioOut2UserCreate")]
+    [InlineData("XHl38ZNknbs", "sceAudioOut2MasteringInit")]
+    [InlineData("v8iOE+j8a5o", "sceAudioOut2MasteringSetParam")]
     public void ExportMetadataIsExact(string nid, string exportName)
     {
         ExportMetadataAssert.Exact(
@@ -409,13 +617,74 @@ public sealed class AudioOut2CompatibilityTests
 
     private static void ConfigurePortCreate(
         CpuContext context,
-        int type,
+        ulong contextHandle,
         ulong outputAddress)
     {
-        context[CpuRegister.Rdi] = unchecked((ulong)type);
+        context[CpuRegister.Rdi] = contextHandle;
         context[CpuRegister.Rsi] = ParameterAddress;
         context[CpuRegister.Rdx] = outputAddress;
-        context[CpuRegister.Rcx] = 1;
+        context[CpuRegister.Rcx] = 0;
+    }
+
+    private static ulong CreateAudioContext(
+        FakeGuestMemory memory,
+        uint queueDepth = 4)
+    {
+        var output = new byte[8];
+        memory.AddRegion(
+            ContextParameterAddress,
+            CreateContextParameter(queueDepth));
+        memory.AddRegion(ContextHandleAddress, output);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = ContextParameterAddress;
+        context[CpuRegister.Rsi] = ContextMemoryAddress;
+        context[CpuRegister.Rdx] = 0x10000UL + (queueDepth * 0x590UL);
+        context[CpuRegister.Rcx] = ContextHandleAddress;
+
+        AssertSuccess(AudioOut2Exports.AudioOut2ContextCreate(context), context);
+        return BinaryPrimitives.ReadUInt64LittleEndian(output);
+    }
+
+    private static ulong CreateAudioPort(
+        FakeGuestMemory memory,
+        ushort portType,
+        uint dataFormat = 1)
+    {
+        var contextHandle = CreateAudioContext(memory);
+        var output = new byte[8];
+        memory.AddRegion(
+            ParameterAddress,
+            CreatePortParameter(portType, dataFormat));
+        memory.AddRegion(PortHandleAddress, output);
+        var context = CreateContext(memory);
+        ConfigurePortCreate(context, contextHandle, PortHandleAddress);
+
+        AssertSuccess(AudioOut2Exports.AudioOut2PortCreate(context), context);
+        return BinaryPrimitives.ReadUInt64LittleEndian(output);
+    }
+
+    private static byte[] CreateContextParameter(uint queueDepth = 4)
+    {
+        var parameter = new byte[0x40];
+        BinaryPrimitives.WriteUInt32LittleEndian(parameter.AsSpan(0x00), 256);
+        BinaryPrimitives.WriteUInt32LittleEndian(parameter.AsSpan(0x04), 256);
+        BinaryPrimitives.WriteUInt32LittleEndian(parameter.AsSpan(0x0C), queueDepth);
+        BinaryPrimitives.WriteUInt32LittleEndian(parameter.AsSpan(0x10), 512);
+        BinaryPrimitives.WriteUInt32LittleEndian(parameter.AsSpan(0x14), 1);
+        return parameter;
+    }
+
+    private static byte[] CreatePortParameter(
+        ushort portType,
+        uint dataFormat = 1)
+    {
+        var parameter = new byte[0x40];
+        BinaryPrimitives.WriteUInt16LittleEndian(parameter, portType);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            parameter.AsSpan(0x04),
+            dataFormat);
+        BinaryPrimitives.WriteUInt32LittleEndian(parameter.AsSpan(0x08), 48_000);
+        return parameter;
     }
 
     private static byte[] FilledBuffer(int length)
