@@ -1019,7 +1019,7 @@ public static class Gen5ShaderTranslator
 
     private static bool HasVop2E64Alias(uint opcode) =>
         opcode == 0x01 ||
-        opcode is >= 0x03 and <= 0x1E ||
+        opcode is >= 0x03 and <= 0x1F ||
         opcode is 0x2B or 0x2F;
 
     private static bool DecodeVop3p(

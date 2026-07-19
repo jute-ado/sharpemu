@@ -7049,14 +7049,15 @@ public sealed class Gen5DecoderTests
     [Fact]
     public void UsesRdna2Vop3OpcodesAndCanonicalBitwiseNames()
     {
-        // LLVM 18 gfx1030 rejects the reserved encodings below. PS5 retains
-        // opcode 0x141 as V_MAD_F32; the remaining reserved encodings stay raw.
+        // LLVM 18 gfx1030 rejects the legacy encodings below. PS5 retains
+        // opcode 0x11f as V_MAC_F32 and opcode 0x141 as V_MAD_F32; the
+        // remaining reserved encodings stay raw.
         // The signed multiply and canonical bitwise encodings were assembled
         // and verified with LLVM.
         var ctx = CreateContext(
         [
             0xD5020000u, 0x040A0301u, // reserved (compact v_dot2c_f32_f16 encoding)
-            0xD51F0000u, 0x040A0301u, // reserved (legacy v_mac_f32 encoding)
+            0xD51F0000u, 0x040A0301u, // PS5 legacy v_mac_f32 v0, v1, v1
             0xD5220000u, 0x040A0301u, // reserved (compact v_bcnt_u32_b32 encoding)
             0xD5300000u, 0x040A0301u, // reserved (compact v_cvt_pk_u16_u32 encoding)
             0xD5310000u, 0x040A0301u, // reserved (compact v_cvt_pk_i16_i32 encoding)
@@ -7080,7 +7081,7 @@ public sealed class Gen5DecoderTests
             decodeError);
         Assert.Equal(
             [
-                "Vop3Raw102", "Vop3Raw11F", "Vop3Raw122", "Vop3Raw130",
+                "Vop3Raw102", "VMacF32", "Vop3Raw122", "Vop3Raw130",
                 "Vop3Raw131", "Vop3Raw03F", "Vop3Raw0EF", "Vop3Raw0FF",
                 "Vop3Raw0AF", "Vop3Raw0BF", "VMadF32", "VMulLoI32",
                 "VLshlOrB32", "VOr3B32", "SEndpgm",
@@ -7091,7 +7092,11 @@ public sealed class Gen5DecoderTests
         // the supported PS5/RDNA2 instructions are submitted to the translator.
         var supportedProgram = program with
         {
-            Instructions = program.Instructions.Skip(10).ToArray(),
+            Instructions =
+            [
+                program.Instructions[1],
+                .. program.Instructions.Skip(10),
+            ],
         };
         var state = new Gen5ShaderState(supportedProgram, [], Metadata: null);
         Assert.True(
@@ -7111,6 +7116,7 @@ public sealed class Gen5DecoderTests
                 out var shader,
                 out var compileError),
             compileError);
+        Assert.True(ContainsGlslExtInst(shader.Spirv, 50));
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ShiftLeftLogical));
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitwiseOr));
         Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.IMul));
