@@ -36,6 +36,11 @@ public static class KernelPthreadExtendedCompatExports
 
     private static readonly ConcurrentDictionary<ulong, ConcurrentDictionary<int, ulong>> _threadLocalSpecific = new();
 
+    static KernelPthreadExtendedCompatExports()
+    {
+        KernelPthreadLifecycle.EnsureInitialized();
+    }
+
     internal static void GetThreadStartScheduling(
         CpuContext ctx,
         ulong attrAddress,
@@ -75,6 +80,66 @@ public static class KernelPthreadExtendedCompatExports
                 SchedPriority = priority,
                 AffinityMask = affinityMask,
             };
+        }
+    }
+
+    internal static void ReleaseOwnedRwlocks(ulong threadHandle)
+    {
+        if (threadHandle == 0)
+        {
+            return;
+        }
+
+        var states = new List<PthreadRwlockState>();
+        var visited = new HashSet<PthreadRwlockState>(
+            ReferenceEqualityComparer.Instance);
+        lock (_stateGate)
+        {
+            foreach (var pair in _rwlockStates)
+            {
+                if (visited.Add(pair.Value))
+                {
+                    states.Add(pair.Value);
+                }
+            }
+        }
+
+        foreach (var state in states)
+        {
+            lock (state.SyncRoot)
+            {
+                var released = false;
+                if (state.WriterThreadId == threadHandle)
+                {
+                    state.WriterThreadId = 0;
+                    released = true;
+                }
+
+                if (state.ReaderCounts.Remove(
+                        threadHandle,
+                        out var readerCount))
+                {
+                    state.ReaderTotalCount = Math.Max(
+                        0,
+                        state.ReaderTotalCount - readerCount);
+                    released = true;
+                }
+
+                if (state.CompatWriterCounts.Remove(
+                        threadHandle,
+                        out var writerCount))
+                {
+                    state.CompatWriterTotalCount = Math.Max(
+                        0,
+                        state.CompatWriterTotalCount - writerCount);
+                    released = true;
+                }
+
+                if (released)
+                {
+                    Monitor.PulseAll(state.SyncRoot);
+                }
+            }
         }
     }
 
