@@ -159,7 +159,14 @@ public static partial class KernelMemoryCompatExports
 
     private readonly record struct DirectAllocation(ulong Start, ulong Length, int MemoryType);
     private readonly record struct LibcHeapAllocation(nint BaseAddress, nuint Size, nuint Alignment, bool IsGuarded);
-    private readonly record struct MappedRegion(ulong Address, ulong Length, int Protection, bool IsFlexible, bool IsDirect, ulong DirectStart);
+    private readonly record struct MappedRegion(
+        ulong Address,
+        ulong Length,
+        int Protection,
+        int MemoryType,
+        bool IsFlexible,
+        bool IsDirect,
+        ulong DirectStart);
     private readonly record struct BatchMapEntry(ulong Start, ulong Offset, ulong Length, byte Protection, byte Type, int Operation);
 
     public static void RegisterGuestPathMount(string guestMountPoint, string hostRoot)
@@ -260,6 +267,7 @@ public static partial class KernelMemoryCompatExports
                 address,
                 mappedLength,
                 protection,
+                MemoryType: 0,
                 IsFlexible: false,
                 IsDirect: false,
                 DirectStart: 0);
@@ -357,6 +365,7 @@ public static partial class KernelMemoryCompatExports
                 address,
                 length,
                 Protection: 0,
+                MemoryType: 0,
                 IsFlexible: false,
                 IsDirect: false,
                 DirectStart: 0);
@@ -3374,16 +3383,55 @@ public static partial class KernelMemoryCompatExports
         LibraryName = "libKernel")]
     public static int KernelMapDirectMemory(CpuContext ctx)
     {
-        var inOutAddressPointer = ctx[CpuRegister.Rdi];
-        var length = ctx[CpuRegister.Rsi];
-        var protection = unchecked((int)ctx[CpuRegister.Rdx]);
-        var flags = ctx[CpuRegister.Rcx];
-        var directMemoryStart = ctx[CpuRegister.R8];
-        var alignment = ctx[CpuRegister.R9];
+        return MapDirectMemoryCore(
+            ctx,
+            inOutAddressPointer: ctx[CpuRegister.Rdi],
+            length: ctx[CpuRegister.Rsi],
+            protection: unchecked((int)ctx[CpuRegister.Rdx]),
+            flags: ctx[CpuRegister.Rcx],
+            directMemoryStart: ctx[CpuRegister.R8],
+            alignment: ctx[CpuRegister.R9],
+            mappingMemoryType: null);
+    }
+
+    [SysAbiExport(
+        Nid = "BQQniolj9tQ",
+        ExportName = "sceKernelMapDirectMemory2",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int KernelMapDirectMemory2(CpuContext ctx)
+    {
+        if (!TryAddU64(ctx[CpuRegister.Rsp], sizeof(ulong), out var alignmentAddress) ||
+            !ctx.TryReadUInt64(alignmentAddress, out var alignment))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        return MapDirectMemoryCore(
+            ctx,
+            inOutAddressPointer: ctx[CpuRegister.Rdi],
+            length: ctx[CpuRegister.Rsi],
+            protection: unchecked((int)ctx[CpuRegister.Rcx]),
+            flags: ctx[CpuRegister.R8],
+            directMemoryStart: ctx[CpuRegister.R9],
+            alignment: alignment,
+            mappingMemoryType: unchecked((int)ctx[CpuRegister.Rdx]));
+    }
+
+    private static int MapDirectMemoryCore(
+        CpuContext ctx,
+        ulong inOutAddressPointer,
+        ulong length,
+        int protection,
+        ulong flags,
+        ulong directMemoryStart,
+        ulong alignment,
+        int? mappingMemoryType)
+    {
         if (ShouldTraceDirectMemory())
         {
             Console.Error.WriteLine(
-                $"[LOADER][TRACE] map_direct: inout=0x{inOutAddressPointer:X16} len=0x{length:X16} prot=0x{protection:X8} flags=0x{flags:X16} direct=0x{directMemoryStart:X16} align=0x{alignment:X16}");
+                $"[LOADER][TRACE] map_direct: inout=0x{inOutAddressPointer:X16} len=0x{length:X16} prot=0x{protection:X8} flags=0x{flags:X16} direct=0x{directMemoryStart:X16} align=0x{alignment:X16} type={mappingMemoryType?.ToString("X8", CultureInfo.InvariantCulture) ?? "<allocation>"}");
         }
         if (inOutAddressPointer == 0 || length == 0)
         {
@@ -3451,10 +3499,15 @@ public static partial class KernelMemoryCompatExports
             }
 
             _nextVirtualAddress = Math.Max(_nextVirtualAddress, mappedAddress + length);
+            var effectiveMemoryType = mappingMemoryType ??
+                (TryFindDirectAllocationLocked(directMemoryStart, out var allocation)
+                    ? allocation.MemoryType
+                    : 0);
             _mappedRegions[mappedAddress] = new MappedRegion(
                 mappedAddress,
                 length,
                 protection,
+                effectiveMemoryType,
                 IsFlexible: false,
                 IsDirect: true,
                 DirectStart: directMemoryStart);
@@ -3546,6 +3599,7 @@ public static partial class KernelMemoryCompatExports
                 mappedAddress,
                 length,
                 protection,
+                MemoryType: 0,
                 IsFlexible: true,
                 IsDirect: false,
                 DirectStart: 0);
@@ -3689,7 +3743,6 @@ public static partial class KernelMemoryCompatExports
         }
 
         MappedRegion region;
-        var memoryType = 0;
         var findNext = (flags & 0x1) != 0;
         MappedRegion trackedRegion;
         bool hasTrackedRegion;
@@ -3712,14 +3765,6 @@ public static partial class KernelMemoryCompatExports
                 out region))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
-        }
-
-        lock (_memoryGate)
-        {
-            if (region.IsDirect && TryFindDirectAllocationLocked(region.DirectStart, out var allocation))
-            {
-                memoryType = allocation.MemoryType;
-            }
         }
 
         Span<byte> payload = stackalloc byte[OrbisVirtualQueryInfoSize];
@@ -3745,7 +3790,7 @@ public static partial class KernelMemoryCompatExports
         BinaryPrimitives.WriteUInt64LittleEndian(payload[8..16], regionEnd);
         BinaryPrimitives.WriteUInt64LittleEndian(payload[16..24], region.DirectStart);
         BinaryPrimitives.WriteInt32LittleEndian(payload[24..28], region.Protection);
-        BinaryPrimitives.WriteInt32LittleEndian(payload[28..32], memoryType);
+        BinaryPrimitives.WriteInt32LittleEndian(payload[28..32], region.MemoryType);
         payload[32] = unchecked((byte)stateFlags);
 
         string name;
@@ -3787,6 +3832,7 @@ public static partial class KernelMemoryCompatExports
                 backingRegion.Address,
                 backingRegion.Length,
                 backingRegion.Protection,
+                MemoryType: 0,
                 IsFlexible: false,
                 IsDirect: false,
                 DirectStart: 0);
@@ -6794,16 +6840,11 @@ public static partial class KernelMemoryCompatExports
                 AddMappedRegionSliceLocked(region, region.Address, protectStart, region.Protection);
             }
 
-            AddMappedRegionSliceLocked(region, protectStart, protectEnd, protection);
+            AddMappedRegionSliceLocked(region, protectStart, protectEnd, protection, memoryType);
 
             if (protectEnd < regionEnd)
             {
                 AddMappedRegionSliceLocked(region, protectEnd, regionEnd, region.Protection);
-            }
-
-            if (memoryType.HasValue && region.IsDirect && TryFindDirectAllocationLocked(region.DirectStart, out var allocation))
-            {
-                _directAllocations[allocation.Start] = allocation with { MemoryType = memoryType.Value };
             }
         }
 
@@ -6814,7 +6855,8 @@ public static partial class KernelMemoryCompatExports
         MappedRegion source,
         ulong start,
         ulong end,
-        int protection)
+        int protection,
+        int? memoryType = null)
     {
         if (end <= start)
         {
@@ -6830,6 +6872,7 @@ public static partial class KernelMemoryCompatExports
             Address = start,
             Length = end - start,
             Protection = protection,
+            MemoryType = memoryType ?? source.MemoryType,
             DirectStart = directStart,
         };
     }

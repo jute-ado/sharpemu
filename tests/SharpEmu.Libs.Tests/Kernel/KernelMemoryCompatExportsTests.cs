@@ -128,18 +128,201 @@ public sealed class KernelMemoryCompatExportsTests
         }
     }
 
-    private static void AllocateDirectMemory(CpuContext context, ulong start, ulong length)
+    [Fact]
+    public void MapDirectMemory2_UsesShiftedAbiAndTracksVirtualMemoryType()
+    {
+        const ulong physicalStart = 0x0200_0000;
+        const ulong physicalLength = 0x0004_0000;
+        const ulong directMemoryStart = physicalStart + 0x4000;
+        const ulong mappedLength = 0xC000;
+        const ulong mappingAlignment = 0x10000;
+        const ulong expectedMappedAddress = 0x0201_0000;
+        const ulong inOutAddress = GuestMemoryBase + 0x200;
+        const ulong stackPointer = GuestMemoryBase + 0x400;
+        const ulong virtualQueryInfo = GuestMemoryBase + 0x600;
+        const ulong directQueryInfo = GuestMemoryBase + 0x700;
+        const int allocationMemoryType = 0x11;
+        const int mappingMemoryType = 0x2A;
+        const int middleMemoryType = 0x35;
+        const int initialProtection = 0x13;
+        const int middleProtection = 0x03;
+
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(GuestMemoryBase, new byte[0x1000]);
+        var context = new CpuContext(memory, Generation.Gen5);
+
+        try
+        {
+            AllocateDirectMemory(
+                context,
+                physicalStart,
+                physicalLength,
+                allocationMemoryType);
+            Assert.True(context.TryWriteUInt64(inOutAddress, 0));
+            Assert.True(context.TryWriteUInt64(stackPointer, 0x1234_5678));
+            Assert.True(context.TryWriteUInt64(stackPointer + sizeof(ulong), mappingAlignment));
+
+            context[CpuRegister.Rdi] = inOutAddress;
+            context[CpuRegister.Rsi] = mappedLength;
+            context[CpuRegister.Rdx] = unchecked((ulong)mappingMemoryType);
+            context[CpuRegister.Rcx] = unchecked((ulong)initialProtection);
+            context[CpuRegister.R8] = 0;
+            context[CpuRegister.R9] = directMemoryStart;
+            context[CpuRegister.Rsp] = stackPointer;
+
+            Assert.Equal(0, KernelMemoryCompatExports.KernelMapDirectMemory2(context));
+            Assert.True(context.TryReadUInt64(inOutAddress, out var mappedAddress));
+            Assert.Equal(expectedMappedAddress, mappedAddress);
+
+            QueryVirtualMemory(
+                context,
+                expectedMappedAddress + 0x100,
+                virtualQueryInfo,
+                out var queriedProtection,
+                out var queriedMemoryType);
+            Assert.Equal(initialProtection, queriedProtection);
+            Assert.Equal(mappingMemoryType, queriedMemoryType);
+
+            context[CpuRegister.Rdi] = physicalStart;
+            context[CpuRegister.Rsi] = 0;
+            context[CpuRegister.Rdx] = directQueryInfo;
+            context[CpuRegister.Rcx] = 24;
+            Assert.Equal(0, KernelMemoryCompatExports.KernelDirectMemoryQuery(context));
+            Assert.True(context.TryReadInt32(directQueryInfo + 16, out var queriedAllocationType));
+            Assert.Equal(allocationMemoryType, queriedAllocationType);
+
+            context[CpuRegister.Rdi] = expectedMappedAddress + 0x4000;
+            context[CpuRegister.Rsi] = 0x4000;
+            context[CpuRegister.Rdx] = unchecked((ulong)middleMemoryType);
+            context[CpuRegister.Rcx] = unchecked((ulong)middleProtection);
+            Assert.Equal(0, KernelMemoryCompatExports.KernelMtypeprotect(context));
+
+            Assert.Equal(
+                mappingMemoryType,
+                QueryVirtualMemoryType(context, expectedMappedAddress, virtualQueryInfo));
+            QueryVirtualMemory(
+                context,
+                expectedMappedAddress + 0x4000,
+                virtualQueryInfo,
+                out queriedProtection,
+                out queriedMemoryType);
+            Assert.Equal(middleProtection, queriedProtection);
+            Assert.Equal(middleMemoryType, queriedMemoryType);
+            Assert.Equal(
+                mappingMemoryType,
+                QueryVirtualMemoryType(context, expectedMappedAddress + 0x8000, virtualQueryInfo));
+
+            context[CpuRegister.Rdi] = physicalStart;
+            context[CpuRegister.Rsi] = 0;
+            context[CpuRegister.Rdx] = directQueryInfo;
+            context[CpuRegister.Rcx] = 24;
+            Assert.Equal(0, KernelMemoryCompatExports.KernelDirectMemoryQuery(context));
+            Assert.True(context.TryReadInt32(directQueryInfo + 16, out queriedAllocationType));
+            Assert.Equal(allocationMemoryType, queriedAllocationType);
+        }
+        finally
+        {
+            TryUnmap(context, expectedMappedAddress, mappedLength);
+            TryUnmap(context, expectedMappedAddress, 0x4000);
+            TryUnmap(context, expectedMappedAddress + 0x4000, 0x4000);
+            TryUnmap(context, expectedMappedAddress + 0x8000, 0x4000);
+            _ = memory.TryFreeGuestMemory(expectedMappedAddress);
+            ReleaseDirectMemory(context, physicalStart, physicalLength);
+        }
+    }
+
+    [Fact]
+    public void MapDirectMemory2_UnreadableStackAlignmentReturnsMemoryFault()
+    {
+        const ulong inOutAddress = GuestMemoryBase + 0x100;
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(GuestMemoryBase, new byte[0x1000]);
+        var context = new CpuContext(memory, Generation.Gen5);
+        Assert.True(context.TryWriteUInt64(inOutAddress, 0));
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 1;
+        context[CpuRegister.Rcx] = 3;
+        context[CpuRegister.R8] = 0;
+        context[CpuRegister.R9] = 0x0040_0000;
+        context[CpuRegister.Rsp] = GuestMemoryBase + 0x2000;
+
+        var result = KernelMemoryCompatExports.KernelMapDirectMemory2(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+        Assert.True(context.TryReadUInt64(inOutAddress, out var mappedAddress));
+        Assert.Equal(0UL, mappedAddress);
+    }
+
+    [Fact]
+    public void MapDirectMemory2_IsRegisteredForBothConsoleGenerations()
+    {
+        const string nid = "BQQniolj9tQ";
+        var manager = new ModuleManager();
+        manager.RegisterExports(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(
+                Generation.Gen4 | Generation.Gen5));
+
+        Assert.True(manager.TryGetExport(nid, out var export));
+        Assert.Equal("sceKernelMapDirectMemory2", export.Name);
+        Assert.Equal("libKernel", export.LibraryName);
+        Assert.Equal(Generation.Gen4 | Generation.Gen5, export.Target);
+    }
+
+    private static void AllocateDirectMemory(
+        CpuContext context,
+        ulong start,
+        ulong length,
+        int memoryType = 0)
     {
         context[CpuRegister.Rdi] = start;
         context[CpuRegister.Rsi] = start + length;
         context[CpuRegister.Rdx] = length;
         context[CpuRegister.Rcx] = 0x4000;
-        context[CpuRegister.R8] = 0;
+        context[CpuRegister.R8] = unchecked((ulong)memoryType);
         context[CpuRegister.R9] = AllocationOutAddress;
 
         Assert.Equal(0, KernelMemoryCompatExports.KernelAllocateDirectMemory(context));
         Assert.True(context.TryReadUInt64(AllocationOutAddress, out var allocatedAddress));
         Assert.Equal(start, allocatedAddress);
+    }
+
+    private static int QueryVirtualMemoryType(
+        CpuContext context,
+        ulong address,
+        ulong infoAddress)
+    {
+        QueryVirtualMemory(
+            context,
+            address,
+            infoAddress,
+            out _,
+            out var memoryType);
+        return memoryType;
+    }
+
+    private static void QueryVirtualMemory(
+        CpuContext context,
+        ulong address,
+        ulong infoAddress,
+        out int protection,
+        out int memoryType)
+    {
+        context[CpuRegister.Rdi] = address;
+        context[CpuRegister.Rsi] = 0;
+        context[CpuRegister.Rdx] = infoAddress;
+        context[CpuRegister.Rcx] = 72;
+
+        Assert.Equal(0, KernelMemoryCompatExports.KernelVirtualQuery(context));
+        Assert.True(context.TryReadInt32(infoAddress + 24, out protection));
+        Assert.True(context.TryReadInt32(infoAddress + 28, out memoryType));
+    }
+
+    private static void TryUnmap(CpuContext context, ulong address, ulong length)
+    {
+        context[CpuRegister.Rdi] = address;
+        context[CpuRegister.Rsi] = length;
+        _ = KernelMemoryCompatExports.KernelMunmap(context);
     }
 
     private static void QueryAvailableDirectMemory(
