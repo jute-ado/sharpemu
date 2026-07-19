@@ -2948,6 +2948,44 @@ internal static unsafe class VulkanVideoPresenter
         return guestOp is 0 or 1 or 3 or 4 or 5 or 6 or 7 or 8 or 9;
     }
 
+    internal static ComponentMapping ToVkComponentMapping(uint dstSelect)
+    {
+        if (dstSelect == 0xFAC)
+        {
+            return new ComponentMapping(
+                ComponentSwizzle.Identity,
+                ComponentSwizzle.Identity,
+                ComponentSwizzle.Identity,
+                ComponentSwizzle.Identity);
+        }
+
+        return new ComponentMapping(
+            ToVkComponentSwizzle(dstSelect & 0x7),
+            ToVkComponentSwizzle((dstSelect >> 3) & 0x7),
+            ToVkComponentSwizzle((dstSelect >> 6) & 0x7),
+            ToVkComponentSwizzle((dstSelect >> 9) & 0x7));
+    }
+
+    private static ComponentSwizzle ToVkComponentSwizzle(uint selector) =>
+        selector switch
+        {
+            0 => ComponentSwizzle.Zero,
+            1 => ComponentSwizzle.One,
+            4 => ComponentSwizzle.R,
+            5 => ComponentSwizzle.G,
+            6 => ComponentSwizzle.B,
+            7 => ComponentSwizzle.A,
+            _ => ComponentSwizzle.Identity,
+        };
+
+    internal static bool CanReuseGuestImageBaseView(
+        Format imageFormat,
+        uint baseViewDstSelect,
+        Format requestedFormat,
+        uint requestedDstSelect) =>
+        requestedFormat == imageFormat &&
+        requestedDstSelect == baseViewDstSelect;
+
     private readonly record struct Presentation(
         byte[]? Pixels,
         uint Width,
@@ -3350,6 +3388,7 @@ internal static unsafe class VulkanVideoPresenter
             public Image Image;
             public DeviceMemory Memory;
             public ImageView View;
+            public uint ViewDstSelect = 0xFAC;
             public ImageView[] MipViews = [];
             public Dictionary<(Format Format, uint MipLevel, uint LevelCount, uint DstSelect), ImageView> FormatViews { get; } = new();
             public RenderPass RenderPass;
@@ -8070,6 +8109,7 @@ internal static unsafe class VulkanVideoPresenter
                     Image = image,
                     Memory = imageMemory,
                     View = view,
+                    ViewDstSelect = texture.DstSelect,
                     InitialUploadPending = true,
                     IsCpuBacked = true,
                     CpuContentFingerprint = contentFingerprint,
@@ -8565,27 +8605,6 @@ internal static unsafe class VulkanVideoPresenter
             _samplers.Add(sampler, vkSampler);
             return vkSampler;
         }
-
-        private static ComponentMapping ToVkComponentMapping(uint dstSelect)
-        {
-            return new ComponentMapping(
-                ToVkComponentSwizzle(dstSelect & 0x7),
-                ToVkComponentSwizzle((dstSelect >> 3) & 0x7),
-                ToVkComponentSwizzle((dstSelect >> 6) & 0x7),
-                ToVkComponentSwizzle((dstSelect >> 9) & 0x7));
-        }
-
-        private static ComponentSwizzle ToVkComponentSwizzle(uint selector) =>
-            selector switch
-            {
-                0 => ComponentSwizzle.Zero,
-                1 => ComponentSwizzle.One,
-                4 => ComponentSwizzle.R,
-                5 => ComponentSwizzle.G,
-                6 => ComponentSwizzle.B,
-                7 => ComponentSwizzle.A,
-                _ => ComponentSwizzle.Identity,
-            };
 
         private static byte[] ExpandRgb32Pixels(byte[] pixels)
         {
@@ -12540,7 +12559,11 @@ internal static unsafe class VulkanVideoPresenter
 
             levelCount = Math.Max(levelCount, 1);
             levelCount = Math.Min(levelCount, resource.MipLevels - mipLevel);
-            if (format == resource.Format && dstSelect == 0xFAC)
+            if (CanReuseGuestImageBaseView(
+                    resource.Format,
+                    resource.ViewDstSelect,
+                    format,
+                    dstSelect))
             {
                 if (mipLevel == 0 && levelCount == resource.MipLevels)
                 {
