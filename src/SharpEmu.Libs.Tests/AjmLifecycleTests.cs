@@ -13,6 +13,7 @@ public sealed class AjmLifecycleTests
     private const int InvalidContext = unchecked((int)0x80930002);
     private const ulong FirstContextAddress = 0x1000;
     private const ulong SecondContextAddress = 0x2000;
+    private const ulong RegisteredMemoryAddress = 0x0000_0004_D600_0000;
 
     [Fact]
     public void InitializeCreatesUniqueContexts()
@@ -95,6 +96,76 @@ public sealed class AjmLifecycleTests
     }
 
     [Fact]
+    public void MemoryRegistrationRequiresLiveContextAndValidArguments()
+    {
+        var context = CreateContext();
+        context[CpuRegister.Rdi] = 1;
+        context[CpuRegister.Rsi] = RegisteredMemoryAddress;
+        context[CpuRegister.Rdx] = 4;
+        AssertCall(InvalidContext, context, AjmExports.AjmMemoryRegister);
+
+        var contextId = Initialize(context, FirstContextAddress);
+        try
+        {
+            context[CpuRegister.Rdi] = contextId;
+            context[CpuRegister.Rsi] = 0;
+            context[CpuRegister.Rdx] = 4;
+            AssertCall(InvalidParameter, context, AjmExports.AjmMemoryRegister);
+
+            context[CpuRegister.Rsi] = RegisteredMemoryAddress;
+            context[CpuRegister.Rdx] = 0;
+            AssertCall(InvalidParameter, context, AjmExports.AjmMemoryRegister);
+
+            context[CpuRegister.Rsi] = 0;
+            AssertCall(InvalidParameter, context, AjmExports.AjmMemoryUnregister);
+        }
+        finally
+        {
+            Finalize(context, contextId);
+        }
+    }
+
+    [Fact]
+    public void MemoryRegistrationTracksSharedGuestRangeLifecycle()
+    {
+        var context = CreateContext();
+        var contextId = Initialize(context, FirstContextAddress);
+        try
+        {
+            context[CpuRegister.Rdi] = contextId;
+            context[CpuRegister.Rsi] = RegisteredMemoryAddress;
+            context[CpuRegister.Rdx] = 4;
+            AssertCall(0, context, AjmExports.AjmMemoryRegister);
+
+            context[CpuRegister.Rdx] = 7;
+            AssertCall(0, context, AjmExports.AjmMemoryRegister);
+
+            AssertCall(0, context, AjmExports.AjmMemoryUnregister);
+            AssertCall(0, context, AjmExports.AjmMemoryUnregister);
+        }
+        finally
+        {
+            Finalize(context, contextId);
+        }
+    }
+
+    [Fact]
+    public void FinalizeInvalidatesMemoryRegistration()
+    {
+        var context = CreateContext();
+        var contextId = Initialize(context, FirstContextAddress);
+        context[CpuRegister.Rdi] = contextId;
+        context[CpuRegister.Rsi] = RegisteredMemoryAddress;
+        context[CpuRegister.Rdx] = 4;
+        AssertCall(0, context, AjmExports.AjmMemoryRegister);
+
+        Finalize(context, contextId);
+
+        context[CpuRegister.Rdi] = contextId;
+        AssertCall(InvalidContext, context, AjmExports.AjmMemoryUnregister);
+    }
+
+    [Fact]
     public void CoreExportsHaveExactGeneratedMetadata()
     {
         var exports = SharpEmu.Generated.SysAbiExportRegistry
@@ -104,6 +175,8 @@ public sealed class AjmLifecycleTests
         AssertExport(exports, "MHur6qCsUus", "sceAjmFinalize");
         AssertExport(exports, "Q3dyFuwGn64", "sceAjmModuleRegister");
         AssertExport(exports, "Wi7DtlLV+KI", "sceAjmModuleUnregister");
+        AssertExport(exports, "bkRHEYG6lEM", "sceAjmMemoryRegister");
+        AssertExport(exports, "pIpGiaYkHkM", "sceAjmMemoryUnregister");
         AssertExport(exports, "MmpF1XsQiHw", "sceAjmBatchInitialize");
     }
 

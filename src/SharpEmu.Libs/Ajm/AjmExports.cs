@@ -31,6 +31,8 @@ public static class AjmExports
 
         public Dictionary<uint, uint> InstancesBySlot { get; } = new();
 
+        public Dictionary<ulong, ulong> RegisteredMemoryPages { get; } = new();
+
         public int NextInstanceIndex { get; set; }
     }
 
@@ -205,6 +207,68 @@ public static class AjmExports
         }
 
         Trace($"instance_destroy context={contextId} instance=0x{instanceId:X8}");
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "bkRHEYG6lEM",
+        ExportName = "sceAjmMemoryRegister",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceAjm")]
+    public static int AjmMemoryRegister(CpuContext ctx)
+    {
+        var contextId = unchecked((uint)ctx[CpuRegister.Rdi]);
+        var address = ctx[CpuRegister.Rsi];
+        var pageCount = ctx[CpuRegister.Rdx];
+        if (!Contexts.TryGetValue(contextId, out var state))
+        {
+            return ctx.SetReturn(InvalidContext);
+        }
+        if (address == 0 || pageCount == 0)
+        {
+            return ctx.SetReturn(InvalidParameter);
+        }
+
+        // Guest memory is already shared with the software AJM path. Retain
+        // the registration lifetime so the ABI remains coherent without
+        // creating a second copy or allocation route.
+        lock (state.Gate)
+        {
+            state.RegisteredMemoryPages[address] = pageCount;
+        }
+
+        Trace(
+            $"memory_register context={contextId} " +
+            $"address=0x{address:X16} pages={pageCount}");
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "pIpGiaYkHkM",
+        ExportName = "sceAjmMemoryUnregister",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceAjm")]
+    public static int AjmMemoryUnregister(CpuContext ctx)
+    {
+        var contextId = unchecked((uint)ctx[CpuRegister.Rdi]);
+        var address = ctx[CpuRegister.Rsi];
+        if (!Contexts.TryGetValue(contextId, out var state))
+        {
+            return ctx.SetReturn(InvalidContext);
+        }
+        if (address == 0)
+        {
+            return ctx.SetReturn(InvalidParameter);
+        }
+
+        lock (state.Gate)
+        {
+            state.RegisteredMemoryPages.Remove(address);
+        }
+
+        Trace(
+            $"memory_unregister context={contextId} " +
+            $"address=0x{address:X16}");
         return ctx.SetReturn(0);
     }
 
