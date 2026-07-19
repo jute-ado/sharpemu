@@ -248,7 +248,7 @@ internal sealed class EmulatorProcess : IDisposable
                 {
                     Environment.SetEnvironmentVariable(MitigatedChildEnvironment, "1");
                     if (!CreateProcessW(
-                            exePath,
+                            null,
                             commandLine,
                             0,
                             0,
@@ -445,7 +445,7 @@ internal sealed class EmulatorProcess : IDisposable
         }
     }
 
-    private static string BuildCommandLine(string processPath, IReadOnlyList<string> arguments)
+    internal static string BuildCommandLine(string processPath, IReadOnlyList<string> arguments)
     {
         var builder = new StringBuilder(QuoteArgument(processPath));
         foreach (var argument in arguments)
@@ -629,7 +629,7 @@ internal sealed class EmulatorProcess : IDisposable
 
     [DllImport("kernel32.dll", EntryPoint = "CreateProcessW", SetLastError = true, CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CreateProcessW(string applicationName, StringBuilder commandLine, nint processAttributes, nint threadAttributes, [MarshalAs(UnmanagedType.Bool)] bool inheritHandles, uint flags, nint environment, string currentDirectory, ref StartupInfoEx startupInfo, out ProcessInformation processInformation);
+    private static extern bool CreateProcessW(string? applicationName, StringBuilder commandLine, nint processAttributes, nint threadAttributes, [MarshalAs(UnmanagedType.Bool)] bool inheritHandles, uint flags, nint environment, string currentDirectory, ref StartupInfoEx startupInfo, out ProcessInformation processInformation);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern uint WaitForSingleObject(nint handle, uint milliseconds);
