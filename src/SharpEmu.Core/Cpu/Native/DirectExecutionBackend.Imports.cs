@@ -222,7 +222,9 @@ public sealed partial class DirectExecutionBackend
 			TraceGuestContext(
 				$"import dispatch={num} nid={importStubEntry.Nid} ret=0x{num7:X16} managed={Environment.CurrentManagedThreadId} guest=0x{GuestThreadExecution.CurrentGuestThreadHandle:X16} fiber=0x{GuestThreadExecution.CurrentFiberAddress:X16} active={HasActiveExecutionThread}");
 		}
-		if (!isGuestWorker &&
+		if (CanForceGuestExitOnImportLoop(
+				isGuestWorker,
+				Volatile.Read(ref _guestThreadCount)) &&
 			!ActiveForcedGuestExit &&
 			ShouldForceGuestExitOnImportLoop(importStubEntry.Nid, num7, num, value, value2) &&
 			TryForceGuestExitToHostStub(argPackPtr, num, num7, importStubEntry.Nid))
@@ -1157,6 +1159,18 @@ public sealed partial class DirectExecutionBackend
 
 		var elapsedTicks = Stopwatch.GetTimestamp() - _importLoopPatternStartTimestamp;
 		return elapsedTicks >= (long)(_importLoopGuardSeconds * Stopwatch.Frequency);
+	}
+
+	internal static bool CanForceGuestExitOnImportLoop(
+		bool isGuestWorker,
+		int guestThreadCount)
+	{
+		// The guard rewrites only the main entry return slot. Once guest workers
+		// exist, a repeating main-thread import pattern can be a normal engine
+		// scheduler loop, and forcing only that thread leaves workers executing
+		// while teardown begins. Runtime-wide shutdown uses the coordinated
+		// guest-thread teardown path instead.
+		return !isGuestWorker && guestThreadCount == 0;
 	}
 
 	internal static bool IsImportLoopGuardBoundary(string nid) =>

@@ -20,4 +20,21 @@ public sealed class ImportLoopGuardTests
     {
         Assert.Equal(expected, DirectExecutionBackend.IsImportLoopGuardBoundary(nid));
     }
+
+    [Theory]
+    [InlineData(false, 0, true)]
+    [InlineData(true, 0, false)]
+    [InlineData(false, 1, false)]
+    [InlineData(false, 32, false)]
+    public void AppliesOnlyBeforeConcurrentGuestRuntimeStarts(
+        bool isGuestWorker,
+        int guestThreadCount,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            DirectExecutionBackend.CanForceGuestExitOnImportLoop(
+                isGuestWorker,
+                guestThreadCount));
+    }
 }
