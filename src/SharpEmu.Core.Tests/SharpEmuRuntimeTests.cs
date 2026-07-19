@@ -246,7 +246,11 @@ public sealed class SharpEmuRuntimeTests
             adjacentModuleImage: SyntheticElfImage.CreateModuleWithInitializer(
                 [0x0F, 0x0B])); // ud2
 
-        Assert.Equal(4, execution.ExitCode);
+        Assert.True(
+            execution.ExitCode == 4,
+            $"Expected synthetic guest trap exit code 4, got {execution.ExitCode}." +
+            $"{Environment.NewLine}stdout:{Environment.NewLine}{execution.StandardOutput}" +
+            $"{Environment.NewLine}stderr:{Environment.NewLine}{execution.StandardError}");
         Assert.NotNull(execution.ReportJson);
         using var document = JsonDocument.Parse(execution.ReportJson);
         var root = document.RootElement;

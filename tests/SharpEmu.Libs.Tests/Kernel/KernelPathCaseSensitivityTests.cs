@@ -89,7 +89,7 @@ public sealed class KernelPathCaseSensitivityTests : IDisposable
     }
 
     [Fact]
-    public void MountResolution_RejectsCaseSiblingEscape()
+    public void MountResolution_ClampsCaseSiblingTraversalInsideMount()
     {
         if (!HostFsIsCaseSensitive())
         {
@@ -103,11 +103,16 @@ public sealed class KernelPathCaseSensitivityTests : IDisposable
         File.WriteAllBytes(Path.Combine(sibling, "secret.bin"), [1]);
         KernelMemoryCompatExports.RegisterGuestPathMount(_guestMount, mountRoot);
 
-        // "../save/..." leaves the mount root; only a case-insensitive
-        // containment check lets it pass by matching the "Save" prefix.
-        Assert.Throws<UnauthorizedAccessException>(
-            () => KernelMemoryCompatExports.ResolveGuestPath(
-                $"{_guestMount}/../save/secret.bin"));
+        // "../save/..." is clamped before host resolution. It must resolve to
+        // a child of the mounted "Save" directory, never the case-different
+        // sibling beside it.
+        var resolved = KernelMemoryCompatExports.ResolveGuestPath(
+            $"{_guestMount}/../save/secret.bin");
+        Assert.Equal(
+            Path.Combine(mountRoot, "save", "secret.bin"),
+            resolved);
+        Assert.False(File.Exists(resolved));
+        Assert.NotEqual(Path.Combine(sibling, "secret.bin"), resolved);
     }
 
     private bool HostFsIsCaseSensitive()
