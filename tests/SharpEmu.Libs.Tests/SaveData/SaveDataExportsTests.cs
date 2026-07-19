@@ -149,7 +149,7 @@ public sealed class SaveDataExportsTests : IDisposable
     {
         Assert.Equal(0, Mount());
         WriteAscii(MountPointStr, MountPoint);
-        Assert.Equal(0, SaveDataExports.SaveDataUmount2(Reg(rdi: MountPointStr)));
+        Assert.Equal(0, SaveDataExports.SaveDataUmount2(Reg(rsi: MountPointStr)));
 
         Assert.Equal(0, SaveDataExports.SaveDataIsMounted(Reg(rsi: EventOut)));
         Assert.True(_ctx.TryReadUInt32(EventOut, out var mounted));
@@ -217,7 +217,7 @@ public sealed class SaveDataExportsTests : IDisposable
         WriteAscii(MountPointStr, MountPoint);
         Assert.Equal(
             0,
-            SaveDataExports.SaveDataUmount2(Reg(rdi: MountPointStr)));
+            SaveDataExports.SaveDataUmount2(Reg(rsi: MountPointStr)));
 
         WriteAscii(DirNamePtr, DirName);
         Span<byte> del = stackalloc byte[0x40];

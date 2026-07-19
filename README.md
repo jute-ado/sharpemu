@@ -39,8 +39,8 @@ test-driven workflow. Major downstream differences include:
 - application plugin discovery and symbol resolution, including deferred module
   initializers that start once and can be retried after a guest failure
 - persistent save-data mutations, including quota-aware mount information,
-  retry-safe event delivery, bounded atomic icon writes, and size-reporting
-  icon loads through mounted guest paths
+  retry-safe and mode-aware lifecycle events, bounded atomic icon writes, and
+  size-reporting icon loads through mounted guest paths
 - a bounded, local-only game regression harness with redacted manifests suitable
   for source control
 - Windows, Linux, and macOS x64 build, test, packaging, and release validation

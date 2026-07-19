@@ -87,7 +87,8 @@ public sealed class SaveDataEventLifecycleTests
             Assert.Equal(0, SaveDataExports.SaveDataGetEventResult(context));
 
             QueueMemorySyncEvent(context, memory, userId: 1);
-            context[CpuRegister.Rdi] = MountResultAddress;
+            context[CpuRegister.Rdi] = 0;
+            context[CpuRegister.Rsi] = MountResultAddress;
             Assert.Equal(0, SaveDataExports.SaveDataUmount2(context));
             Assert.Equal(0, SaveDataExports.SaveDataTerminate(context));
             context[CpuRegister.Rdi] = 0;
@@ -97,6 +98,33 @@ public sealed class SaveDataEventLifecycleTests
             Assert.Equal(
                 OrbisSaveDataErrorNotFound,
                 SaveDataExports.SaveDataGetEventResult(context));
+        });
+    }
+
+    [Fact]
+    public void Umount2BackupModeQueuesExactCompletionEvent()
+    {
+        WithIsolatedSaveRoot(() =>
+        {
+            var memory = new FakeGuestMemory();
+            memory.AddRegion(EventAddress, new byte[0x68]);
+            memory.AddRegion(DirNameAddress, FixedAscii("slot00", 32));
+            var context = new CpuContext(memory, Generation.Gen5);
+            MountSave(context, memory);
+
+            context[CpuRegister.Rdi] = 1u << 16;
+            context[CpuRegister.Rsi] = MountResultAddress;
+            Assert.Equal(0, SaveDataExports.SaveDataUmount2(context));
+
+            context[CpuRegister.Rsi] = EventAddress;
+            Assert.Equal(0, SaveDataExports.SaveDataGetEventResult(context));
+            var actual = new byte[0x68];
+            Assert.True(memory.TryRead(EventAddress, actual));
+            var expected = new byte[0x68];
+            BinaryPrimitives.WriteUInt32LittleEndian(expected, 1);
+            Encoding.ASCII.GetBytes("TEST00001", expected.AsSpan(0x10, 10));
+            Encoding.ASCII.GetBytes("slot00", expected.AsSpan(0x20, 32));
+            Assert.Equal(expected, actual);
         });
     }
 

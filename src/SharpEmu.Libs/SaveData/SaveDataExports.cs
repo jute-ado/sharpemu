@@ -35,6 +35,7 @@ public static class SaveDataExports
     private const uint SortOrderDescent = 1;
     private const uint MountModeCreate = 1u << 2;
     private const uint MountModeCreate2 = 1u << 5;
+    private const uint UmountModeBackupAsync = 1u << 16;
     private const int MountParamSize = 0x2C;
     private const int MountResultSize = 0x40;
     private const int MountInfoSize = 0x30;
@@ -78,7 +79,12 @@ public static class SaveDataExports
         int UserId,
         string TitleId,
         string DirName);
-    private readonly record struct MountedSave(string Path, ulong Blocks);
+    private readonly record struct MountedSave(
+        string Path,
+        ulong Blocks,
+        int UserId,
+        string TitleId,
+        string DirName);
 
     public static void ConfigureApplicationInfo(string? titleId)
     {
@@ -402,7 +408,10 @@ public static class SaveDataExports
             {
                 _mountedSaves[mountPoint] = new MountedSave(
                     savePath,
-                    blocks == 0 ? DefaultSaveDataBlocks : blocks);
+                    blocks == 0 ? DefaultSaveDataBlocks : blocks,
+                    userId,
+                    titleId,
+                    dirName);
             }
 
             TraceSaveData(
@@ -1242,12 +1251,8 @@ public static class SaveDataExports
         LibraryName = "libSceSaveData")]
     public static int SaveDataUmount2(CpuContext ctx)
     {
-        var mountPointAddress = ctx[CpuRegister.Rdi];
-        if (mountPointAddress == 0)
-        {
-            mountPointAddress = ctx[CpuRegister.Rsi];
-        }
-
+        var mode = unchecked((uint)ctx[CpuRegister.Rdi]);
+        var mountPointAddress = ctx[CpuRegister.Rsi];
         if (mountPointAddress == 0)
         {
             return ctx.SetReturn(OrbisSaveDataErrorParameter);
@@ -1263,13 +1268,29 @@ public static class SaveDataExports
             return ctx.SetReturn(OrbisSaveDataErrorParameter);
         }
 
-        var unmounted = KernelMemoryCompatExports.TryUnregisterGuestPathMount(mountPoint);
+        MountedSave mountedSave;
         lock (_stateGate)
         {
-            _mountedSaves.Remove(mountPoint);
+            if (!_mountedSaves.Remove(mountPoint, out mountedSave))
+            {
+                return ctx.SetReturn(OrbisSaveDataErrorNotFound);
+            }
+
+            if ((mode & UmountModeBackupAsync) != 0)
+            {
+                _events.Enqueue(new SaveDataEvent(
+                    Type: 1,
+                    ErrorCode: 0,
+                    UserId: mountedSave.UserId,
+                    TitleId: mountedSave.TitleId,
+                    DirName: mountedSave.DirName));
+            }
         }
 
-        TraceSaveData($"umount2 mount_point={mountPoint} unregistered={unmounted}");
+        var unregistered = KernelMemoryCompatExports.TryUnregisterGuestPathMount(mountPoint);
+        TraceSaveData(
+            $"umount2 mode=0x{mode:X8} mount_point={mountPoint} " +
+            $"backup_async={(mode & UmountModeBackupAsync) != 0} unregistered={unregistered}");
         return ctx.SetReturn(0);
     }
 
