@@ -1979,6 +1979,100 @@ public sealed class Gen5DecoderTests
         Assert.False(ContainsSpirvConstant(shader.Spirv, 16));
     }
 
+    [Fact]
+    public void CompilesCoherentStorageImageLoadAndStoreToSpirv()
+    {
+        var ctx = CreateContext(
+        [
+            0xF0000108u, 0x00000800u, // image_load v8, v[0:1], s[0:7] dmask:0x1 dim:2d
+            0xF0200108u, 0x00000800u, // image_store v8, v[0:1], s[0:7] dmask:0x1 dim:2d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[1] = 0xC140_0000u;
+        scalarRegisters[2] = 0x0003_C003u; // 16x16 R32ui image
+        var state = new Gen5ShaderState(program, scalarRegisters, Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.All(
+            evaluation.ImageBindings,
+            binding => Assert.True(
+                Gen5ShaderTranslator.RequiresStorageImage(
+                    binding,
+                    evaluation.ImageBindings)));
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ImageRead));
+        Assert.Equal(1, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ImageWrite));
+        Assert.Equal(0, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ImageFetch));
+    }
+
+    [Fact]
+    public void RejectsDynamicStorageImageLoadMipInsteadOfReadingMipZero()
+    {
+        var ctx = CreateContext(
+        [
+            0xF0040108u, 0x00000800u, // image_load_mip v8, v[0:2], s[0:7] dmask:0x1 dim:2d
+            0xF0200108u, 0x00000800u, // image_store v8, v[0:1], s[0:7] dmask:0x1 dim:2d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[1] = 0xC140_0000u;
+        scalarRegisters[2] = 0x0003_C003u;
+        var state = new Gen5ShaderState(program, scalarRegisters, Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.Null(evaluation.ImageBindings[0].MipLevel);
+        Assert.False(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out _,
+                out var compileError));
+        Assert.Contains(
+            "dynamic image_load_mip is unsupported for storage images",
+            compileError,
+            StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(22u, SpirvImageFormat.R32f)]
     [InlineData(29u, SpirvImageFormat.Rg16f)]

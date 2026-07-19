@@ -53,6 +53,11 @@ uint[] dispatchTopologyWords =
         0xD56C0005, 0x00020501, // v_mul_hi_i32 v5, v1, v2
         0xBF810000,             // s_endpgm
     ]),
+    ("storage-image-load-store", true, [
+        0xF0000108, 0x00000800, // image_load v8, v[0:1], s[0:7] dmask:0x1 dim:2d
+        0xF0200108, 0x00000800, // image_store v8, v[0:1], s[0:7] dmask:0x1 dim:2d
+        0xBF810000,             // s_endpgm
+    ]),
     // Packed f16 fused multiply-add conformance. The exact positive-addend
     // result lies just above an f16 midpoint, while the negated-addend result
     // lies just below it. A double-rounded f32 implementation incorrectly
@@ -675,6 +680,7 @@ HashSet<string> computeOnlyPrograms = new(StringComparer.Ordinal)
     "exec-lds-atomic",
     "exec-lds-barrier",
     "exec-wave64-lanes",
+    "storage-image-load-store",
 };
 var outputDirectory = args.Length > 0
     ? args[0]
@@ -774,11 +780,30 @@ foreach (var (name, expectTranslate, words) in testPrograms)
         }
     }
 
+    var imageBindings = new List<Gen5ImageBinding>();
+    if (name == "storage-image-load-store")
+    {
+        foreach (var instruction in program.Instructions)
+        {
+            if (instruction.Control is Gen5ImageControl image)
+            {
+                imageBindings.Add(
+                    new Gen5ImageBinding(
+                        instruction.Pc,
+                        instruction.Opcode,
+                        image,
+                        [0u, 0xC140_0000u, 0x0003_C003u],
+                        [],
+                        MipLevel: null));
+            }
+        }
+    }
+
     var evaluation = new Gen5ShaderEvaluation(
         initialScalarRegisters,
         new uint[256],
         new Dictionary<uint, IReadOnlyList<uint>>(),
-        Array.Empty<Gen5ImageBinding>(),
+        imageBindings,
         globalBindings,
         ComputeSystemRegisters: computeSystemRegisters);
 
