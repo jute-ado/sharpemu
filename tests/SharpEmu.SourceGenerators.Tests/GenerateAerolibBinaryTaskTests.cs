@@ -3,6 +3,7 @@
 
 using System.Collections.Concurrent;
 using System.Text;
+using SharpEmu.Nids;
 using SharpEmu.SourceGenerators;
 using Xunit;
 

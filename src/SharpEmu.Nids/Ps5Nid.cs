@@ -4,15 +4,18 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace SharpEmu.SourceGenerators;
+namespace SharpEmu.Nids;
 
 /// <summary>
 /// The PS NID derivation: base64 (with the '+','-' alphabet, no padding) of the
-/// byte-reversed first eight bytes of SHA1(symbolName + fixed suffix). The same
-/// algorithm scripts/generate_aerolib_binary.py uses to build the runtime catalog,
-/// in C# so the analyzer and generator can validate and derive NIDs at compile time.
+/// byte-reversed first eight bytes of SHA1(symbolName + fixed suffix).
 /// </summary>
-public static class Ps5Nid
+#if SHARPEMU_PUBLIC_NIDS
+public
+#else
+internal
+#endif
+static class Ps5Nid
 {
     private static readonly byte[] Suffix =
     [
@@ -39,8 +42,8 @@ public static class Ps5Nid
 
         var hash = sha1.ComputeHash(input);
 
-        // The script reads the first eight bytes as a little-endian integer and
-        // formats it big-endian before encoding — a byte reversal.
+        // The catalog generator reads the first eight bytes as a little-endian integer
+        // and formats it big-endian before encoding — a byte reversal.
         var reversed = new byte[8];
         for (var index = 0; index < 8; index++)
         {

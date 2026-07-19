@@ -21,6 +21,13 @@ SPDX-License-Identifier: GPL-2.0-or-later
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Roslyn isolates analyzer dependencies. Compile the single NID source into
+         this component as an internal helper; the runtime library exposes it publicly. -->
+    <Compile Include="..\SharpEmu.Nids\Ps5Nid.cs"
+             Link="Nids\Ps5Nid.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.Build.Framework" PrivateAssets="all" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />

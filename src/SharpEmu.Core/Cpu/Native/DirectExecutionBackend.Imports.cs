@@ -12,6 +12,8 @@ using SharpEmu.Core.Cpu.Native.Windows;
 using SharpEmu.Core.Loader;
 using SharpEmu.HLE;
 using SharpEmu.HLE.Host;
+using SharpEmu.Libs.Kernel;
+using SharpEmu.Nids;
 
 namespace SharpEmu.Core.Cpu.Native;
 
@@ -1424,6 +1426,7 @@ public sealed partial class DirectExecutionBackend
 		}
 
 		NormalizeKernelDynlibDlsymArguments(cpuContext, out var symbolNameAddress, out var outputAddress);
+		var moduleHandle = unchecked((int)cpuContext[CpuRegister.Rdi]);
 		try
 		{
 			if (string.Equals(
@@ -1434,11 +1437,11 @@ public sealed partial class DirectExecutionBackend
 			{
 				Console.Error.WriteLine(
 					$"[LOADER][TRACE] dlsym request symbol='{diagnosticSymbolName}' " +
-					$"out=0x{outputAddress:X16}");
+					$"handle={cpuContext[CpuRegister.Rdi]} out=0x{outputAddress:X16}");
 			}
 
 			if (!TryReadAsciiZ(symbolNameAddress, 512, out var symbolName) ||
-				!TryResolveDlsymGuestAddress(symbolName, out var resolvedAddress) ||
+				!TryResolveDlsymGuestAddress(moduleHandle, symbolName, out var resolvedAddress) ||
 				outputAddress == 0 ||
 				!TryWriteUInt64Compat(outputAddress, resolvedAddress))
 			{
@@ -1504,7 +1507,10 @@ public sealed partial class DirectExecutionBackend
 		}
 	}
 
-	private bool TryResolveDlsymGuestAddress(string symbolName, out ulong guestAddress)
+	private bool TryResolveDlsymGuestAddress(
+		int moduleHandle,
+		string symbolName,
+		out ulong guestAddress)
 	{
 		guestAddress = 0;
 		if (string.IsNullOrWhiteSpace(symbolName))
@@ -1513,6 +1519,14 @@ public sealed partial class DirectExecutionBackend
 		}
 
 		var canonicalSymbolName = GetRuntimeSymbolAlias(symbolName) ?? symbolName;
+		if (TryResolveModuleDlsymGuestAddress(
+				moduleHandle,
+				symbolName,
+				canonicalSymbolName,
+				out guestAddress))
+		{
+			return true;
+		}
 
 		// Tier 0: ELF runtime symbols and aliases.
 		if (TryResolveRuntimeSymbolAddress(symbolName, out guestAddress) ||
@@ -1578,6 +1592,41 @@ public sealed partial class DirectExecutionBackend
 			symbolName,
 			hasAerolibSymbol ? hleSymbol : null,
 			export,
+			out guestAddress);
+	}
+
+	private static bool TryResolveModuleDlsymGuestAddress(
+		int moduleHandle,
+		string requestedSymbolName,
+		string canonicalSymbolName,
+		out ulong guestAddress)
+	{
+		guestAddress = 0;
+		if (moduleHandle <= 0)
+		{
+			return false;
+		}
+
+		if (KernelModuleRegistry.TryResolveModuleSymbol(
+				moduleHandle,
+				requestedSymbolName,
+				out guestAddress) ||
+			(!string.Equals(
+					canonicalSymbolName,
+					requestedSymbolName,
+					StringComparison.Ordinal) &&
+				KernelModuleRegistry.TryResolveModuleSymbol(
+					moduleHandle,
+					canonicalSymbolName,
+					out guestAddress)))
+		{
+			return true;
+		}
+
+		var nid = Ps5Nid.Compute(canonicalSymbolName);
+		return KernelModuleRegistry.TryResolveModuleSymbol(
+			moduleHandle,
+			nid,
 			out guestAddress);
 	}
 

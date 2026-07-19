@@ -587,6 +587,11 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         for (var i = 0; i < loadedModuleImages.Count; i++)
         {
             var loadedModule = loadedModuleImages[i];
+            if (!loadedModule.StartOnBoot)
+            {
+                continue;
+            }
+
             var initializerEntryPoints = loadedModule.Image.InitializerFunctions;
             if (initializerEntryPoints.Count == 0)
             {
@@ -718,11 +723,13 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             return loadedImages;
         }
 
+        var pluginDirectory = Path.Combine(ebootDirectory, "Media", "Plugins");
         var moduleDirectories = new[]
         {
             Path.Combine(ebootDirectory, "sce_module"),
             Path.Combine(ebootDirectory, "sce_modules"),
             Path.Combine(ebootDirectory, "Media", "Modules"),
+            pluginDirectory,
         }
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .Where(Directory.Exists)
@@ -828,7 +835,11 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 mergedImportCount += MergeImportStubs(importStubs, moduleImage.ImportStubs, modulePath);
                 mergedSymbolCount += MergeRuntimeSymbols(runtimeSymbols, moduleImage.RuntimeSymbols);
                 RegisterLoadedModule(modulePath, moduleImage, isMain: false, isSystemModule: false);
-                loadedImages.Add(new PreparedModule(modulePath, moduleImage));
+                var startOnBoot = !string.Equals(
+                    Path.GetDirectoryName(modulePath),
+                    pluginDirectory,
+                    StringComparison.OrdinalIgnoreCase);
+                loadedImages.Add(new PreparedModule(modulePath, moduleImage, startOnBoot));
                 loadedModules++;
 
                 Log.Info(
@@ -1064,8 +1075,13 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             baseAddress,
             size,
             image.EntryPoint,
+            image.InitFunctionEntryPoint,
+            ehFrameHeaderAddress: 0,
+            ehFrameAddress: 0,
+            ehFrameSize: 0,
             isMain,
             isSystemModule);
+        KernelModuleRegistry.RegisterModuleSymbols(handle, image.RuntimeSymbols);
         Log.Info(
             $"Registered module handle={handle} name={Path.GetFileName(modulePath)} base=0x{baseAddress:X16} size=0x{size:X16}");
     }

@@ -4,6 +4,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Build.Framework;
+using SharpEmu.Nids;
 
 namespace SharpEmu.SourceGenerators;
 
