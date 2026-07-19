@@ -38,6 +38,8 @@ test-driven workflow. Major downstream differences include:
   behavior exercised through native guest-code tests
 - application plugin discovery and symbol resolution, including deferred module
   initializers that start once and can be retried after a guest failure
+- persistent save-data mutations, including bounded icon writes that preserve
+  existing data when guest memory or filesystem operations fail
 - a bounded, local-only game regression harness with redacted manifests suitable
   for source control
 - Windows, Linux, and macOS x64 build, test, packaging, and release validation

@@ -655,8 +655,32 @@ public static class SaveDataExports
             _transactionResources.Add(resource);
         }
 
-        TraceSaveData($"create_transaction_resource memory_size=0x{memorySize:X} resource={resource}");
+        // Some SDK revisions return the resource directly; others pass an
+        // output pointer in RDX, or a small ABI flag in RDX and the pointer in
+        // RCX. Preserve the direct return while writing only the documented
+        // candidate, never probing stale argument registers.
+        var resourceAddress = SelectTransactionResourceAddress(
+            ctx[CpuRegister.Rdx],
+            ctx[CpuRegister.Rcx]);
+        if (resourceAddress != 0)
+        {
+            _ = ctx.TryWriteUInt32(resourceAddress, unchecked((uint)resource));
+        }
+
+        TraceSaveData(
+            $"create_transaction_resource memory_size=0x{memorySize:X} " +
+            $"resource={resource} resource_addr=0x{resourceAddress:X}");
         return ctx.SetReturn(resource);
+    }
+
+    internal static ulong SelectTransactionResourceAddress(ulong rdx, ulong rcx)
+    {
+        if (rdx == 0)
+        {
+            return 0;
+        }
+
+        return rdx <= ushort.MaxValue ? rcx : rdx;
     }
 
     [SysAbiExport(

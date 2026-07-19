@@ -370,6 +370,13 @@ public static class KernelPthreadCompatExports
     public static int PthreadCondDestroy(CpuContext ctx) => PthreadCondDestroyCore(ctx, ctx[CpuRegister.Rdi]);
 
     [SysAbiExport(
+        Nid = "RXXqi4CtF8w",
+        ExportName = "pthread_cond_destroy",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadCondDestroy(CpuContext ctx) => PthreadCondDestroyCore(ctx, ctx[CpuRegister.Rdi]);
+
+    [SysAbiExport(
         Nid = "WKAXJ4XBPQ4",
         ExportName = "scePthreadCondWait",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -655,6 +662,20 @@ public static class KernelPthreadCompatExports
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
+    [SysAbiExport(
+        Nid = "Z4QosVuAsA0",
+        ExportName = "pthread_once",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadOncePosix(CpuContext ctx) => PthreadOnce(ctx);
+
+    [SysAbiExport(
+        Nid = "9vyP6Z7bqzc",
+        ExportName = "pthread_rename_np",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PthreadRenameNpPosix(CpuContext ctx) => PthreadRename(ctx);
+
     private static int PthreadMutexInitCore(CpuContext ctx, ulong mutexAddress, ulong attrAddress)
     {
         if (mutexAddress == 0)
@@ -791,7 +812,22 @@ public static class KernelPthreadCompatExports
                     return (int)OrbisGen2Result.ORBIS_GEN2_OK;
                 }
 
-                if (state.Type is MutexTypeNormal or MutexTypeAdaptiveNp)
+                if (state.Type == MutexTypeAdaptiveNp)
+                {
+                    if (tryOnly)
+                    {
+                        TracePthreadMutex(ctx, "trylock", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY);
+                        return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
+                    }
+
+                    // Adaptive mutexes are used with guest-side owner/count
+                    // bookkeeping. Treat a repeated owner lock as an idempotent
+                    // compatibility acquisition so one matching unlock releases it.
+                    TracePthreadMutex(ctx, "lock", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_OK);
+                    return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                }
+
+                if (state.Type == MutexTypeNormal)
                 {
                     if (tryOnly)
                     {

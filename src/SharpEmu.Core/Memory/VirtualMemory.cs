@@ -294,8 +294,14 @@ public sealed class VirtualMemory : IVirtualMemory, IGuestStackMemory, IGuestVir
                 copied += length;
             }
 
-            return true;
         }
+
+        if (GuestWriteWatch.Armed)
+        {
+            GuestWriteWatch.Check(virtualAddress, source);
+        }
+
+        return true;
     }
 
     private bool TryResolveRange(

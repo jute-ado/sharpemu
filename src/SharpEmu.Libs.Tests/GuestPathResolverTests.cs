@@ -23,17 +23,18 @@ public sealed class GuestPathResolverTests
     }
 
     [Theory]
-    [InlineData("/temp0/../../escape.txt")]
-    [InlineData("/temp0\\..\\..\\escape.txt")]
-    [InlineData("/download0/../escape.txt")]
-    [InlineData("download0/../../escape.txt")]
-    [InlineData("/hostapp/../escape.txt")]
-    [InlineData("devlog/app/../../../escape.txt")]
-    [InlineData("/app0/../../escape.txt")]
-    [InlineData("$/../../escape.txt")]
-    public void RejectsPathsThatEscapeKnownMounts(string guestPath)
+    [InlineData("/temp0/../../escape.txt", "temp0")]
+    [InlineData("/temp0\\..\\..\\escape.txt", "temp0")]
+    [InlineData("/download0/../escape.txt", "download0")]
+    [InlineData("download0/../../escape.txt", "download0")]
+    [InlineData("/hostapp/../escape.txt", "hostapp")]
+    [InlineData("devlog/app/../../../escape.txt", "devlog")]
+    [InlineData("/app0/../../escape.txt", "app0")]
+    [InlineData("$/../../escape.txt", "app0")]
+    public void ClampsTraversalAtKnownMountRoots(string guestPath, string rootName)
     {
-        Assert.False(KernelMemoryCompatExports.TryResolveGuestPath(guestPath, out _));
+        Assert.True(KernelMemoryCompatExports.TryResolveGuestPath(guestPath, out var hostPath));
+        Assert.Equal(Path.Combine(Root, rootName, "escape.txt"), hostPath);
     }
 
     [Theory]
@@ -82,9 +83,10 @@ public sealed class GuestPathResolverTests
         Assert.Equal(
             Path.GetFullPath(Path.Combine(mountRoot, "slot", "save.bin")),
             safePath);
-        Assert.False(KernelMemoryCompatExports.TryResolveGuestPath(
+        Assert.True(KernelMemoryCompatExports.TryResolveGuestPath(
             mountPoint + "/../../escape.bin",
-            out _));
+            out var clampedPath));
+        Assert.Equal(Path.Combine(mountRoot, "escape.bin"), clampedPath);
     }
 
     [Fact]

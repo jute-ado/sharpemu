@@ -99,12 +99,11 @@ public sealed class KernelFilesystemContractTests : IDisposable
     }
 
     [Fact]
-    public void TraversalCannotMutateOutsideRegisteredMount()
+    public void TraversalIsClampedBeforeMutatingRegisteredMount()
     {
         WritePath(_mount + "/../escape");
-        Assert.Equal(
-            PermissionDenied,
-            KernelMemoryCompatExports.KernelMkdir(_context));
+        Assert.Equal(0, KernelMemoryCompatExports.KernelMkdir(_context));
+        Assert.True(Directory.Exists(Path.Combine(_root, "escape")));
         Assert.False(Directory.Exists(Path.Combine(_root, "..", "escape")));
     }
 
@@ -149,7 +148,9 @@ public sealed class KernelFilesystemContractTests : IDisposable
 
         WritePath("/app0/../../escape");
         _context[CpuRegister.Rsi] = OpenDirectory;
-        Assert.Equal(InvalidArgument, KernelExports.KernelOpen(_context));
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND,
+            KernelExports.KernelOpen(_context));
     }
 
     [Fact]

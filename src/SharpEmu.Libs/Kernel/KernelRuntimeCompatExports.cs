@@ -97,6 +97,13 @@ public static class KernelRuntimeCompatExports
         LibraryName = "libKernel")]
     public static int PosixNanosleep(CpuContext ctx) => NanosleepCore(ctx, posix: true);
 
+    [SysAbiExport(
+        Nid = "NhpspxdjEKU",
+        ExportName = "_nanosleep",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixNanosleepUnderscore(CpuContext ctx) => NanosleepCore(ctx, posix: true);
+
     private static int NanosleepCore(CpuContext ctx, bool posix)
     {
         var requestAddress = ctx[CpuRegister.Rdi];

@@ -1750,4 +1750,37 @@ public static class KernelPthreadExtendedCompatExports
         payload[^1] = 0;
         return ctx.Memory.TryWrite(address, payload);
     }
+
+    [SysAbiExport(Nid = "a2P9wYGeZvc", ExportName = "pthread_setprio", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libKernel")]
+    public static int PthreadSetprioPosix(CpuContext ctx) => PthreadSetprio(ctx);
+
+    [SysAbiExport(Nid = "vQm4fDEsWi8", ExportName = "pthread_attr_getstack", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libKernel")]
+    public static int PthreadAttrGetstackPosix(CpuContext ctx) => PthreadAttrGetstack(ctx);
+
+    [SysAbiExport(Nid = "Ucsu-OK+els", ExportName = "pthread_attr_get_np", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libKernel")]
+    public static int PthreadAttrGetNpPosix(CpuContext ctx) => PthreadAttrGet(ctx);
+
+    [SysAbiExport(Nid = "JarMIy8kKEY", ExportName = "pthread_attr_setschedpolicy", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libKernel")]
+    public static int PthreadAttrSetschedpolicyPosix(CpuContext ctx) => PthreadAttrSetschedpolicy(ctx);
+
+    [SysAbiExport(Nid = "E+tyo3lp5Lw", ExportName = "pthread_attr_setdetachstate", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libKernel")]
+    public static int PthreadAttrSetdetachstatePosix(CpuContext ctx) => PthreadAttrSetdetachstate(ctx);
+
+    [SysAbiExport(Nid = "euKRgm0Vn2M", ExportName = "pthread_attr_setschedparam", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libKernel")]
+    public static int PthreadAttrSetschedparamPosix(CpuContext ctx) => PthreadAttrSetschedparam(ctx);
+
+    [SysAbiExport(Nid = "7ZlAakEf0Qg", ExportName = "pthread_attr_setinheritsched", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libKernel")]
+    public static int PthreadAttrSetinheritschedPosix(CpuContext ctx) => PthreadAttrSetinheritsched(ctx);
+
+    [SysAbiExport(Nid = "0qOtCR-ZHck", ExportName = "pthread_attr_getstacksize", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libKernel")]
+    public static int PthreadAttrGetstacksizePosix(CpuContext ctx) => PthreadAttrGetstacksize(ctx);
+
+    [SysAbiExport(Nid = "VUT1ZSrHT0I", ExportName = "pthread_attr_getdetachstate", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libKernel")]
+    public static int PthreadAttrGetdetachstatePosix(CpuContext ctx) => PthreadAttrGetdetachstate(ctx);
+
+    [SysAbiExport(Nid = "JKyG3SWyA10", ExportName = "pthread_attr_setguardsize", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libKernel")]
+    public static int PthreadAttrSetguardsizePosix(CpuContext ctx) => PthreadAttrSetguardsize(ctx);
+
+    [SysAbiExport(Nid = "JNkVVsVDmOk", ExportName = "pthread_attr_getguardsize", Target = Generation.Gen4 | Generation.Gen5, LibraryName = "libKernel")]
+    public static int PthreadAttrGetguardsizePosix(CpuContext ctx) => PthreadAttrGetguardsize(ctx);
 }
