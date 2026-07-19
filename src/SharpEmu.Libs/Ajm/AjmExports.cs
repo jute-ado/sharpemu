@@ -18,7 +18,7 @@ public static class AjmExports
     private const int CodecAlreadyRegistered = unchecked((int)0x80930009);
     private const int CodecNotRegistered = unchecked((int)0x8093000A);
     private const int WrongRevisionFlag = unchecked((int)0x8093000B);
-    private const uint MaxCodecType = 23;
+    private const uint MaxCodecTypeExclusive = 25;
     private const int MaxInstanceIndex = 0x2FFF;
     private static readonly ConcurrentDictionary<uint, AjmContextState> Contexts = new();
     private static int _nextContextId;
@@ -43,7 +43,7 @@ public static class AjmExports
     {
         var reserved = ctx[CpuRegister.Rdi];
         var outputAddress = ctx[CpuRegister.Rsi];
-        if (reserved != 0 || outputAddress == 0)
+        if (outputAddress == 0)
         {
             return InvalidParameter;
         }
@@ -89,7 +89,7 @@ public static class AjmExports
         var contextId = unchecked((uint)ctx[CpuRegister.Rdi]);
         var codecType = unchecked((uint)ctx[CpuRegister.Rsi]);
         var reserved = ctx[CpuRegister.Rdx];
-        if (codecType >= MaxCodecType || reserved != 0)
+        if (codecType >= MaxCodecTypeExclusive)
         {
             return ctx.SetReturn(InvalidInstanceParameter);
         }
@@ -133,7 +133,7 @@ public static class AjmExports
             return ctx.SetReturn(InvalidContext);
         }
 
-        if (codecType >= MaxCodecType || outputAddress == 0)
+        if (codecType >= MaxCodecTypeExclusive || outputAddress == 0)
         {
             return ctx.SetReturn(InvalidInstanceParameter);
         }
