@@ -35,6 +35,12 @@ by its displayed name, for example:
 dotnet test tests/SharpEmu.GameTests/SharpEmu.GameTests.csproj -c Release --filter "DisplayName~Example game load"
 ```
 
+Standard output and error are streamed directly to their ignored artifact logs
+instead of being buffered in memory. Each log is capped at 64 MiB so a repeated
+guest diagnostic cannot exhaust host memory or disk. Import counts, known and
+unexpected warning totals, configured output milestones, and requested image
+observations continue to be analyzed after a log reaches that cap.
+
 ## External GPU and pull-request runners
 
 An external runner can keep licensed game archives, GPU scheduling, display

@@ -94,8 +94,14 @@ internal static class GameRegressionRunner
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException(
                 "Failed to start the SharpEmu game regression process.");
-        var standardOutputTask = process.StandardOutput.ReadToEndAsync();
-        var standardErrorTask = process.StandardError.ReadToEndAsync();
+        var standardOutputTask = GameRegressionOutputCapture.CaptureAsync(
+            process.StandardOutput,
+            standardOutputPath,
+            testCase.Expectations);
+        var standardErrorTask = GameRegressionOutputCapture.CaptureAsync(
+            process.StandardError,
+            standardErrorPath,
+            testCase.Expectations);
         var outerTimeoutSeconds = checked(testCase.TimeoutSeconds + 60);
         using var timeout = new CancellationTokenSource(
             TimeSpan.FromSeconds(outerTimeoutSeconds));
@@ -114,8 +120,9 @@ internal static class GameRegressionRunner
 
         var standardOutput = await standardOutputTask;
         var standardError = await standardErrorTask;
-        await File.WriteAllTextAsync(standardOutputPath, standardOutput);
-        await File.WriteAllTextAsync(standardErrorPath, standardError);
+        var outputAnalysis = GameOutputAnalysis.Combine(
+            standardOutput,
+            standardError);
         if (!File.Exists(reportPath))
         {
             throw new InvalidDataException(
@@ -129,7 +136,8 @@ internal static class GameRegressionRunner
             testCase,
             report.RootElement,
             reportPath,
-            standardOutput + Environment.NewLine + standardError);
+            outputAnalysis.RelevantOutput,
+            outputAnalysis);
         return new GameRegressionExecution(
             testCase.Name,
             testCase.Mode,
@@ -530,8 +538,11 @@ internal static class GameRegressionRunner
         GameRegressionCase testCase,
         JsonElement report,
         string reportPath,
-        string capturedOutput = "")
+        string capturedOutput = "",
+        GameOutputAnalysis? outputAnalysis = null)
     {
+        var searchableOutput =
+            outputAnalysis?.RelevantOutput ?? capturedOutput;
         var failures = new StringBuilder();
         var resultName = GetRequiredString(
             report.GetProperty("result"),
@@ -666,8 +677,9 @@ internal static class GameRegressionRunner
         if (testCase.Expectations.MinimumObservedImportDispatches is
             { } minimumImportDispatches)
         {
-            var observedImportDispatches =
-                GetMaximumObservedImportDispatch(capturedOutput);
+            var observedImportDispatches = outputAnalysis is null
+                ? GetMaximumObservedImportDispatch(capturedOutput)
+                : outputAnalysis.MaximumObservedImportDispatch;
             if (observedImportDispatches < minimumImportDispatches)
             {
                 failures.AppendLine(
@@ -680,9 +692,14 @@ internal static class GameRegressionRunner
         if (testCase.Expectations.MaximumImportWarnings is
             { } maximumImportWarnings)
         {
-            var importWarnings = AnalyzeImportWarnings(
-                capturedOutput,
-                testCase.Expectations.KnownImportWarnings);
+            var importWarnings = outputAnalysis is null
+                ? AnalyzeImportWarnings(
+                    capturedOutput,
+                    testCase.Expectations.KnownImportWarnings)
+                : (
+                    Total: outputAnalysis.TotalImportWarnings,
+                    Known: outputAnalysis.KnownImportWarnings,
+                    Unexpected: outputAnalysis.UnexpectedImportWarnings);
             if (importWarnings.Unexpected > maximumImportWarnings)
             {
                 failures.AppendLine(
@@ -700,7 +717,9 @@ internal static class GameRegressionRunner
         {
             var requiredOutput =
                 testCase.Expectations.RequiredOutputSubstrings[index];
-            if (!capturedOutput.Contains(
+            if (!OutputContains(
+                    capturedOutput,
+                    outputAnalysis,
                     requiredOutput,
                     StringComparison.Ordinal))
             {
@@ -716,7 +735,9 @@ internal static class GameRegressionRunner
         {
             var forbiddenOutput =
                 testCase.Expectations.ForbiddenOutputSubstrings[index];
-            if (capturedOutput.Contains(
+            if (OutputContains(
+                    capturedOutput,
+                    outputAnalysis,
                     forbiddenOutput,
                     StringComparison.Ordinal))
             {
@@ -734,7 +755,11 @@ internal static class GameRegressionRunner
                 testCase.Expectations.RequiredVideoOutFrameFingerprints[index],
                 out var fingerprint);
             var marker = $"fingerprint=0x{fingerprint}";
-            if (!capturedOutput.Contains(marker, StringComparison.OrdinalIgnoreCase))
+            if (!OutputContains(
+                    capturedOutput,
+                    outputAnalysis,
+                    marker,
+                    StringComparison.OrdinalIgnoreCase))
             {
                 failures.AppendLine(
                     $"required VideoOut frame fingerprint was not observed: " +
@@ -746,7 +771,7 @@ internal static class GameRegressionRunner
             { } presentedImage)
         {
             if (!TryGetPresentedGuestImageObservation(
-                    capturedOutput,
+                    searchableOutput,
                     presentedImage.Frame,
                     out var actualFingerprint,
                     out var nonBlackPixels,
@@ -841,7 +866,7 @@ internal static class GameRegressionRunner
                 $"vk.guest_image_write_capture selector={captureRequest} " +
                 "fingerprint=0x";
             if (!TryGetCapturedImageObservation(
-                    capturedOutput,
+                    searchableOutput,
                     marker,
                     out var actualFingerprint,
                     out var nonBlackPixels,
@@ -946,6 +971,14 @@ internal static class GameRegressionRunner
 
         return false;
     }
+
+    private static bool OutputContains(
+        string capturedOutput,
+        GameOutputAnalysis? outputAnalysis,
+        string value,
+        StringComparison comparison) =>
+        outputAnalysis?.Contains(value, comparison) ??
+        capturedOutput.Contains(value, comparison);
 
     private static void AppendUnsupportedRelocationFailures(
         JsonElement image,
@@ -1056,7 +1089,7 @@ internal static class GameRegressionRunner
         return (total, known, total - known);
     }
 
-    private static bool MatchesKnownImportWarning(
+    internal static bool MatchesKnownImportWarning(
         ReadOnlySpan<char> warningLine,
         ImportWarningExpectation[] knownWarnings)
     {
