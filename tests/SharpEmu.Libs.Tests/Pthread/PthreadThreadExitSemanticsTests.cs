@@ -18,6 +18,7 @@ public sealed class PthreadThreadExitSemanticsTests
 {
     private const ulong MutexAddress = 0x1_0000;
     private const ulong CondAddress = 0x2_0000;
+    private const ulong RwlockAddress = 0x3_0000;
 
     [Fact]
     public void GuestThreadExit_ReleasesOwnedMutex()
@@ -134,6 +135,78 @@ public sealed class PthreadThreadExitSemanticsTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void GuestThreadExit_ReleasesAllOwnedRwlockDepth(bool write)
+    {
+        var fixture = CreateRwlockFixture();
+        var ownerThread = KernelPthreadState.CreateThreadHandle("rwlock-owner");
+
+        Assert.Equal(0, LockRwlockAs(fixture, ownerThread, write));
+        Assert.Equal(0, LockRwlockAs(fixture, ownerThread, write));
+
+        GuestThreadExecution.NotifyGuestThreadExited(ownerThread);
+
+        Assert.Equal(0, DestroyRwlock(fixture));
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task GuestThreadExit_WakesQueuedRwlockSuccessor(
+        bool ownerWrites,
+        bool successorWrites)
+    {
+        GuestThreadBlocking.BeginExecution();
+        var fixture = CreateRwlockFixture();
+        var ownerThread = KernelPthreadState.CreateThreadHandle("rwlock-owner");
+        var successorThread =
+            KernelPthreadState.CreateThreadHandle("rwlock-successor");
+        Task<int>? successor = null;
+
+        try
+        {
+            Assert.Equal(
+                0,
+                LockRwlockAs(fixture, ownerThread, ownerWrites));
+            successor = Task.Run(() =>
+            {
+                var lockResult =
+                    LockRwlockAs(
+                        fixture,
+                        successorThread,
+                        successorWrites);
+                if (lockResult != 0)
+                {
+                    return lockResult;
+                }
+
+                return UnlockRwlockAs(fixture, successorThread);
+            });
+            AssertBlocked(
+                successorThread,
+                successorWrites
+                    ? "pthread_rwlock_wrlock"
+                    : "pthread_rwlock_rdlock");
+
+            GuestThreadExecution.NotifyGuestThreadExited(ownerThread);
+
+            Assert.Equal(0, await successor.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        finally
+        {
+            GuestThreadBlocking.BeginExecution();
+            if (successor is not null)
+            {
+                _ = await successor.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+
+            _ = DestroyRwlock(fixture);
+            GuestThreadBlocking.BeginExecution();
+        }
+    }
+
     private static MutexFixture CreateMutexFixture()
     {
         var memory = new FakeGuestMemory();
@@ -154,6 +227,19 @@ public sealed class PthreadThreadExitSemanticsTests
         Assert.Equal(0, KernelPthreadCompatExports.PosixPthreadCondInit(context));
     }
 
+    private static RwlockFixture CreateRwlockFixture()
+    {
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(RwlockAddress, new byte[sizeof(ulong)]);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = RwlockAddress;
+        context[CpuRegister.Rsi] = 0;
+        Assert.Equal(
+            0,
+            KernelPthreadExtendedCompatExports.PosixPthreadRwlockInit(context));
+        return new RwlockFixture(memory);
+    }
+
     private static int LockAs(MutexFixture fixture, ulong threadHandle) =>
         InvokeAs(
             fixture,
@@ -172,22 +258,62 @@ public sealed class PthreadThreadExitSemanticsTests
             threadHandle,
             KernelPthreadCompatExports.PosixPthreadMutexUnlock);
 
+    private static int LockRwlockAs(
+        RwlockFixture fixture,
+        ulong threadHandle,
+        bool write) =>
+        InvokeAs(
+            fixture.Memory,
+            RwlockAddress,
+            threadHandle,
+            write
+                ? KernelPthreadExtendedCompatExports.PosixPthreadRwlockWrlock
+                : KernelPthreadExtendedCompatExports.PosixPthreadRwlockRdlock);
+
+    private static int UnlockRwlockAs(
+        RwlockFixture fixture,
+        ulong threadHandle) =>
+        InvokeAs(
+            fixture.Memory,
+            RwlockAddress,
+            threadHandle,
+            KernelPthreadExtendedCompatExports.PosixPthreadRwlockUnlock);
+
     private static int InvokeAs(
         MutexFixture fixture,
+        ulong threadHandle,
+        Func<CpuContext, int> operation) =>
+        InvokeAs(
+            fixture.Memory,
+            MutexAddress,
+            threadHandle,
+            operation);
+
+    private static int InvokeAs(
+        FakeGuestMemory memory,
+        ulong address,
         ulong threadHandle,
         Func<CpuContext, int> operation)
     {
         var previous = GuestThreadExecution.EnterGuestThread(threadHandle);
         try
         {
-            var context = CreateContext(fixture.Memory);
-            context[CpuRegister.Rdi] = MutexAddress;
+            var context = CreateContext(memory);
+            context[CpuRegister.Rdi] = address;
             return operation(context);
         }
         finally
         {
             GuestThreadExecution.RestoreGuestThread(previous);
         }
+    }
+
+    private static int DestroyRwlock(RwlockFixture fixture)
+    {
+        var context = CreateContext(fixture.Memory);
+        context[CpuRegister.Rdi] = RwlockAddress;
+        return KernelPthreadExtendedCompatExports.PosixPthreadRwlockDestroy(
+            context);
     }
 
     private static void AssertBlocked(ulong threadHandle, string reason)
@@ -210,4 +336,6 @@ public sealed class PthreadThreadExitSemanticsTests
         new(memory, Generation.Gen5);
 
     private sealed record MutexFixture(FakeGuestMemory Memory);
+
+    private sealed record RwlockFixture(FakeGuestMemory Memory);
 }

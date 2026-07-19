@@ -40,7 +40,7 @@ public static class KernelPthreadCompatExports
 
     static KernelPthreadCompatExports()
     {
-        GuestThreadExecution.GuestThreadExited += ReleaseThreadSynchronizationState;
+        KernelPthreadLifecycle.EnsureInitialized();
     }
 
     private sealed class PthreadMutexState
@@ -82,7 +82,7 @@ public static class KernelPthreadCompatExports
 
     private readonly record struct PthreadMutexAttrState(int Type, int Protocol);
 
-    private static void ReleaseThreadSynchronizationState(ulong threadHandle)
+    internal static void ReleaseOwnedMutexes(ulong threadHandle)
     {
         if (threadHandle == 0)
         {
