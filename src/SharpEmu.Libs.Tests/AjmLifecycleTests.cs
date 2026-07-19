@@ -51,15 +51,47 @@ public sealed class AjmLifecycleTests
     }
 
     [Fact]
-    public void InvalidInitializeParametersDoNotModifyGuestOutput()
+    public void ModuleRegisterAcceptsOpusCodecAndIgnoresReservedValue()
+    {
+        const uint OpusCodec = 24;
+        var context = CreateContext();
+        var contextId = Initialize(context, FirstContextAddress);
+
+        try
+        {
+            context[CpuRegister.Rdi] = contextId;
+            context[CpuRegister.Rsi] = OpusCodec;
+            context[CpuRegister.Rdx] = 0x0000_0003_0000_0000;
+
+            AssertCall(0, context, AjmExports.AjmModuleRegister);
+        }
+        finally
+        {
+            Finalize(context, contextId);
+        }
+    }
+
+    [Fact]
+    public void NonZeroReservedInitializeValueIsAccepted()
     {
         var context = CreateContext();
-        context[CpuRegister.Rdi] = 1;
+        context[CpuRegister.Rdi] = 0x0000_0003_0000_0000;
         context[CpuRegister.Rsi] = FirstContextAddress;
 
-        Assert.Equal(InvalidParameter, AjmExports.AjmInitialize(context));
+        AssertCall(0, context, AjmExports.AjmInitialize);
         Assert.True(context.TryReadUInt32(FirstContextAddress, out var value));
-        Assert.Equal(0xA5A5_A5A5U, value);
+        Assert.NotEqual(0U, value);
+        Finalize(context, value);
+    }
+
+    [Fact]
+    public void NullInitializeOutputIsRejected()
+    {
+        var context = CreateContext();
+        context[CpuRegister.Rdi] = 0;
+        context[CpuRegister.Rsi] = 0;
+
+        Assert.Equal(InvalidParameter, AjmExports.AjmInitialize(context));
     }
 
     [Fact]
