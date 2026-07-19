@@ -177,6 +177,37 @@ public sealed class FiberExportsContractTests
     }
 
     [Fact]
+    public void GetInfoRoundTripsInitializedFiberFields()
+    {
+        const ulong argument = 0xCAFE;
+        const ulong contextSize = 512;
+        const string name = "RoundTrip";
+        var context = CreateContext();
+        WriteCString(context, NameAddress, name);
+        SetInitializeArguments(
+            context,
+            FiberAddress,
+            NameAddress,
+            EntryAddress);
+        context[CpuRegister.Rcx] = argument;
+        context[CpuRegister.R8] = ContextAddress;
+        context[CpuRegister.R9] = contextSize;
+        Assert.Equal(0, FiberExports.FiberInitialize(context));
+        WriteUInt64(context, InfoAddress, 128);
+        context[CpuRegister.Rdi] = FiberAddress;
+        context[CpuRegister.Rsi] = InfoAddress;
+
+        Assert.Equal(0, FiberExports.FiberGetInfo(context));
+
+        Assert.Equal(EntryAddress, ReadUInt64(context, InfoAddress + 8));
+        Assert.Equal(argument, ReadUInt64(context, InfoAddress + 16));
+        Assert.Equal(ContextAddress, ReadUInt64(context, InfoAddress + 24));
+        Assert.Equal(contextSize, ReadUInt64(context, InfoAddress + 32));
+        AssertInlineName(context, InfoAddress + 40, name);
+        Assert.Equal(ulong.MaxValue, ReadUInt64(context, InfoAddress + 72));
+    }
+
+    [Fact]
     public void GetInfoRejectsUnexpectedStructureSize()
     {
         var context = CreateContext();
