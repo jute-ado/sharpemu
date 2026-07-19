@@ -16,6 +16,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 
   <ItemGroup>
     <ProjectReference Include="..\SharpEmu.Logging\SharpEmu.Logging.csproj" />
+    <ProjectReference Include="..\SharpEmu.Nids\SharpEmu.Nids.csproj" />
   </ItemGroup>
 
   <ItemGroup>

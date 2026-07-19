@@ -307,9 +307,9 @@
         "type": "Project",
         "dependencies": {
           "Iced": "[1.21.0, )",
-          "SharpEmu.HLE": "[0.0.2-beta.3, )",
-          "SharpEmu.Libs": "[0.0.2-beta.3, )",
-          "SharpEmu.Logging": "[0.0.2-beta.3, )"
+          "SharpEmu.HLE": "[0.0.2-beta.4, )",
+          "SharpEmu.Libs": "[0.0.2-beta.4, )",
+          "SharpEmu.Logging": "[0.0.2-beta.4, )"
         }
       },
       "sharpemu.gui": {
@@ -319,26 +319,27 @@
           "Avalonia.Desktop": "[11.3.18, )",
           "Avalonia.Fonts.Inter": "[11.3.18, )",
           "Avalonia.Themes.Fluent": "[11.3.18, )",
-          "SharpEmu.Core": "[0.0.2-beta.3, )",
-          "SharpEmu.HLE": "[0.0.2-beta.3, )",
-          "SharpEmu.Libs": "[0.0.2-beta.3, )",
-          "SharpEmu.Logging": "[0.0.2-beta.3, )",
+          "SharpEmu.Core": "[0.0.2-beta.4, )",
+          "SharpEmu.HLE": "[0.0.2-beta.4, )",
+          "SharpEmu.Libs": "[0.0.2-beta.4, )",
+          "SharpEmu.Logging": "[0.0.2-beta.4, )",
           "Tmds.DBus.Protocol": "[0.21.3, )"
         }
       },
       "sharpemu.hle": {
         "type": "Project",
         "dependencies": {
-          "SharpEmu.Logging": "[0.0.2-beta.3, )"
+          "SharpEmu.Logging": "[0.0.2-beta.4, )",
+          "SharpEmu.Nids": "[0.0.2-beta.4, )"
         }
       },
       "sharpemu.libs": {
         "type": "Project",
         "dependencies": {
-          "SharpEmu.HLE": "[0.0.2-beta.3, )",
-          "SharpEmu.ShaderCompiler": "[0.0.2-beta.3, )",
-          "SharpEmu.ShaderCompiler.Metal": "[0.0.2-beta.3, )",
-          "SharpEmu.ShaderCompiler.Vulkan": "[0.0.2-beta.3, )",
+          "SharpEmu.HLE": "[0.0.2-beta.4, )",
+          "SharpEmu.ShaderCompiler": "[0.0.2-beta.4, )",
+          "SharpEmu.ShaderCompiler.Metal": "[0.0.2-beta.4, )",
+          "SharpEmu.ShaderCompiler.Vulkan": "[0.0.2-beta.4, )",
           "Silk.NET.Input": "[2.23.0, )",
           "Silk.NET.Vulkan": "[2.23.0, )",
           "Silk.NET.Vulkan.Extensions.EXT": "[2.23.0, )",
@@ -349,22 +350,25 @@
       "sharpemu.logging": {
         "type": "Project"
       },
+      "sharpemu.nids": {
+        "type": "Project"
+      },
       "sharpemu.shadercompiler": {
         "type": "Project",
         "dependencies": {
-          "SharpEmu.HLE": "[0.0.2-beta.3, )"
+          "SharpEmu.HLE": "[0.0.2-beta.4, )"
         }
       },
       "sharpemu.shadercompiler.metal": {
         "type": "Project",
         "dependencies": {
-          "SharpEmu.ShaderCompiler": "[0.0.2-beta.3, )"
+          "SharpEmu.ShaderCompiler": "[0.0.2-beta.4, )"
         }
       },
       "sharpemu.shadercompiler.vulkan": {
         "type": "Project",
         "dependencies": {
-          "SharpEmu.ShaderCompiler": "[0.0.2-beta.3, )"
+          "SharpEmu.ShaderCompiler": "[0.0.2-beta.4, )"
         }
       },
       "Avalonia": {

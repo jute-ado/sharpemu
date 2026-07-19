@@ -1376,6 +1376,15 @@ public static class KernelRuntimeCompatExports
             handle = KernelModuleRegistry.RegisterSyntheticModule("module.sprx", isSystemModule: false);
         }
 
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("SHARPEMU_LOG_MODULE_LOAD"),
+                "1",
+                StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] load_start_module path='{modulePath}' handle={handle}");
+        }
+
         ctx[CpuRegister.Rax] = unchecked((uint)handle);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }

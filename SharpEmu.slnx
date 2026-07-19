@@ -16,6 +16,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
     <Project Path="src/SharpEmu.Libs/SharpEmu.Libs.csproj" />
     <Project Path="src/SharpEmu.Libs.Tests/SharpEmu.Libs.Tests.csproj" />
     <Project Path="src/SharpEmu.Logging/SharpEmu.Logging.csproj" />
+    <Project Path="src/SharpEmu.Nids/SharpEmu.Nids.csproj" />
     <Project Path="src/SharpEmu.ShaderCompiler/SharpEmu.ShaderCompiler.csproj" />
     <Project Path="src/SharpEmu.ShaderCompiler.Metal/SharpEmu.ShaderCompiler.Metal.csproj" />
     <Project Path="src/SharpEmu.ShaderCompiler.Vulkan/SharpEmu.ShaderCompiler.Vulkan.csproj" />

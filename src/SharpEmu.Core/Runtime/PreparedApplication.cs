@@ -53,7 +53,7 @@ public sealed class PreparedApplication
     internal string ProcessImageName { get; }
 }
 
-public sealed record PreparedModule(string Path, SelfImage Image);
+public sealed record PreparedModule(string Path, SelfImage Image, bool StartOnBoot);
 
 public sealed record SkippedModule(string Path, string Reason);
 

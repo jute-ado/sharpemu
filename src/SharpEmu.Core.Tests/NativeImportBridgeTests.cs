@@ -4,6 +4,7 @@
 using System.Buffers.Binary;
 using SharpEmu.Core.Cpu;
 using SharpEmu.HLE;
+using SharpEmu.Libs.Kernel;
 using Xunit;
 
 namespace SharpEmu.Core.Tests;
@@ -19,6 +20,7 @@ public sealed class NativeImportBridgeTests
     private const string ColdHandlerNid = "test-cold-handler-nid";
     private const string BlockingYieldNid = "test-blocking-yield-nid";
     private const string MemalignNid = "Ujf3KzMvRmI";
+    private const string PluginInitializeNid = "Mglc7amPW4k";
     private const ulong CodeAddress = 0x0000_0008_1000_0000;
     private const ulong ImportAddress = CodeAddress + 0x100;
     private const ulong SecondImportAddress = ImportAddress + 0x10;
@@ -26,6 +28,7 @@ public sealed class NativeImportBridgeTests
     private const ulong DlsymImportAddress = 0x0000_7000_0000_0000;
     private const ulong DlsymResultAddress = CodeAddress + 0x280;
     private const ulong DlsymSymbolAddress = CodeAddress + 0x200;
+    private const ulong PluginFunctionAddress = CodeAddress + 0x300;
     private const ulong NonvolatileSentinel = 0x1122_3344_5566_7788;
     private const ulong ApplicationHeapAllocationSentinel = 0x1234_5678_9ABC_0000;
 
@@ -148,45 +151,12 @@ public sealed class NativeImportBridgeTests
             return;
         }
 
-        var code = new byte[0x288];
-        byte[] instructions =
-        [
-            0xBF, 0x00, 0x00, 0x00, 0x00,             // mov edi, 0 (main module)
-            0x48, 0xBE, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00,                   // mov rsi, DlsymSymbolAddress
-            0x48, 0xBA, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00,                   // mov rdx, DlsymResultAddress
-            0x48, 0xB8, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00,                   // mov rax, DlsymImportAddress
-            0xFF, 0xD0,                               // call rax
-            0x85, 0xC0,                               // test eax, eax
-            0x75, 0x30,                               // jne failure
-            0x48, 0xBB, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00,                   // mov rbx, DlsymResultAddress
-            0x48, 0x8B, 0x03,                         // mov rax, [rbx]
-            0x48, 0x85, 0xC0,                         // test rax, rax
-            0x74, 0x1E,                               // jz failure
-            0xBF, 0x00, 0x10, 0x00, 0x00,             // mov edi, 0x1000 (alignment)
-            0xBE, 0x00, 0x00, 0x04, 0x00,             // mov esi, 0x40000 (size)
-            0xFF, 0xD0,                               // call rax
-            0x48, 0xB9, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00,                   // mov rcx, allocation sentinel
-            0x48, 0x39, 0xC8,                         // cmp rax, rcx
-            0x75, 0x03,                               // jne failure
-            0x31, 0xC0,                               // xor eax, eax
-            0xC3,                                     // ret
-            0xB8, 0x01, 0x00, 0x00, 0x00,             // failure: mov eax, 1
-            0xC3,                                     // ret
-        ];
-        BinaryPrimitives.WriteUInt64LittleEndian(instructions.AsSpan(7, 8), DlsymSymbolAddress);
-        BinaryPrimitives.WriteUInt64LittleEndian(instructions.AsSpan(17, 8), DlsymResultAddress);
-        BinaryPrimitives.WriteUInt64LittleEndian(instructions.AsSpan(27, 8), DlsymImportAddress);
-        BinaryPrimitives.WriteUInt64LittleEndian(instructions.AsSpan(43, 8), DlsymResultAddress);
-        BinaryPrimitives.WriteUInt64LittleEndian(
-            instructions.AsSpan(73, 8),
-            ApplicationHeapAllocationSentinel);
-        instructions.CopyTo(code, 0);
-        "scriptingGetMem\0"u8.CopyTo(code.AsSpan(0x200));
+        var code = CreateDlsymTwoArgumentCallProbe(
+            "scriptingGetMem",
+            moduleHandle: 0,
+            firstArgument: 0x1000,
+            secondArgument: 0x40000,
+            expectedResult: ApplicationHeapAllocationSentinel);
 
         SyntheticExports.ApplicationHeapAlignment = 0;
         SyntheticExports.ApplicationHeapSize = 0;
@@ -217,6 +187,70 @@ public sealed class NativeImportBridgeTests
         AssertSuccessful(execution);
         Assert.Equal(0x1000UL, SyntheticExports.ApplicationHeapAlignment);
         Assert.Equal(0x40000UL, SyntheticExports.ApplicationHeapSize);
+    }
+
+    [HostX64Fact]
+    public async Task DlsymResolvesUncataloguedExportFromRequestedModule()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
+        KernelModuleRegistry.Reset();
+        try
+        {
+            var moduleHandle = KernelModuleRegistry.RegisterModule(
+                "/app0/Media/Plugins/plugin.prx",
+                baseAddress: CodeAddress,
+                size: 0x1000,
+                entryPoint: CodeAddress,
+                isMain: false);
+            KernelModuleRegistry.RegisterModuleSymbols(
+                moduleHandle,
+                new Dictionary<string, ulong>
+                {
+                    [PluginInitializeNid] = PluginFunctionAddress,
+                });
+
+            var code = CreateDlsymTwoArgumentCallProbe(
+                "plugin.initialize",
+                moduleHandle,
+                firstArgument: 0xA5,
+                secondArgument: 0x5A,
+                expectedResult: ApplicationHeapAllocationSentinel);
+            byte[] pluginFunction =
+            [
+                0x81, 0xFF, 0xA5, 0x00, 0x00, 0x00,   // cmp edi, 0xA5
+                0x75, 0x13,                           // jne failure
+                0x81, 0xFE, 0x5A, 0x00, 0x00, 0x00,   // cmp esi, 0x5A
+                0x75, 0x0B,                           // jne failure
+                0x48, 0xB8, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,               // mov rax, expectedResult
+                0xC3,                                 // ret
+                0x0F, 0x0B,                           // failure: ud2
+            ];
+            BinaryPrimitives.WriteUInt64LittleEndian(
+                pluginFunction.AsSpan(18, 8),
+                ApplicationHeapAllocationSentinel);
+            pluginFunction.CopyTo(code, 0x300);
+            var execution = SyntheticNativeGuest.ExecuteModuleInitializer(
+                code,
+                Generation.Gen5,
+                "synthetic-module-dlsym",
+                new Dictionary<ulong, string>
+                {
+                    [DlsymImportAddress] = "LwG8g3niqwA",
+                },
+                configureModules: null,
+                CodeAddress);
+
+            AssertSuccessful(execution);
+        }
+        finally
+        {
+            KernelModuleRegistry.Reset();
+        }
     }
 
     [HostX64Fact]
@@ -427,6 +461,62 @@ public sealed class NativeImportBridgeTests
                 Assert.True(moduleManager.TryGetExport(nid, out _));
             },
             CodeAddress);
+    }
+
+    private static byte[] CreateDlsymTwoArgumentCallProbe(
+        string symbolName,
+        int moduleHandle,
+        uint firstArgument,
+        uint secondArgument,
+        ulong expectedResult)
+    {
+        var symbolBytes = System.Text.Encoding.ASCII.GetBytes(symbolName + '\0');
+        const int symbolCapacity = 0x80;
+        if (symbolBytes.Length > symbolCapacity)
+        {
+            throw new ArgumentException("Synthetic dlsym symbol is too long.", nameof(symbolName));
+        }
+
+        var code = new byte[0x400];
+        byte[] instructions =
+        [
+            0xBF, 0x00, 0x00, 0x00, 0x00,             // mov edi, moduleHandle
+            0x48, 0xBE, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,                   // mov rsi, DlsymSymbolAddress
+            0x48, 0xBA, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,                   // mov rdx, DlsymResultAddress
+            0x48, 0xB8, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,                   // mov rax, DlsymImportAddress
+            0xFF, 0xD0,                               // call rax
+            0x85, 0xC0,                               // test eax, eax
+            0x75, 0x30,                               // jne failure
+            0x48, 0xBB, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,                   // mov rbx, DlsymResultAddress
+            0x48, 0x8B, 0x03,                         // mov rax, [rbx]
+            0x48, 0x85, 0xC0,                         // test rax, rax
+            0x74, 0x1E,                               // jz failure
+            0xBF, 0x00, 0x00, 0x00, 0x00,             // mov edi, firstArgument
+            0xBE, 0x00, 0x00, 0x00, 0x00,             // mov esi, secondArgument
+            0xFF, 0xD0,                               // call rax
+            0x48, 0xB9, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,                   // mov rcx, expectedResult
+            0x48, 0x39, 0xC8,                         // cmp rax, rcx
+            0x75, 0x03,                               // jne failure
+            0x31, 0xC0,                               // xor eax, eax
+            0xC3,                                     // ret
+            0x0F, 0x0B,                               // failure: ud2
+        ];
+        BinaryPrimitives.WriteInt32LittleEndian(instructions.AsSpan(1, 4), moduleHandle);
+        BinaryPrimitives.WriteUInt64LittleEndian(instructions.AsSpan(7, 8), DlsymSymbolAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(instructions.AsSpan(17, 8), DlsymResultAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(instructions.AsSpan(27, 8), DlsymImportAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(instructions.AsSpan(43, 8), DlsymResultAddress);
+        BinaryPrimitives.WriteUInt32LittleEndian(instructions.AsSpan(60, 4), firstArgument);
+        BinaryPrimitives.WriteUInt32LittleEndian(instructions.AsSpan(65, 4), secondArgument);
+        BinaryPrimitives.WriteUInt64LittleEndian(instructions.AsSpan(73, 8), expectedResult);
+        instructions.CopyTo(code, 0);
+        symbolBytes.CopyTo(code, 0x200);
+        return code;
     }
 
     private static void AssertSuccessful(SyntheticGuestExecutionResult execution)

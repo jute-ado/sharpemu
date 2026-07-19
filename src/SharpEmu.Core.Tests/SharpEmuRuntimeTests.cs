@@ -79,6 +79,76 @@ public sealed class SharpEmuRuntimeTests
         }
     }
 
+    [Fact]
+    public void InspectionRuntimeDiscoversMediaPlugins()
+    {
+        var testDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "sharpemu-runtime-tests",
+            Guid.NewGuid().ToString("N"));
+        var pluginDirectory = Path.Combine(testDirectory, "Media", "Plugins");
+        Directory.CreateDirectory(pluginDirectory);
+        var executablePath = Path.Combine(testDirectory, "eboot.bin");
+        var pluginPath = Path.Combine(pluginDirectory, "plugin.prx");
+
+        try
+        {
+            File.WriteAllBytes(executablePath, SyntheticElfImage.CreateExecutable([0xC3]));
+            File.WriteAllBytes(
+                pluginPath,
+                SyntheticElfImage.CreateModuleWithInitializer([0x0F, 0x0B]));
+            using var runtime = SharpEmuRuntime.CreateForInspection();
+
+            var application = runtime.PrepareApplication(executablePath);
+
+            var plugin = Assert.Single(application.Modules);
+            Assert.Equal(pluginPath, plugin.Path);
+            Assert.False(plugin.StartOnBoot);
+            Assert.Empty(application.ModuleLoadFailures);
+        }
+        finally
+        {
+            Directory.Delete(testDirectory, recursive: true);
+        }
+    }
+
+    [HostX64Fact]
+    public async Task RuntimeDefersMediaPluginInitializerUntilRequested()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(SharpEmuRuntimeTests)))
+        {
+            return;
+        }
+
+        var testDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "sharpemu-runtime-tests",
+            Guid.NewGuid().ToString("N"));
+        var pluginDirectory = Path.Combine(testDirectory, "Media", "Plugins");
+        Directory.CreateDirectory(pluginDirectory);
+        var executablePath = Path.Combine(testDirectory, "eboot.bin");
+        File.WriteAllBytes(
+            executablePath,
+            SyntheticElfImage.CreateExecutable([0x31, 0xC0, 0xC3]));
+        File.WriteAllBytes(
+            Path.Combine(pluginDirectory, "synthetic.prx"),
+            SyntheticElfImage.CreateModuleWithInitializer([0x0F, 0x0B]));
+
+        try
+        {
+            using var runtime = SharpEmuRuntime.CreateDefault();
+
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, runtime.Run(executablePath));
+            Assert.Empty(runtime.LastModuleInitializerExecutions);
+            var plugin = Assert.Single(runtime.LastPreparedApplication!.Modules);
+            Assert.False(plugin.StartOnBoot);
+        }
+        finally
+        {
+            Directory.Delete(testDirectory, recursive: true);
+        }
+    }
+
     [HostX64Fact]
     public async Task DefaultRuntimeBootsContentFreeSyntheticExecutable()
     {
