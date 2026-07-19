@@ -159,6 +159,8 @@ public readonly record struct GuestCpuContinuation(
 
 public static class GuestThreadExecution
 {
+    public static event Action<ulong>? GuestThreadExited;
+
     [ThreadStatic]
     private static ulong _currentGuestThreadHandle;
 
@@ -199,6 +201,14 @@ public static class GuestThreadExecution
     public static ulong CurrentGuestThreadHandle => _currentGuestThreadHandle;
 
     public static ulong CurrentFiberAddress => _currentFiberAddress;
+
+    public static void NotifyGuestThreadExited(ulong threadHandle)
+    {
+        if (threadHandle != 0)
+        {
+            GuestThreadExited?.Invoke(threadHandle);
+        }
+    }
 
     public static ulong EnterGuestThread(ulong threadHandle)
     {

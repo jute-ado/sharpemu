@@ -4886,6 +4886,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				thread.EntryPoint,
 				thread.Name,
 				out var blockReason);
+			var notifyThreadExited = false;
 			using (LockGate("RunGuestThread.exit"))
 			{
 				switch (exitReason)
@@ -4893,6 +4894,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					case GuestNativeCallExitReason.Returned:
 						thread.ExitValue = thread.Context[CpuRegister.Rax];
 						thread.State = GuestThreadRunState.Exited;
+						notifyThreadExited = true;
 						break;
 					case GuestNativeCallExitReason.Blocked:
 						thread.State = GuestThreadRunState.Blocked;
@@ -4903,6 +4905,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 						thread.BlockReason = blockReason;
 						break;
 				}
+			}
+			if (notifyThreadExited)
+			{
+				GuestThreadExecution.NotifyGuestThreadExited(thread.ThreadHandle);
 			}
 			if (_logGuestThreads)
 			{

@@ -38,6 +38,11 @@ public static class KernelPthreadCompatExports
     private static readonly ConcurrentDictionary<ulong, long> _posixTimedWaitCounts = new();
     private static readonly ConcurrentDictionary<ulong, byte> _reportedContendedMutexes = new();
 
+    static KernelPthreadCompatExports()
+    {
+        GuestThreadExecution.GuestThreadExited += ReleaseThreadSynchronizationState;
+    }
+
     private sealed class PthreadMutexState
     {
         public ulong OwnerThreadId { get; set; }
@@ -76,6 +81,43 @@ public static class KernelPthreadCompatExports
     }
 
     private readonly record struct PthreadMutexAttrState(int Type, int Protocol);
+
+    private static void ReleaseThreadSynchronizationState(ulong threadHandle)
+    {
+        if (threadHandle == 0)
+        {
+            return;
+        }
+
+        // A mutex state can be published under both its guest pointer and its
+        // allocated opaque handle. Visit each state once so aliases cannot
+        // release a successor that acquired the mutex after the first visit.
+        var visited = new HashSet<PthreadMutexState>(
+            ReferenceEqualityComparer.Instance);
+        foreach (var pair in _mutexStates)
+        {
+            var state = pair.Value;
+            if (!visited.Add(state))
+            {
+                continue;
+            }
+
+            lock (state)
+            {
+                if (state.OwnerThreadId != threadHandle)
+                {
+                    continue;
+                }
+
+                state.OwnerThreadId = 0;
+                state.RecursionCount = 0;
+                if (state.WaiterCount != 0)
+                {
+                    Monitor.PulseAll(state);
+                }
+            }
+        }
+    }
 
     [SysAbiExport(
         Nid = "aI+OeCz8xrQ",
