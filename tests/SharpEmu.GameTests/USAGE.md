@@ -35,6 +35,38 @@ by its displayed name, for example:
 dotnet test tests/SharpEmu.GameTests/SharpEmu.GameTests.csproj -c Release --filter "DisplayName~Example game load"
 ```
 
+## External GPU and pull-request runners
+
+An external runner can keep licensed game archives, GPU scheduling, display
+capture, recordings, pull-request discovery, and result publication outside
+this repository while using this project as the single compatibility assertion
+engine:
+
+1. Extract the runner-owned game archive into an isolated workspace.
+2. Generate a private schema-1 manifest whose `executablePath` points into that
+   workspace and whose bundle hash and expectations identify the exact game
+   build.
+3. Set `SHARPEMU_GAME_TEST_MANIFEST` to that manifest and provide the runner's
+   GPU-backed display environment.
+4. Run the normal test project with a machine-readable test logger:
+
+   ```text
+   dotnet test tests/SharpEmu.GameTests/SharpEmu.GameTests.csproj \
+     -c Release \
+     --logger "trx;LogFileName=game-regressions.trx" \
+     --results-directory artifacts/game-tests/test-results
+   ```
+
+5. Publish the TRX plus the ignored JSON execution reports, stdout/stderr logs,
+   and requested image captures from `artifactDirectory`. Screen or window
+   recording remains an external concern and can run around the test process.
+
+The external service should derive pass/fail from the test result rather than
+from process survival alone. It may translate the result into its own dashboard
+schema, attach recordings, and post pull-request comments without coupling
+those orchestration concerns to the emulator. Game archives, private manifests,
+machine paths, and captured proprietary content remain runner-local.
+
 `requiredVideoOutFrameFingerprints` checks the guest's CPU-visible VideoOut
 buffer. `requiredPresentedGuestImage` captures one explicit presented frame and
 checks the image SharpEmu actually presents. Set `fingerprint` for a stable exact
