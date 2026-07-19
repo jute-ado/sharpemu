@@ -145,11 +145,14 @@ public sealed class KernelExceptionCompatibilityTests
             ulong entryPoint,
             ulong arg0,
             ulong arg1,
+            ulong arg2,
             ulong stackAddress,
             ulong stackSize,
             string reason,
+            out ulong returnValue,
             out string? error)
         {
+            returnValue = 0;
             error = "not used";
             return false;
         }

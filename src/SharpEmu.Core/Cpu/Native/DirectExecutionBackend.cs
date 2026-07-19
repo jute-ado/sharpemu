@@ -859,9 +859,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return *(ulong*)((byte*)contextRecord + offset);
 	}
 
-	private unsafe static int CallNativeEntry(void* entry)
+	private unsafe static ulong CallNativeEntry(void* entry)
 	{
-		var nativeEntry = (delegate* unmanaged[Cdecl]<int>)entry;
+		var nativeEntry = (delegate* unmanaged[Cdecl]<ulong>)entry;
 		if (!LogThreadMode)
 		{
 			return nativeEntry();
@@ -871,7 +871,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		var dispatchesBefore = _threadModeGatewayCalls;
 		TraceThreadMode($"native_enter entry=0x{(ulong)entry:X16}");
 		var result = nativeEntry();
-		TraceThreadMode($"native_exit result=0x{result:X8} dispatches={_threadModeGatewayCalls - dispatchesBefore}");
+		TraceThreadMode($"native_exit result=0x{result:X16} dispatches={_threadModeGatewayCalls - dispatchesBefore}");
 		return result;
 	}
 
@@ -4283,8 +4283,32 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		ulong stackAddress,
 		ulong stackSize,
 		string reason,
+		out string? error) =>
+		TryCallGuestFunction(
+			callerContext,
+			entryPoint,
+			arg0,
+			arg1,
+			arg2: 0,
+			stackAddress,
+			stackSize,
+			reason,
+			out _,
+			out error);
+
+	public bool TryCallGuestFunction(
+		CpuContext callerContext,
+		ulong entryPoint,
+		ulong arg0,
+		ulong arg1,
+		ulong arg2,
+		ulong stackAddress,
+		ulong stackSize,
+		string reason,
+		out ulong returnValue,
 		out string? error)
 	{
+		returnValue = 0;
 		error = null;
 		if (entryPoint < 65536)
 		{
@@ -4325,7 +4349,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		context[CpuRegister.Rsp] = AlignDown(callbackStackBase + callbackStackSize, 16) - sizeof(ulong);
 		context[CpuRegister.Rdi] = arg0;
 		context[CpuRegister.Rsi] = arg1;
-		context[CpuRegister.Rdx] = 0;
+		context[CpuRegister.Rdx] = arg2;
 		context[CpuRegister.Rcx] = 0;
 		context[CpuRegister.R8] = 0;
 		context[CpuRegister.R9] = 0;
@@ -4346,6 +4370,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				return false;
 			}
 
+			returnValue = context[CpuRegister.Rax];
 			return true;
 		}
 		finally
@@ -5143,6 +5168,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		ActiveGuestThreadYieldReason = null;
 		guestEntryStarted = true;
 		var nativeReturn = RunGuestEntryStub(ptr, hostRspSlot);
+		context[CpuRegister.Rax] = nativeReturn;
 		if (ApplyActiveGuestHardwareException(context, out var hardwareExceptionDetail))
 		{
 			LastError = hardwareExceptionDetail;
@@ -5157,7 +5183,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
             reason = LastError ?? "guest thread forced exit";
             return GuestNativeCallExitReason.ForcedExit;
         }
-        reason = $"returned 0x{nativeReturn:X8}";
+        reason = $"returned 0x{nativeReturn:X16}";
         return GuestNativeCallExitReason.Returned;
     }
     catch (AccessViolationException ex)
@@ -5656,7 +5682,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 			Console.Error.WriteLine("[LOADER][INFO] Calling guest entry...");
 			StartStallWatchdog();
-			int num6 = -1;
+			ulong num6 = ulong.MaxValue;
 			try
 			{
 				guestEntryStarted = true;
@@ -5680,13 +5706,13 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				Console.Error.WriteLine("  1. Invalid memory access in guest code");
 				Console.Error.WriteLine("  2. Unpatched import/TLS call");
 				Console.Error.WriteLine("  3. Stack corruption");
-				num6 = -1;
+				num6 = ulong.MaxValue;
 			}
 			catch (Exception ex2)
 			{
 				Console.Error.WriteLine("[LOADER][ERROR] Exception during execution: " + ex2.GetType().Name + ": " + ex2.Message);
 				LastError = "Exception during execution: " + ex2.GetType().Name + ": " + ex2.Message;
-				num6 = -1;
+				num6 = ulong.MaxValue;
 			}
 			if (ActiveForcedGuestExit)
 			{

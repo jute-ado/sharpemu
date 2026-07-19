@@ -43,7 +43,7 @@ public sealed partial class DirectExecutionBackend
 	// Callers set the Active* thread-statics before emitting the stub and read the
 	// yield/forced-exit flags right after this returns, so the worker outcome is
 	// copied back into this thread's statics before returning.
-	private unsafe int RunGuestEntryStub(void* entryStub, ulong hostRspSlot)
+	private unsafe ulong RunGuestEntryStub(void* entryStub, ulong hostRspSlot)
 	{
 		if (NativeGuestWorkersDisabled)
 		{
@@ -206,7 +206,7 @@ public sealed partial class DirectExecutionBackend
 		private nint _runHostRspSlot;
 		private nint _runEntryStub;
 		private ulong _runAffinityMask;
-		private int _runNativeResult;
+		private ulong _runNativeResult;
 		private bool _runYieldRequested;
 		private string? _runYieldReason;
 		private bool _runForcedExit;
@@ -283,7 +283,7 @@ public sealed partial class DirectExecutionBackend
 			}
 
 			var prologuePtr = (nint)(delegate* unmanaged<nint, nint>)&RunPrologue;
-			var epiloguePtr = (nint)(delegate* unmanaged<nint, int, void>)&RunEpilogue;
+			var epiloguePtr = (nint)(delegate* unmanaged<nint, ulong, void>)&RunEpilogue;
 			var executorHandle = GCHandle.ToIntPtr(_selfHandle);
 			prologuePtr = _backend._hostNativeInterop.AdaptGuestAbiCallback(prologuePtr);
 			epiloguePtr = _backend._hostNativeInterop.AdaptGuestAbiCallback(epiloguePtr);
@@ -342,9 +342,9 @@ public sealed partial class DirectExecutionBackend
 			Emit(0x0F); Emit(0x84);                         // je skipEntry
 			int skipJump = offset;
 			offset += sizeof(int);
-			EmitCallRax();                                  // guest entry stub -> eax
+			EmitCallRax();                                  // guest entry stub -> rax
 			int skipEntryOffset = offset;
-			Emit(0x89); Emit(0xC2);                         // mov edx, eax
+			Emit(0x48); Emit(0x89); Emit(0xC2);             // mov rdx, rax
 			EmitMovRcxImm64((ulong)executorHandle);
 			EmitMovRaxImm64((ulong)epiloguePtr);
 			EmitCallRax();
@@ -385,7 +385,7 @@ public sealed partial class DirectExecutionBackend
 			return true;
 		}
 
-		public int Run(
+		public ulong Run(
 			CpuContext context,
 			GuestThreadState? state,
 			ulong guestThreadHandle,
@@ -472,7 +472,7 @@ public sealed partial class DirectExecutionBackend
 		}
 
 		[UnmanagedCallersOnly]
-		private static void RunEpilogue(nint executorHandle, int nativeResult)
+		private static void RunEpilogue(nint executorHandle, ulong nativeResult)
 		{
 			try
 			{
@@ -545,7 +545,7 @@ public sealed partial class DirectExecutionBackend
 			return _runEntryStub;
 		}
 
-		private void ExitRun(int nativeResult)
+		private void ExitRun(ulong nativeResult)
 		{
 			_runNativeResult = nativeResult;
 			_runYieldRequested = _activeGuestThreadYieldRequested;
@@ -587,7 +587,7 @@ public sealed partial class DirectExecutionBackend
 			if (LogThreadMode)
 			{
 				TraceThreadMode(
-					$"worker_exit guest=0x{_runGuestThreadHandle:X16} result=0x{nativeResult:X8} yield={_runYieldRequested}");
+					$"worker_exit guest=0x{_runGuestThreadHandle:X16} result=0x{nativeResult:X16} yield={_runYieldRequested}");
 			}
 		}
 

@@ -65,9 +65,11 @@ public interface IGuestThreadScheduler
         ulong entryPoint,
         ulong arg0,
         ulong arg1,
+        ulong arg2,
         ulong stackAddress,
         ulong stackSize,
         string reason,
+        out ulong returnValue,
         out string? error);
 
     bool TryCallGuestFunction(
@@ -75,30 +77,22 @@ public interface IGuestThreadScheduler
         ulong entryPoint,
         ulong arg0,
         ulong arg1,
-        ulong arg2,
         ulong stackAddress,
         ulong stackSize,
         string reason,
-        out ulong returnValue,
         out string? error)
     {
-        error = null;
-        if (arg2 != 0 || !TryCallGuestFunction(
-                callerContext,
-                entryPoint,
-                arg0,
-                arg1,
-                stackAddress,
-                stackSize,
-                reason,
-                out error))
-        {
-            returnValue = 0;
-            return false;
-        }
-
-        returnValue = callerContext[CpuRegister.Rax];
-        return true;
+        return TryCallGuestFunction(
+            callerContext,
+            entryPoint,
+            arg0,
+            arg1,
+            arg2: 0,
+            stackAddress,
+            stackSize,
+            reason,
+            out _,
+            out error);
     }
 
     bool TryCallGuestContinuation(
