@@ -1409,7 +1409,9 @@ public sealed class NativeBackendConstructionTests
             return 0;
         }
 
-        public bool WaitForThreadExit(nint threadHandle, uint timeoutMilliseconds) => true;
+        public void JoinExitedThread(nint threadHandle)
+        {
+        }
 
         public void CloseThreadHandle(nint threadHandle)
         {

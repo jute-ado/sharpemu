@@ -68,9 +68,9 @@ internal sealed unsafe partial class WindowsHostThreading : IHostThreading
         return CreateThread(0, stackReserveBytes, entry, parameter, StackSizeParamIsAReservation, out threadId);
     }
 
-    public bool WaitForThreadExit(nint threadHandle, uint timeoutMilliseconds)
+    public void JoinExitedThread(nint threadHandle)
     {
-        return WaitForSingleObject(threadHandle, timeoutMilliseconds) == 0u;
+        _ = WaitForSingleObject(threadHandle, uint.MaxValue);
     }
 
     public void CloseThreadHandle(nint threadHandle)
