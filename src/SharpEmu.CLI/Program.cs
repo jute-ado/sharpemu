@@ -838,7 +838,7 @@ internal static partial class Program
             Environment.SetEnvironmentVariable(MitigatedChildEnvironment, "1");
             Environment.SetEnvironmentVariable(SupervisorReadyFileEnvironment, executionReadyPath);
             var created = CreateProcessW(
-                processPath,
+                null,
                 cmdLineBuilder,
                 0,
                 0,
@@ -2741,7 +2741,7 @@ internal static partial class Program
     [DllImport("kernel32.dll", EntryPoint = "CreateProcessW", SetLastError = true, CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateProcessW(
-        string applicationName,
+        string? applicationName,
         StringBuilder commandLine,
         nint processAttributes,
         nint threadAttributes,
