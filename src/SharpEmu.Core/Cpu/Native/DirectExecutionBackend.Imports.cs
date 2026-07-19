@@ -1426,6 +1426,17 @@ public sealed partial class DirectExecutionBackend
 		NormalizeKernelDynlibDlsymArguments(cpuContext, out var symbolNameAddress, out var outputAddress);
 		try
 		{
+			if (string.Equals(
+					Environment.GetEnvironmentVariable("SHARPEMU_LOG_DLSYM"),
+					"1",
+					StringComparison.Ordinal) &&
+				TryReadAsciiZ(symbolNameAddress, 512, out var diagnosticSymbolName))
+			{
+				Console.Error.WriteLine(
+					$"[LOADER][TRACE] dlsym request symbol='{diagnosticSymbolName}' " +
+					$"out=0x{outputAddress:X16}");
+			}
+
 			if (!TryReadAsciiZ(symbolNameAddress, 512, out var symbolName) ||
 				!TryResolveDlsymGuestAddress(symbolName, out var resolvedAddress) ||
 				outputAddress == 0 ||
@@ -1501,20 +1512,25 @@ public sealed partial class DirectExecutionBackend
 			return false;
 		}
 
+		var canonicalSymbolName = GetRuntimeSymbolAlias(symbolName) ?? symbolName;
+
 		// Tier 0: ELF runtime symbols and aliases.
 		if (TryResolveRuntimeSymbolAddress(symbolName, out guestAddress) ||
-			TryResolveRuntimeSymbolAlias(symbolName, out guestAddress))
+			(!string.Equals(canonicalSymbolName, symbolName, StringComparison.Ordinal) &&
+				TryResolveRuntimeSymbolAddress(canonicalSymbolName, out guestAddress)))
 		{
 			return true;
 		}
 
 		// Tier 1: existing import stub entries (duplicate prevention).
-		if (TryFindImportStubGuestAddress(symbolName, out guestAddress))
+		if (TryFindImportStubGuestAddress(symbolName, out guestAddress) ||
+			(!string.Equals(canonicalSymbolName, symbolName, StringComparison.Ordinal) &&
+				TryFindImportStubGuestAddress(canonicalSymbolName, out guestAddress)))
 		{
 			return true;
 		}
 
-		var hasAerolibSymbol = Aerolib.Instance.TryGetByExportName(symbolName, out var hleSymbol);
+		var hasAerolibSymbol = Aerolib.Instance.TryGetByExportName(canonicalSymbolName, out var hleSymbol);
 		if (hasAerolibSymbol)
 		{
 			if (HleDataSymbols.TryGetAddress(hleSymbol.Nid, out _))
@@ -1530,7 +1546,7 @@ public sealed partial class DirectExecutionBackend
 				return true;
 			}
 		}
-		else if (Aerolib.Instance.TryGetByNid(symbolName, out hleSymbol))
+		else if (Aerolib.Instance.TryGetByNid(canonicalSymbolName, out hleSymbol))
 		{
 			if (HleDataSymbols.TryGetAddress(hleSymbol.Nid, out _))
 			{
@@ -1547,7 +1563,12 @@ public sealed partial class DirectExecutionBackend
 		}
 
 		// Tier 3: lazy materialization for callable HLE symbols missing from ELF imports.
-		if (!TryResolveLazyDispatchTarget(symbolName, hasAerolibSymbol, in hleSymbol, out var dispatchNid, out var export))
+		if (!TryResolveLazyDispatchTarget(
+				canonicalSymbolName,
+				hasAerolibSymbol,
+				in hleSymbol,
+				out var dispatchNid,
+				out var export))
 		{
 			return false;
 		}
@@ -1901,19 +1922,16 @@ public sealed partial class DirectExecutionBackend
 		return true;
 	}
 
-	private bool TryResolveRuntimeSymbolAlias(string symbolName, out ulong address)
+	private static string? GetRuntimeSymbolAlias(string symbolName)
 	{
-		address = 0;
-		var alias = symbolName switch
+		return symbolName switch
 		{
-			"scriptingGetMem" => "malloc",
+			"scriptingGetMem" => "memalign",
 			"scriptingFreeMem" => "free",
 			"scriptingRealloc" => "realloc",
 			"scriptingCalloc" => "calloc",
 			_ => null,
 		};
-
-		return alias != null && TryResolveRuntimeSymbolAddress(alias, out address);
 	}
 
 	private OrbisGen2Result DispatchIl2CppApiLookupSymbol()
