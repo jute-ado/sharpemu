@@ -1081,6 +1081,9 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             ehFrameSize: 0,
             isMain,
             isSystemModule);
+        KernelModuleRegistry.RegisterModuleInitializers(
+            handle,
+            image.InitializerFunctions);
         KernelModuleRegistry.RegisterModuleSymbols(handle, image.RuntimeSymbols);
         Log.Info(
             $"Registered module handle={handle} name={Path.GetFileName(modulePath)} base=0x{baseAddress:X16} size=0x{size:X16}");
