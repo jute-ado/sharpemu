@@ -29,6 +29,7 @@ public sealed class SaveDataMutationTests
     private const ulong IconAddress = 0xC000;
     private const ulong IconBufferAddress = 0xD000;
     private const ulong IconPathAddress = 0xE000;
+    private const ulong MountInfoAddress = 0xF000;
 
     [Fact]
     public void SetParamPersistsMetadataReturnedByDirectorySearch()
@@ -349,6 +350,68 @@ public sealed class SaveDataMutationTests
     }
 
     [Theory]
+    [InlineData(0UL, 16384UL, 16382UL)]
+    [InlineData(1UL, 1UL, 0UL)]
+    [InlineData(100UL, 100UL, 98UL)]
+    public void GetMountInfoReportsQuotaAndSaturatedContentUsage(
+        ulong requestedBlocks,
+        ulong expectedBlocks,
+        ulong expectedFreeBlocks)
+    {
+        WithIsolatedSaveRoot((_, savePath) =>
+        {
+            File.WriteAllBytes(Path.Combine(savePath, "progress.dat"), new byte[32 * 1024 + 1]);
+            var memory = new FakeGuestMemory();
+            memory.AddRegion(DirNameAddress, FixedAscii("slot00", 32));
+            memory.AddRegion(MountInfoAddress, Enumerable.Repeat((byte)0xCC, 0x30).ToArray());
+            var context = new CpuContext(memory, Generation.Gen5);
+
+            MountSave(context, memory, requestedBlocks);
+            context[CpuRegister.Rdi] = MountResultAddress;
+            context[CpuRegister.Rsi] = MountInfoAddress;
+
+            Assert.Equal(0, SaveDataExports.SaveDataGetMountInfo(context));
+            Assert.True(context.TryReadUInt64(MountInfoAddress, out var blocks));
+            Assert.True(context.TryReadUInt64(MountInfoAddress + 0x08, out var freeBlocks));
+            Assert.Equal(expectedBlocks, blocks);
+            Assert.Equal(expectedFreeBlocks, freeBlocks);
+            var reserved = new byte[0x20];
+            Assert.True(memory.TryRead(MountInfoAddress + 0x10, reserved));
+            Assert.All(reserved, value => Assert.Equal(0, value));
+        });
+    }
+
+    [Fact]
+    public void GetMountInfoValidatesPointersMountAndOutputMemory()
+    {
+        WithIsolatedSaveRoot((_, _) =>
+        {
+            var memory = new FakeGuestMemory();
+            memory.AddRegion(DirNameAddress, FixedAscii("slot00", 32));
+            memory.AddRegion(UntrackedMountPointAddress, FixedAscii("/untracked", 16));
+            var context = new CpuContext(memory, Generation.Gen5);
+
+            context[CpuRegister.Rdi] = 0;
+            context[CpuRegister.Rsi] = MountInfoAddress;
+            Assert.Equal(
+                OrbisSaveDataErrorParameter,
+                SaveDataExports.SaveDataGetMountInfo(context));
+
+            context[CpuRegister.Rdi] = UntrackedMountPointAddress;
+            Assert.Equal(
+                OrbisSaveDataErrorNotMounted,
+                SaveDataExports.SaveDataGetMountInfo(context));
+
+            MountSave(context, memory, blocks: 1);
+            context[CpuRegister.Rdi] = MountResultAddress;
+            context[CpuRegister.Rsi] = MountInfoAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                SaveDataExports.SaveDataGetMountInfo(context));
+        });
+    }
+
+    [Theory]
     [InlineData(".")]
     [InlineData("..")]
     public void DeleteRejectsDirectoryAliasesThatCouldEscapeSaveSlot(string dirName)
@@ -386,6 +449,9 @@ public sealed class SaveDataMutationTests
     [InlineData(
         "cGjO3wM3V28",
         "sceSaveDataLoadIcon")]
+    [InlineData(
+        "65VH0Qaaz6s",
+        "sceSaveDataGetMountInfo")]
     public void MutationExportMetadataIsExact(
         string nid,
         string exportName)
@@ -397,11 +463,15 @@ public sealed class SaveDataMutationTests
             Generation.Gen4 | Generation.Gen5);
     }
 
-    private static void MountSave(CpuContext context, FakeGuestMemory memory)
+    private static void MountSave(
+        CpuContext context,
+        FakeGuestMemory memory,
+        ulong blocks = 0)
     {
         var mount = new byte[0x2C];
         BinaryPrimitives.WriteInt32LittleEndian(mount, 0);
         BinaryPrimitives.WriteUInt64LittleEndian(mount.AsSpan(0x08), DirNameAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(mount.AsSpan(0x10), blocks);
         BinaryPrimitives.WriteUInt32LittleEndian(mount.AsSpan(0x20), 1u << 5);
         memory.AddRegion(MountParamAddress, mount);
         memory.AddRegion(MountResultAddress, new byte[0x40]);

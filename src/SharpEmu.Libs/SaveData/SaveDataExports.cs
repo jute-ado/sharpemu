@@ -37,6 +37,9 @@ public static class SaveDataExports
     private const uint MountModeCreate2 = 1u << 5;
     private const int MountParamSize = 0x2C;
     private const int MountResultSize = 0x40;
+    private const int MountInfoSize = 0x30;
+    private const ulong SaveDataBlockSize = 32UL * 1024;
+    private const ulong DefaultSaveDataBlocks = 16384;
     // Emulator guard against corrupt or misread sizes, not a platform limit.
     private const ulong SaveDataMemoryMaxSize = 64UL * 1024 * 1024;
     private const int DeleteParamSize = 0x40;
@@ -64,7 +67,7 @@ public static class SaveDataExports
     private static readonly object _memoryGate = new();
     private static readonly HashSet<int> _transactionResources = [];
     private static readonly HashSet<int> _preparedTransactionResources = [];
-    private static readonly Dictionary<string, string> _mountedSavePaths =
+    private static readonly Dictionary<string, MountedSave> _mountedSaves =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly Queue<SaveDataEvent> _events = new();
     private static string? _titleId;
@@ -74,6 +77,7 @@ public static class SaveDataExports
         int ErrorCode,
         int UserId,
         string DirName);
+    private readonly record struct MountedSave(string Path, ulong Blocks);
 
     public static void ConfigureApplicationInfo(string? titleId)
     {
@@ -83,8 +87,8 @@ public static class SaveDataExports
             _titleId = string.IsNullOrWhiteSpace(titleId) ? null : SanitizePathSegment(titleId.Trim());
             _transactionResources.Clear();
             _preparedTransactionResources.Clear();
-            mountedSavePoints = _mountedSavePaths.Keys.ToArray();
-            _mountedSavePaths.Clear();
+            mountedSavePoints = _mountedSaves.Keys.ToArray();
+            _mountedSaves.Clear();
             _events.Clear();
             _nextTransactionResource = 0;
         }
@@ -148,7 +152,7 @@ public static class SaveDataExports
         uint mounted;
         lock (_stateGate)
         {
-            mounted = _mountedSavePaths.Count == 0 ? 0u : 1u;
+            mounted = _mountedSaves.Count == 0 ? 0u : 1u;
         }
 
         return ctx.TryWriteUInt32(outputAddress, mounted)
@@ -368,7 +372,9 @@ public static class SaveDataExports
             KernelMemoryCompatExports.RegisterGuestPathMount(mountPoint, savePath);
             lock (_stateGate)
             {
-                _mountedSavePaths[mountPoint] = savePath;
+                _mountedSaves[mountPoint] = new MountedSave(
+                    savePath,
+                    blocks == 0 ? DefaultSaveDataBlocks : blocks);
             }
 
             TraceSaveData(
@@ -388,6 +394,67 @@ public static class SaveDataExports
         catch (ArgumentException)
         {
             return ctx.SetReturn(OrbisSaveDataErrorParameter);
+        }
+    }
+
+    [SysAbiExport(
+        Nid = "65VH0Qaaz6s",
+        ExportName = "sceSaveDataGetMountInfo",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceSaveData")]
+    public static int SaveDataGetMountInfo(CpuContext ctx)
+    {
+        var mountPointAddress = ctx[CpuRegister.Rdi];
+        var infoAddress = ctx[CpuRegister.Rsi];
+        if (mountPointAddress == 0 || infoAddress == 0)
+        {
+            return ctx.SetReturn(OrbisSaveDataErrorParameter);
+        }
+
+        if (!TryReadFixedAscii(ctx, mountPointAddress, 16, out var mountPoint))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (string.IsNullOrWhiteSpace(mountPoint))
+        {
+            return ctx.SetReturn(OrbisSaveDataErrorParameter);
+        }
+
+        if (!TryGetMountedSave(mountPoint, out var mountedSave) ||
+            !Directory.Exists(mountedSave.Path))
+        {
+            return ctx.SetReturn(OrbisSaveDataErrorNotMounted);
+        }
+
+        try
+        {
+            var usedBytes = unchecked((ulong)GetDirectorySize(mountedSave.Path));
+            var usedBlocks = usedBytes / SaveDataBlockSize;
+            if (usedBytes % SaveDataBlockSize != 0)
+            {
+                usedBlocks++;
+            }
+
+            Span<byte> info = stackalloc byte[MountInfoSize];
+            info.Clear();
+            BinaryPrimitives.WriteUInt64LittleEndian(info, mountedSave.Blocks);
+            BinaryPrimitives.WriteUInt64LittleEndian(
+                info[0x08..],
+                mountedSave.Blocks > usedBlocks ? mountedSave.Blocks - usedBlocks : 0);
+            if (!ctx.Memory.TryWrite(infoAddress, info))
+            {
+                return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            TraceSaveData(
+                $"get_mount_info mount_point={mountPoint} blocks={mountedSave.Blocks} " +
+                $"used_blocks={usedBlocks} root='{mountedSave.Path}'");
+            return ctx.SetReturn(0);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return ctx.SetReturn(OrbisSaveDataErrorInternal);
         }
     }
 
@@ -1169,7 +1236,7 @@ public static class SaveDataExports
         var unmounted = KernelMemoryCompatExports.TryUnregisterGuestPathMount(mountPoint);
         lock (_stateGate)
         {
-            _mountedSavePaths.Remove(mountPoint);
+            _mountedSaves.Remove(mountPoint);
         }
 
         TraceSaveData($"umount2 mount_point={mountPoint} unregistered={unmounted}");
@@ -1435,25 +1502,30 @@ public static class SaveDataExports
 
     private static bool TryGetMountedSavePath(string mountPoint, out string savePath)
     {
-        lock (_stateGate)
+        if (TryGetMountedSave(mountPoint, out var mountedSave))
         {
-            if (_mountedSavePaths.TryGetValue(mountPoint, out var mountedPath))
-            {
-                savePath = mountedPath;
-                return true;
-            }
+            savePath = mountedSave.Path;
+            return true;
         }
 
         savePath = string.Empty;
         return false;
     }
 
+    private static bool TryGetMountedSave(string mountPoint, out MountedSave mountedSave)
+    {
+        lock (_stateGate)
+        {
+            return _mountedSaves.TryGetValue(mountPoint, out mountedSave);
+        }
+    }
+
     private static bool IsSavePathMounted(string savePath)
     {
         lock (_stateGate)
         {
-            return _mountedSavePaths.Values.Any(mountedPath =>
-                PathsEqual(mountedPath, savePath));
+            return _mountedSaves.Values.Any(mountedSave =>
+                PathsEqual(mountedSave.Path, savePath));
         }
     }
 
