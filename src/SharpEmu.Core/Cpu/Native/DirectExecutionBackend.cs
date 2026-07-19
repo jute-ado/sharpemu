@@ -1519,7 +1519,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_importEntries = checkpoint.PreviousEntries;
 	}
 
-	private unsafe bool TryCreateNativeImportIntrinsic(string nid, out nint address)
+	internal unsafe bool TryCreateNativeImportIntrinsic(string nid, out nint address)
 	{
 		if (IsHlePreferredNid(nid))
 		{
@@ -1934,7 +1934,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return false;
 	}
 
-	private static bool IsHlePreferredNid(string nid)
+	internal static bool IsHlePreferredNid(string nid)
 	{
 		return string.Equals(nid, "QrZZdJ8XsX0", StringComparison.Ordinal) ||
 			string.Equals(nid, "Q3VBxCXhUHs", StringComparison.Ordinal);
