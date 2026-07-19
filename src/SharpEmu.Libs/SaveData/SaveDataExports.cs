@@ -76,6 +76,7 @@ public static class SaveDataExports
         uint Type,
         int ErrorCode,
         int UserId,
+        string TitleId,
         string DirName);
     private readonly record struct MountedSave(string Path, ulong Blocks);
 
@@ -106,14 +107,13 @@ public static class SaveDataExports
         LibraryName = "libSceSaveData")]
     public static int SaveDataGetEventResult(CpuContext ctx)
     {
-        const int eventSize = 0x60;
+        const int eventSize = 0x68;
         var eventAddress = ctx[CpuRegister.Rsi];
         if (eventAddress == 0)
         {
             return ctx.SetReturn(OrbisSaveDataErrorParameter);
         }
 
-        SaveDataEvent pending;
         lock (_stateGate)
         {
             if (_events.Count == 0)
@@ -121,19 +121,23 @@ public static class SaveDataExports
                 return ctx.SetReturn(OrbisSaveDataErrorNoEvent);
             }
 
-            pending = _events.Dequeue();
-        }
+            var pending = _events.Peek();
+            Span<byte> data = stackalloc byte[eventSize];
+            data.Clear();
+            BinaryPrimitives.WriteUInt32LittleEndian(data, pending.Type);
+            BinaryPrimitives.WriteInt32LittleEndian(data[0x04..], pending.ErrorCode);
+            BinaryPrimitives.WriteInt32LittleEndian(data[0x08..], pending.UserId);
+            WriteAscii(data.Slice(0x10, SaveDataTitleIdSize), pending.TitleId);
+            WriteAscii(data.Slice(0x20, SaveDataDirNameSize), pending.DirName);
+            if (!ctx.Memory.TryWrite(eventAddress, data))
+            {
+                return ctx.SetReturn(
+                    (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
 
-        Span<byte> data = stackalloc byte[eventSize];
-        data.Clear();
-        BinaryPrimitives.WriteUInt32LittleEndian(data, pending.Type);
-        BinaryPrimitives.WriteInt32LittleEndian(data[0x04..], pending.ErrorCode);
-        BinaryPrimitives.WriteInt32LittleEndian(data[0x08..], pending.UserId);
-        WriteAscii(data.Slice(0x10, SaveDataDirNameSize), pending.DirName);
-        return ctx.Memory.TryWrite(eventAddress, data)
-            ? ctx.SetReturn(0)
-            : ctx.SetReturn(
-                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            _events.Dequeue();
+            return ctx.SetReturn(0);
+        }
     }
 
     [SysAbiExport(
@@ -181,6 +185,30 @@ public static class SaveDataExports
         {
             return ctx.SetReturn(OrbisSaveDataErrorInternal);
         }
+    }
+
+    [SysAbiExport(
+        Nid = "yKDy8S5yLA0",
+        ExportName = "sceSaveDataTerminate",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceSaveData")]
+    public static int SaveDataTerminate(CpuContext ctx)
+    {
+        lock (_stateGate)
+        {
+            if (_mountedSaves.Count != 0)
+            {
+                return ctx.SetReturn(OrbisSaveDataErrorBusy);
+            }
+
+            _transactionResources.Clear();
+            _preparedTransactionResources.Clear();
+            _events.Clear();
+            _nextTransactionResource = 0;
+        }
+
+        TraceSaveData("terminate");
+        return ctx.SetReturn(0);
     }
 
     [SysAbiExport(
@@ -1106,12 +1134,14 @@ public static class SaveDataExports
             return ctx.SetReturn(OrbisSaveDataErrorMemoryNotReady);
         }
 
+        var titleId = ResolveConfiguredTitleId();
         lock (_stateGate)
         {
             _events.Enqueue(new SaveDataEvent(
                 Type: 3,
                 ErrorCode: 0,
-                userId,
+                UserId: userId,
+                TitleId: titleId,
                 DirName: string.Empty));
         }
 
