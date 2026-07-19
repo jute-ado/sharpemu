@@ -801,6 +801,9 @@ public sealed partial class DirectExecutionBackend
 		var expectedMutexTrylockBusy =
 			string.Equals(nid, "K-jXhbt2gn4", StringComparison.Ordinal) &&
 			result == OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
+		var expectedSemaphoreTrywaitAgain =
+			string.Equals(nid, "H2a+IN9TP0E", StringComparison.Ordinal) &&
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN;
 		var expectedUserServiceNoEvent =
 			string.Equals(nid, "yH17Q6NWtVg", StringComparison.Ordinal) &&
 			resultValue == unchecked((int)0x80960007);
@@ -818,6 +821,7 @@ public sealed partial class DirectExecutionBackend
 			expectedEqueueTimeout ||
 			expectedEventFlagTimeout ||
 			expectedMutexTrylockBusy ||
+			expectedSemaphoreTrywaitAgain ||
 			expectedUserServiceNoEvent ||
 			expectedPrivacyInvalidParameter ||
 			expectedPlayGoEnumerationEnd ||
