@@ -133,6 +133,13 @@ public static class KernelPthreadCompatExports
     }
 
     [SysAbiExport(
+        Nid = "B5GmVDKwpn0",
+        ExportName = "pthread_yield",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int PosixPthreadYield(CpuContext ctx) => PthreadYield(ctx);
+
+    [SysAbiExport(
         Nid = "GBUY7ywdULE",
         ExportName = "scePthreadRename",
         Target = Generation.Gen4 | Generation.Gen5,
