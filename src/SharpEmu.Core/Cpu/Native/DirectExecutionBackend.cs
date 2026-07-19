@@ -661,6 +661,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private int _readyGuestThreadCount;
 
+	private int _guestThreadCount;
+
 	private readonly Dictionary<ulong, GuestThreadState> _guestThreads = new Dictionary<ulong, GuestThreadState>();
 
 	private int _guestThreadPumpDepth;
@@ -4004,6 +4006,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		using (LockGate("TryStartThread"))
 		{
 			_guestThreads[request.ThreadHandle] = thread;
+			Volatile.Write(ref _guestThreadCount, _guestThreads.Count);
 			_readyGuestThreads.Enqueue(thread);
 			Interlocked.Increment(ref _readyGuestThreadCount);
 		}
@@ -4588,8 +4591,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			_readyGuestThreads.Clear();
 			Interlocked.Exchange(ref _readyGuestThreadCount, 0);
 			_guestThreads.Clear();
+			Volatile.Write(ref _guestThreadCount, 0);
 			ClearGuestExceptionState();
 		}
+		ResetImportLoopPattern();
 
 		foreach (var runner in runners)
 		{
