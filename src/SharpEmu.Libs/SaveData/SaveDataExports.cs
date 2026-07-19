@@ -56,6 +56,9 @@ public static class SaveDataExports
     private const int ParamMtimeOffset = 0x508;
     private const string ParamMetadataDirectoryName = "sce_sys";
     private const string ParamMetadataFileName = "param.bin";
+    private const string IconMetadataFileName = "icon0.png";
+    // Emulator guard against corrupt descriptors, not a platform limit.
+    private const ulong SaveDataIconMaxSize = 16UL * 1024 * 1024;
     private static readonly object _stateGate = new();
     private static readonly object _memoryGate = new();
     private static readonly HashSet<int> _transactionResources = [];
@@ -482,6 +485,76 @@ public static class SaveDataExports
         catch (UnauthorizedAccessException)
         {
             return ctx.SetReturn(OrbisSaveDataErrorInternal);
+        }
+    }
+
+    [SysAbiExport(
+        Nid = "c88Yy54Mx0w",
+        ExportName = "sceSaveDataSaveIcon",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceSaveData")]
+    public static int SaveDataSaveIcon(CpuContext ctx)
+    {
+        var mountPointAddress = ctx[CpuRegister.Rdi];
+        var iconAddress = ctx[CpuRegister.Rsi];
+        if (mountPointAddress == 0 || iconAddress == 0)
+        {
+            return ctx.SetReturn(OrbisSaveDataErrorParameter);
+        }
+
+        if (!TryReadFixedAscii(ctx, mountPointAddress, 16, out var mountPoint) ||
+            !ctx.TryReadUInt64(iconAddress, out var bufferAddress) ||
+            !ctx.TryReadUInt64(iconAddress + 0x08, out var bufferSize) ||
+            !ctx.TryReadUInt64(iconAddress + 0x10, out var dataSize))
+        {
+            return ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var writeSize = Math.Min(bufferSize, dataSize);
+        if (string.IsNullOrWhiteSpace(mountPoint) ||
+            bufferAddress == 0 ||
+            writeSize > SaveDataIconMaxSize ||
+            !GuestAddress.IsRangeValid(bufferAddress, writeSize))
+        {
+            return ctx.SetReturn(OrbisSaveDataErrorParameter);
+        }
+
+        if (!TryGetMountedSavePath(mountPoint, out var savePath))
+        {
+            return ctx.SetReturn(OrbisSaveDataErrorNotMounted);
+        }
+
+        var rented = ArrayPool<byte>.Shared.Rent(Math.Max(1, checked((int)writeSize)));
+        try
+        {
+            var payload = rented.AsSpan(0, checked((int)writeSize));
+            if (!ctx.Memory.TryRead(bufferAddress, payload))
+            {
+                return ctx.SetReturn(
+                    (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            var metadataPath = Path.Combine(savePath, ParamMetadataDirectoryName);
+            Directory.CreateDirectory(metadataPath);
+            File.WriteAllBytes(
+                Path.Combine(metadataPath, IconMetadataFileName),
+                payload);
+            TraceSaveData(
+                $"save_icon mount_point={mountPoint} size=0x{writeSize:X} root='{savePath}'");
+            return ctx.SetReturn(0);
+        }
+        catch (IOException)
+        {
+            return ctx.SetReturn(OrbisSaveDataErrorInternal);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return ctx.SetReturn(OrbisSaveDataErrorInternal);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented, clearArray: true);
         }
     }
 

@@ -25,6 +25,8 @@ public sealed class SaveDataMutationTests
     private const ulong MountParamAddress = 0x9000;
     private const ulong MountResultAddress = 0xA000;
     private const ulong UntrackedMountPointAddress = 0xB000;
+    private const ulong IconAddress = 0xC000;
+    private const ulong IconBufferAddress = 0xD000;
 
     [Fact]
     public void SetParamPersistsMetadataReturnedByDirectorySearch()
@@ -177,6 +179,91 @@ public sealed class SaveDataMutationTests
         });
     }
 
+    [Fact]
+    public void SaveIconPersistsOnlyGuestDataSizeInMountedSaveMetadata()
+    {
+        WithIsolatedSaveRoot((_, savePath) =>
+        {
+            var payload = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0xAA, 0xBB };
+            var memory = new FakeGuestMemory();
+            memory.AddRegion(DirNameAddress, FixedAscii("slot00", 32));
+            memory.AddRegion(
+                IconAddress,
+                CreateIcon(IconBufferAddress, bufferSize: 6, dataSize: 4));
+            memory.AddRegion(IconBufferAddress, payload);
+            var context = new CpuContext(memory, Generation.Gen5);
+
+            MountSave(context, memory);
+            context[CpuRegister.Rdi] = MountResultAddress;
+            context[CpuRegister.Rsi] = IconAddress;
+
+            Assert.Equal(0, SaveDataExports.SaveDataSaveIcon(context));
+            Assert.Equal(
+                payload[..4],
+                File.ReadAllBytes(Path.Combine(savePath, "sce_sys", "icon0.png")));
+        });
+    }
+
+    [Fact]
+    public void SaveIconRejectsNullPointersAndUnmountedSave()
+    {
+        WithIsolatedSaveRoot((_, _) =>
+        {
+            var memory = new FakeGuestMemory();
+            memory.AddRegion(DirNameAddress, FixedAscii("slot00", 32));
+            memory.AddRegion(
+                IconAddress,
+                CreateIcon(IconBufferAddress, bufferSize: 4, dataSize: 4));
+            memory.AddRegion(IconBufferAddress, new byte[4]);
+            memory.AddRegion(UntrackedMountPointAddress, FixedAscii("/untracked", 16));
+            var context = new CpuContext(memory, Generation.Gen5);
+
+            context[CpuRegister.Rdi] = 0;
+            context[CpuRegister.Rsi] = IconAddress;
+            Assert.Equal(
+                OrbisSaveDataErrorParameter,
+                SaveDataExports.SaveDataSaveIcon(context));
+
+            context[CpuRegister.Rdi] = UntrackedMountPointAddress;
+            context[CpuRegister.Rsi] = 0;
+            Assert.Equal(
+                OrbisSaveDataErrorParameter,
+                SaveDataExports.SaveDataSaveIcon(context));
+
+            context[CpuRegister.Rsi] = IconAddress;
+            Assert.Equal(
+                OrbisSaveDataErrorNotMounted,
+                SaveDataExports.SaveDataSaveIcon(context));
+        });
+    }
+
+    [Fact]
+    public void SaveIconGuestMemoryFailureDoesNotReplaceExistingIcon()
+    {
+        WithIsolatedSaveRoot((_, savePath) =>
+        {
+            var iconPath = Path.Combine(savePath, "sce_sys", "icon0.png");
+            Directory.CreateDirectory(Path.GetDirectoryName(iconPath)!);
+            File.WriteAllBytes(iconPath, [1, 2, 3]);
+            var memory = new FakeGuestMemory();
+            memory.AddRegion(DirNameAddress, FixedAscii("slot00", 32));
+            memory.AddRegion(
+                IconAddress,
+                CreateIcon(IconBufferAddress, bufferSize: 4, dataSize: 4));
+            memory.AddRegion(IconBufferAddress, new byte[2]);
+            var context = new CpuContext(memory, Generation.Gen5);
+
+            MountSave(context, memory);
+            context[CpuRegister.Rdi] = MountResultAddress;
+            context[CpuRegister.Rsi] = IconAddress;
+
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                SaveDataExports.SaveDataSaveIcon(context));
+            Assert.Equal([1, 2, 3], File.ReadAllBytes(iconPath));
+        });
+    }
+
     [Theory]
     [InlineData(".")]
     [InlineData("..")]
@@ -206,6 +293,9 @@ public sealed class SaveDataMutationTests
     [InlineData(
         "S1GkePI17zQ",
         "sceSaveDataDelete")]
+    [InlineData(
+        "c88Yy54Mx0w",
+        "sceSaveDataSaveIcon")]
     public void MutationExportMetadataIsExact(
         string nid,
         string exportName)
@@ -262,6 +352,18 @@ public sealed class SaveDataMutationTests
         var buffer = new byte[size];
         WriteAscii(buffer, value);
         return buffer;
+    }
+
+    private static byte[] CreateIcon(
+        ulong bufferAddress,
+        ulong bufferSize,
+        ulong dataSize)
+    {
+        var icon = new byte[0x38];
+        BinaryPrimitives.WriteUInt64LittleEndian(icon, bufferAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(icon.AsSpan(0x08), bufferSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(icon.AsSpan(0x10), dataSize);
+        return icon;
     }
 
     private static void WriteAscii(Span<byte> destination, string value)
