@@ -4929,6 +4929,33 @@ public static partial class Gen5SpirvTranslator
                 return true;
             }
 
+            if (resource.IsStorage &&
+                instruction.Opcode is "ImageLoad" or "ImageLoadMip")
+            {
+                if (instruction.Opcode == "ImageLoadMip" &&
+                    !_evaluation.ImageBindings[bindingIndex].MipLevel.HasValue)
+                {
+                    error = "dynamic image_load_mip is unsupported for storage images";
+                    return false;
+                }
+
+                var imageSize = _module.AddInstruction(
+                    SpirvOp.ImageQuerySize,
+                    _module.TypeVector(_intType, 2),
+                    imageObject);
+                var coordinates = BuildClampedIntegerCoordinates(
+                    image,
+                    0,
+                    imageSize);
+                var texel = _module.AddInstruction(
+                    SpirvOp.ImageRead,
+                    resource.VectorType,
+                    imageObject,
+                    coordinates);
+                StoreImageComponents(image, resource, texel);
+                return true;
+            }
+
             if (resource.IsStorage)
             {
                 error = $"unsupported storage image opcode {instruction.Opcode}";
@@ -5207,6 +5234,16 @@ public static partial class Gen5SpirvTranslator
                 return false;
             }
 
+            StoreImageComponents(image, resource, sampled, writeAllComponents);
+            return true;
+        }
+
+        private void StoreImageComponents(
+            Gen5ImageControl image,
+            SpirvImageResource resource,
+            uint texel,
+            bool writeAllComponents = false)
+        {
             uint output = 0;
             for (uint component = 0; component < 4; component++)
             {
@@ -5219,7 +5256,7 @@ public static partial class Gen5SpirvTranslator
                 var value = _module.AddInstruction(
                     SpirvOp.CompositeExtract,
                     resource.ComponentType,
-                    sampled,
+                    texel,
                     component);
                 var raw = resource.ComponentKind switch
                 {
@@ -5228,8 +5265,6 @@ public static partial class Gen5SpirvTranslator
                 };
                 StoreV(image.VectorData + output++, raw);
             }
-
-            return true;
         }
 
         private uint EmitImageAtomic32(
