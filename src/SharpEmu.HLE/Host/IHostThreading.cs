@@ -37,8 +37,11 @@ public interface IHostThreading
     /// </summary>
     nint CreateNativeThread(nint entry, nint parameter, nuint stackReserveBytes, out uint threadId);
 
-    /// <summary>Waits for the thread to exit; true when it did within the timeout.</summary>
-    bool WaitForThreadExit(nint threadHandle, uint timeoutMilliseconds);
+    /// <summary>
+    /// Joins a thread after the caller has observed its completion signal.
+    /// Implementations may block until the final native return completes.
+    /// </summary>
+    void JoinExitedThread(nint threadHandle);
 
     void CloseThreadHandle(nint threadHandle);
 

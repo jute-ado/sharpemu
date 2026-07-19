@@ -38,9 +38,9 @@ internal sealed class PosixHostThreading : IHostThreading
         return PosixHostStubs.CreateWorkerThread(entry, parameter, stackReserveBytes, out threadId);
     }
 
-    public bool WaitForThreadExit(nint threadHandle, uint timeoutMilliseconds)
+    public void JoinExitedThread(nint threadHandle)
     {
-        return PosixHostStubs.WaitForWorkerThreadExit(threadHandle, timeoutMilliseconds);
+        PosixHostStubs.JoinExitedWorkerThread(threadHandle);
     }
 
     public void CloseThreadHandle(nint threadHandle)

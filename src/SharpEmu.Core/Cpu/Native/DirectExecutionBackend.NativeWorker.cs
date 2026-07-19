@@ -607,7 +607,16 @@ public sealed partial class DirectExecutionBackend
 			var exited = _threadHandle == 0;
 			if (_threadHandle != 0)
 			{
-				exited = _backend._hostThreading.WaitForThreadExit(_threadHandle, 1000u);
+				// The worker signals done immediately before its native exit path.
+				// This is a reliable completion proof on POSIX, where probing a
+				// returned-but-unjoined pthread can keep reporting it as live.
+				exited = _backend._hostNativeInterop.WaitWorkerEvent(
+					_doneEvent,
+					1000);
+				if (exited)
+				{
+					_backend._hostThreading.JoinExitedThread(_threadHandle);
+				}
 				_backend._hostThreading.CloseThreadHandle(_threadHandle);
 				_threadHandle = 0;
 			}

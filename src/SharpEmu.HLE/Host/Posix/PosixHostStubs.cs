@@ -158,8 +158,8 @@ internal static unsafe class PosixHostStubs
     /// <summary>
     /// Starts a raw pthread at a native entry point (pthread entries take their
     /// argument in RDI; the worker loop stub ignores it). Returns an opaque
-    /// handle for <see cref="WaitForWorkerThreadExit"/>/<see cref="CloseWorkerThreadHandle"/>,
-    /// or 0 on failure.
+    /// handle for <see cref="JoinExitedWorkerThread"/> and
+    /// <see cref="CloseWorkerThreadHandle"/>, or 0 on failure.
     /// </summary>
     public static nint CreateWorkerThread(nint entry, nint parameter, nuint stackReserveBytes, out uint threadId)
     {
@@ -208,39 +208,20 @@ internal static unsafe class PosixHostStubs
     }
 
     /// <summary>
-    /// Waits for a worker thread to exit. Liveness is probed with
-    /// pthread_kill(thread, 0) (ESRCH once the thread has terminated) because
-    /// neither platform offers a portable timed join; the exited thread is then
-    /// joined so its resources are reclaimed.
+    /// Reaps a worker after its owner has independently observed the worker's
+    /// completion event. A returned pthread remains joinable, and on glibc a
+    /// liveness probe can continue to report it as present until this join.
     /// </summary>
-    public static bool WaitForWorkerThreadExit(nint threadHandle, uint timeoutMilliseconds)
+    public static void JoinExitedWorkerThread(nint threadHandle)
     {
         var holder = (nint*)threadHandle;
-        if (holder == null)
+        if (holder == null || holder[1] != 0)
         {
-            return false;
+            return;
         }
 
-        if (holder[1] != 0)
-        {
-            return true;
-        }
-
-        var thread = holder[0];
-        var deadline = Environment.TickCount64 + timeoutMilliseconds;
-        while (pthread_kill(thread, 0) == 0)
-        {
-            if (Environment.TickCount64 >= deadline)
-            {
-                return false;
-            }
-
-            System.Threading.Thread.Sleep(1);
-        }
-
-        _ = pthread_join(thread, null);
+        _ = pthread_join(holder[0], null);
         holder[1] = 1;
-        return true;
     }
 
     public static void CloseWorkerThreadHandle(nint threadHandle)
@@ -637,9 +618,6 @@ internal static unsafe class PosixHostStubs
 
     [DllImport("libc")]
     private static extern int pthread_detach(nint thread);
-
-    [DllImport("libc")]
-    private static extern int pthread_kill(nint thread, int signal);
 
     // macOS: dispatch semaphores back the worker events (unnamed sem_init is
     // unsupported on Darwin). libSystem reexports libdispatch, so "libc"
