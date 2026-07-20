@@ -56,10 +56,33 @@ public sealed class KernelVirtualMemoryQueryTests
         Assert.All(output, value => Assert.Equal(0xCC, value));
     }
 
-    private sealed class QueryGuestMemory : ICpuMemory, IGuestVirtualMemoryQuery
+    [Fact]
+    public void QueryReportsRegisteredGuestStackMetadata()
+    {
+        var output = new byte[72];
+        var memory = new QueryGuestMemory(
+            new GuestVirtualMemoryRegion(RegionAddress, RegionLength, 0x03));
+        memory.AddRegion(OutputAddress, output);
+        memory.RegisterStackRange(RegionAddress, RegionLength);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = RegionAddress + 0x100;
+        context[CpuRegister.Rdx] = OutputAddress;
+        context[CpuRegister.Rcx] = 72;
+
+        var result = KernelMemoryCompatExports.KernelVirtualQuery(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, result);
+        Assert.Equal(0x14, output[32]);
+    }
+
+    private sealed class QueryGuestMemory :
+        ICpuMemory,
+        IGuestVirtualMemoryQuery,
+        IGuestStackMemory
     {
         private readonly GuestVirtualMemoryRegion _queryRegion;
         private readonly List<(ulong Address, byte[] Data)> _regions = [];
+        private readonly List<(ulong Start, ulong End)> _stackRanges = [];
 
         public QueryGuestMemory(GuestVirtualMemoryRegion queryRegion)
         {
@@ -67,6 +90,26 @@ public sealed class KernelVirtualMemoryQueryTests
         }
 
         public void AddRegion(ulong address, byte[] data) => _regions.Add((address, data));
+
+        public void RegisterStackRange(ulong start, ulong size) =>
+            _stackRanges.Add((start, checked(start + size)));
+
+        public bool TryGetStackRange(ulong address, out ulong start, out ulong end)
+        {
+            foreach (var range in _stackRanges)
+            {
+                if (address >= range.Start && address < range.End)
+                {
+                    start = range.Start;
+                    end = range.End;
+                    return true;
+                }
+            }
+
+            start = 0;
+            end = 0;
+            return false;
+        }
 
         public bool TryQueryMemoryRegion(
             ulong address,
