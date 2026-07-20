@@ -265,40 +265,26 @@ public sealed class SaveDataExportsTests : IDisposable
     }
 
     [Fact]
-    public void CreateTransactionResource_WithOutPointerFlag_WritesOnlyRcx()
+    public void CreateTransactionResource_UsesCanonicalSizeOnlyAbi()
     {
         const uint sentinel = 0xA5A5A5A5;
-        Assert.True(_ctx.TryWriteUInt32(TransactionOut, 0));
-        Assert.True(_ctx.TryWriteUInt32(StaleR8, sentinel));
-        Assert.True(_ctx.TryWriteUInt32(StaleR9, sentinel));
-
-        var ctx = Reg(rdi: UserId, rdx: 1, rcx: TransactionOut);
-        ctx[CpuRegister.R8] = StaleR8;
-        ctx[CpuRegister.R9] = StaleR9;
-
-        Assert.True(SaveDataExports.SaveDataCreateTransactionResource(ctx) > 0);
-        Assert.True(_ctx.TryReadUInt32(TransactionOut, out var resource));
-        Assert.True(_ctx.TryReadUInt32(StaleR8, out var r8Value));
-        Assert.True(_ctx.TryReadUInt32(StaleR9, out var r9Value));
-        Assert.NotEqual(0u, resource);
-        Assert.Equal(sentinel, r8Value);
-        Assert.Equal(sentinel, r9Value);
-    }
-
-    [Fact]
-    public void CreateTransactionResource_WithLegacyOutPointer_WritesOnlyRdx()
-    {
-        const uint sentinel = 0xA5A5A5A5;
-        Assert.True(_ctx.TryWriteUInt32(TransactionOut, 0));
+        Assert.True(_ctx.TryWriteUInt32(TransactionOut, sentinel));
         Assert.True(_ctx.TryWriteUInt32(StaleR8, sentinel));
 
-        Assert.True(
-            SaveDataExports.SaveDataCreateTransactionResource(
-                Reg(rdi: UserId, rdx: TransactionOut, rcx: StaleR8)) > 0);
+        var ctx = Reg(
+            rdi: 0xC0000,
+            rsi: TransactionOut + sizeof(ulong),
+            rdx: TransactionOut,
+            rcx: StaleR8);
 
-        Assert.True(_ctx.TryReadUInt32(TransactionOut, out var resource));
+        var resource = SaveDataExports.SaveDataCreateTransactionResource(ctx);
+
+        Assert.True(resource > 0);
+        Assert.Equal(unchecked((ulong)resource), ctx[CpuRegister.Rax]);
+        Assert.True(_ctx.TryReadUInt32(TransactionOut, out var rdxValue));
         Assert.True(_ctx.TryReadUInt32(StaleR8, out var rcxValue));
-        Assert.NotEqual(0u, resource);
+        Assert.Equal(sentinel, rdxValue);
         Assert.Equal(sentinel, rcxValue);
     }
+
 }
