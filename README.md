@@ -40,9 +40,9 @@ test-driven workflow. Major downstream differences include:
   that retain native import progress across guest workers and distinguish
   normal process exit codes from CPU traps, structured faulting-instruction
   decoding, cross-platform general-register snapshots, bounded guest frame
-  chains and code windows, mapped-image-relative code locations, faulting
-  guest-thread identity, and bounded cross-thread native import traces in
-  execution reports,
+  chains with fault and return-site code windows, mapped-image-relative code
+  locations, faulting guest-thread identity, and bounded cross-thread native
+  import traces in execution reports,
   and immediate teardown signaling for interruptible guest waits
 - application plugin discovery and symbol resolution, including deferred module
   initializers that start once and can be retried after a guest failure

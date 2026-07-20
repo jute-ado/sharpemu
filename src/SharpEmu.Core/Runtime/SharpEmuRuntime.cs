@@ -1228,7 +1228,11 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 break;
             }
 
-            frames.Add(new CpuStackFrame(framePointer, nextFramePointer, returnAddress));
+            frames.Add(new CpuStackFrame(
+                framePointer,
+                nextFramePointer,
+                returnAddress,
+                CaptureTrapCodeWindow(returnAddress)));
             if (nextFramePointer <= framePointer || nextFramePointer > stackLimit)
             {
                 break;

@@ -770,6 +770,13 @@ public sealed class SharpEmuRuntimeTests
         var returnLocation = frame.GetProperty("returnLocation");
         Assert.Equal("eboot.bin", returnLocation.GetProperty("imagePath").GetString());
         Assert.Equal("0x0000000000000009", returnLocation.GetProperty("imageOffset").GetString());
+        var returnCodeWindow = frame.GetProperty("returnCodeWindow");
+        Assert.Equal("0x0000000800000000", returnCodeWindow.GetProperty("startAddress").GetString());
+        Assert.Equal(9, returnCodeWindow.GetProperty("instructionOffset").GetInt32());
+        Assert.StartsWith(
+            "55 48 89 E5 E8 02 00 00 00 C9 C3",
+            returnCodeWindow.GetProperty("bytes").GetString(),
+            StringComparison.Ordinal);
     }
 
     [Fact]
