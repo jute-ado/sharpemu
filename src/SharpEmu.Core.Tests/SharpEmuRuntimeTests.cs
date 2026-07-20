@@ -62,6 +62,31 @@ public sealed class SharpEmuRuntimeTests
             frame => Assert.Equal(secondFrame, frame.FramePointer));
     }
 
+    [Fact]
+    public void TrapStackWindowIsBoundedAndStopsAtUnreadableMemory()
+    {
+        const ulong stackStart = 0x7000;
+        var bytes = Enumerable.Range(0, 48).Select(value => (byte)value).ToArray();
+        var memory = new VirtualMemory();
+        memory.Map(
+            stackStart,
+            (ulong)bytes.Length,
+            fileOffset: 0,
+            bytes,
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        var registers = new CpuRegisterSnapshot(
+            0, 0, 0, 0, 0, 0, 0,
+            stackStart + 16,
+            0, 0, 0, 0, 0, 0, 0, 0);
+
+        var window = SharpEmuRuntime.CaptureTrapStackWindow(memory, registers);
+
+        Assert.NotNull(window);
+        Assert.Equal(stackStart + 16, window.Value.StartAddress);
+        Assert.Equal(32, window.Value.Bytes.Split(' ').Length);
+        Assert.StartsWith("10 11 12 13", window.Value.Bytes, StringComparison.Ordinal);
+    }
+
     private static void WriteFrame(
         byte[] bytes,
         ulong mappedStart,
@@ -775,6 +800,9 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("0x0000000000000000", registers.GetProperty("rax").GetString());
         Assert.Equal("0x0000000000000000", registers.GetProperty("rdi").GetString());
         Assert.NotEqual("0x0000000000000000", registers.GetProperty("rsp").GetString());
+        var stackWindow = cpuTrap.GetProperty("stackWindow");
+        Assert.Equal(registers.GetProperty("rsp").GetString(), stackWindow.GetProperty("startAddress").GetString());
+        Assert.InRange(stackWindow.GetProperty("bytes").GetString()!.Split(' ').Length, 1, 128);
         Assert.Empty(cpuTrap.GetProperty("stackFrames").EnumerateArray());
         Assert.Contains(
             "inst=mov rax,[rax]",

@@ -283,6 +283,10 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             {
                 enrichedTrapInfo = enrichedTrapInfo.WithCodeWindow(codeWindow);
             }
+            if (CaptureTrapStackWindow(_virtualMemory, trapInfo.Registers) is { } stackWindow)
+            {
+                enrichedTrapInfo = enrichedTrapInfo.WithStackWindow(stackWindow);
+            }
             LastCpuTrapInfo = enrichedTrapInfo;
 
             var longModeHint = IsInvalidLongModeOpcode(trapInfo.Opcode)
@@ -1250,6 +1254,33 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         }
 
         return frames.ToArray();
+    }
+
+    internal static CpuMemoryWindow? CaptureTrapStackWindow(
+        IVirtualMemory virtualMemory,
+        CpuRegisterSnapshot? registers)
+    {
+        const int maximumWindowBytes = 128;
+        if (registers is not { Rsp: > 0 } snapshot)
+        {
+            return null;
+        }
+
+        var bytes = new byte[maximumWindowBytes];
+        Span<byte> oneByte = stackalloc byte[1];
+        var count = 0;
+        while (count < bytes.Length &&
+               snapshot.Rsp <= ulong.MaxValue - (ulong)count &&
+               virtualMemory.TryRead(snapshot.Rsp + (ulong)count, oneByte))
+        {
+            bytes[count++] = oneByte[0];
+        }
+
+        return count == 0
+            ? null
+            : new CpuMemoryWindow(
+                snapshot.Rsp,
+                IcedDecoder.FormatBytes(bytes.AsSpan(0, count)));
     }
 
     private static bool TryReadUInt64At(
