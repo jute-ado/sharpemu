@@ -46,7 +46,7 @@ test-driven workflow. Major downstream differences include:
   import traces in execution reports,
   and immediate teardown signaling for interruptible guest waits
 - guest virtual-memory queries that preserve registered stack classification
-  and Prospero-compatible end-of-range errors
+  and Prospero-compatible argument validation and end-of-range errors
 - application plugin discovery and symbol resolution, including deferred module
   initializers that start once and can be retried after a guest failure
 - persistent save-data mutations, including quota-aware mount information,

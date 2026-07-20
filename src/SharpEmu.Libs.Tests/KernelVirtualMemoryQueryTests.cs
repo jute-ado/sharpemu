@@ -75,6 +75,28 @@ public sealed class KernelVirtualMemoryQueryTests
         Assert.Equal(0x14, output[32]);
     }
 
+    [Theory]
+    [InlineData(2, 72)]
+    [InlineData(0, 71)]
+    [InlineData(0, 73)]
+    public void QueryRejectsUnknownFlagsAndNonExactInfoSizes(int flags, ulong infoSize)
+    {
+        var output = Enumerable.Repeat((byte)0xCC, 72).ToArray();
+        var memory = new QueryGuestMemory(
+            new GuestVirtualMemoryRegion(RegionAddress, RegionLength, 0x03));
+        memory.AddRegion(OutputAddress, output);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = RegionAddress + 0x100;
+        context[CpuRegister.Rsi] = unchecked((ulong)flags);
+        context[CpuRegister.Rdx] = OutputAddress;
+        context[CpuRegister.Rcx] = infoSize;
+
+        var result = KernelMemoryCompatExports.KernelVirtualQuery(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT, result);
+        Assert.All(output, value => Assert.Equal(0xCC, value));
+    }
+
     private sealed class QueryGuestMemory :
         ICpuMemory,
         IGuestVirtualMemoryQuery,
