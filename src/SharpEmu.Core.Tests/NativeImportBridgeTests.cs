@@ -58,6 +58,94 @@ public sealed class NativeImportBridgeTests
     }
 
     [HostX64Fact]
+    public async Task NativeImportTraceRetainsOnlyRequestedRecentCalls()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
+        byte[] code =
+        [
+            0xE8, 0xFB, 0x00, 0x00, 0x00, // call ImportAddress
+            0xE8, 0xF6, 0x00, 0x00, 0x00, // call ImportAddress
+            0xE8, 0xF1, 0x00, 0x00, 0x00, // call ImportAddress
+            0x31, 0xC0,                   // xor eax, eax
+            0xC3,                         // ret
+        ];
+        var execution = SyntheticNativeGuest.ExecuteModuleInitializer(
+            code,
+            Generation.Gen5,
+            "synthetic-bounded-native-import-trace",
+            new Dictionary<ulong, string> { [ImportAddress] = AddNid },
+            moduleManager =>
+            {
+                Assert.Equal(
+                    1,
+                    moduleManager.RegisterExports(
+                    [
+                        new ExportedFunction(
+                            "libSyntheticTest",
+                            AddNid,
+                            "syntheticAdd",
+                            Generation.Gen5,
+                            SyntheticExports.Add),
+                    ]));
+            },
+            CodeAddress,
+            new CpuExecutionOptions { ImportTraceLimit = 2 });
+
+        AssertSuccessful(execution);
+        Assert.Equal(3, execution.ImportsHit);
+        Assert.NotNull(execution.ImportTrace);
+        var lines = execution.ImportTrace.Split(Environment.NewLine);
+        Assert.Equal(2, lines.Length);
+        Assert.DoesNotContain($"ret=0x{CodeAddress + 5:X16}", execution.ImportTrace, StringComparison.Ordinal);
+        Assert.Contains($"ret=0x{CodeAddress + 10:X16}", lines[0], StringComparison.Ordinal);
+        Assert.Contains($"ret=0x{CodeAddress + 15:X16}", lines[1], StringComparison.Ordinal);
+        Assert.All(lines, line => Assert.Contains($"nid={AddNid}", line, StringComparison.Ordinal));
+    }
+
+    [HostX64Fact]
+    public async Task NativeImportTraceIncludesGuestWorkerCalls()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
+        byte[] code =
+        [
+            0xE8, 0xFB, 0x00, 0x00, 0x00, // call ImportAddress
+            0x31, 0xC0,                   // xor eax, eax
+            0xC3,                         // ret
+        ];
+        var execution = Assert.Single(SyntheticNativeGuest.ExecuteModuleInitializers(
+            code,
+            Generation.Gen5,
+            "synthetic-worker-native-import-trace",
+            executionCount: 1,
+            new Dictionary<ulong, string> { [ImportAddress] = AddNid },
+            moduleManager => moduleManager.RegisterExports(
+            [
+                new ExportedFunction(
+                    "libSyntheticTest",
+                    AddNid,
+                    "syntheticAdd",
+                    Generation.Gen5,
+                    SyntheticExports.Add),
+            ]),
+            CodeAddress,
+            guestThreadHandle: 0xCAFE,
+            useDedicatedHostThreads: true,
+            new CpuExecutionOptions { ImportTraceLimit = 1 }));
+
+        AssertSuccessful(execution);
+        Assert.Contains($"nid={AddNid}", execution.ImportTrace, StringComparison.Ordinal);
+        Assert.Contains("thread=0x000000000000CAFE", execution.ImportTrace, StringComparison.Ordinal);
+    }
+
+    [HostX64Fact]
     public async Task FirstGuestImportInitializesColdHandlerOnHostStack()
     {
         if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))

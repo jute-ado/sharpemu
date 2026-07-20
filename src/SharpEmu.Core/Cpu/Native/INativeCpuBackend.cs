@@ -22,6 +22,8 @@ public interface INativeCpuBackend
 
     int LastSessionImportsHit => 0;
 
+    string? LastImportResolutionTrace => null;
+
     ulong? LastEntryReturnValue => null;
 
     bool TryExecute(
