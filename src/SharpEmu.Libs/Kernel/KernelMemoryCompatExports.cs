@@ -5486,6 +5486,11 @@ public static partial class KernelMemoryCompatExports
     private static bool TryResolvePathWithinRoot(string hostRoot, string relativePath, out string hostPath)
     {
         hostPath = string.Empty;
+        if (HasOverlongPathSegment(relativePath))
+        {
+            return false;
+        }
+
         try
         {
             var normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(hostRoot));
@@ -5516,6 +5521,25 @@ public static partial class KernelMemoryCompatExports
         {
             return false;
         }
+    }
+
+    private static bool HasOverlongPathSegment(string path)
+    {
+        foreach (var segment in path.Split(
+                     ['/', '\\'],
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            // Orbis and mainstream host filesystems limit individual path
+            // components to 255 bytes/characters. Rejecting them here keeps
+            // malformed guest paths fail-closed on hosts whose lexical path
+            // normalizer otherwise accepts arbitrarily long components.
+            if (segment.Length > 255)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool ContainsReparsePointBelowRoot(string root, string candidate)
