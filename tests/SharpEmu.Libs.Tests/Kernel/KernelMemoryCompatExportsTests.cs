@@ -212,6 +212,105 @@ public sealed class KernelMemoryCompatExportsTests
         }
     }
 
+    [Theory]
+    [InlineData(0x0300_0000UL, 0x0000UL, false)]
+    [InlineData(0x0310_0000UL, 0x0000UL, true)]
+    [InlineData(0x0320_0000UL, 0x4000UL, true)]
+    [InlineData(0x0330_0000UL, 0xC000UL, true)]
+    public void DirectMemoryRelease_ReleasesContainedAlignedSubrange(
+        ulong allocationStart,
+        ulong releaseOffset,
+        bool useCheckedRelease)
+    {
+        const ulong allocationLength = 0x1_0000;
+        const ulong releaseLength = 0x4000;
+        const int memoryType = 0x2A;
+        var context = new CpuContext(new FakeCpuMemory(GuestMemoryBase, 0x1000), Generation.Gen5);
+        var releaseStart = allocationStart + releaseOffset;
+        var releaseEnd = releaseStart + releaseLength;
+        var allocationEnd = allocationStart + allocationLength;
+        var released = false;
+
+        try
+        {
+            AllocateDirectMemory(context, allocationStart, allocationLength, memoryType);
+            context[CpuRegister.Rdi] = releaseStart;
+            context[CpuRegister.Rsi] = releaseLength;
+
+            var result = useCheckedRelease
+                ? KernelMemoryCompatExports.KernelCheckedReleaseDirectMemory(context)
+                : KernelMemoryCompatExports.KernelReleaseDirectMemory(context);
+
+            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, result);
+            released = true;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED,
+                QueryDirectMemory(context, releaseStart, out _, out _, out _));
+            if (releaseStart > allocationStart)
+            {
+                AssertDirectMemoryRange(
+                    context,
+                    allocationStart,
+                    allocationStart,
+                    releaseStart,
+                    memoryType);
+            }
+
+            if (releaseEnd < allocationEnd)
+            {
+                AssertDirectMemoryRange(context, releaseEnd, releaseEnd, allocationEnd, memoryType);
+            }
+        }
+        finally
+        {
+            if (!released)
+            {
+                ReleaseDirectMemory(context, allocationStart, allocationLength);
+            }
+            else
+            {
+                if (releaseStart > allocationStart)
+                {
+                    ReleaseDirectMemory(context, allocationStart, releaseStart - allocationStart);
+                }
+
+                if (releaseEnd < allocationEnd)
+                {
+                    ReleaseDirectMemory(context, releaseEnd, allocationEnd - releaseEnd);
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void CheckedReleaseDirectMemory_EmptyAlignedRangeSucceeds()
+    {
+        var context = new CpuContext(new FakeCpuMemory(GuestMemoryBase, 0x1000), Generation.Gen5);
+        context[CpuRegister.Rdi] = 0x0400_0000;
+        context[CpuRegister.Rsi] = 0;
+
+        var result = KernelMemoryCompatExports.KernelCheckedReleaseDirectMemory(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, result);
+    }
+
+    [Theory]
+    [InlineData(0x0400_0001UL, 0x4000UL)]
+    [InlineData(0x0400_0000UL, 0x4001UL)]
+    [InlineData(ulong.MaxValue, 0x4000UL)]
+    public void CheckedReleaseDirectMemory_RejectsUnalignedOrNegativeRange(
+        ulong start,
+        ulong length)
+    {
+        var context = new CpuContext(new FakeCpuMemory(GuestMemoryBase, 0x1000), Generation.Gen5);
+        context[CpuRegister.Rdi] = start;
+        context[CpuRegister.Rsi] = length;
+
+        var result = KernelMemoryCompatExports.KernelCheckedReleaseDirectMemory(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT, result);
+    }
+
     [Fact]
     public void MapDirectMemory2_UsesShiftedAbiAndTracksVirtualMemoryType()
     {
@@ -422,6 +521,41 @@ public sealed class KernelMemoryCompatExportsTests
         context[CpuRegister.R8] = SpanSizeOutAddress;
 
         Assert.Equal(0, KernelMemoryCompatExports.KernelAvailableDirectMemorySize(context));
+    }
+
+    private static int QueryDirectMemory(
+        CpuContext context,
+        ulong offset,
+        out ulong start,
+        out ulong end,
+        out int memoryType)
+    {
+        const ulong infoAddress = GuestMemoryBase + 0x200;
+        context[CpuRegister.Rdi] = offset;
+        context[CpuRegister.Rsi] = 0;
+        context[CpuRegister.Rdx] = infoAddress;
+        context[CpuRegister.Rcx] = 24;
+
+        var result = KernelMemoryCompatExports.KernelDirectMemoryQuery(context);
+        Assert.True(context.TryReadUInt64(infoAddress, out start));
+        Assert.True(context.TryReadUInt64(infoAddress + 8, out end));
+        Assert.True(context.TryReadInt32(infoAddress + 16, out memoryType));
+        return result;
+    }
+
+    private static void AssertDirectMemoryRange(
+        CpuContext context,
+        ulong offset,
+        ulong expectedStart,
+        ulong expectedEnd,
+        int expectedMemoryType)
+    {
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            QueryDirectMemory(context, offset, out var start, out var end, out var memoryType));
+        Assert.Equal(expectedStart, start);
+        Assert.Equal(expectedEnd, end);
+        Assert.Equal(expectedMemoryType, memoryType);
     }
 
     private static void ReleaseDirectMemory(CpuContext context, ulong start, ulong length)
