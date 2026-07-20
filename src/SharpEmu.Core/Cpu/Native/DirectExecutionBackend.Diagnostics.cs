@@ -28,14 +28,12 @@ public sealed partial class DirectExecutionBackend
 		ulong arg4,
 		ulong arg5)
 	{
-		if (_recentImportTrace.Length == 0)
+		if (_recentImportTrace is null)
 		{
 			return;
 		}
 
-		lock (_recentImportTraceGate)
-		{
-			_recentImportTrace[_recentImportTraceWriteIndex] = new RecentImportTraceEntry(
+		_recentImportTrace.Record(new RecentImportTraceEntry(
 				dispatchIndex,
 				nid,
 				GuestThreadExecution.CurrentGuestThreadHandle,
@@ -45,46 +43,11 @@ public sealed partial class DirectExecutionBackend
 				arg2,
 				arg3,
 				arg4,
-				arg5);
-			_recentImportTraceWriteIndex = (_recentImportTraceWriteIndex + 1) % _recentImportTrace.Length;
-			if (_recentImportTraceCount < _recentImportTrace.Length)
-			{
-				_recentImportTraceCount++;
-			}
-		}
+				arg5));
 	}
 
-	private string? BuildRecentImportTrace(int requestedLimit)
-	{
-		lock (_recentImportTraceGate)
-		{
-			var count = Math.Min(_recentImportTraceCount, Math.Max(requestedLimit, 0));
-			if (count == 0)
-			{
-				return null;
-			}
-
-			var builder = new System.Text.StringBuilder(count * 128);
-			var readIndex = (_recentImportTraceWriteIndex - count + _recentImportTrace.Length) %
-				_recentImportTrace.Length;
-			for (var i = 0; i < count; i++)
-			{
-				var entry = _recentImportTrace[(readIndex + i) % _recentImportTrace.Length];
-				if (i > 0)
-				{
-					builder.AppendLine();
-				}
-				builder.Append(
-					$"#{entry.DispatchIndex} nid={entry.Nid} thread=0x{entry.ThreadHandle:X16} " +
-					$"ret=0x{entry.ReturnRip:X16} " +
-					$"rdi=0x{entry.Arg0:X16} rsi=0x{entry.Arg1:X16} " +
-					$"rdx=0x{entry.Arg2:X16} rcx=0x{entry.Arg3:X16} " +
-					$"r8=0x{entry.Arg4:X16} r9=0x{entry.Arg5:X16}");
-			}
-
-			return builder.ToString();
-		}
-	}
+	private string? BuildRecentImportTrace(int requestedLimit, ulong? prioritizedThreadHandle) =>
+		_recentImportTrace?.Build(requestedLimit, prioritizedThreadHandle);
 
 	private void RecordDeferredBootstrapTrace(
 		long dispatchIndex,
@@ -153,23 +116,17 @@ public sealed partial class DirectExecutionBackend
 
 	private void DumpRecentImportTrace()
 	{
-		if (_recentImportTraceCount == 0)
+		var trace = _recentImportTrace?.Build(_recentImportTrace.Capacity, prioritizedThreadHandle: null);
+		if (string.IsNullOrWhiteSpace(trace))
 		{
 			return;
 		}
-		Log.Info($"   Recent import calls ({_recentImportTraceCount}):");
-		int num = (_recentImportTraceWriteIndex - _recentImportTraceCount + _recentImportTrace.Length) % _recentImportTrace.Length;
-		for (int i = 0; i < _recentImportTraceCount; i++)
+
+		var lines = trace.Split(Environment.NewLine);
+		Log.Info($"   Recent import calls ({lines.Length}):");
+		foreach (var line in lines)
 		{
-			int num2 = (num + i) % _recentImportTrace.Length;
-			var entry = _recentImportTrace[num2];
-			if (!string.IsNullOrEmpty(entry.Nid))
-			{
-				Log.Info(
-					$"     #{entry.DispatchIndex} nid={entry.Nid} thread=0x{entry.ThreadHandle:X16} " +
-					$"ret=0x{entry.ReturnRip:X16} " +
-					$"rdi=0x{entry.Arg0:X16} rsi=0x{entry.Arg1:X16} rdx=0x{entry.Arg2:X16}");
-			}
+			Log.Info($"     {line}");
 		}
 	}
 
