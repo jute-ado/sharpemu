@@ -150,6 +150,7 @@ public sealed class NativeImportBridgeTests
         Assert.Contains("rcx=0x0000000012345678", execution.ImportTrace, StringComparison.Ordinal);
         Assert.Contains("r8=0x0000000087654321", execution.ImportTrace, StringComparison.Ordinal);
         Assert.Contains("r9=0x0000000009ABCDEF", execution.ImportTrace, StringComparison.Ordinal);
+        Assert.Contains("rax=0x000000000000002A", execution.ImportTrace, StringComparison.Ordinal);
     }
 
     [HostX64Fact]

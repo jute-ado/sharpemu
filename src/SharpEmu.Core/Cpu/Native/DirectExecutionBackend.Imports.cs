@@ -332,9 +332,10 @@ public sealed partial class DirectExecutionBackend
 				Console.Error.Flush();
 			}
 		}
+		RecentImportTraceEntry? recentImportTraceEntry = null;
 		if (!flag0)
 		{
-			RecordRecentImportTrace(
+			recentImportTraceEntry = RecordRecentImportTrace(
 				num,
 				importStubEntry.Nid,
 				num7,
@@ -523,6 +524,7 @@ public sealed partial class DirectExecutionBackend
 					LastError = transferError ?? "failed to prepare guest context transfer";
 					ActiveForcedGuestExit = true;
 					cpuContext[CpuRegister.Rax] = 18446744071562199298uL;
+					recentImportTraceEntry?.Complete(cpuContext[CpuRegister.Rax]);
 					return cpuContext[CpuRegister.Rax];
 				}
 
@@ -535,6 +537,7 @@ public sealed partial class DirectExecutionBackend
 						$"fiber=0x{GuestThreadExecution.CurrentFiberAddress:X16}");
 				}
 
+				recentImportTraceEntry?.Complete(cpuContext[CpuRegister.Rax]);
 				return unchecked((ulong)transferFrame);
 			}
 			if (GuestThreadExecution.TryConsumeCurrentEntryExit(out var exitValue, out var exitReason))
@@ -559,6 +562,7 @@ public sealed partial class DirectExecutionBackend
 			}
 			StoreImportVectorReturn(cpuContext, argPackPtr);
 			DrainDeferredBootstrapTraces();
+			recentImportTraceEntry?.Complete(cpuContext[CpuRegister.Rax]);
 			return cpuContext[CpuRegister.Rax];
 		}
 		catch (Exception ex)
@@ -568,6 +572,7 @@ public sealed partial class DirectExecutionBackend
 			Console.Error.WriteLine($"[LOADER][ERROR] {ex.StackTrace}");
 			cpuContext[CpuRegister.Rax] = 18446744071562199298uL;
 			DrainDeferredBootstrapTraces();
+			recentImportTraceEntry?.Complete(cpuContext[CpuRegister.Rax]);
 			return 18446744071562199298uL;
 		}
 	}
@@ -603,7 +608,7 @@ public sealed partial class DirectExecutionBackend
 		cpuContext[CpuRegister.R14] = *(ulong*)(argPackPtr + 80);
 		cpuContext[CpuRegister.R15] = *(ulong*)(argPackPtr + 88);
 		cpuContext[CpuRegister.Rsp] = (ulong)argPackPtr + 96uL;
-		RecordRecentImportTrace(
+		var recentImportTraceEntry = RecordRecentImportTrace(
 			dispatchIndex,
 			importStubEntry.Nid,
 			returnRip,
@@ -686,6 +691,7 @@ public sealed partial class DirectExecutionBackend
 		}
 
 		result = cpuContext[CpuRegister.Rax];
+		recentImportTraceEntry?.Complete(result);
 		return true;
 	}
 

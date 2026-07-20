@@ -5,7 +5,7 @@ using System.Text;
 
 namespace SharpEmu.Core.Cpu.Native;
 
-internal readonly record struct RecentImportTraceEntry(
+internal sealed class RecentImportTraceEntry(
     long DispatchIndex,
     string Nid,
     ulong ThreadHandle,
@@ -15,7 +15,40 @@ internal readonly record struct RecentImportTraceEntry(
     ulong Arg2,
     ulong Arg3,
     ulong Arg4,
-    ulong Arg5);
+    ulong Arg5)
+{
+    private ulong _returnValue;
+    private int _isComplete;
+
+    public long DispatchIndex { get; } = DispatchIndex;
+    public string Nid { get; } = Nid;
+    public ulong ThreadHandle { get; } = ThreadHandle;
+    public ulong ReturnRip { get; } = ReturnRip;
+    public ulong Arg0 { get; } = Arg0;
+    public ulong Arg1 { get; } = Arg1;
+    public ulong Arg2 { get; } = Arg2;
+    public ulong Arg3 { get; } = Arg3;
+    public ulong Arg4 { get; } = Arg4;
+    public ulong Arg5 { get; } = Arg5;
+
+    public void Complete(ulong returnValue)
+    {
+        _returnValue = returnValue;
+        Volatile.Write(ref _isComplete, 1);
+    }
+
+    public bool TryGetReturnValue(out ulong returnValue)
+    {
+        if (Volatile.Read(ref _isComplete) == 0)
+        {
+            returnValue = 0;
+            return false;
+        }
+
+        returnValue = _returnValue;
+        return true;
+    }
+}
 
 internal sealed class RecentImportTraceBuffer
 {
@@ -117,12 +150,15 @@ internal sealed class RecentImportTraceBuffer
             }
 
             var entry = entries[index];
+            var returnValue = entry.TryGetReturnValue(out var completedReturnValue)
+                ? $"0x{completedReturnValue:X16}"
+                : "<pending>";
             builder.Append(
                 $"#{entry.DispatchIndex} nid={entry.Nid} thread=0x{entry.ThreadHandle:X16} " +
                 $"ret=0x{entry.ReturnRip:X16} " +
                 $"rdi=0x{entry.Arg0:X16} rsi=0x{entry.Arg1:X16} " +
                 $"rdx=0x{entry.Arg2:X16} rcx=0x{entry.Arg3:X16} " +
-                $"r8=0x{entry.Arg4:X16} r9=0x{entry.Arg5:X16}");
+                $"r8=0x{entry.Arg4:X16} r9=0x{entry.Arg5:X16} rax={returnValue}");
         }
 
         return builder.ToString();
