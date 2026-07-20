@@ -122,8 +122,6 @@ public static partial class KernelMemoryCompatExports
     // though that file exists and a fresh probe would find it.
     private static readonly StringComparer HostFsPathComparer =
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-    private static readonly StringComparison HostFsPathComparison =
-        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
     private static readonly HashSet<string> _negativeStatCache = new(HostFsPathComparer);
     private static readonly ConcurrentDictionary<string, ulong> _aprFileSizeCache = new(HostFsPathComparer);
     private static long _nextFileDescriptor = 2;
@@ -5379,12 +5377,9 @@ public static partial class KernelMemoryCompatExports
 
     public static string ResolveGuestPath(string guestPath)
     {
-        if (TryResolveGuestPath(guestPath, out var hostPath))
-        {
-            return hostPath;
-        }
-
-        throw new UnauthorizedAccessException($"Guest path is outside the configured mounts: '{guestPath}'.");
+        return TryResolveGuestPath(guestPath, out var hostPath)
+            ? hostPath
+            : string.Empty;
     }
 
     public static bool TryResolveGuestPath(string guestPath, out string hostPath)
@@ -5396,9 +5391,21 @@ public static partial class KernelMemoryCompatExports
         }
 
         var normalizedGuestPath = guestPath.Replace('\\', '/');
-        if (TryResolveRegisteredGuestMount(normalizedGuestPath, out hostPath))
+        if (TryResolveRegisteredGuestMount(
+                normalizedGuestPath,
+                out hostPath,
+                out var mountPrefixMatched))
         {
             return true;
+        }
+
+        // A registered mount that claimed this prefix remains authoritative
+        // even when containment or reparse-point validation rejects the path.
+        // Falling through could resolve an overlapping built-in mount against a
+        // different root and turn the denial back into access.
+        if (mountPrefixMatched)
+        {
+            return false;
         }
 
         if (TryGetMountRelativePath(normalizedGuestPath, "/devlog/app", out var relativePath) ||
@@ -5551,9 +5558,13 @@ public static partial class KernelMemoryCompatExports
         path.StartsWith("//", StringComparison.Ordinal) ||
         (path.Length >= 2 && char.IsAsciiLetter(path[0]) && path[1] == ':');
 
-    private static bool TryResolveRegisteredGuestMount(string guestPath, out string hostPath)
+    private static bool TryResolveRegisteredGuestMount(
+        string guestPath,
+        out string hostPath,
+        out bool mountPrefixMatched)
     {
         hostPath = string.Empty;
+        mountPrefixMatched = false;
         var normalizedGuestPath = NormalizeGuestStatCachePath(guestPath);
         if (normalizedGuestPath is null)
         {
@@ -5581,23 +5592,9 @@ public static partial class KernelMemoryCompatExports
             return false;
         }
 
+        mountPrefixMatched = true;
         var relativePath = normalizedGuestPath[matchedMountPoint.Length..].TrimStart('/');
-        var candidate = Path.GetFullPath(Path.Combine(
-            matchedHostRoot,
-            NormalizeMountRelativePath(relativePath)));
-        var rootWithSeparator = Path.TrimEndingDirectorySeparator(matchedHostRoot) + Path.DirectorySeparatorChar;
-        // Host-semantics comparison: an ignore-case check on a case-sensitive
-        // host would let a relative path escape into a sibling directory that
-        // differs from the mount root only by case (root ".../Save" vs
-        // sibling ".../save").
-        if (!string.Equals(candidate, matchedHostRoot, HostFsPathComparison) &&
-            !candidate.StartsWith(rootWithSeparator, HostFsPathComparison))
-        {
-            return false;
-        }
-
-        hostPath = candidate;
-        return true;
+        return TryResolvePathWithinRoot(matchedHostRoot, relativePath, out hostPath);
     }
 
     private static string? ResolveApp0Root()
