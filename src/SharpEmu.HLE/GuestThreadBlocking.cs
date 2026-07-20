@@ -21,6 +21,7 @@ public static class GuestThreadBlocking
     public const int WaitSliceMilliseconds = 50;
 
     private static volatile bool _shutdownRequested;
+    private static readonly ManualResetEventSlim _shutdownSignal = new(false);
     private static readonly ConcurrentDictionary<ulong, string> _blockDescriptions = new();
     private static readonly ConcurrentDictionary<ulong, byte> _interrupted = new();
 
@@ -34,12 +35,24 @@ public static class GuestThreadBlocking
     public static void BeginExecution()
     {
         _shutdownRequested = false;
+        _shutdownSignal.Reset();
         _blockDescriptions.Clear();
         _interrupted.Clear();
     }
 
     /// <summary>Requests all sliced waits to unwind during backend teardown.</summary>
-    public static void RequestShutdown() => _shutdownRequested = true;
+    public static void RequestShutdown()
+    {
+        _shutdownRequested = true;
+        _shutdownSignal.Set();
+    }
+
+    /// <summary>
+    /// Waits for execution shutdown or the supplied host timeout. Unlike sliced
+    /// polling, shutdown wakes every waiter immediately.
+    /// </summary>
+    public static bool WaitForShutdown(int millisecondsTimeout) =>
+        _shutdownSignal.Wait(millisecondsTimeout);
 
     /// <summary>Records what a guest thread is about to wait on.</summary>
     public static void NoteBlocked(ulong guestThreadHandle, string description)
