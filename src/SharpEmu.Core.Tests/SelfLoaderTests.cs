@@ -10,6 +10,7 @@ using Xunit;
 
 namespace SharpEmu.Core.Tests;
 
+[Collection(PhysicalVirtualMemoryTestCollection.Name)]
 public sealed class SelfLoaderTests
 {
     private const int ElfHeaderSize = 64;
