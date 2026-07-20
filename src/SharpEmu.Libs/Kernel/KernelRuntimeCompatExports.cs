@@ -1016,7 +1016,20 @@ public static class KernelRuntimeCompatExports
                 : AlignUp(_nextReservedVirtualBase, effectiveAlignment);
         }
 
-        if (!TryReserveVirtualRange(ctx, desiredAddress, length, effectiveAlignment, allowSearch: !fixedMapping, out var mappedAddress))
+        if (ShouldTraceVirtualMemory())
+        {
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] reserve_virtual_range_attempt: req=0x{requestedAddress:X16} desired=0x{desiredAddress:X16} len=0x{length:X16} flags=0x{flags:X8} align=0x{effectiveAlignment:X16}");
+        }
+
+        if (!TryReserveVirtualRange(
+                ctx,
+                desiredAddress,
+                length,
+                effectiveAlignment,
+                allowSearch: !fixedMapping,
+                replaceFixedRange: fixedMapping,
+                out var mappedAddress))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
         }
@@ -2149,6 +2162,7 @@ public static class KernelRuntimeCompatExports
         ulong length,
         ulong alignment,
         bool allowSearch,
+        bool replaceFixedRange,
         out ulong mappedAddress)
     {
         return KernelVirtualRangeAllocator.TryReserve(
@@ -2160,7 +2174,8 @@ public static class KernelRuntimeCompatExports
             allowSearch,
             allowAllocateAtAlternative: allowSearch,
             "reserve_virtual_range",
-            out mappedAddress);
+            out mappedAddress,
+            backPartialOverlap: replaceFixedRange);
     }
 
     private static ulong AlignUp(ulong value, ulong alignment)
