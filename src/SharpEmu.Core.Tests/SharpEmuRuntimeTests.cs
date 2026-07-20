@@ -748,12 +748,18 @@ public sealed class SharpEmuRuntimeTests
         Assert.NotNull(execution.ReportJson);
         using var document = JsonDocument.Parse(execution.ReportJson);
         var cpuTrap = document.RootElement.GetProperty("cpuTrap");
+        var trapLocation = cpuTrap.GetProperty("location");
+        Assert.Equal("eboot.bin", trapLocation.GetProperty("imagePath").GetString());
+        Assert.Equal("0x0000000000000012", trapLocation.GetProperty("imageOffset").GetString());
         var frames = cpuTrap.GetProperty("stackFrames").EnumerateArray().ToArray();
         Assert.InRange(frames.Length, 1, 16);
         var frame = frames[0];
         Assert.StartsWith("0x", frame.GetProperty("framePointer").GetString(), StringComparison.Ordinal);
         Assert.StartsWith("0x", frame.GetProperty("nextFramePointer").GetString(), StringComparison.Ordinal);
         Assert.Equal("0x0000000800000009", frame.GetProperty("returnAddress").GetString());
+        var returnLocation = frame.GetProperty("returnLocation");
+        Assert.Equal("eboot.bin", returnLocation.GetProperty("imagePath").GetString());
+        Assert.Equal("0x0000000000000009", returnLocation.GetProperty("imageOffset").GetString());
     }
 
     [Fact]

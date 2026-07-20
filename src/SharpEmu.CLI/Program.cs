@@ -1609,7 +1609,10 @@ internal static partial class Program
                 ModuleLoadFailures: BuildModuleFailureReports(runtime?.LastPreparedApplication, executablePath),
                 Result: executionResult,
                 CpuSession: BuildCpuSessionReport(runtime?.LastCpuSessionSummary),
-                CpuTrap: BuildCpuTrapReport(runtime?.LastCpuTrapInfo),
+                CpuTrap: BuildCpuTrapReport(
+                    runtime?.LastCpuTrapInfo,
+                    runtime?.LastPreparedApplication,
+                    executablePath),
                 CpuMemoryFault: BuildCpuMemoryFaultReport(runtime?.LastCpuMemoryFaultInfo),
                 CpuNotImplemented: BuildCpuNotImplementedReport(runtime?.LastCpuNotImplementedInfo),
                 SessionSummary: runtime?.LastSessionSummary,
@@ -2038,7 +2041,10 @@ internal static partial class Program
             value.UniqueNidsHit);
     }
 
-    private static CliCpuTrapReport? BuildCpuTrapReport(CpuTrapInfo? trap)
+    private static CliCpuTrapReport? BuildCpuTrapReport(
+        CpuTrapInfo? trap,
+        PreparedApplication? application,
+        string executablePath)
     {
         if (trap is not { } value)
         {
@@ -2057,15 +2063,54 @@ internal static partial class Program
             value.InstructionText,
             value.InstructionFlowControl,
             BuildCpuRegisterReport(value.Registers),
-            BuildCpuStackFrameReports(value.StackFrames));
+            BuildCodeLocationReport(value.InstructionPointer, application, executablePath),
+            BuildCpuStackFrameReports(value.StackFrames, application, executablePath));
     }
 
     private static IReadOnlyList<CliCpuStackFrameReport>? BuildCpuStackFrameReports(
-        IReadOnlyList<CpuStackFrame>? stackFrames) =>
+        IReadOnlyList<CpuStackFrame>? stackFrames,
+        PreparedApplication? application,
+        string executablePath) =>
         stackFrames?.Select(frame => new CliCpuStackFrameReport(
             FormatAddress(frame.FramePointer),
             FormatAddress(frame.NextFramePointer),
-            FormatAddress(frame.ReturnAddress))).ToArray();
+            FormatAddress(frame.ReturnAddress),
+            BuildCodeLocationReport(frame.ReturnAddress, application, executablePath))).ToArray();
+
+    private static CliCodeLocationReport? BuildCodeLocationReport(
+        ulong address,
+        PreparedApplication? application,
+        string executablePath)
+    {
+        if (application is null)
+        {
+            return null;
+        }
+
+        if (ImageContainsAddress(application.MainImage, address))
+        {
+            return new CliCodeLocationReport(
+                BuildBundleRelativePath(executablePath, executablePath),
+                FormatAddress(address - application.MainImage.ImageBase));
+        }
+
+        foreach (var module in application.Modules)
+        {
+            if (ImageContainsAddress(module.Image, address))
+            {
+                return new CliCodeLocationReport(
+                    BuildBundleRelativePath(executablePath, module.Path),
+                    FormatAddress(address - module.Image.ImageBase));
+            }
+        }
+
+        return null;
+    }
+
+    private static bool ImageContainsAddress(SelfImage image, ulong address) =>
+        image.MappedRegions.Any(region =>
+            address >= region.VirtualAddress &&
+            address - region.VirtualAddress < region.MemorySize);
 
     private static CliCpuRegisterReport? BuildCpuRegisterReport(CpuRegisterSnapshot? registers) =>
         registers is not { } value
@@ -2601,12 +2646,18 @@ internal static partial class Program
         string? InstructionText,
         string? InstructionFlowControl,
         CliCpuRegisterReport? Registers,
+        CliCodeLocationReport? Location,
         IReadOnlyList<CliCpuStackFrameReport>? StackFrames);
 
     private sealed record CliCpuStackFrameReport(
         string FramePointer,
         string NextFramePointer,
-        string ReturnAddress);
+        string ReturnAddress,
+        CliCodeLocationReport? ReturnLocation);
+
+    private sealed record CliCodeLocationReport(
+        string ImagePath,
+        string ImageOffset);
 
     private sealed record CliCpuRegisterReport(
         string Rax,
