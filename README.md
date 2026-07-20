@@ -47,7 +47,8 @@ test-driven workflow. Major downstream differences include:
   and immediate teardown signaling for interruptible guest waits
 - guest virtual- and direct-memory query contracts with exact argument
   validation, registered stack classification, terminal direct-memory ranges,
-  Prospero-compatible gap errors, and idempotent fixed-range reservations
+  Prospero-compatible gap errors, subrange direct-memory release, and
+  idempotent fixed-range reservations
 - application plugin discovery and symbol resolution, including deferred module
   initializers that start once and can be retried after a guest failure
 - persistent save-data mutations, including quota-aware mount information,

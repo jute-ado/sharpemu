@@ -3418,19 +3418,18 @@ public static partial class KernelMemoryCompatExports
     {
         var start = ctx[CpuRegister.Rdi];
         var length = ctx[CpuRegister.Rsi];
-        if (length == 0)
+        if (unchecked((long)start) < 0 || length == 0)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
         lock (_memoryGate)
         {
-            if (!_directAllocations.TryGetValue(start, out var allocation) || allocation.Length != length)
+            if (!TryReleaseDirectMemoryRangeLocked(start, length))
             {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED;
             }
 
-            _directAllocations.Remove(start);
             _nextPhysicalAddress = GetDirectMemoryHighWaterMarkLocked();
         }
 
@@ -3447,20 +3446,26 @@ public static partial class KernelMemoryCompatExports
         var start = ctx[CpuRegister.Rdi];
         var length = ctx[CpuRegister.Rsi];
 
-        if (length == 0)
+        const ulong pageSize = 0x4000;
+        if (unchecked((long)start) < 0 ||
+            (start & (pageSize - 1)) != 0 ||
+            (length & (pageSize - 1)) != 0)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
+        if (length == 0)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
         lock (_memoryGate)
         {
-            if (!_directAllocations.TryGetValue(start, out var allocation) ||
-                allocation.Length != length)
+            if (!TryReleaseDirectMemoryRangeLocked(start, length))
             {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED;
             }
 
-            _directAllocations.Remove(start);
             _nextPhysicalAddress = GetDirectMemoryHighWaterMarkLocked();
         }
 
@@ -7485,6 +7490,57 @@ public static partial class KernelMemoryCompatExports
         }
 
         return highWaterMark;
+    }
+
+    private static bool TryReleaseDirectMemoryRangeLocked(ulong start, ulong length)
+    {
+        if (!TryAddU64(start, length, out var end))
+        {
+            return false;
+        }
+
+        var containingAllocation = default(DirectAllocation);
+        var allocationEnd = 0UL;
+        var found = false;
+        foreach (var allocation in _directAllocations.Values)
+        {
+            if (!TryAddU64(allocation.Start, allocation.Length, out var candidateEnd) ||
+                start < allocation.Start ||
+                start >= candidateEnd ||
+                end > candidateEnd)
+            {
+                continue;
+            }
+
+            containingAllocation = allocation;
+            allocationEnd = candidateEnd;
+            found = true;
+            break;
+        }
+
+        if (!found)
+        {
+            return false;
+        }
+
+        _directAllocations.Remove(containingAllocation.Start);
+        if (start > containingAllocation.Start)
+        {
+            _directAllocations[containingAllocation.Start] = new DirectAllocation(
+                containingAllocation.Start,
+                start - containingAllocation.Start,
+                containingAllocation.MemoryType);
+        }
+
+        if (end < allocationEnd)
+        {
+            _directAllocations[end] = new DirectAllocation(
+                end,
+                allocationEnd - end,
+                containingAllocation.MemoryType);
+        }
+
+        return true;
     }
 
     private static unsafe bool TryReadHostMemory(ulong address, Span<byte> destination)
