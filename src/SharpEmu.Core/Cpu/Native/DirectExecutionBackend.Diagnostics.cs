@@ -25,17 +25,56 @@ public sealed partial class DirectExecutionBackend
 		ulong arg1,
 		ulong arg2)
 	{
-		_recentImportTrace[_recentImportTraceWriteIndex] = new RecentImportTraceEntry(
-			dispatchIndex,
-			nid,
-			returnRip,
-			arg0,
-			arg1,
-			arg2);
-		_recentImportTraceWriteIndex = (_recentImportTraceWriteIndex + 1) % _recentImportTrace.Length;
-		if (_recentImportTraceCount < _recentImportTrace.Length)
+		if (_recentImportTrace.Length == 0)
 		{
-			_recentImportTraceCount++;
+			return;
+		}
+
+		lock (_recentImportTraceGate)
+		{
+			_recentImportTrace[_recentImportTraceWriteIndex] = new RecentImportTraceEntry(
+				dispatchIndex,
+				nid,
+				GuestThreadExecution.CurrentGuestThreadHandle,
+				returnRip,
+				arg0,
+				arg1,
+				arg2);
+			_recentImportTraceWriteIndex = (_recentImportTraceWriteIndex + 1) % _recentImportTrace.Length;
+			if (_recentImportTraceCount < _recentImportTrace.Length)
+			{
+				_recentImportTraceCount++;
+			}
+		}
+	}
+
+	private string? BuildRecentImportTrace(int requestedLimit)
+	{
+		lock (_recentImportTraceGate)
+		{
+			var count = Math.Min(_recentImportTraceCount, Math.Max(requestedLimit, 0));
+			if (count == 0)
+			{
+				return null;
+			}
+
+			var builder = new System.Text.StringBuilder(count * 128);
+			var readIndex = (_recentImportTraceWriteIndex - count + _recentImportTrace.Length) %
+				_recentImportTrace.Length;
+			for (var i = 0; i < count; i++)
+			{
+				var entry = _recentImportTrace[(readIndex + i) % _recentImportTrace.Length];
+				if (i > 0)
+				{
+					builder.AppendLine();
+				}
+				builder.Append(
+					$"#{entry.DispatchIndex} nid={entry.Nid} thread=0x{entry.ThreadHandle:X16} " +
+					$"ret=0x{entry.ReturnRip:X16} " +
+					$"rdi=0x{entry.Arg0:X16} rsi=0x{entry.Arg1:X16} rdx=0x{entry.Arg2:X16}");
+			}
+
+			return builder.ToString();
 		}
 	}
 
@@ -119,7 +158,8 @@ public sealed partial class DirectExecutionBackend
 			if (!string.IsNullOrEmpty(entry.Nid))
 			{
 				Log.Info(
-					$"     #{entry.DispatchIndex} nid={entry.Nid} ret=0x{entry.ReturnRip:X16} " +
+					$"     #{entry.DispatchIndex} nid={entry.Nid} thread=0x{entry.ThreadHandle:X16} " +
+					$"ret=0x{entry.ReturnRip:X16} " +
 					$"rdi=0x{entry.Arg0:X16} rsi=0x{entry.Arg1:X16} rdx=0x{entry.Arg2:X16}");
 			}
 		}

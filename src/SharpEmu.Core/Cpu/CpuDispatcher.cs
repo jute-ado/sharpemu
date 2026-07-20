@@ -331,7 +331,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
             Environment.NewLine,
             "CpuEngine: native-only");
         _nativeCpuBackend ??= new DirectExecutionBackend(_moduleManager, _hostPlatform);
-        if (_nativeCpuBackend.TryExecute(
+        var nativeExecutionCompleted = _nativeCpuBackend.TryExecute(
                 context,
                 entryPoint,
                 generation,
@@ -341,7 +341,9 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                 frameKind == EntryFrameKind.ModuleInitializer
                     ? NativeEntryReturnContract.IgnoreReturnValue
                     : NativeEntryReturnContract.CaptureExitCode,
-                out var nativeResult))
+                out var nativeResult);
+        LastImportResolutionTrace = _nativeCpuBackend.LastImportResolutionTrace;
+        if (nativeExecutionCompleted)
         {
             var exitCode = frameKind == EntryFrameKind.ProcessEntry &&
                 _nativeCpuBackend.LastEntryReturnValue is { } returnValue

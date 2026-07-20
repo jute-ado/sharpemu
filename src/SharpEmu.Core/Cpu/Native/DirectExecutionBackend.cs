@@ -131,6 +131,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private readonly record struct RecentImportTraceEntry(
 		long DispatchIndex,
 		string Nid,
+		ulong ThreadHandle,
 		ulong ReturnRip,
 		ulong Arg0,
 		ulong Arg1,
@@ -373,7 +374,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private bool _lazyImportStubPoolMapped;
 
-	private readonly RecentImportTraceEntry[] _recentImportTrace = new RecentImportTraceEntry[64];
+	private RecentImportTraceEntry[] _recentImportTrace = Array.Empty<RecentImportTraceEntry>();
+
+	private readonly object _recentImportTraceGate = new();
 
 	private int _recentImportTraceCount;
 
@@ -864,6 +867,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	public int LastSessionImportsHit { get; private set; }
 
+	public string? LastImportResolutionTrace { get; private set; }
+
 	public ulong? LastEntryReturnValue { get; private set; }
 
 	private unsafe static ulong ReadCtxU64(void* contextRecord, int offset)
@@ -1132,13 +1137,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		LastError = null;
 		LastTrapInfo = null;
 		LastSessionImportsHit = 0;
+		LastImportResolutionTrace = null;
 		LastEntryReturnValue = null;
 		_sessionEntryImportCount = 0;
 		var workerImportsBefore = GetTotalGuestThreadImports();
 		InitializeRuntimeSymbolIndex(runtimeSymbols);
 		ResetLazyDlsymStubState();
-		_recentImportTraceCount = 0;
-		_recentImportTraceWriteIndex = 0;
 		lock (_deferredBootstrapTraceGate)
 		{
 			_deferredBootstrapTraceCount = 0;
@@ -1162,6 +1166,14 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_SETUP"));
 		_logImportFrames = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_FRAMES"), "1", StringComparison.Ordinal);
 		_logImportRecent = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_RECENT"), "1", StringComparison.Ordinal);
+		var importTraceCapacity = executionOptions.ImportTraceLimit > 0
+			? Math.Min(executionOptions.ImportTraceLimit, 4096)
+			: _logImportRecent ? 64 : 0;
+		_recentImportTrace = importTraceCapacity == 0
+			? Array.Empty<RecentImportTraceEntry>()
+			: new RecentImportTraceEntry[importTraceCapacity];
+		_recentImportTraceCount = 0;
+		_recentImportTraceWriteIndex = 0;
 		_logStackCheck = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_STACK_CHK"), "1", StringComparison.Ordinal);
 		_probeImportReturn = Environment.GetEnvironmentVariable("SHARPEMU_PROBE_IMPORT_RET");
 		_importFilter = Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_FILTER");
@@ -1267,6 +1279,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			LastSessionImportsHit = SaturateImportCount(
 				workerImports,
 				Volatile.Read(ref _sessionEntryImportCount));
+			LastImportResolutionTrace = executionOptions.ImportTraceLimit > 0
+				? BuildRecentImportTrace(executionOptions.ImportTraceLimit)
+				: null;
 			shutdownRegistration.Dispose();
 			if (ReferenceEquals(_activeSessionBackend, this))
 			{

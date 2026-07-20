@@ -13,6 +13,8 @@ internal readonly record struct SyntheticGuestExecutionResult(
     string? FailureDetail)
 {
     public int ImportsHit { get; init; }
+
+    public string? ImportTrace { get; init; }
 }
 
 internal static class SyntheticNativeGuest
@@ -26,7 +28,8 @@ internal static class SyntheticNativeGuest
         string moduleName,
         IReadOnlyDictionary<ulong, string>? importStubs = null,
         Action<ModuleManager>? configureModules = null,
-        ulong codeAddress = DefaultCodeAddress)
+        ulong codeAddress = DefaultCodeAddress,
+        CpuExecutionOptions executionOptions = default)
     {
         return ExecuteModuleInitializers(
             code,
@@ -35,7 +38,8 @@ internal static class SyntheticNativeGuest
             executionCount: 1,
             importStubs,
             configureModules,
-            codeAddress)[0];
+            codeAddress,
+            executionOptions: executionOptions)[0];
     }
 
     public static IReadOnlyList<SyntheticGuestExecutionResult> ExecuteModuleInitializers(
@@ -47,7 +51,8 @@ internal static class SyntheticNativeGuest
         Action<ModuleManager>? configureModules = null,
         ulong codeAddress = DefaultCodeAddress,
         ulong guestThreadHandle = 0,
-        bool useDedicatedHostThreads = false)
+        bool useDedicatedHostThreads = false,
+        CpuExecutionOptions executionOptions = default)
     {
         ArgumentNullException.ThrowIfNull(code);
         ArgumentException.ThrowIfNullOrWhiteSpace(moduleName);
@@ -99,13 +104,15 @@ internal static class SyntheticNativeGuest
                     entryPoint,
                     generation,
                     importStubs,
-                    moduleName: currentModuleName);
+                    moduleName: currentModuleName,
+                    executionOptions: executionOptions);
                 executions[index] = new SyntheticGuestExecutionResult(
                     result,
                     dispatcher.LastSessionSummary.Reason,
                     dispatcher.LastNotImplementedInfo?.Detail)
                 {
                     ImportsHit = dispatcher.LastSessionSummary.ImportsHit,
+                    ImportTrace = dispatcher.LastImportResolutionTrace,
                 };
             }
             finally

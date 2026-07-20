@@ -332,7 +332,7 @@ public sealed partial class DirectExecutionBackend
 				Console.Error.Flush();
 			}
 		}
-		if (!flag0 && !isGuestWorker)
+		if (!flag0)
 		{
 			RecordRecentImportTrace(
 				num,
@@ -600,6 +600,13 @@ public sealed partial class DirectExecutionBackend
 		cpuContext[CpuRegister.R14] = *(ulong*)(argPackPtr + 80);
 		cpuContext[CpuRegister.R15] = *(ulong*)(argPackPtr + 88);
 		cpuContext[CpuRegister.Rsp] = (ulong)argPackPtr + 96uL;
+		RecordRecentImportTrace(
+			dispatchIndex,
+			importStubEntry.Nid,
+			returnRip,
+			cpuContext[CpuRegister.Rdi],
+			cpuContext[CpuRegister.Rsi],
+			cpuContext[CpuRegister.Rdx]);
 
 		if (_activeGuestThreadState is { } activeGuestThreadState)
 		{
