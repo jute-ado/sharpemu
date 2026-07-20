@@ -107,6 +107,15 @@ internal static unsafe class VulkanVideoPresenter
     private const uint DefaultWindowWidth = 1920;
     private const uint DefaultWindowHeight = 1080;
 
+    internal static (uint Width, uint Height) ResolveLogicalExtent(
+        uint physicalWidth,
+        uint physicalHeight,
+        uint logicalWidth = 0,
+        uint logicalHeight = 0) =>
+        (
+            logicalWidth == 0 ? physicalWidth : logicalWidth,
+            logicalHeight == 0 ? physicalHeight : logicalHeight);
+
     internal enum StorageImageComponentKind
     {
         Float,
@@ -5791,12 +5800,19 @@ internal static unsafe class VulkanVideoPresenter
                 ObjectType.Image,
                 image.Handle,
                 $"guest flip v{version} source 0x{source.Address:X16}");
+            var logicalExtent = ResolveLogicalExtent(
+                source.Width,
+                source.Height,
+                source.LogicalWidth,
+                source.LogicalHeight);
             return new GuestImageResource
             {
                 Address = source.Address,
                 FlipVersion = version,
                 Width = source.Width,
                 Height = source.Height,
+                LogicalWidth = logicalExtent.Width,
+                LogicalHeight = logicalExtent.Height,
                 MipLevels = 1,
                 GuestFormat = source.GuestFormat,
                 Format = source.Format,
@@ -7957,11 +7973,14 @@ internal static unsafe class VulkanVideoPresenter
             SetDebugName(ObjectType.Image, image.Handle, $"SharpEmu scratch storage {width}x{height} {vkFormat}");
             SetDebugName(ObjectType.ImageView, view.Handle, $"SharpEmu scratch storage {width}x{height} {vkFormat} view");
 
+            var logicalExtent = ResolveLogicalExtent(width, height);
             var guestImage = new GuestImageResource
             {
                 Address = 0,
                 Width = width,
                 Height = height,
+                LogicalWidth = logicalExtent.Width,
+                LogicalHeight = logicalExtent.Height,
                 MipLevels = 1,
                 GuestFormat = GetGuestTextureFormat(texture.Format, texture.NumberType),
                 Format = vkFormat,
@@ -8163,11 +8182,14 @@ internal static unsafe class VulkanVideoPresenter
                 !_guestImages.ContainsKey(texture.Address))
             {
                 var guestFormat = GetGuestTextureFormat(texture.Format, texture.NumberType);
+                var logicalExtent = ResolveLogicalExtent(width, height);
                 var guestImage = new GuestImageResource
                 {
                     Address = texture.Address,
                     Width = width,
                     Height = height,
+                    LogicalWidth = logicalExtent.Width,
+                    LogicalHeight = logicalExtent.Height,
                     MipLevels = 1,
                     GuestFormat = guestFormat,
                     Format = vkFormat,
