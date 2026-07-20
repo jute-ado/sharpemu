@@ -128,18 +128,6 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		public Dictionary<(NativeTlsInstructionKind Kind, int DestinationRegister, int Displacement, bool Is64Bit), nint> StackCanaryHelpers { get; } = stackCanaryHelpers;
 	}
 
-	private readonly record struct RecentImportTraceEntry(
-		long DispatchIndex,
-		string Nid,
-		ulong ThreadHandle,
-		ulong ReturnRip,
-		ulong Arg0,
-		ulong Arg1,
-		ulong Arg2,
-		ulong Arg3,
-		ulong Arg4,
-		ulong Arg5);
-
 	private readonly record struct DeferredBootstrapTraceEntry(
 		long DispatchIndex,
 		ulong Op,
@@ -377,13 +365,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private bool _lazyImportStubPoolMapped;
 
-	private RecentImportTraceEntry[] _recentImportTrace = Array.Empty<RecentImportTraceEntry>();
-
-	private readonly object _recentImportTraceGate = new();
-
-	private int _recentImportTraceCount;
-
-	private int _recentImportTraceWriteIndex;
+	private RecentImportTraceBuffer? _recentImportTrace;
 
 	private readonly DeferredBootstrapTraceEntry[] _deferredBootstrapTrace = new DeferredBootstrapTraceEntry[32];
 
@@ -1174,10 +1156,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			? Math.Min(executionOptions.ImportTraceLimit, 4096)
 			: _logImportRecent ? 64 : 0;
 		_recentImportTrace = importTraceCapacity == 0
-			? Array.Empty<RecentImportTraceEntry>()
-			: new RecentImportTraceEntry[importTraceCapacity];
-		_recentImportTraceCount = 0;
-		_recentImportTraceWriteIndex = 0;
+			? null
+			: new RecentImportTraceBuffer(importTraceCapacity);
 		_logStackCheck = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_STACK_CHK"), "1", StringComparison.Ordinal);
 		_probeImportReturn = Environment.GetEnvironmentVariable("SHARPEMU_PROBE_IMPORT_RET");
 		_importFilter = Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_FILTER");
@@ -1284,7 +1264,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				workerImports,
 				Volatile.Read(ref _sessionEntryImportCount));
 			LastImportResolutionTrace = executionOptions.ImportTraceLimit > 0
-				? BuildRecentImportTrace(executionOptions.ImportTraceLimit)
+				? BuildRecentImportTrace(
+					executionOptions.ImportTraceLimit,
+					LastTrapInfo?.GuestThreadHandle)
 				: null;
 			shutdownRegistration.Dispose();
 			if (ReferenceEquals(_activeSessionBackend, this))
