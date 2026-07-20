@@ -3829,7 +3829,9 @@ public static partial class KernelMemoryCompatExports
         var flags = unchecked((int)ctx[CpuRegister.Rsi]);
         var infoAddress = ctx[CpuRegister.Rdx];
         var infoSize = ctx[CpuRegister.Rcx];
-        if (infoAddress == 0 || infoSize < OrbisVirtualQueryInfoSize)
+        if (infoAddress == 0 ||
+            infoSize != OrbisVirtualQueryInfoSize ||
+            (flags != 0 && flags != 1))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
