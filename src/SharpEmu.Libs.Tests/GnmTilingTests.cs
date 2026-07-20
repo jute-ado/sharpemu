@@ -31,15 +31,16 @@ public sealed class GnmTilingTests
     }
 
     [Theory]
-    [InlineData(1u, 64, 64, 1, 7u, 2_304ul)]
-    [InlineData(9u, 4_096, 4_096, 4, 13u, 22_413_312ul)]
+    [InlineData(1u, 64, 64, 1, 7u, 2_304ul, 6_400ul)]
+    [InlineData(9u, 4_096, 4_096, 4, 13u, 22_413_312ul, 89_522_176ul)]
     public void TryGetBaseMipPlacement_SumsSmallestFirstChainBeforeBaseMip(
         uint swizzleMode,
         int width,
         int height,
         int bytesPerElement,
         uint mipLevels,
-        ulong expectedOffset)
+        ulong expectedOffset,
+        ulong expectedChainSliceBytes)
     {
         Assert.True(GnmTiling.TryGetBaseMipPlacement(
             swizzleMode,
@@ -50,12 +51,14 @@ public sealed class GnmTilingTests
             out var byteOffset,
             out var inMipTail,
             out var tailElementX,
-            out var tailElementY));
+            out var tailElementY,
+            out var chainSliceBytes));
 
         Assert.Equal(expectedOffset, byteOffset);
         Assert.False(inMipTail);
         Assert.Equal(0, tailElementX);
         Assert.Equal(0, tailElementY);
+        Assert.Equal(expectedChainSliceBytes, chainSliceBytes);
     }
 
     [Fact]
@@ -70,12 +73,14 @@ public sealed class GnmTilingTests
             out var byteOffset,
             out var inMipTail,
             out var tailElementX,
-            out var tailElementY));
+            out var tailElementY,
+            out var chainSliceBytes));
 
         Assert.Equal(0ul, byteOffset);
         Assert.True(inMipTail);
         Assert.Equal(64, tailElementX);
         Assert.Equal(0, tailElementY);
+        Assert.Equal(65_536ul, chainSliceBytes);
     }
 
     [Theory]
@@ -91,6 +96,7 @@ public sealed class GnmTilingTests
             elementsHigh: 256,
             bytesPerElement: 4,
             mipLevels,
+            out _,
             out _,
             out _,
             out _,

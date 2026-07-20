@@ -157,6 +157,10 @@ public static partial class AgcExports
     private const uint Gen5TextureFormatR16G16B16A16Float = 12;
     private const uint Gen5TextureType1D = 8;
     private const uint Gen5TextureType2D = 9;
+    private const uint Gen5TextureType3D = 10;
+    private const uint Gen5TextureTypeCube = 11;
+    private const uint Gen5TextureType1DArray = 12;
+    private const uint Gen5TextureType2DArray = 13;
     private const ulong MaxPresentedTextureBytes = 128UL * 1024UL * 1024UL;
     private const ulong VideoOutPixelFormatA8R8G8B8Srgb = 0x80000000;
     private const ulong VideoOutPixelFormatA8B8G8R8Srgb = 0x80002200;
@@ -452,7 +456,8 @@ public static partial class AgcExports
         TextureDescriptor Descriptor,
         bool IsStorage,
         uint MipLevel,
-        IReadOnlyList<uint> SamplerDescriptor);
+        IReadOnlyList<uint> SamplerDescriptor,
+        bool IsArrayed = false);
 
     private readonly record struct RenderTargetWriter(
         ulong Sequence,
@@ -6177,7 +6182,8 @@ public static partial class AgcExports
                     binding,
                     exportEvaluation.ImageBindings),
                 binding.MipLevel ?? 0,
-                binding.SamplerDescriptor));
+                binding.SamplerDescriptor,
+                Gen5ShaderTranslator.IsArrayedImageBinding(binding)));
         }
 
         IReadOnlyList<Gen5VertexInputBinding> vertexInputs =
@@ -6634,7 +6640,8 @@ public static partial class AgcExports
                     texture,
                     isStorage,
                     binding.MipLevel ?? 0,
-                    binding.SamplerDescriptor));
+                    binding.SamplerDescriptor,
+                    Gen5ShaderTranslator.IsArrayedImageBinding(binding)));
         }
 
         error = string.Empty;
@@ -7812,6 +7819,7 @@ public static partial class AgcExports
                     binding.IsStorage,
                     binding.MipLevel,
                     binding.SamplerDescriptor,
+                    binding.IsArrayed,
                     out var texture))
             {
                 textures.Add(texture);
@@ -8302,18 +8310,23 @@ public static partial class AgcExports
         bool isStorage,
         uint mipLevel,
         IReadOnlyList<uint> samplerDescriptor,
+        bool isArrayed,
         out GuestDrawTexture texture)
     {
         texture = default!;
         if ((descriptor.Type != Gen5TextureType1D &&
-             descriptor.Type != Gen5TextureType2D) ||
+             descriptor.Type != Gen5TextureType2D &&
+             descriptor.Type != Gen5TextureType3D &&
+             descriptor.Type != Gen5TextureTypeCube &&
+             descriptor.Type != Gen5TextureType1DArray &&
+             descriptor.Type != Gen5TextureType2DArray) ||
             descriptor.Width == 0 ||
             descriptor.Height == 0 ||
             descriptor.Width > 8192 ||
             descriptor.Height > 8192)
         {
             TraceTextureFallback(descriptor, "invalid-descriptor");
-            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType);
+            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType, isArrayed);
             return true;
         }
 
@@ -8334,7 +8347,7 @@ public static partial class AgcExports
             TraceTextureFallback(
                 descriptor,
                 $"invalid-byte-count:{sourceByteCount}");
-            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType);
+            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType, isArrayed);
             return true;
         }
 
@@ -8363,7 +8376,7 @@ public static partial class AgcExports
         if (physicalSourceByteCount > MaxPresentedTextureBytes ||
             physicalSourceByteCount > int.MaxValue)
         {
-            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType);
+            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType, isArrayed);
             return true;
         }
 
@@ -8374,8 +8387,8 @@ public static partial class AgcExports
         var baseMipInTail = false;
         var mipTailElementX = 0;
         var mipTailElementY = 0;
-        if (hasElementLayout && resourceMipLevels > 1)
-        {
+        var chainSliceBytes = physicalSourceByteCount;
+        if (hasElementLayout && resourceMipLevels > 1 &&
             GnmTiling.TryGetBaseMipPlacement(
                 descriptor.TileMode,
                 elementsWide,
@@ -8385,14 +8398,26 @@ public static partial class AgcExports
                 out baseMipByteOffset,
                 out baseMipInTail,
                 out mipTailElementX,
-                out mipTailElementY);
+                out mipTailElementY,
+                out var placedChainSliceBytes))
+        {
+            chainSliceBytes = placedChainSliceBytes;
         }
+
+        var wantsArrayUpload = isArrayed &&
+            !isStorage &&
+            descriptor.Address != 0 &&
+            (descriptor.Type == Gen5TextureType2DArray ||
+             descriptor.Type == Gen5TextureType1DArray) &&
+            descriptor.Depth > 1;
+        var arrayUploadLayers = wantsArrayUpload ? descriptor.Depth : 1u;
 
         // Upload-known (not plain availability): the presenter's answer goes
         // generation-stale when the guest CPU rewrites a CPU-backed image
         // (video planes, streamed font atlases), which routes this draw back
         // through the texel copy below so the refresh path re-uploads.
         if (!isStorage &&
+            !wantsArrayUpload &&
             descriptor.Address != 0 &&
             GuestGpu.Current.IsGuestImageUploadKnown(
                 descriptor.Address,
@@ -8415,7 +8440,8 @@ public static partial class AgcExports
                 Pitch: sourceWidth,
                 TileMode: descriptor.TileMode,
                 DstSelect: descriptor.DstSelect,
-                Sampler: ToGuestSampler(samplerDescriptor));
+                Sampler: ToGuestSampler(samplerDescriptor),
+                ArrayedView: isArrayed);
             return true;
         }
 
@@ -8530,7 +8556,9 @@ public static partial class AgcExports
                     descriptor.DstSelect,
                     descriptor.TileMode,
                     sourceWidth,
-                    sampler)))
+                    sampler,
+                    isArrayed,
+                    arrayUploadLayers)))
         {
             texture = new GuestDrawTexture(
                 descriptor.Address,
@@ -8548,8 +8576,68 @@ public static partial class AgcExports
                 Pitch: sourceWidth,
                 TileMode: descriptor.TileMode,
                 DstSelect: descriptor.DstSelect,
-                Sampler: sampler);
+                Sampler: sampler,
+                ArrayedView: isArrayed,
+                ArrayLayers: arrayUploadLayers);
             return true;
+        }
+
+        if (wantsArrayUpload)
+        {
+            var arrayLayers = arrayUploadLayers;
+            var layerBytes = checked((int)sourceByteCount);
+            var totalBytes = (long)layerBytes * arrayLayers;
+            if (totalBytes <= int.MaxValue)
+            {
+                var layered = new byte[totalBytes];
+                var uploadedLayers = 0u;
+                for (var layer = 0u; layer < arrayLayers; layer++)
+                {
+                    var sliceSource = new byte[(int)physicalSourceByteCount];
+                    if (!ctx.Memory.TryRead(
+                            descriptor.Address + layer * chainSliceBytes + baseMipByteOffset,
+                            sliceSource))
+                    {
+                        break;
+                    }
+
+                    var sliceLinear = TryDetileTextureSource(
+                        descriptor,
+                        sourceWidth,
+                        layerBytes,
+                        sliceSource,
+                        baseMipInTail,
+                        mipTailElementX,
+                        mipTailElementY) ?? sliceSource.AsSpan(0, layerBytes).ToArray();
+                    sliceLinear.AsSpan(0, layerBytes)
+                        .CopyTo(layered.AsSpan(checked((int)(layer * layerBytes))));
+                    uploadedLayers++;
+                }
+
+                if (uploadedLayers == arrayLayers)
+                {
+                    texture = new GuestDrawTexture(
+                        descriptor.Address,
+                        descriptor.Width,
+                        descriptor.Height,
+                        descriptor.Format,
+                        descriptor.NumberType,
+                        layered,
+                        IsFallback: false,
+                        IsStorage: false,
+                        MipLevels: descriptor.MipLevels,
+                        MipLevel: mipLevel,
+                        BaseMipLevel: descriptor.ViewBaseLevel,
+                        ResourceMipLevels: descriptor.ResourceMipLevels,
+                        Pitch: sourceWidth,
+                        TileMode: descriptor.TileMode,
+                        DstSelect: descriptor.DstSelect,
+                        Sampler: sampler,
+                        ArrayedView: true,
+                        ArrayLayers: arrayLayers);
+                    return true;
+                }
+            }
         }
 
         var source = new byte[(int)physicalSourceByteCount];
@@ -8558,7 +8646,7 @@ public static partial class AgcExports
             TraceTextureFallback(
                 descriptor,
                 $"guest-read-failed:{sourceByteCount}");
-            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType);
+            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType, isArrayed);
             return true;
         }
 
@@ -8612,7 +8700,8 @@ public static partial class AgcExports
             TileMode: descriptor.TileMode,
             DstSelect: descriptor.DstSelect,
             Sampler: ToGuestSampler(samplerDescriptor),
-            WriteGeneration: hasWriteGeneration ? writeGeneration : -1);
+            WriteGeneration: hasWriteGeneration ? writeGeneration : -1,
+            ArrayedView: isArrayed);
         return true;
     }
 
@@ -8891,7 +8980,8 @@ public static partial class AgcExports
     private static GuestDrawTexture CreateFallbackGuestDrawTexture(
         bool isStorage,
         uint format,
-        uint numberType)
+        uint numberType,
+        bool isArrayed = false)
     {
         var fallbackFormat = format == 0 ? 10u : format;
         var fallbackNumberType = numberType;
@@ -8905,7 +8995,8 @@ public static partial class AgcExports
             IsFallback: true,
             IsStorage: isStorage,
             MipLevels: 1,
-            MipLevel: 0);
+            MipLevel: 0,
+            ArrayedView: isArrayed);
     }
 
     private static GuestSampler ToGuestSampler(IReadOnlyList<uint> descriptor) =>
@@ -9345,7 +9436,8 @@ public static partial class AgcExports
                     texture,
                     isStorage,
                     binding.MipLevel ?? 0,
-                    binding.SamplerDescriptor));
+                    binding.SamplerDescriptor,
+                    Gen5ShaderTranslator.IsArrayedImageBinding(binding)));
             hasStorageBinding |= isStorage;
 
             var descriptorState = descriptorValid ? string.Empty : "/invalid-desc";
@@ -12031,6 +12123,69 @@ public static partial class AgcExports
         TraceAgc(
             $"agc.driver_register_owner out=0x{ownerAddress:X16} owner={owner} " +
             $"name={System.Text.Encoding.UTF8.GetString(nameBytes)}");
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    private static int RemoveResourcesForOwner(SubmittedGpuState state, uint owner)
+    {
+        var stale = new List<uint>();
+        foreach (var (handle, resource) in state.RegisteredResources)
+        {
+            if (resource.Owner == owner)
+            {
+                stale.Add(handle);
+            }
+        }
+
+        foreach (var handle in stale)
+        {
+            state.RegisteredResources.Remove(handle);
+        }
+
+        return stale.Count;
+    }
+
+    [SysAbiExport(
+        Nid = "ZLJk9r2+2Aw",
+        ExportName = "sceAgcDriverUnregisterOwnerAndResources",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DriverUnregisterOwnerAndResources(CpuContext ctx)
+    {
+        var owner = (uint)ctx[CpuRegister.Rdi];
+        var state = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        int resources;
+        lock (state.Gate)
+        {
+            if (!state.ResourceOwners.Remove(owner))
+            {
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+            }
+
+            resources = RemoveResourcesForOwner(state, owner);
+            state.ComputeQueues.Remove(owner);
+        }
+
+        TraceAgc($"agc.driver_unregister_owner owner={owner} resources={resources}");
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
+        Nid = "SCoAN5fYlUM",
+        ExportName = "sceAgcDriverUnregisterAllResourcesForOwner",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DriverUnregisterAllResourcesForOwner(CpuContext ctx)
+    {
+        var owner = (uint)ctx[CpuRegister.Rdi];
+        var state = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        int resources;
+        lock (state.Gate)
+        {
+            resources = RemoveResourcesForOwner(state, owner);
+        }
+
+        TraceAgc($"agc.driver_unregister_owner_resources owner={owner} resources={resources}");
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 

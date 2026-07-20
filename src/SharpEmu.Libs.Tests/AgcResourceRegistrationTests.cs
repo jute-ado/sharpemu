@@ -161,6 +161,58 @@ public sealed class AgcResourceRegistrationTests
             AgcExports.DriverRegisterOwner(fixture.Context));
     }
 
+    [Fact]
+    public void UnregisteringOwnerResourcesReclaimsResourceCapacityButKeepsOwner()
+    {
+        var fixture = CreateFixture(includeSizeOutput: false, includeHandleOutput: true);
+        fixture.Memory.AddRegion(OwnerOutputAddress, new byte[sizeof(uint)]);
+        Assert.Equal(0, Initialize(
+            fixture.Context,
+            BytesPerOwner + BytesPerResource,
+            ownerCount: 1));
+
+        var owner = RegisterOwner(fixture);
+        Assert.Equal(0, RegisterResource(fixture.Context, ResourceAddress, owner));
+
+        fixture.Context[CpuRegister.Rdi] = owner;
+        Assert.Equal(0, AgcExports.DriverUnregisterAllResourcesForOwner(fixture.Context));
+        Assert.Equal(0, RegisterResource(fixture.Context, ResourceAddress + 0x1000, owner));
+
+        fixture.Context[CpuRegister.Rdi] = OwnerOutputAddress;
+        fixture.Context[CpuRegister.Rsi] = NameAddress;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+            AgcExports.DriverRegisterOwner(fixture.Context));
+    }
+
+    [Fact]
+    public void UnregisteringOwnerAndResourcesReclaimsBothCapacities()
+    {
+        var fixture = CreateFixture(includeSizeOutput: false, includeHandleOutput: true);
+        fixture.Memory.AddRegion(OwnerOutputAddress, new byte[sizeof(uint)]);
+        Assert.Equal(0, Initialize(
+            fixture.Context,
+            BytesPerOwner + BytesPerResource,
+            ownerCount: 1));
+
+        var owner = RegisterOwner(fixture);
+        Assert.Equal(0, RegisterResource(fixture.Context, ResourceAddress, owner));
+
+        fixture.Context[CpuRegister.Rdi] = owner;
+        Assert.Equal(0, AgcExports.DriverUnregisterOwnerAndResources(fixture.Context));
+
+        var replacementOwner = RegisterOwner(fixture);
+        Assert.Equal(0, RegisterResource(
+            fixture.Context,
+            ResourceAddress + 0x1000,
+            replacementOwner));
+
+        fixture.Context[CpuRegister.Rdi] = owner;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+            AgcExports.DriverUnregisterOwnerAndResources(fixture.Context));
+    }
+
     private static int Initialize(CpuContext context, ulong memorySize, ulong ownerCount)
     {
         context[CpuRegister.Rdi] = RegistrationMemoryAddress;
@@ -174,6 +226,18 @@ public sealed class AgcResourceRegistrationTests
         context[CpuRegister.Rdi] = RegistrationMemoryAddress;
         context[CpuRegister.Rsi] = 10;
         return AgcExports.Init(context);
+    }
+
+    private static uint RegisterOwner(Fixture fixture)
+    {
+        fixture.Context[CpuRegister.Rdi] = OwnerOutputAddress;
+        fixture.Context[CpuRegister.Rsi] = NameAddress;
+        var result = AgcExports.DriverRegisterOwner(fixture.Context);
+        Assert.Equal(0, result);
+        Assert.True(fixture.Memory.TryRead(
+            OwnerOutputAddress,
+            fixture.Scratch.AsSpan(0, sizeof(uint))));
+        return BinaryPrimitives.ReadUInt32LittleEndian(fixture.Scratch);
     }
 
     private static int RegisterResource(
