@@ -302,6 +302,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private static ulong _activeGuestHardwareExceptionAccessAddress;
 
 	[ThreadStatic]
+	private static CpuRegisterSnapshot? _activeGuestHardwareExceptionRegisters;
+
+	[ThreadStatic]
 	private static bool _activeGuestThreadYieldRequested;
 
 	[ThreadStatic]
@@ -1025,7 +1028,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			context.Memory.TryRead(_activeGuestHardwareExceptionRip, opcode) ? opcode[0] : (byte)0,
 			_activeGuestHardwareExceptionCode,
 			accessKind.HasValue ? _activeGuestHardwareExceptionAccessAddress : null,
-			accessKind);
+			accessKind,
+			registers: _activeGuestHardwareExceptionRegisters);
 		detail =
 			$"Guest hardware exception 0x{_activeGuestHardwareExceptionCode:X8} " +
 			$"at RIP=0x{_activeGuestHardwareExceptionRip:X16}.";
@@ -5065,6 +5069,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		var previousHardwareExceptionCode = _activeGuestHardwareExceptionCode;
 		var previousHardwareExceptionAccessType = _activeGuestHardwareExceptionAccessType;
 		var previousHardwareExceptionAccessAddress = _activeGuestHardwareExceptionAccessAddress;
+		var previousHardwareExceptionRegisters = _activeGuestHardwareExceptionRegisters;
 		var guestStackSlotAddress = context[CpuRegister.Rsp];
 		var originalGuestStackValue = 0UL;
 		var guestStackSlotPatched = false;
@@ -5089,6 +5094,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_activeGuestHardwareExceptionCode = 0;
 		_activeGuestHardwareExceptionAccessType = 0;
 		_activeGuestHardwareExceptionAccessAddress = 0;
+		_activeGuestHardwareExceptionRegisters = null;
 		BindActiveGuestStackRange(context);
         BindTlsBase(context);
         byte* ptr2 = (byte*)ptr;
@@ -5266,6 +5272,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_activeGuestHardwareExceptionCode = previousHardwareExceptionCode;
 		_activeGuestHardwareExceptionAccessType = previousHardwareExceptionAccessType;
 		_activeGuestHardwareExceptionAccessAddress = previousHardwareExceptionAccessAddress;
+		_activeGuestHardwareExceptionRegisters = previousHardwareExceptionRegisters;
 		_hostMemory.Free(hostRspSlot);
 		_hostMemory.Free((ulong)ptr);
 	}
@@ -5303,6 +5310,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		var previousHardwareExceptionCode = _activeGuestHardwareExceptionCode;
 		var previousHardwareExceptionAccessType = _activeGuestHardwareExceptionAccessType;
 		var previousHardwareExceptionAccessAddress = _activeGuestHardwareExceptionAccessAddress;
+		var previousHardwareExceptionRegisters = _activeGuestHardwareExceptionRegisters;
 		var originalReturnSlotValue = 0UL;
 		var returnSlotPatched = false;
 		var guestEntryStarted = false;
@@ -5326,6 +5334,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			_activeGuestHardwareExceptionCode = 0;
 			_activeGuestHardwareExceptionAccessType = 0;
 			_activeGuestHardwareExceptionAccessAddress = 0;
+			_activeGuestHardwareExceptionRegisters = null;
 			BindActiveGuestStackRange(context);
 			BindTlsBase(context);
 			byte* ptr2 = (byte*)ptr;
@@ -5433,6 +5442,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			_activeGuestHardwareExceptionCode = previousHardwareExceptionCode;
 			_activeGuestHardwareExceptionAccessType = previousHardwareExceptionAccessType;
 			_activeGuestHardwareExceptionAccessAddress = previousHardwareExceptionAccessAddress;
+			_activeGuestHardwareExceptionRegisters = previousHardwareExceptionRegisters;
 			_hostMemory.Free(hostRspSlot);
 			_hostMemory.Free((ulong)ptr);
 		}
@@ -5576,6 +5586,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		var previousHardwareExceptionCode = _activeGuestHardwareExceptionCode;
 		var previousHardwareExceptionAccessType = _activeGuestHardwareExceptionAccessType;
 		var previousHardwareExceptionAccessAddress = _activeGuestHardwareExceptionAccessAddress;
+		var previousHardwareExceptionRegisters = _activeGuestHardwareExceptionRegisters;
 		var guestStackSlotAddress = context[CpuRegister.Rsp];
 		var originalGuestStackValue = 0UL;
 		var guestStackSlotPatched = false;
@@ -5594,6 +5605,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			_activeGuestHardwareExceptionCode = 0;
 			_activeGuestHardwareExceptionAccessType = 0;
 			_activeGuestHardwareExceptionAccessAddress = 0;
+			_activeGuestHardwareExceptionRegisters = null;
 			BindActiveGuestStackRange(context);
 			BindTlsBase(context);
 			byte* ptr2 = (byte*)ptr;
@@ -5825,6 +5837,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			_activeGuestHardwareExceptionCode = previousHardwareExceptionCode;
 			_activeGuestHardwareExceptionAccessType = previousHardwareExceptionAccessType;
 			_activeGuestHardwareExceptionAccessAddress = previousHardwareExceptionAccessAddress;
+			_activeGuestHardwareExceptionRegisters = previousHardwareExceptionRegisters;
 			_hostMemory.Free(num2);
 			_hostMemory.Free((ulong)ptr);
 		}

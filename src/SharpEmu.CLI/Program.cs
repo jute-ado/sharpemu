@@ -2055,8 +2055,30 @@ internal static partial class Program
             value.InstructionLength,
             value.InstructionMnemonic,
             value.InstructionText,
-            value.InstructionFlowControl);
+            value.InstructionFlowControl,
+            BuildCpuRegisterReport(value.Registers));
     }
+
+    private static CliCpuRegisterReport? BuildCpuRegisterReport(CpuRegisterSnapshot? registers) =>
+        registers is not { } value
+            ? null
+            : new CliCpuRegisterReport(
+                FormatAddress(value.Rax),
+                FormatAddress(value.Rbx),
+                FormatAddress(value.Rcx),
+                FormatAddress(value.Rdx),
+                FormatAddress(value.Rsi),
+                FormatAddress(value.Rdi),
+                FormatAddress(value.Rbp),
+                FormatAddress(value.Rsp),
+                FormatAddress(value.R8),
+                FormatAddress(value.R9),
+                FormatAddress(value.R10),
+                FormatAddress(value.R11),
+                FormatAddress(value.R12),
+                FormatAddress(value.R13),
+                FormatAddress(value.R14),
+                FormatAddress(value.R15));
 
     private static CliCpuMemoryFaultReport? BuildCpuMemoryFaultReport(CpuMemoryFaultInfo? fault)
     {
@@ -2569,7 +2591,26 @@ internal static partial class Program
         int? InstructionLength,
         string? InstructionMnemonic,
         string? InstructionText,
-        string? InstructionFlowControl);
+        string? InstructionFlowControl,
+        CliCpuRegisterReport? Registers);
+
+    private sealed record CliCpuRegisterReport(
+        string Rax,
+        string Rbx,
+        string Rcx,
+        string Rdx,
+        string Rsi,
+        string Rdi,
+        string Rbp,
+        string Rsp,
+        string R8,
+        string R9,
+        string R10,
+        string R11,
+        string R12,
+        string R13,
+        string R14,
+        string R15);
 
     private sealed record CliCpuMemoryFaultReport(
         string InstructionPointer,
