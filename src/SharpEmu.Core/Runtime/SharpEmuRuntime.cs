@@ -274,7 +274,10 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 ud2Hint = ", trap=ud2";
             }
 
-            var stackFrames = CaptureTrapStackFrames(trapInfo.Registers);
+            var stackFrames = CaptureTrapStackFrames(
+                _virtualMemory,
+                trapInfo.Registers,
+                CaptureTrapCodeWindow);
             enrichedTrapInfo = enrichedTrapInfo.WithStackFrames(stackFrames);
             if (CaptureTrapCodeWindow(trapInfo.InstructionPointer) is { } codeWindow)
             {
@@ -1189,20 +1192,13 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         return count == 0 ? "??" : string.Join(' ', parts, 0, count);
     }
 
-    private bool TryReadUInt64At(ulong address, out ulong value)
-    {
-        Span<byte> buffer = stackalloc byte[sizeof(ulong)];
-        if (!_virtualMemory.TryRead(address, buffer))
-        {
-            value = 0;
-            return false;
-        }
+    private bool TryReadUInt64At(ulong address, out ulong value) =>
+        TryReadUInt64At(_virtualMemory, address, out value);
 
-        value = BinaryPrimitives.ReadUInt64LittleEndian(buffer);
-        return true;
-    }
-
-    private IReadOnlyList<CpuStackFrame> CaptureTrapStackFrames(CpuRegisterSnapshot? registers)
+    internal static IReadOnlyList<CpuStackFrame> CaptureTrapStackFrames(
+        IVirtualMemory virtualMemory,
+        CpuRegisterSnapshot? registers,
+        Func<ulong, CpuCodeWindow?> captureCodeWindow)
     {
         const int maxFrameCount = 16;
         const ulong maxStackDistance = 8UL * 1024 * 1024;
@@ -1215,14 +1211,26 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         var stackLimit = snapshot.Rsp > ulong.MaxValue - maxStackDistance
             ? ulong.MaxValue
             : snapshot.Rsp + maxStackDistance;
+        if (virtualMemory is IGuestStackMemory stackMemory &&
+            stackMemory.TryGetStackRange(snapshot.Rsp, out var stackStart, out var stackEnd))
+        {
+            if (snapshot.Rbp < stackStart || snapshot.Rbp >= stackEnd)
+            {
+                return Array.Empty<CpuStackFrame>();
+            }
+
+            stackLimit = stackEnd;
+        }
+
         var framePointer = snapshot.Rbp;
         var frames = new List<CpuStackFrame>(maxFrameCount);
         for (var i = 0; i < maxFrameCount; i++)
         {
             if ((framePointer & 7) != 0 ||
+                stackLimit < 2 * sizeof(ulong) ||
                 framePointer > stackLimit - (2 * sizeof(ulong)) ||
-                !TryReadUInt64At(framePointer, out var nextFramePointer) ||
-                !TryReadUInt64At(framePointer + sizeof(ulong), out var returnAddress) ||
+                !TryReadUInt64At(virtualMemory, framePointer, out var nextFramePointer) ||
+                !TryReadUInt64At(virtualMemory, framePointer + sizeof(ulong), out var returnAddress) ||
                 returnAddress == 0)
             {
                 break;
@@ -1232,7 +1240,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 framePointer,
                 nextFramePointer,
                 returnAddress,
-                CaptureTrapCodeWindow(returnAddress)));
+                captureCodeWindow(returnAddress)));
             if (nextFramePointer <= framePointer || nextFramePointer > stackLimit)
             {
                 break;
@@ -1242,6 +1250,22 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         }
 
         return frames.ToArray();
+    }
+
+    private static bool TryReadUInt64At(
+        IVirtualMemory virtualMemory,
+        ulong address,
+        out ulong value)
+    {
+        Span<byte> buffer = stackalloc byte[sizeof(ulong)];
+        if (!virtualMemory.TryRead(address, buffer))
+        {
+            value = 0;
+            return false;
+        }
+
+        value = BinaryPrimitives.ReadUInt64LittleEndian(buffer);
+        return true;
     }
 
     private CpuCodeWindow? CaptureTrapCodeWindow(ulong instructionPointer)
