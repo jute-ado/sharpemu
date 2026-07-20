@@ -17,6 +17,9 @@ public sealed class NpUniversalDataSystemTests
     private const ulong EventNameAddress = 0x4000;
     private const ulong EventOutAddress = 0x5000;
     private const ulong PropertyOutAddress = 0x6000;
+    private const ulong SerializedEventAddress = 0x7000;
+    private const ulong SerializedSizeAddress = 0x8000;
+    private const ulong SerializedBufferAddress = 0x9000;
 
     [Fact]
     public void ArraySetStringValidatesDestinationAndBoundedString()
@@ -174,6 +177,84 @@ public sealed class NpUniversalDataSystemTests
         ExportMetadataAssert.Exact(
             "Hm7qubT3b70",
             "sceNpUniversalDataSystemCreateEventPropertyArray",
+            "libSceNpUniversalDataSystem",
+            Generation.Gen4 | Generation.Gen5);
+    }
+
+    [Fact]
+    public void EventSerializationReportsRequiredSizeAndWritesJson()
+    {
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(SerializedEventAddress, new byte[1]);
+        memory.AddRegion(SerializedSizeAddress, new byte[sizeof(ulong)]);
+        memory.AddRegion(SerializedBufferAddress, new byte[3]);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = SerializedEventAddress;
+        context[CpuRegister.Rsi] = SerializedSizeAddress;
+
+        Assert.Equal(
+            0,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemEventEstimateSize(context));
+        Assert.True(
+            context.TryReadUInt64(SerializedSizeAddress, out var estimatedSize));
+        Assert.Equal(3UL, estimatedSize);
+
+        context[CpuRegister.Rsi] = SerializedBufferAddress;
+        context[CpuRegister.Rdx] = 3;
+        context[CpuRegister.Rcx] = SerializedSizeAddress;
+        Assert.Equal(
+            0,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemEventToString(context));
+        Span<byte> serialized = stackalloc byte[3];
+        Assert.True(memory.TryRead(SerializedBufferAddress, serialized));
+        Assert.Equal("{}\0"u8.ToArray(), serialized.ToArray());
+        Assert.True(
+            context.TryReadUInt64(SerializedSizeAddress, out var serializedSize));
+        Assert.Equal(3UL, serializedSize);
+    }
+
+    [Fact]
+    public void EventToStringBoundsWritesAndSupportsSizeOnlyQueries()
+    {
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(SerializedEventAddress, new byte[1]);
+        memory.AddRegion(SerializedSizeAddress, new byte[sizeof(ulong)]);
+        memory.AddRegion(SerializedBufferAddress, [0xCC, 0xCC, 0xCC]);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = SerializedEventAddress;
+        context[CpuRegister.Rsi] = SerializedBufferAddress;
+        context[CpuRegister.Rdx] = 2;
+        context[CpuRegister.Rcx] = SerializedSizeAddress;
+
+        Assert.Equal(
+            0,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemEventToString(context));
+        Span<byte> bounded = stackalloc byte[3];
+        Assert.True(memory.TryRead(SerializedBufferAddress, bounded));
+        Assert.Equal(new byte[] { (byte)'{', 0, 0xCC }, bounded.ToArray());
+
+        context[CpuRegister.Rsi] = 0;
+        context[CpuRegister.Rdx] = 0;
+        Assert.Equal(
+            0,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemEventToString(context));
+        Assert.True(
+            context.TryReadUInt64(SerializedSizeAddress, out var requiredSize));
+        Assert.Equal(3UL, requiredSize);
+    }
+
+    [Theory]
+    [InlineData("+s14jq-KGYw", "sceNpUniversalDataSystemEventEstimateSize")]
+    [InlineData("vj6CQGWtEBg", "sceNpUniversalDataSystemEventToString")]
+    public void EventSerializationExportMetadataIsExact(string nid, string name)
+    {
+        ExportMetadataAssert.Exact(
+            nid,
+            name,
             "libSceNpUniversalDataSystem",
             Generation.Gen4 | Generation.Gen5);
     }

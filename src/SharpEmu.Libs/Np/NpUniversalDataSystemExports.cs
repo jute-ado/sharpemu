@@ -133,6 +133,71 @@ public static class NpUniversalDataSystemExports
     }
 
     [SysAbiExport(
+        Nid = "+s14jq-KGYw",
+        ExportName = "sceNpUniversalDataSystemEventEstimateSize",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNpUniversalDataSystem")]
+    public static int NpUniversalDataSystemEventEstimateSize(CpuContext ctx)
+    {
+        var eventAddress = ctx[CpuRegister.Rdi];
+        var sizeAddress = ctx[CpuRegister.Rsi];
+        if (eventAddress == 0 || sizeAddress == 0)
+        {
+            return ctx.SetReturn(NpUniversalDataSystemErrorInvalidArgument, typeof(long));
+        }
+
+        Span<byte> eventProbe = stackalloc byte[1];
+        return ctx.Memory.TryRead(eventAddress, eventProbe) &&
+               ctx.TryWriteUInt64(sizeAddress, 3)
+            ? ctx.SetReturn(0, typeof(long))
+            : ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                typeof(long));
+    }
+
+    [SysAbiExport(
+        Nid = "vj6CQGWtEBg",
+        ExportName = "sceNpUniversalDataSystemEventToString",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNpUniversalDataSystem")]
+    public static int NpUniversalDataSystemEventToString(CpuContext ctx)
+    {
+        var eventAddress = ctx[CpuRegister.Rdi];
+        var bufferAddress = ctx[CpuRegister.Rsi];
+        var bufferSize = ctx[CpuRegister.Rdx];
+        var stringSizeAddress = ctx[CpuRegister.Rcx];
+        if (eventAddress == 0)
+        {
+            return ctx.SetReturn(NpUniversalDataSystemErrorInvalidArgument, typeof(long));
+        }
+
+        Span<byte> eventProbe = stackalloc byte[1];
+        if (!ctx.Memory.TryRead(eventAddress, eventProbe) ||
+            (stringSizeAddress != 0 &&
+             !ctx.TryWriteUInt64(stringSizeAddress, 3)))
+        {
+            return ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                typeof(long));
+        }
+
+        if (bufferAddress != 0 && bufferSize != 0)
+        {
+            Span<byte> serialized = stackalloc byte[] { (byte)'{', (byte)'}', 0 };
+            var writeLength = (int)Math.Min(bufferSize, (ulong)serialized.Length);
+            serialized[writeLength - 1] = 0;
+            if (!ctx.Memory.TryWrite(bufferAddress, serialized[..writeLength]))
+            {
+                return ctx.SetReturn(
+                    (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                    typeof(long));
+            }
+        }
+
+        return ctx.SetReturn(0, typeof(long));
+    }
+
+    [SysAbiExport(
         Nid = "wG+84pnNIuo",
         ExportName = "sceNpUniversalDataSystemDestroyEvent",
         Target = Generation.Gen4 | Generation.Gen5,

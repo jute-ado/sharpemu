@@ -45,6 +45,8 @@ test-driven workflow. Major downstream differences include:
 - persistent save-data mutations, including quota-aware mount information,
   retry-safe and mode-aware lifecycle events, bounded atomic icon writes, and
   size-reporting icon loads through mounted guest paths
+- NP telemetry compatibility with guest-memory-validated event construction,
+  bounded JSON serialization, and exact required-size reporting
 - a bounded, local-only game regression harness with redacted manifests suitable
   for source control
 - Windows, Linux, and macOS x64 build, test, packaging, and release validation
