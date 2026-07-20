@@ -56,7 +56,20 @@ public static partial class KernelMemoryCompatExports
     private const ulong FlexibleMemorySizeBytes = 448UL * 1024 * 1024;
     private const int OrbisVirtualQueryInfoSize = 72;
     private const int OrbisKernelMaximumNameLength = 32;
+    private const uint MemCommit = 0x1000;
+    private const uint HostPageNoAccess = 0x01;
+    private const uint HostPageReadOnly = 0x02;
+    private const uint HostPageReadWrite = 0x04;
+    private const uint HostPageWriteCopy = 0x08;
+    private const uint HostPageExecute = 0x10;
+    private const uint HostPageExecuteRead = 0x20;
+    private const uint HostPageExecuteReadWrite = 0x40;
+    private const uint HostPageExecuteWriteCopy = 0x80;
+    private const uint HostPageGuard = 0x100;
+    private const int Enoent = 2;
+    private const int Ebadf = 9;
     private const int Enomem = 12;
+    private const int Eacces = 13;
     private const int Efault = 14;
     private const int Einval = 22;
     private const int Erange = 34;
@@ -2039,7 +2052,13 @@ public static partial class KernelMemoryCompatExports
         ExportName = "close",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixClose(CpuContext ctx) => KernelCloseCore(ctx, unchecked((int)ctx[CpuRegister.Rdi]));
+    public static int PosixClose(CpuContext ctx)
+    {
+        var result = KernelCloseCore(ctx, unchecked((int)ctx[CpuRegister.Rdi]));
+        return result == (int)OrbisGen2Result.ORBIS_GEN2_OK
+            ? 0
+            : PosixFailure(ctx, result, notFoundErrno: Ebadf);
+    }
 
     [SysAbiExport(
         Nid = "UK2Tl2DWUns",
@@ -2112,6 +2131,29 @@ public static partial class KernelMemoryCompatExports
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
+    // Translates a failed raw Orbis kernel result into the libc/POSIX ABI:
+    // return -1 with errno set. The raw sceKernel* implementations report the
+    // 0x8002xxxx sentinel through the return value, but the POSIX-named exports
+    // (open/fstat/close/read/write/stat) are called by libc code that expects a
+    // negative result on failure. Leaking the raw sentinel makes callers store
+    // it as a "valid" fd or handle and later dereference it - the null-pointer
+    // access violation seen when Unity's IL2CPP file layer probes an absent
+    // il2cpp.usym. fd-based calls pass notFoundErrno=Ebadf; path-based calls
+    // leave the Enoent default.
+    private static int PosixFailure(CpuContext ctx, int orbisResult, int notFoundErrno = Enoent)
+    {
+        var errno = orbisResult switch
+        {
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT => Einval,
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT => Efault,
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED => Eacces,
+            _ => notFoundErrno,
+        };
+        KernelRuntimeCompatExports.TrySetErrno(ctx, errno);
+        ctx[CpuRegister.Rax] = ulong.MaxValue;
+        return -1;
+    }
+
     [SysAbiExport(
         Nid = "E6ao34wPw+U",
         ExportName = "stat",
@@ -2120,23 +2162,29 @@ public static partial class KernelMemoryCompatExports
     public static int PosixStat(CpuContext ctx)
     {
         var result = KernelStat(ctx);
-        if (result == (int)OrbisGen2Result.ORBIS_GEN2_OK)
-        {
-            return 0;
-        }
+        return result == (int)OrbisGen2Result.ORBIS_GEN2_OK
+            ? 0
+            : PosixFailure(ctx, result);
+    }
 
-        // stat(2) follows the libc/POSIX ABI: failures return -1 and expose
-        // the reason through errno. Returning the raw Orbis kernel code here
-        // makes callers treat a missing file as a non-negative success value.
-        var errno = result switch
-        {
-            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT => Einval,
-            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT => Efault,
-            _ => 2, // ENOENT
-        };
-        KernelRuntimeCompatExports.TrySetErrno(ctx, errno);
-        ctx[CpuRegister.Rax] = ulong.MaxValue;
-        return -1;
+    // POSIX open(2): translates a failed raw open into -1/errno. On success
+    // KernelOpenUnderscore already writes the fd into RAX (the import bridge
+    // prefers a written RAX over the return value), so returning 0 is correct.
+    public static int PosixOpen(CpuContext ctx)
+    {
+        var result = KernelOpenUnderscore(ctx);
+        return result == (int)OrbisGen2Result.ORBIS_GEN2_OK
+            ? 0
+            : PosixFailure(ctx, result);
+    }
+
+    // POSIX fstat(2): a bad fd maps to EBADF rather than the path-oriented ENOENT.
+    public static int PosixFstat(CpuContext ctx)
+    {
+        var result = KernelFstat(ctx);
+        return result == (int)OrbisGen2Result.ORBIS_GEN2_OK
+            ? 0
+            : PosixFailure(ctx, result, notFoundErrno: Ebadf);
     }
 
     [SysAbiExport(
@@ -2658,7 +2706,15 @@ public static partial class KernelMemoryCompatExports
         ExportName = "read",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixRead(CpuContext ctx) => KernelReadUnderscore(ctx);
+    public static int PosixRead(CpuContext ctx)
+    {
+        // On success KernelReadUnderscore writes the byte count into RAX, which
+        // the import bridge prefers over this return value.
+        var result = KernelReadUnderscore(ctx);
+        return result == (int)OrbisGen2Result.ORBIS_GEN2_OK
+            ? 0
+            : PosixFailure(ctx, result, notFoundErrno: Ebadf);
+    }
 
     [SysAbiExport(
         Nid = "Cg4srZ6TKbU",
@@ -2868,7 +2924,15 @@ public static partial class KernelMemoryCompatExports
         ExportName = "write",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixWrite(CpuContext ctx) => KernelWriteUnderscore(ctx);
+    public static int PosixWrite(CpuContext ctx)
+    {
+        // On success KernelWriteUnderscore writes the byte count into RAX, which
+        // the import bridge prefers over this return value.
+        var result = KernelWriteUnderscore(ctx);
+        return result == (int)OrbisGen2Result.ORBIS_GEN2_OK
+            ? 0
+            : PosixFailure(ctx, result, notFoundErrno: Ebadf);
+    }
 
     [SysAbiExport(
         Nid = "4wSze92BhLI",

@@ -78,7 +78,7 @@ jobs:
         uses: fsfe/reuse-action@v6
 
   build:
-    name: Build win-x64
+    name: Build Archive
     needs:
       - init
       - reuse
