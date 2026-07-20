@@ -383,6 +383,12 @@ public static class KernelSemaphoreCompatExports
         LibraryName = "libKernel")]
     public static int PosixSemInit(CpuContext ctx)
     {
+        var result = InitializeAddressSemaphore(ctx);
+        return PosixResult(ctx, result);
+    }
+
+    private static int InitializeAddressSemaphore(CpuContext ctx)
+    {
         var semaphoreAddress = ctx[CpuRegister.Rdi];
         var initialCountValue = ctx[CpuRegister.Rdx];
         if (semaphoreAddress == 0 || initialCountValue > int.MaxValue)
@@ -441,7 +447,7 @@ public static class KernelSemaphoreCompatExports
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        return PosixSemInit(ctx);
+        return InitializeAddressSemaphore(ctx);
     }
 
     [SysAbiExport(
@@ -450,6 +456,12 @@ public static class KernelSemaphoreCompatExports
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixSemWait(CpuContext ctx)
+    {
+        var result = WaitAddressSemaphore(ctx);
+        return PosixResult(ctx, result);
+    }
+
+    private static int WaitAddressSemaphore(CpuContext ctx)
     {
         if (!TryGetPosixSemaphoreHandle(ctx, ctx[CpuRegister.Rdi], out var handle))
         {
@@ -467,7 +479,7 @@ public static class KernelSemaphoreCompatExports
         ExportName = "scePthreadSemWait",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PthreadSemWait(CpuContext ctx) => PosixSemWait(ctx);
+    public static int PthreadSemWait(CpuContext ctx) => WaitAddressSemaphore(ctx);
 
     [SysAbiExport(
         Nid = "WBWzsRifCEA",
@@ -475,6 +487,12 @@ public static class KernelSemaphoreCompatExports
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixSemTryWait(CpuContext ctx)
+    {
+        var result = TryWaitAddressSemaphore(ctx);
+        return PosixResult(ctx, result, busyErrno: Eagain);
+    }
+
+    private static int TryWaitAddressSemaphore(CpuContext ctx)
     {
         if (!TryGetPosixSemaphoreHandle(ctx, ctx[CpuRegister.Rdi], out var handle))
         {
@@ -493,7 +511,7 @@ public static class KernelSemaphoreCompatExports
         LibraryName = "libKernel")]
     public static int PthreadSemTryWait(CpuContext ctx)
     {
-        var result = PosixSemTryWait(ctx);
+        var result = TryWaitAddressSemaphore(ctx);
         return result == (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY
             ? SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN)
             : result;
@@ -515,7 +533,7 @@ public static class KernelSemaphoreCompatExports
         ctx[CpuRegister.Rdi] = handle;
         ctx[CpuRegister.Rsi] = 1;
         ctx[CpuRegister.Rdx] = timeoutAddress;
-        return KernelWaitSema(ctx);
+        return PosixResult(ctx, KernelWaitSema(ctx));
     }
 
     [SysAbiExport(
@@ -524,6 +542,19 @@ public static class KernelSemaphoreCompatExports
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixSemPost(CpuContext ctx)
+    {
+        if (!TryGetPosixSemaphoreHandle(ctx, ctx[CpuRegister.Rdi], out _))
+        {
+            return PosixResult(
+                ctx,
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        var result = PostAddressSemaphore(ctx);
+        return PosixResult(ctx, result, invalidArgumentErrno: Eoverflow);
+    }
+
+    private static int PostAddressSemaphore(CpuContext ctx)
     {
         if (!TryGetPosixSemaphoreHandle(ctx, ctx[CpuRegister.Rdi], out var handle))
         {
@@ -540,7 +571,7 @@ public static class KernelSemaphoreCompatExports
         ExportName = "scePthreadSemPost",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PthreadSemPost(CpuContext ctx) => PosixSemPost(ctx);
+    public static int PthreadSemPost(CpuContext ctx) => PostAddressSemaphore(ctx);
 
     [SysAbiExport(
         Nid = "Bq+LRV-N6Hk",
@@ -548,6 +579,12 @@ public static class KernelSemaphoreCompatExports
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int PosixSemGetValue(CpuContext ctx)
+    {
+        var result = GetAddressSemaphoreValue(ctx);
+        return PosixResult(ctx, result);
+    }
+
+    private static int GetAddressSemaphoreValue(CpuContext ctx)
     {
         var semaphoreAddress = ctx[CpuRegister.Rdi];
         var valueAddress = ctx[CpuRegister.Rsi];
@@ -579,6 +616,12 @@ public static class KernelSemaphoreCompatExports
         LibraryName = "libKernel")]
     public static int PosixSemDestroy(CpuContext ctx)
     {
+        var result = DestroyAddressSemaphore(ctx);
+        return PosixResult(ctx, result);
+    }
+
+    private static int DestroyAddressSemaphore(CpuContext ctx)
+    {
         var semaphoreAddress = ctx[CpuRegister.Rdi];
         if (!TryGetPosixSemaphoreHandle(ctx, semaphoreAddress, out var handle))
         {
@@ -603,7 +646,7 @@ public static class KernelSemaphoreCompatExports
         ExportName = "scePthreadSemDestroy",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PthreadSemDestroy(CpuContext ctx) => PosixSemDestroy(ctx);
+    public static int PthreadSemDestroy(CpuContext ctx) => DestroyAddressSemaphore(ctx);
 
     private static bool TryGetPosixSemaphoreHandle(CpuContext ctx, ulong semaphoreAddress, out uint handle)
     {
@@ -621,6 +664,42 @@ public static class KernelSemaphoreCompatExports
         var value = (int)result;
         ctx[CpuRegister.Rax] = unchecked((ulong)value);
         return value;
+    }
+
+    private const int Eacces = 13;
+    private const int Efault = 14;
+    private const int Einval = 22;
+    private const int Eagain = 35;
+    private const int Etimedout = 60;
+    private const int Eoverflow = 84;
+    private const int Ecanceled = 85;
+
+    private static int PosixResult(
+        CpuContext ctx,
+        int result,
+        int invalidArgumentErrno = Einval,
+        int busyErrno = Eagain)
+    {
+        if (result == (int)OrbisGen2Result.ORBIS_GEN2_OK)
+        {
+            return 0;
+        }
+
+        var errno = result switch
+        {
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT => invalidArgumentErrno,
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT => Efault,
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED => Eacces,
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED => Eacces,
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY => busyErrno,
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN => Eagain,
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT => Etimedout,
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_CANCELED => Ecanceled,
+            _ => Einval,
+        };
+        _ = KernelRuntimeCompatExports.TrySetErrno(ctx, errno);
+        ctx[CpuRegister.Rax] = ulong.MaxValue;
+        return -1;
     }
 
     // Call sites must check this before building the interpolated message; the trace

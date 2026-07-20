@@ -35,7 +35,8 @@ test-driven workflow. Major downstream differences include:
   require no copyrighted games, firmware, or proprietary assets
 - generated HLE export registration instead of runtime reflection discovery
 - a guest-thread scheduler with callback, synchronization, and lifecycle
-  behavior exercised through native guest-code tests
+  behavior exercised through native guest-code tests, including distinct
+  POSIX `-1`/`errno` and SCE kernel semaphore contracts
 - application plugin discovery and symbol resolution, including deferred module
   initializers that start once and can be retried after a guest failure
 - persistent save-data mutations, including quota-aware mount information,
