@@ -47,6 +47,28 @@ public sealed class RecentImportTraceBufferTests
         Assert.Contains("#3 ", formatted, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CompletionAddsReturnValueWithoutAppendingAnotherTraceEntry()
+    {
+        var trace = new RecentImportTraceBuffer(capacity: 2);
+        var first = Entry(1, threadHandle: 1);
+        var second = Entry(2, threadHandle: 1);
+        trace.Record(first);
+        trace.Record(second);
+
+        Assert.Contains("rax=<pending>", trace.Build(2, prioritizedThreadHandle: null), StringComparison.Ordinal);
+
+        first.Complete(returnValue: 0x1234);
+
+        var formatted = trace.Build(2, prioritizedThreadHandle: null);
+        Assert.NotNull(formatted);
+        Assert.Equal(2, formatted.Split(Environment.NewLine).Length);
+        Assert.Contains("#1 ", formatted, StringComparison.Ordinal);
+        Assert.Contains("rax=0x0000000000001234", formatted, StringComparison.Ordinal);
+        Assert.Contains("#2 ", formatted, StringComparison.Ordinal);
+        Assert.Contains("rax=<pending>", formatted, StringComparison.Ordinal);
+    }
+
     private static RecentImportTraceEntry Entry(long dispatchIndex, ulong threadHandle) =>
         new(
             dispatchIndex,
