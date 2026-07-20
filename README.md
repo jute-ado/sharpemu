@@ -45,8 +45,9 @@ test-driven workflow. Major downstream differences include:
   locations, faulting guest-thread identity, and bounded cross-thread native
   import traces in execution reports,
   and immediate teardown signaling for interruptible guest waits
-- guest virtual-memory queries that preserve registered stack classification
-  and Prospero-compatible argument validation and end-of-range errors
+- guest virtual- and direct-memory query contracts with exact argument
+  validation, registered stack classification, terminal direct-memory ranges,
+  and Prospero-compatible gap errors
 - application plugin discovery and symbol resolution, including deferred module
   initializers that start once and can be retried after a guest failure
 - persistent save-data mutations, including quota-aware mount information,

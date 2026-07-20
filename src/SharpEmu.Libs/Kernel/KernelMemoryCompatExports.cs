@@ -4060,7 +4060,10 @@ public static partial class KernelMemoryCompatExports
         var flags = ctx[CpuRegister.Rsi];
         var infoAddress = ctx[CpuRegister.Rdx];
         var infoSize = ctx[CpuRegister.Rcx];
-        if (infoAddress == 0 || infoSize < 24)
+        if (unchecked((long)offset) < 0 ||
+            flags > 1 ||
+            infoAddress == 0 ||
+            infoSize != 24)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
@@ -4073,12 +4076,27 @@ public static partial class KernelMemoryCompatExports
 
         var findNext = (flags & 1) != 0;
         DirectAllocation block;
+        bool found;
         lock (_memoryGate)
         {
-            if (!TryFindDirectAllocationForQueryLocked(offset, findNext, out block))
+            found = TryFindDirectAllocationForQueryLocked(offset, findNext, out block);
+        }
+
+        if (!found)
+        {
+            if (!findNext)
             {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED;
             }
+
+            if (!ctx.TryWriteUInt64(infoAddress, DirectMemorySizeBytes) ||
+                !ctx.TryWriteUInt64(infoAddress + sizeof(ulong), DirectMemorySizeBytes) ||
+                !ctx.TryWriteInt32(infoAddress + (sizeof(ulong) * 2), 0))
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
         if (!ctx.TryWriteUInt64(infoAddress, block.Start) ||

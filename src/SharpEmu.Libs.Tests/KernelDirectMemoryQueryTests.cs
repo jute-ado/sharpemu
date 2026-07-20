@@ -11,6 +11,7 @@ namespace SharpEmu.Libs.Tests;
 public sealed class KernelDirectMemoryQueryTests
 {
     private const ulong OutputAddress = 0x1000;
+    private const ulong DirectMemorySize = 16UL * 1024 * 1024 * 1024;
     private const ulong SearchSize = 0x0100_0000;
     private const ulong AllocationLength = 0x4000;
     private const int MemoryType = 7;
@@ -35,6 +36,7 @@ public sealed class KernelDirectMemoryQueryTests
     {
         var (context, output, allocationStart) = CreateAllocatedContext(0x1900_0000);
         context[CpuRegister.Rdi] = allocationStart + 0x1000;
+        context[CpuRegister.Rsi] = 0;
         context[CpuRegister.Rdx] = OutputAddress;
         context[CpuRegister.Rcx] = 24;
 
@@ -45,7 +47,7 @@ public sealed class KernelDirectMemoryQueryTests
     }
 
     [Fact]
-    public void QueryWithoutFindNextRejectsGapBeforeAllocation()
+    public void QueryWithoutFindNextReturnsKernelAccessErrorForGap()
     {
         var (context, output, allocationStart) = CreateAllocatedContext(0x1A00_0000);
         context[CpuRegister.Rdi] = allocationStart - 0x1000;
@@ -55,8 +57,56 @@ public sealed class KernelDirectMemoryQueryTests
 
         var result = KernelMemoryCompatExports.KernelDirectMemoryQuery(context);
 
-        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND, result);
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED, result);
         Assert.All(output, value => Assert.Equal(0xCC, value));
+    }
+
+    [Fact]
+    public void FindNextAfterLastAllocationReturnsTerminalRange()
+    {
+        var (context, output) = CreateEmptyContext();
+        context[CpuRegister.Rdi] = DirectMemorySize - 1;
+        context[CpuRegister.Rsi] = 1;
+        context[CpuRegister.Rdx] = OutputAddress;
+        context[CpuRegister.Rcx] = 24;
+
+        var result = KernelMemoryCompatExports.KernelDirectMemoryQuery(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, result);
+        Assert.Equal(DirectMemorySize, BinaryPrimitives.ReadUInt64LittleEndian(output.AsSpan(0, 8)));
+        Assert.Equal(DirectMemorySize, BinaryPrimitives.ReadUInt64LittleEndian(output.AsSpan(8, 8)));
+        Assert.Equal(0, BinaryPrimitives.ReadInt32LittleEndian(output.AsSpan(16, 4)));
+        Assert.All(output.AsSpan(20, 4).ToArray(), value => Assert.Equal(0xCC, value));
+    }
+
+    [Theory]
+    [InlineData(-1L, 0, 24)]
+    [InlineData(0L, 2, 24)]
+    [InlineData(0L, 0, 23)]
+    [InlineData(0L, 0, 25)]
+    public void QueryRejectsNegativeOffsetsUnknownFlagsAndNonExactSizes(
+        long offset,
+        ulong flags,
+        ulong infoSize)
+    {
+        var (context, output) = CreateEmptyContext();
+        context[CpuRegister.Rdi] = unchecked((ulong)offset);
+        context[CpuRegister.Rsi] = flags;
+        context[CpuRegister.Rdx] = OutputAddress;
+        context[CpuRegister.Rcx] = infoSize;
+
+        var result = KernelMemoryCompatExports.KernelDirectMemoryQuery(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT, result);
+        Assert.All(output, value => Assert.Equal(0xCC, value));
+    }
+
+    private static (CpuContext Context, byte[] Output) CreateEmptyContext()
+    {
+        var output = Enumerable.Repeat((byte)0xCC, 24).ToArray();
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(OutputAddress, output);
+        return (new CpuContext(memory, Generation.Gen5), output);
     }
 
     private static (CpuContext Context, byte[] Output, ulong AllocationStart) CreateAllocatedContext(
