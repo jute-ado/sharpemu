@@ -704,6 +704,15 @@ public sealed class SharpEmuRuntimeTests
         Assert.StartsWith("0x", cpuTrap.GetProperty("instructionPointer").GetString(), StringComparison.Ordinal);
         Assert.Equal("0x0000000000000000", cpuTrap.GetProperty("accessAddress").GetString());
         Assert.Equal("read", cpuTrap.GetProperty("accessKind").GetString());
+        Assert.Equal("48 8B 00", cpuTrap.GetProperty("instructionBytes").GetString());
+        Assert.Equal("Mov", cpuTrap.GetProperty("instructionMnemonic").GetString());
+        Assert.Equal("mov rax,[rax]", cpuTrap.GetProperty("instructionText").GetString());
+        Assert.Equal("Next", cpuTrap.GetProperty("instructionFlowControl").GetString());
+        Assert.Equal(3, cpuTrap.GetProperty("instructionLength").GetInt32());
+        Assert.Contains(
+            "inst=mov rax,[rax]",
+            root.GetProperty("diagnostics").GetString(),
+            StringComparison.Ordinal);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuMemoryFault").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuNotImplemented").ValueKind);
     }
