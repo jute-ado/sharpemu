@@ -4712,7 +4712,9 @@ public static partial class Gen5SpirvTranslator
                     SpirvOp.ImageQueryLod,
                     _vec2Type,
                     imageObject,
-                    BuildFloatCoordinates(image, 0));
+                    resource.Arrayed
+                        ? BuildFloatArrayCoordinates(image, 0)
+                        : BuildFloatCoordinates(image, 0));
                 for (var component = 0u; component < 2; component++)
                 {
                     StoreV(
@@ -4737,11 +4739,14 @@ public static partial class Gen5SpirvTranslator
                         SpirvOp.Image,
                         resource.ImageType,
                         imageObject);
+                var sizeType = _module.TypeVector(
+                    _intType,
+                    resource.Arrayed ? 3u : 2u);
                 var size = _module.AddInstruction(
                     resource.IsStorage
                         ? SpirvOp.ImageQuerySize
                         : SpirvOp.ImageQuerySizeLod,
-                    _module.TypeVector(_intType, 2),
+                    sizeType,
                     resource.IsStorage
                         ? [queryImage]
                         :
@@ -4768,7 +4773,7 @@ public static partial class Gen5SpirvTranslator
                     }
 
                     uint value;
-                    if (component < 2)
+                    if (component < 2 || (component == 2 && resource.Arrayed))
                     {
                         var signedValue = _module.AddInstruction(
                             SpirvOp.CompositeExtract,
@@ -5034,7 +5039,9 @@ public static partial class Gen5SpirvTranslator
                 var compareIndex = biasIndex + (hasBias ? 1 : 0);
                 var gradientIndex = compareIndex + (hasCompare ? 1 : 0);
                 var start = gradientIndex + (hasGradients ? 4 : 0);
-                var coordinates = BuildFloatCoordinates(image, start);
+                var coordinates = resource.Arrayed
+                    ? BuildFloatArrayCoordinates(image, start)
+                    : BuildFloatCoordinates(image, start);
                 var explicitLod = sampleSuffix == "L" || isZeroLod || hasGradients;
                 uint offset = 0;
                 uint offsetOperand = 0;
@@ -5091,7 +5098,8 @@ public static partial class Gen5SpirvTranslator
                                 ? Float(0)
                                 : Bitcast(
                                     _floatType,
-                                    LoadV(image.GetAddressRegister(start + 2))));
+                                    LoadV(image.GetAddressRegister(
+                                        start + (resource.Arrayed ? 3 : 2)))));
                     }
 
                     if (hasOffset)
@@ -5151,7 +5159,9 @@ public static partial class Gen5SpirvTranslator
                 var biasIndex = hasOffset ? 1 : 0;
                 var compareIndex = biasIndex + (hasBias ? 1 : 0);
                 var start = compareIndex + (hasCompare ? 1 : 0);
-                var coordinates = BuildFloatCoordinates(image, start);
+                var coordinates = resource.Arrayed
+                    ? BuildFloatArrayCoordinates(image, start)
+                    : BuildFloatCoordinates(image, start);
                 var offset = hasOffset ? BuildImageOffset(image, 0) : 0u;
                 var reference = hasCompare
                     ? Bitcast(
@@ -5198,7 +5208,8 @@ public static partial class Gen5SpirvTranslator
                         operands.Add(
                             Bitcast(
                                 _floatType,
-                                LoadV(image.GetAddressRegister(start + 2))));
+                                LoadV(image.GetAddressRegister(
+                                    start + (resource.Arrayed ? 3 : 2)))));
                     }
 
                     if (hasOffset)
@@ -5417,6 +5428,25 @@ public static partial class Gen5SpirvTranslator
                 _vec2Type,
                 x,
                 y);
+        }
+
+        private uint BuildFloatArrayCoordinates(Gen5ImageControl image, int start)
+        {
+            var x = Bitcast(
+                _floatType,
+                LoadV(image.GetAddressRegister(start)));
+            var y = Bitcast(
+                _floatType,
+                LoadV(image.GetAddressRegister(start + 1)));
+            var layer = Bitcast(
+                _floatType,
+                LoadV(image.GetAddressRegister(start + 2)));
+            return _module.AddInstruction(
+                SpirvOp.CompositeConstruct,
+                _vec3Type,
+                x,
+                y,
+                layer);
         }
 
         private uint BuildClampedIntegerCoordinates(

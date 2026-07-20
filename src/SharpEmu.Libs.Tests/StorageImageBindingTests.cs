@@ -35,9 +35,31 @@ public sealed class StorageImageBindingTests
         Assert.False(Gen5ShaderTranslator.RequiresStorageImage(load, [load, store]));
     }
 
+    [Theory]
+    [InlineData("ImageSample")]
+    [InlineData("ImageSampleL")]
+    [InlineData("ImageGather4")]
+    public void ArraySamplingOperationsUseArrayedImageBindings(string opcode)
+    {
+        Assert.True(Gen5ShaderTranslator.IsArrayedImageBinding(
+            CreateBinding(opcode, [1u, 2u, 3u], isArray: true)));
+    }
+
+    [Theory]
+    [InlineData("ImageLoad", true)]
+    [InlineData("ImageStore", true)]
+    [InlineData("ImageSample", false)]
+    [InlineData("ImageGather4", false)]
+    public void NonArraySamplingBindingsRemainNonArrayed(string opcode, bool isArray)
+    {
+        Assert.False(Gen5ShaderTranslator.IsArrayedImageBinding(
+            CreateBinding(opcode, [1u, 2u, 3u], isArray)));
+    }
+
     private static Gen5ImageBinding CreateBinding(
         string opcode,
-        IReadOnlyList<uint> descriptor) =>
+        IReadOnlyList<uint> descriptor,
+        bool isArray = false) =>
         new(
             Pc: 0,
             opcode,
@@ -49,7 +71,7 @@ public sealed class StorageImageBindingTests
                 ScalarResource: 0,
                 ScalarSampler: 0,
                 Dimension: 2,
-                IsArray: false,
+                IsArray: isArray,
                 Glc: false,
                 Slc: false),
             descriptor,

@@ -1892,6 +1892,11 @@ public static class Gen5ShaderTranslator
         name.StartsWith("ImageStore", StringComparison.Ordinal) ||
         name.StartsWith("ImageAtomic", StringComparison.Ordinal);
 
+    public static bool IsArrayedImageBinding(Gen5ImageBinding binding) =>
+        binding.Control.IsArray &&
+        (binding.Opcode.StartsWith("ImageSample", StringComparison.Ordinal) ||
+         binding.Opcode.StartsWith("ImageGather4", StringComparison.Ordinal));
+
     public static bool RequiresStorageImage(
         Gen5ImageBinding binding,
         IReadOnlyList<Gen5ImageBinding> stageBindings)
