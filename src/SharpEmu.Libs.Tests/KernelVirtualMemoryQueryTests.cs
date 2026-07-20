@@ -38,7 +38,7 @@ public sealed class KernelVirtualMemoryQueryTests
     }
 
     [Fact]
-    public void QueryWithoutFindNextRejectsBackingMemoryGap()
+    public void UnmappedQueryReturnsKernelAccessError()
     {
         var output = Enumerable.Repeat((byte)0xCC, 72).ToArray();
         var memory = new QueryGuestMemory(
@@ -52,7 +52,7 @@ public sealed class KernelVirtualMemoryQueryTests
 
         var result = KernelMemoryCompatExports.KernelVirtualQuery(context);
 
-        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND, result);
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED, result);
         Assert.All(output, value => Assert.Equal(0xCC, value));
     }
 
