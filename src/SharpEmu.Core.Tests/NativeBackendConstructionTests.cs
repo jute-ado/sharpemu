@@ -102,6 +102,36 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public void DisposeSignalsBlockedGuestThreadsBeforeReleasingBackendResources()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var memory = new AllocatingHostMemory(failedAllocation: int.MaxValue);
+        var platform = new StubHostPlatform(
+            threading,
+            memory,
+            new StubHostSymbolResolver(address: 1));
+        var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+
+        try
+        {
+            Assert.False(GuestThreadBlocking.ShutdownRequested);
+
+            backend.Dispose();
+
+            Assert.True(GuestThreadBlocking.ShutdownRequested);
+            Assert.Empty(memory.ActiveAllocations);
+        }
+        finally
+        {
+            backend.Dispose();
+            GuestThreadBlocking.BeginExecution();
+        }
+    }
+
+    [Fact]
     public void RegisteredPrimaryThreadAcceptsQueuedGuestException()
     {
         var threading = new RecordingHostThreading([17u, 23u]);

@@ -7,8 +7,16 @@ using Xunit;
 
 namespace SharpEmu.Libs.Tests.Pthread;
 
-public sealed class PthreadMutexSemanticsTests
+public sealed class PthreadMutexSemanticsTests : IDisposable
 {
+    public PthreadMutexSemanticsTests() => GuestThreadBlocking.BeginExecution();
+
+    public void Dispose()
+    {
+        GuestThreadBlocking.RequestShutdown();
+        GuestThreadBlocking.BeginExecution();
+    }
+
     [Fact]
     public void AdaptiveMutex_SelfLockIsIdempotent()
     {
