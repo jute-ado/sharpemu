@@ -1034,7 +1034,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			_activeGuestHardwareExceptionCode,
 			accessKind.HasValue ? _activeGuestHardwareExceptionAccessAddress : null,
 			accessKind,
-			registers: _activeGuestHardwareExceptionRegisters);
+			registers: _activeGuestHardwareExceptionRegisters,
+			guestThreadHandle: GuestThreadExecution.CurrentGuestThreadHandle);
 		detail =
 			$"Guest hardware exception 0x{_activeGuestHardwareExceptionCode:X8} " +
 			$"at RIP=0x{_activeGuestHardwareExceptionRip:X16}.";

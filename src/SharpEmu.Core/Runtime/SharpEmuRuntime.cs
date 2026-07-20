@@ -292,6 +292,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 ? $", rax=0x{registers.Rax:X16}, rdi=0x{registers.Rdi:X16}, " +
                   $"rsp=0x{registers.Rsp:X16}, rbp=0x{registers.Rbp:X16}"
                 : string.Empty;
+            var threadText = $", thread=0x{trapInfo.GuestThreadHandle:X16}";
 
             var hint = string.Empty;
             if (image.IsSelf &&
@@ -319,7 +320,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 : string.Empty;
             var diagnosticsBuilder = new StringBuilder(1024);
             diagnosticsBuilder.Append(
-                $"CPU trap at RIP=0x{trapInfo.InstructionPointer:X16}, opcode=0x{trapInfo.Opcode:X2}, bytes={opcodeBytes}{decodedTrapText}{exceptionText}{accessText}{registerText}, import_stubs={activeImportStubs.Count}{ud2Hint}{longModeHint}{hint}{ripStubText}{transferText}");
+                $"CPU trap at RIP=0x{trapInfo.InstructionPointer:X16}, opcode=0x{trapInfo.Opcode:X2}, bytes={opcodeBytes}{decodedTrapText}{exceptionText}{accessText}{registerText}{threadText}, import_stubs={activeImportStubs.Count}{ud2Hint}{longModeHint}{hint}{ripStubText}{transferText}");
             if (!string.IsNullOrWhiteSpace(_cpuDispatcher.LastRecentControlTransferTrace))
             {
                 diagnosticsBuilder.AppendLine();

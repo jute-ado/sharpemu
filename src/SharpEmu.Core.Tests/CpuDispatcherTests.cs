@@ -233,7 +233,8 @@ public sealed class CpuDispatcherTests
                 0xF7,
                 exceptionCode: 0xC0000005,
                 accessAddress: 0,
-                accessKind: CpuMemoryAccessKind.Read));
+                accessKind: CpuMemoryAccessKind.Read,
+                guestThreadHandle: 0xCAFE));
         using var dispatcher = new CpuDispatcher(
             new VirtualMemory(),
             new ModuleManager(),
@@ -250,6 +251,7 @@ public sealed class CpuDispatcherTests
         Assert.Equal(0xC0000005u, dispatcher.LastTrapInfo?.ExceptionCode);
         Assert.Equal(0uL, dispatcher.LastTrapInfo?.AccessAddress);
         Assert.Equal(CpuMemoryAccessKind.Read, dispatcher.LastTrapInfo?.AccessKind);
+        Assert.Equal(0xCAFEuL, dispatcher.LastTrapInfo?.GuestThreadHandle);
         Assert.Equal(trapRip, dispatcher.LastSessionSummary.LastGuestRip);
         Assert.Null(dispatcher.LastNotImplementedInfo);
     }

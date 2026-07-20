@@ -17,7 +17,8 @@ public readonly struct CpuTrapInfo
         string? instructionText = null,
         string? instructionFlowControl = null,
         CpuRegisterSnapshot? registers = null,
-        IReadOnlyList<CpuStackFrame>? stackFrames = null)
+        IReadOnlyList<CpuStackFrame>? stackFrames = null,
+        ulong guestThreadHandle = 0)
     {
         InstructionPointer = instructionPointer;
         Opcode = opcode;
@@ -31,6 +32,7 @@ public readonly struct CpuTrapInfo
         InstructionFlowControl = instructionFlowControl;
         Registers = registers;
         StackFrames = stackFrames;
+        GuestThreadHandle = guestThreadHandle;
     }
 
     public ulong InstructionPointer { get; }
@@ -57,6 +59,8 @@ public readonly struct CpuTrapInfo
 
     public IReadOnlyList<CpuStackFrame>? StackFrames { get; }
 
+    public ulong GuestThreadHandle { get; }
+
     public CpuTrapInfo WithDecodedInstruction(
         string instructionBytes,
         int instructionLength,
@@ -75,7 +79,8 @@ public readonly struct CpuTrapInfo
             instructionText,
             instructionFlowControl,
             Registers,
-            StackFrames);
+            StackFrames,
+            GuestThreadHandle);
 
     public CpuTrapInfo WithStackFrames(IReadOnlyList<CpuStackFrame> stackFrames) =>
         new(
@@ -90,5 +95,6 @@ public readonly struct CpuTrapInfo
             InstructionText,
             InstructionFlowControl,
             Registers,
-            stackFrames);
+            stackFrames,
+            GuestThreadHandle);
 }
