@@ -79,28 +79,105 @@ public sealed class KernelSleepCompatibilityTests
         GuestThreadBlocking.BeginExecution();
         var context = new CpuContext(new FakeGuestMemory(), Generation.Gen5);
         context[CpuRegister.Rdi] = ulong.MaxValue;
-        var waitTask = Task.Run(() =>
+        var completion = new TaskCompletionSource<int>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var waitThread = new Thread(() =>
         {
             var previous = GuestThreadExecution.EnterGuestThread(0x9ABC);
             try
             {
-                return KernelRuntimeCompatExports.KernelUsleep(context);
+                completion.TrySetResult(
+                    KernelRuntimeCompatExports.KernelUsleep(context));
+            }
+            catch (Exception exception)
+            {
+                completion.TrySetException(exception);
             }
             finally
             {
                 GuestThreadExecution.RestoreGuestThread(previous);
             }
-        });
+        })
+        {
+            IsBackground = true,
+            Name = "kernel-usleep-shutdown-test",
+        };
+        waitThread.Start();
 
-        Assert.True(SpinWait.SpinUntil(
-            () => GuestThreadBlocking.DescribeBlock(0x9ABC) is not null,
-            TimeSpan.FromSeconds(1)));
-        GuestThreadBlocking.RequestShutdown();
+        try
+        {
+            Assert.True(SpinWait.SpinUntil(
+                () => GuestThreadBlocking.DescribeBlock(0x9ABC) is not null,
+                TimeSpan.FromSeconds(1)));
+            GuestThreadBlocking.RequestShutdown();
 
-        Assert.Equal(
-            (int)OrbisGen2Result.ORBIS_GEN2_OK,
-            await waitTask.WaitAsync(TimeSpan.FromSeconds(1)));
-        Assert.Null(GuestThreadBlocking.DescribeBlock(0x9ABC));
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                await completion.Task.WaitAsync(TimeSpan.FromSeconds(1)));
+            Assert.True(waitThread.Join(TimeSpan.FromSeconds(1)));
+            Assert.Null(GuestThreadBlocking.DescribeBlock(0x9ABC));
+        }
+        finally
+        {
+            GuestThreadBlocking.RequestShutdown();
+            _ = waitThread.Join(TimeSpan.FromSeconds(1));
+            GuestThreadBlocking.BeginExecution();
+        }
+    }
+
+    [Fact]
+    public async Task ShutdownSignalWakesWaiterWithoutPolling()
+    {
         GuestThreadBlocking.BeginExecution();
+        using var started = new ManualResetEventSlim();
+        var completion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var waitThread = new Thread(() =>
+        {
+            started.Set();
+            completion.TrySetResult(
+                GuestThreadBlocking.WaitForShutdown(Timeout.Infinite));
+        })
+        {
+            IsBackground = true,
+            Name = "guest-shutdown-signal-test",
+        };
+        waitThread.Start();
+
+        try
+        {
+            Assert.True(started.Wait(TimeSpan.FromSeconds(1)));
+            Assert.False(completion.Task.IsCompleted);
+            GuestThreadBlocking.RequestShutdown();
+
+            Assert.True(await completion.Task.WaitAsync(TimeSpan.FromSeconds(1)));
+            Assert.True(waitThread.Join(TimeSpan.FromSeconds(1)));
+        }
+        finally
+        {
+            GuestThreadBlocking.RequestShutdown();
+            _ = waitThread.Join(TimeSpan.FromSeconds(1));
+            GuestThreadBlocking.BeginExecution();
+        }
+    }
+
+    [Fact]
+    public void ShutdownSignalResetsBetweenExecutionLifetimes()
+    {
+        try
+        {
+            for (var iteration = 0; iteration < 16; iteration++)
+            {
+                GuestThreadBlocking.BeginExecution();
+                Assert.False(GuestThreadBlocking.WaitForShutdown(0));
+
+                GuestThreadBlocking.RequestShutdown();
+                Assert.True(GuestThreadBlocking.WaitForShutdown(0));
+            }
+        }
+        finally
+        {
+            GuestThreadBlocking.BeginExecution();
+        }
     }
 }

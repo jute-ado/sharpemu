@@ -246,20 +246,24 @@ public static class KernelRuntimeCompatExports
         GuestThreadBlocking.NoteBlocked(guestThreadHandle, description);
         try
         {
-            lock (_sleepGate)
+            while (!GuestThreadBlocking.ShutdownRequested)
             {
-                while (!GuestThreadBlocking.ShutdownRequested)
+                var remainingTicks = deadlineTimestamp - Stopwatch.GetTimestamp();
+                if (remainingTicks <= 0)
                 {
-                    var remainingTicks = deadlineTimestamp - Stopwatch.GetTimestamp();
-                    if (remainingTicks <= 0)
-                    {
-                        break;
-                    }
+                    break;
+                }
 
-                    var waitMilliseconds =
-                        GuestThreadBlocking.GetWaitMilliseconds(deadlineTimestamp);
+                var waitMilliseconds =
+                    GuestThreadBlocking.GetWaitMilliseconds(deadlineTimestamp);
+                lock (_sleepGate)
+                {
                     GuestThreadBlocking.Checkpoint(guestThreadHandle, _sleepGate);
-                    _ = Monitor.Wait(_sleepGate, waitMilliseconds);
+                }
+
+                if (GuestThreadBlocking.WaitForShutdown(waitMilliseconds))
+                {
+                    break;
                 }
             }
         }
