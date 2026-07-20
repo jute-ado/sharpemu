@@ -139,14 +139,14 @@ public sealed class GuestMemoryAllocatorTests
     }
 
     [Fact]
-    public void TryBackFixedRangeReturnsFalseWhenRangeIsFullyOccupied()
+    public void TryBackFixedRangeSucceedsWithoutAllocatingWhenRangeIsFullyOccupied()
     {
         const ulong rangeBase = 0x0000_0020_2F00_0000;
         const ulong rangeSize = 0x40_0000;
         using var host = new PartialOverlapHostMemory(rangeBase, rangeSize, rangeSize);
         using var memory = new PhysicalVirtualMemory(host);
 
-        Assert.False(memory.TryBackFixedRange(rangeBase, rangeSize, executable: false));
+        Assert.True(memory.TryBackFixedRange(rangeBase, rangeSize, executable: false));
         Assert.Empty(host.AllocationCalls);
     }
 

@@ -81,7 +81,6 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestAddressSpace, IGuestStac
 
         var end = address + size;
         var cursor = address;
-        var backedAny = false;
         foreach (var region in _regions
                      .Where(region => region.Base < end)
                      .OrderBy(region => region.Base)
@@ -100,14 +99,12 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestAddressSpace, IGuestStac
                 {
                     return false;
                 }
-
-                backedAny = true;
             }
 
             cursor = Math.Max(cursor, regionEnd);
             if (cursor >= end)
             {
-                return backedAny;
+                return true;
             }
         }
 
@@ -117,11 +114,9 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestAddressSpace, IGuestStac
             {
                 return false;
             }
-
-            backedAny = true;
         }
 
-        return backedAny;
+        return true;
     }
 
     public bool TryAllocateAtOrAbove(

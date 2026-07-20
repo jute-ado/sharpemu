@@ -397,7 +397,6 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
         // stretches already reserved or committed by another allocation are left as
         // they are, which is exactly what a fixed mapping does on hardware.
         var cursor = start;
-        var backedAny = false;
         while (cursor < end)
         {
             if (!_hostMemory.Query(cursor, out var info))
@@ -447,13 +446,12 @@ public sealed unsafe class PhysicalVirtualMemory : IVirtualMemory, IGuestMemoryA
                 }
 
                 TraceVmem($"Backed fixed range gap: 0x{cursor:X16} - 0x{runEnd:X16} ({runSize} bytes)");
-                backedAny = true;
             }
 
             cursor = runEnd;
         }
 
-        return backedAny;
+        return true;
     }
 
     public bool TryAllocateAtOrAbove(
