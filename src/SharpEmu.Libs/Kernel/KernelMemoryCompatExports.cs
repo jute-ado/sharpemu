@@ -3876,6 +3876,14 @@ public static partial class KernelMemoryCompatExports
             stateFlags |= 0x02u;
         }
 
+        if (ctx.Memory is IGuestStackMemory stackMemory &&
+            stackMemory.TryGetStackRange(region.Address, out var stackStart, out var stackEnd) &&
+            stackStart == region.Address &&
+            stackEnd == regionEnd)
+        {
+            stateFlags |= 0x04u;
+        }
+
         stateFlags |= 0x10u;
 
         BinaryPrimitives.WriteUInt64LittleEndian(payload[0..8], region.Address);
