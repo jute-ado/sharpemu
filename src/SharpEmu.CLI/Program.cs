@@ -2063,6 +2063,7 @@ internal static partial class Program
             value.InstructionText,
             value.InstructionFlowControl,
             BuildCpuRegisterReport(value.Registers),
+            FormatAddress(value.GuestThreadHandle),
             BuildCodeLocationReport(value.InstructionPointer, application, executablePath),
             BuildCpuStackFrameReports(value.StackFrames, application, executablePath));
     }
@@ -2646,6 +2647,7 @@ internal static partial class Program
         string? InstructionText,
         string? InstructionFlowControl,
         CliCpuRegisterReport? Registers,
+        string GuestThreadHandle,
         CliCodeLocationReport? Location,
         IReadOnlyList<CliCpuStackFrameReport>? StackFrames);
 

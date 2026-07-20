@@ -711,6 +711,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("Next", cpuTrap.GetProperty("instructionFlowControl").GetString());
         Assert.Equal(3, cpuTrap.GetProperty("instructionLength").GetInt32());
         var registers = cpuTrap.GetProperty("registers");
+        Assert.Equal("0x0000000000000000", cpuTrap.GetProperty("guestThreadHandle").GetString());
         Assert.Equal("0x0000000000000000", registers.GetProperty("rax").GetString());
         Assert.Equal("0x0000000000000000", registers.GetProperty("rdi").GetString());
         Assert.NotEqual("0x0000000000000000", registers.GetProperty("rsp").GetString());
