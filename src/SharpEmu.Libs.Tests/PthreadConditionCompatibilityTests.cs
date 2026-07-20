@@ -8,7 +8,7 @@ using Xunit;
 
 namespace SharpEmu.Libs.Tests;
 
-public sealed class PthreadConditionCompatibilityTests
+public sealed class PthreadConditionCompatibilityTests : IDisposable
 {
     private const int PosixMemoryFault = 14;
     private const int PosixInvalidArgument = 22;
@@ -17,6 +17,15 @@ public sealed class PthreadConditionCompatibilityTests
     private const ulong MutexAddress = 0x2000;
     private const ulong DeadlineAddress = 0x3000;
     private const ulong MutexAttrAddress = 0x4000;
+
+    public PthreadConditionCompatibilityTests() =>
+        GuestThreadBlocking.BeginExecution();
+
+    public void Dispose()
+    {
+        GuestThreadBlocking.RequestShutdown();
+        GuestThreadBlocking.BeginExecution();
+    }
 
     [Fact]
     public void DestroyReleasesAllocatedConditionMutexAndAttributeObjects()

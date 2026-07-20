@@ -7,10 +7,19 @@ using Xunit;
 
 namespace SharpEmu.Libs.Tests;
 
-public sealed class PthreadMutexOwnershipTests
+public sealed class PthreadMutexOwnershipTests : IDisposable
 {
     private const ulong MutexAddress = 0x71_0000;
     private const ulong AttrAddress = 0x72_0000;
+
+    public PthreadMutexOwnershipTests() =>
+        GuestThreadBlocking.BeginExecution();
+
+    public void Dispose()
+    {
+        GuestThreadBlocking.RequestShutdown();
+        GuestThreadBlocking.BeginExecution();
+    }
 
     [Theory]
     [InlineData(3)]

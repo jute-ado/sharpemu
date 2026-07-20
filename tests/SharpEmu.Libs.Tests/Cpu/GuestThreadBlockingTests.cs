@@ -8,8 +8,16 @@ using Xunit;
 
 namespace SharpEmu.Libs.Tests.Cpu;
 
-public sealed class GuestThreadBlockingTests
+public sealed class GuestThreadBlockingTests : IDisposable
 {
+    public GuestThreadBlockingTests() => GuestThreadBlocking.BeginExecution();
+
+    public void Dispose()
+    {
+        GuestThreadBlocking.RequestShutdown();
+        GuestThreadBlocking.BeginExecution();
+    }
+
     [Fact]
     public void CooperativeBlockingSurfaceIsRemoved()
     {
