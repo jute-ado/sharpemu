@@ -106,10 +106,10 @@ public sealed class AprStreamingContractTests
         const ulong errorIndexAddress = memoryBase + 0x8F0;
         var memory = new FakeCpuMemory(memoryBase, 0x4000);
         var context = new CpuContext(memory, Generation.Gen5);
-        var missingHostPath = Path.Combine(
-            Path.GetTempPath(),
+        using var mount = new TemporaryGuestMount();
+        var missingGuestPath = mount.PathFor(
             $"sharpemu-apr-missing-{Guid.NewGuid():N}.bin");
-        memory.WriteCString(pathAddress, missingHostPath);
+        memory.WriteCString(pathAddress, missingGuestPath);
         WriteUInt64(memory, pathListAddress, pathAddress);
 
         context[CpuRegister.Rdi] = pathListAddress;
@@ -135,10 +135,10 @@ public sealed class AprStreamingContractTests
         const ulong sizesAddress = memoryBase + 0x880;
         var memory = new FakeCpuMemory(memoryBase, 0x4000);
         var context = new CpuContext(memory, Generation.Gen5);
-        var missingHostPath = Path.Combine(
-            Path.GetTempPath(),
+        using var mount = new TemporaryGuestMount();
+        var missingGuestPath = mount.PathFor(
             $"sharpemu-apr-missing-{Guid.NewGuid():N}.bin");
-        memory.WriteCString(pathAddress, missingHostPath);
+        memory.WriteCString(pathAddress, missingGuestPath);
         WriteUInt64(memory, pathListAddress, pathAddress);
 
         context[CpuRegister.Rdi] = pathListAddress;
@@ -162,8 +162,9 @@ public sealed class AprStreamingContractTests
         const ulong errorIndexAddress = memoryBase + 0x8F0;
         byte[] fileContents = [1, 2, 3, 4, 5];
         var hostPath = Path.GetTempFileName();
-        var missingHostPath = Path.Combine(
-            Path.GetTempPath(),
+        using var mount = new TemporaryGuestMount();
+        var existingGuestPath = mount.PathFor(Path.GetFileName(hostPath));
+        var missingGuestPath = mount.PathFor(
             $"sharpemu-apr-missing-{Guid.NewGuid():N}.bin");
 
         try
@@ -171,9 +172,9 @@ public sealed class AprStreamingContractTests
             File.WriteAllBytes(hostPath, fileContents);
             var memory = new FakeCpuMemory(memoryBase, 0x4000);
             var context = new CpuContext(memory, Generation.Gen5);
-            memory.WriteCString(memoryBase + 0x200, hostPath);
-            memory.WriteCString(memoryBase + 0x400, missingHostPath);
-            memory.WriteCString(memoryBase + 0x600, hostPath);
+            memory.WriteCString(memoryBase + 0x200, existingGuestPath);
+            memory.WriteCString(memoryBase + 0x400, missingGuestPath);
+            memory.WriteCString(memoryBase + 0x600, existingGuestPath);
             WriteUInt64(memory, pathListAddress, memoryBase + 0x200);
             WriteUInt64(memory, pathListAddress + 8, memoryBase + 0x400);
             WriteUInt64(memory, pathListAddress + 16, memoryBase + 0x600);
@@ -220,6 +221,24 @@ public sealed class AprStreamingContractTests
         Span<byte> bytes = stackalloc byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32LittleEndian(bytes, value);
         Assert.True(memory.TryWrite(address, bytes));
+    }
+
+    private sealed class TemporaryGuestMount : IDisposable
+    {
+        public TemporaryGuestMount()
+        {
+            MountPoint = "/apr-test-" + Guid.NewGuid().ToString("N");
+            KernelMemoryCompatExports.RegisterGuestPathMount(
+                MountPoint,
+                Path.GetTempPath());
+        }
+
+        private string MountPoint { get; }
+
+        public string PathFor(string fileName) => $"{MountPoint}/{fileName}";
+
+        public void Dispose() =>
+            KernelMemoryCompatExports.TryUnregisterGuestPathMount(MountPoint);
     }
 
     private static void WriteUInt64(FakeCpuMemory memory, ulong address, ulong value)

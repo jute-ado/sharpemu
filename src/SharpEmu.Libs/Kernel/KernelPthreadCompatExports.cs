@@ -973,6 +973,16 @@ public static class KernelPthreadCompatExports
         }
     }
 
+    private static bool IsGuestTrackedSelfLock(
+        CpuContext ctx,
+        ulong mutexAddress,
+        ulong currentThreadId) =>
+        KernelMemoryCompatExports.TryReadUInt64Compat(
+            ctx,
+            mutexAddress + sizeof(ulong),
+            out var guestOwner) &&
+        guestOwner == currentThreadId;
+
     private static int PthreadMutexUnlockCore(CpuContext ctx, ulong mutexAddress, bool requireOwner)
     {
         if (mutexAddress == 0)
