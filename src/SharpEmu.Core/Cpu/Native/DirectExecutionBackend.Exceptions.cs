@@ -382,6 +382,7 @@ public sealed partial class DirectExecutionBackend
 			exceptionRecord->NumberParameters >= 2
 				? exceptionRecord->ExceptionInformation[1]
 				: 0;
+		_activeGuestHardwareExceptionRegisters = CaptureRegisterSnapshot(contextRecord, rsp);
 		if (_logGuestContext)
 		{
 			LogRedirectedGuestExceptionContext(
@@ -397,6 +398,25 @@ public sealed partial class DirectExecutionBackend
 		WriteCtxU64(contextRecord, CTX_RIP, (ulong)_guestReturnStub);
 		return true;
 	}
+
+	private unsafe static CpuRegisterSnapshot CaptureRegisterSnapshot(void* contextRecord, ulong rsp) =>
+		new(
+			ReadCtxU64(contextRecord, CTX_RAX),
+			ReadCtxU64(contextRecord, CTX_RBX),
+			ReadCtxU64(contextRecord, CTX_RCX),
+			ReadCtxU64(contextRecord, CTX_RDX),
+			ReadCtxU64(contextRecord, CTX_RSI),
+			ReadCtxU64(contextRecord, CTX_RDI),
+			ReadCtxU64(contextRecord, CTX_RBP),
+			rsp,
+			ReadCtxU64(contextRecord, CTX_R8),
+			ReadCtxU64(contextRecord, CTX_R9),
+			ReadCtxU64(contextRecord, CTX_R10),
+			ReadCtxU64(contextRecord, CTX_R11),
+			ReadCtxU64(contextRecord, CTX_R12),
+			ReadCtxU64(contextRecord, CTX_R13),
+			ReadCtxU64(contextRecord, CTX_R14),
+			ReadCtxU64(contextRecord, CTX_R15));
 
 	private unsafe void LogRedirectedGuestExceptionContext(
 		void* contextRecord,

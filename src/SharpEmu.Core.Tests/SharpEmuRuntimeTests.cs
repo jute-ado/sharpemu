@@ -678,6 +678,7 @@ public sealed class SharpEmuRuntimeTests
         var execution = await RunSyntheticExecutableInCliAsync(
             [
                 0x48, 0x31, 0xC0, // xor rax, rax
+                0x48, 0x31, 0xFF, // xor rdi, rdi
                 0x48, 0x8B, 0x00, // mov rax, [rax]
             ],
             requestReport: true);
@@ -709,8 +710,16 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("mov rax,[rax]", cpuTrap.GetProperty("instructionText").GetString());
         Assert.Equal("Next", cpuTrap.GetProperty("instructionFlowControl").GetString());
         Assert.Equal(3, cpuTrap.GetProperty("instructionLength").GetInt32());
+        var registers = cpuTrap.GetProperty("registers");
+        Assert.Equal("0x0000000000000000", registers.GetProperty("rax").GetString());
+        Assert.Equal("0x0000000000000000", registers.GetProperty("rdi").GetString());
+        Assert.NotEqual("0x0000000000000000", registers.GetProperty("rsp").GetString());
         Assert.Contains(
             "inst=mov rax,[rax]",
+            root.GetProperty("diagnostics").GetString(),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "rdi=0x0000000000000000",
             root.GetProperty("diagnostics").GetString(),
             StringComparison.Ordinal);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuMemoryFault").ValueKind);

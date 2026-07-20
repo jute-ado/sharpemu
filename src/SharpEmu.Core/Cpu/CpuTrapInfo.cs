@@ -15,7 +15,8 @@ public readonly struct CpuTrapInfo
         int? instructionLength = null,
         string? instructionMnemonic = null,
         string? instructionText = null,
-        string? instructionFlowControl = null)
+        string? instructionFlowControl = null,
+        CpuRegisterSnapshot? registers = null)
     {
         InstructionPointer = instructionPointer;
         Opcode = opcode;
@@ -27,6 +28,7 @@ public readonly struct CpuTrapInfo
         InstructionMnemonic = instructionMnemonic;
         InstructionText = instructionText;
         InstructionFlowControl = instructionFlowControl;
+        Registers = registers;
     }
 
     public ulong InstructionPointer { get; }
@@ -49,6 +51,8 @@ public readonly struct CpuTrapInfo
 
     public string? InstructionFlowControl { get; }
 
+    public CpuRegisterSnapshot? Registers { get; }
+
     public CpuTrapInfo WithDecodedInstruction(
         string instructionBytes,
         int instructionLength,
@@ -65,5 +69,6 @@ public readonly struct CpuTrapInfo
             instructionLength,
             instructionMnemonic,
             instructionText,
-            instructionFlowControl);
+            instructionFlowControl,
+            Registers);
 }
