@@ -8,6 +8,7 @@ using Xunit;
 
 namespace SharpEmu.Core.Tests;
 
+[Collection(PhysicalVirtualMemoryTestCollection.Name)]
 public sealed class GuestCallbackIntegrationTests
 {
     private const ulong CodeAddress = 0x0000_0008_3000_0000;

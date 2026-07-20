@@ -8,6 +8,7 @@ using Xunit;
 
 namespace SharpEmu.Core.Tests;
 
+[Collection(PhysicalVirtualMemoryTestCollection.Name)]
 public sealed class PhysicalVirtualMemoryTests
 {
     private const ulong OneGibibyte = 0x4000_0000UL;
