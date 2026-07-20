@@ -89,6 +89,27 @@ public sealed class CpuDispatcherTests
     }
 
     [Fact]
+    public void ProcessEntryReturnCapturesSignedGuestExitCode()
+    {
+        var backend = new SuccessfulNativeBackend(
+            lastEntryReturnValue: unchecked((ulong)-1L));
+        using var dispatcher = new CpuDispatcher(
+            new VirtualMemory(),
+            new ModuleManager(),
+            backend);
+
+        Assert.Equal(
+            OrbisGen2Result.ORBIS_GEN2_OK,
+            dispatcher.DispatchEntry(
+                0x0000_0008_0000_0000,
+                Generation.Gen5,
+                processImageName: "native-exit-code"));
+        Assert.Equal(CpuExitReason.Exited, dispatcher.LastSessionSummary.Reason);
+        Assert.Equal(-1, dispatcher.LastSessionSummary.ExitCode);
+        Assert.Equal(NativeEntryReturnContract.CaptureExitCode, Assert.Single(backend.ReturnContracts));
+    }
+
+    [Fact]
     public void InfrastructureMappingFailureReportsExactStage()
     {
         var stackBaseAddress = OperatingSystem.IsWindows()
@@ -279,7 +300,7 @@ public sealed class CpuDispatcherTests
         Assert.Equal(20, backend.ExecutionCount);
         Assert.All(
             backend.ReturnContracts,
-            contract => Assert.Equal(NativeEntryReturnContract.RequireZero, contract));
+            contract => Assert.Equal(NativeEntryReturnContract.CaptureExitCode, contract));
         Assert.Equal(4, memory.SnapshotRegions().Count);
     }
 
@@ -471,13 +492,17 @@ public sealed class CpuDispatcherTests
         }
     }
 
-    private sealed class SuccessfulNativeBackend(int lastSessionImportsHit = 0) : INativeCpuBackend
+    private sealed class SuccessfulNativeBackend(
+        int lastSessionImportsHit = 0,
+        ulong? lastEntryReturnValue = null) : INativeCpuBackend
     {
         public string BackendName => "synthetic-backend";
 
         public string? LastError => null;
 
         public int LastSessionImportsHit => lastSessionImportsHit;
+
+        public ulong? LastEntryReturnValue => lastEntryReturnValue;
 
         public int ExecutionCount { get; private set; }
 

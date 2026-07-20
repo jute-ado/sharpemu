@@ -9,6 +9,7 @@ public enum NativeEntryReturnContract
 {
     RequireZero,
     IgnoreReturnValue,
+    CaptureExitCode,
 }
 
 public interface INativeCpuBackend
@@ -20,6 +21,8 @@ public interface INativeCpuBackend
     CpuTrapInfo? LastTrapInfo => null;
 
     int LastSessionImportsHit => 0;
+
+    ulong? LastEntryReturnValue => null;
 
     bool TryExecute(
         CpuContext context,
