@@ -5297,8 +5297,36 @@ public static partial class Gen5SpirvTranslator
                     $"unsupported packed float opcode {instruction.Opcode}"),
             };
             return control.Clamp
-                ? Ext(43, _floatType, result, Float(0), Float(1))
+                ? EmitClampToUnitInterval(result)
                 : result;
+        }
+
+        // VOP3P clamp saturates to [0, 1]. Ordered comparisons also reproduce
+        // the hardware's NaN-to-zero behavior without requiring an IsNan op.
+        private uint EmitClampToUnitInterval(uint value)
+        {
+            var aboveZero = _module.AddInstruction(
+                SpirvOp.FOrdGreaterThan,
+                _boolType,
+                value,
+                Float(0));
+            var lowerBounded = _module.AddInstruction(
+                SpirvOp.Select,
+                _floatType,
+                aboveZero,
+                value,
+                Float(0));
+            var belowOne = _module.AddInstruction(
+                SpirvOp.FOrdLessThan,
+                _boolType,
+                lowerBounded,
+                Float(1));
+            return _module.AddInstruction(
+                SpirvOp.Select,
+                _floatType,
+                belowOne,
+                lowerBounded,
+                Float(1));
         }
 
         /// <summary>

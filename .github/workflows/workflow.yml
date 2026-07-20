@@ -78,7 +78,7 @@ jobs:
         uses: fsfe/reuse-action@v6
 
   build:
-    name: Build Archive
+    name: Build win-x64
     needs:
       - init
       - reuse
@@ -87,7 +87,6 @@ jobs:
       DOTNET_NOLOGO: true
       NUGET_PACKAGES: ${{ github.workspace }}\.nuget\packages
       PUBLISH_DIR: ${{ github.workspace }}\artifacts\publish\win-x64
-      RELEASE_DIR: ${{ github.workspace }}\artifacts\release
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -147,36 +146,18 @@ jobs:
             throw "SBOM tool did not create $manifest"
           }
 
-          New-Item -ItemType Directory -Path $env:RELEASE_DIR -Force | Out-Null
           Copy-Item `
             -LiteralPath $manifest `
-            -Destination (Join-Path $env:RELEASE_DIR '${{ needs.init.outputs.sbom-name }}')
-
-      - name: Create release archive
-        run: |
-          New-Item -ItemType Directory -Path $env:RELEASE_DIR -Force | Out-Null
-
-          $archiveName = "sharpemu-${{ needs.init.outputs.version }}-win-x64.zip"
-          $archivePath = Join-Path $env:RELEASE_DIR $archiveName
-          if (Test-Path $archivePath) {
-            Remove-Item $archivePath -Force
-          }
-
-          Compress-Archive -Path (Join-Path $env:PUBLISH_DIR '*') -DestinationPath $archivePath -CompressionLevel Optimal
-          $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $archiveName" | Set-Content `
-            -LiteralPath "${archivePath}.sha256" `
-            -Encoding ascii
+            -Destination (Join-Path $env:PUBLISH_DIR '${{ needs.init.outputs.sbom-name }}')
+          Remove-Item -LiteralPath (Join-Path $env:PUBLISH_DIR '_manifest') -Recurse -Force
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
           name: sharpemu-win-x64-${{ needs.init.outputs.short-sha }}
-          path: |
-            ${{ env.RELEASE_DIR }}\sharpemu-${{ needs.init.outputs.version }}-win-x64.zip
-            ${{ env.RELEASE_DIR }}\sharpemu-${{ needs.init.outputs.version }}-win-x64.zip.sha256
-            ${{ env.RELEASE_DIR }}\${{ needs.init.outputs.sbom-name }}
+          path: ${{ env.PUBLISH_DIR }}
           if-no-files-found: error
+          include-hidden-files: true
 
   build-posix:
     name: Build ${{ matrix.rid }}
@@ -196,7 +177,6 @@ jobs:
       DOTNET_NOLOGO: true
       NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
       PUBLISH_DIR: ${{ github.workspace }}/artifacts/publish/${{ matrix.rid }}
-      RELEASE_DIR: ${{ github.workspace }}/artifacts/release
       SPIRV_HEADERS_COMMIT: ad9184e76a66b1001c29db9b0a3e87f646c64de0
       # SpirvModuleBuilder emits SPIR-V 1.5 and VulkanVideoPresenter requests Vulkan 1.2.
       SPIRV_TARGET_ENV: vulkan1.2
@@ -287,25 +267,13 @@ jobs:
         if: matrix.rid == 'osx-x64'
         run: scripts/fetch-macos-moltenvk.sh "$PUBLISH_DIR"
 
-      - name: Create release archive
-        run: |
-          mkdir -p "$RELEASE_DIR"
-          archive_name="sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}.tar.gz"
-          # tar keeps the executable bit, which zip would drop.
-          tar -czf "$RELEASE_DIR/$archive_name" -C "$PUBLISH_DIR" .
-          (
-            cd "$RELEASE_DIR"
-            sha256sum "$archive_name" > "$archive_name.sha256"
-          )
-
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
           name: sharpemu-${{ matrix.rid }}-${{ needs.init.outputs.short-sha }}
-          path: |
-            ${{ env.RELEASE_DIR }}/sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}.tar.gz
-            ${{ env.RELEASE_DIR }}/sharpemu-${{ needs.init.outputs.version }}-${{ matrix.rid }}.tar.gz.sha256
+          path: ${{ env.PUBLISH_DIR }}
           if-no-files-found: error
+          include-hidden-files: true
 
   release:
     name: Publish GitHub Release
@@ -323,6 +291,36 @@ jobs:
         with:
           path: release
 
+      - name: Package release assets
+        shell: bash
+        env:
+          SBOM_NAME: ${{ needs.init.outputs.sbom-name }}
+          SHORT_SHA: ${{ needs.init.outputs.short-sha }}
+          VERSION: ${{ needs.init.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          win_dir="release/sharpemu-win-x64-${SHORT_SHA}"
+          linux_dir="release/sharpemu-linux-x64-${SHORT_SHA}"
+          macos_dir="release/sharpemu-osx-x64-${SHORT_SHA}"
+          for package_dir in "${win_dir}" "${linux_dir}" "${macos_dir}"; do
+            test -d "${package_dir}"
+          done
+
+          mkdir -p release-assets
+          test -f "${win_dir}/${SBOM_NAME}"
+          mv "${win_dir}/${SBOM_NAME}" "release-assets/${SBOM_NAME}"
+          (cd "${win_dir}" && zip -q -r "../../release-assets/sharpemu-${VERSION}-win-x64.zip" .)
+
+          chmod +x "${linux_dir}/SharpEmu" "${macos_dir}/SharpEmu"
+          tar -czf "release-assets/sharpemu-${VERSION}-linux-x64.tar.gz" -C "${linux_dir}" .
+          tar -czf "release-assets/sharpemu-${VERSION}-osx-x64.tar.gz" -C "${macos_dir}" .
+
+          cd release-assets
+          sha256sum "sharpemu-${VERSION}-win-x64.zip" > "sharpemu-${VERSION}-win-x64.zip.sha256"
+          sha256sum "sharpemu-${VERSION}-linux-x64.tar.gz" > "sharpemu-${VERSION}-linux-x64.tar.gz.sha256"
+          sha256sum "sharpemu-${VERSION}-osx-x64.tar.gz" > "sharpemu-${VERSION}-osx-x64.tar.gz.sha256"
+
       - name: Create or update release
         shell: bash
         env:
@@ -333,7 +331,7 @@ jobs:
           SBOM_NAME: ${{ needs.init.outputs.sbom-name }}
           VERSION: ${{ needs.init.outputs.version }}
         run: |
-          mapfile -t assets < <(find release -type f \( \
+          mapfile -t assets < <(find release-assets -maxdepth 1 -type f \( \
             -name '*.zip' -o \
             -name '*.tar.gz' -o \
             -name '*.sha256' -o \
@@ -356,7 +354,7 @@ jobs:
           fi
 
           for expected_name in "${expected[@]}"; do
-            mapfile -t matches < <(find release -type f -name "${expected_name}")
+            mapfile -t matches < <(find release-assets -maxdepth 1 -type f -name "${expected_name}")
             if [ "${#matches[@]}" -ne 1 ]; then
               echo "Expected exactly one ${expected_name}, found ${#matches[@]}." >&2
               exit 1
@@ -368,7 +366,7 @@ jobs:
               cd "$(dirname "${checksum}")"
               sha256sum --check "$(basename "${checksum}")"
             )
-          done < <(find release -type f -name '*.sha256' | sort)
+          done < <(find release-assets -maxdepth 1 -type f -name '*.sha256' | sort)
 
           notes="Automated SharpEmu v${VERSION} build for commit ${GITHUB_SHA}."
 

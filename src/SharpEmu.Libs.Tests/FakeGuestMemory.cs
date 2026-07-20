@@ -70,6 +70,60 @@ public sealed class FakeGuestMemory : ICpuMemory, IGuestAddressSpace, IGuestStac
             : 0;
     }
 
+    public bool TryBackFixedRange(ulong address, ulong size, bool executable)
+    {
+        _ = executable;
+        if (address == 0 || size == 0 || size > int.MaxValue ||
+            ulong.MaxValue - address < size)
+        {
+            return false;
+        }
+
+        var end = address + size;
+        var cursor = address;
+        var backedAny = false;
+        foreach (var region in _regions
+                     .Where(region => region.Base < end)
+                     .OrderBy(region => region.Base)
+                     .ToArray())
+        {
+            var regionEnd = checked(region.Base + (ulong)region.Data.Length);
+            if (regionEnd <= cursor)
+            {
+                continue;
+            }
+
+            if (region.Base > cursor)
+            {
+                var gapEnd = Math.Min(region.Base, end);
+                if (!TryAddAllocation(cursor, gapEnd - cursor))
+                {
+                    return false;
+                }
+
+                backedAny = true;
+            }
+
+            cursor = Math.Max(cursor, regionEnd);
+            if (cursor >= end)
+            {
+                return backedAny;
+            }
+        }
+
+        if (cursor < end)
+        {
+            if (!TryAddAllocation(cursor, end - cursor))
+            {
+                return false;
+            }
+
+            backedAny = true;
+        }
+
+        return backedAny;
+    }
+
     public bool TryAllocateAtOrAbove(
         ulong desiredAddress,
         ulong size,

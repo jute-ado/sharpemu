@@ -5188,7 +5188,8 @@ public static partial class KernelMemoryCompatExports
             allowSearch: false,
             allowAllocateAtAlternative: false,
             "reserve fixed range",
-            out _);
+            out _,
+            backPartialOverlap: true);
     }
 
     private static bool IsGuestRangeBacked(CpuContext ctx, ulong address, ulong length)

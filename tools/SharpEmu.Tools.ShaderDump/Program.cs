@@ -67,9 +67,16 @@ uint[] dispatchTopologyWords =
         0x7E0202FF, 0x75227522, // v_mov_b32 v1, 0x75227522 (21024 packed)
         0x7E0402FF, 0x04EA04EA, // v_mov_b32 v2, 0x04EA04EA (~7.496e-5 packed)
         0xCC0E4003, 0x1C0A0300, // v_pk_fma_f16 v3, v0, v1, v2
-        0xCC0E4404, 0x9C0A0300, // v_pk_fma_f16 v4, v0, v1, neg_lo/neg_hi v2
+        0xCC0F4004, 0x18020500, // v_pk_add_f16 v4, v0, v2
+        0xCC104005, 0x18020300, // v_pk_mul_f16 v5, v0, v1
+        0xCC114006, 0x18020300, // v_pk_min_f16 v6, v0, v1
+        0xCC124007, 0x18020300, // v_pk_max_f16 v7, v0, v1
+        0xCC0E4408, 0x9C0A0300, // v_pk_fma_f16 v8, v0, v1, neg_lo/neg_hi v2
+        0xCC0FC009, 0x18020000, // v_pk_add_f16 v9, v0, v0 clamp
+        0xCC0EC40A, 0x1C0A0300, // v_pk_fma_f16 v10, v0, v1, v2 clamp
         0xE0700000, 0x80020300, // buffer_store_dword v3, off, s[8:11], 0
-        0xE0700004, 0x80020400, // buffer_store_dword v4, off, s[8:11], 0 offset:4
+        0xE0700004, 0x80020800, // buffer_store_dword v8, off, s[8:11], 0 offset:4
+        0xE0700008, 0x80020A00, // buffer_store_dword v10, off, s[8:11], 0 offset:8
         0xBF810000,             // s_endpgm
     ]),
     ("mrt", true, [
@@ -974,8 +981,10 @@ static SyntheticConformanceCase? CreateConformanceCase(string name)
         case "pk-f16":
             expectedWords[0] = 0x7A6B_7A6B;
             expectedWords[1] = 0x7A6A_7A6A;
+            expectedWords[2] = 0x3C00_3C00;
             labels[0] = "v_pk_fma_f16 fused rounds above midpoint";
             labels[1] = "v_pk_fma_f16 negated addend rounds below midpoint";
+            labels[2] = "v_pk_fma_f16 clamp saturates both lanes to 1.0";
             break;
         case "exec":
             expectedWords[0] = 0x41560000; // fma(1.5f, 2.25f, 10.0f)
