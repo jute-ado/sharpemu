@@ -19,6 +19,8 @@ public interface INativeCpuBackend
 
     CpuTrapInfo? LastTrapInfo => null;
 
+    int LastSessionImportsHit => 0;
+
     bool TryExecute(
         CpuContext context,
         ulong entryPoint,

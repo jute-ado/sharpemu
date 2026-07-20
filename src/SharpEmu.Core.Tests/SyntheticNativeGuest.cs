@@ -10,7 +10,10 @@ namespace SharpEmu.Core.Tests;
 internal readonly record struct SyntheticGuestExecutionResult(
     OrbisGen2Result Result,
     CpuExitReason ExitReason,
-    string? FailureDetail);
+    string? FailureDetail)
+{
+    public int ImportsHit { get; init; }
+}
 
 internal static class SyntheticNativeGuest
 {
@@ -100,7 +103,10 @@ internal static class SyntheticNativeGuest
                 executions[index] = new SyntheticGuestExecutionResult(
                     result,
                     dispatcher.LastSessionSummary.Reason,
-                    dispatcher.LastNotImplementedInfo?.Detail);
+                    dispatcher.LastNotImplementedInfo?.Detail)
+                {
+                    ImportsHit = dispatcher.LastSessionSummary.ImportsHit,
+                };
             }
             finally
             {

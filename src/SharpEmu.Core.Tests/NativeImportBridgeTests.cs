@@ -54,6 +54,7 @@ public sealed class NativeImportBridgeTests
         ];
         var execution = ExecuteImport(code, AddNid, "synthetic-import-roundtrip");
         AssertSuccessful(execution);
+        Assert.Equal(1, execution.ImportsHit);
     }
 
     [HostX64Fact]
