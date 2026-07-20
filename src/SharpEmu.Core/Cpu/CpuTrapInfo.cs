@@ -19,7 +19,8 @@ public readonly struct CpuTrapInfo
         CpuRegisterSnapshot? registers = null,
         IReadOnlyList<CpuStackFrame>? stackFrames = null,
         ulong guestThreadHandle = 0,
-        CpuCodeWindow? codeWindow = null)
+        CpuCodeWindow? codeWindow = null,
+        CpuMemoryWindow? stackWindow = null)
     {
         InstructionPointer = instructionPointer;
         Opcode = opcode;
@@ -35,6 +36,7 @@ public readonly struct CpuTrapInfo
         StackFrames = stackFrames;
         GuestThreadHandle = guestThreadHandle;
         CodeWindow = codeWindow;
+        StackWindow = stackWindow;
     }
 
     public ulong InstructionPointer { get; }
@@ -65,6 +67,8 @@ public readonly struct CpuTrapInfo
 
     public CpuCodeWindow? CodeWindow { get; }
 
+    public CpuMemoryWindow? StackWindow { get; }
+
     public CpuTrapInfo WithDecodedInstruction(
         string instructionBytes,
         int instructionLength,
@@ -85,7 +89,8 @@ public readonly struct CpuTrapInfo
             Registers,
             StackFrames,
             GuestThreadHandle,
-            CodeWindow);
+            CodeWindow,
+            StackWindow);
 
     public CpuTrapInfo WithStackFrames(IReadOnlyList<CpuStackFrame> stackFrames) =>
         new(
@@ -102,7 +107,8 @@ public readonly struct CpuTrapInfo
             Registers,
             stackFrames,
             GuestThreadHandle,
-            CodeWindow);
+            CodeWindow,
+            StackWindow);
 
     public CpuTrapInfo WithCodeWindow(CpuCodeWindow codeWindow) =>
         new(
@@ -119,5 +125,24 @@ public readonly struct CpuTrapInfo
             Registers,
             StackFrames,
             GuestThreadHandle,
-            codeWindow);
+            codeWindow,
+            StackWindow);
+
+    public CpuTrapInfo WithStackWindow(CpuMemoryWindow stackWindow) =>
+        new(
+            InstructionPointer,
+            Opcode,
+            ExceptionCode,
+            AccessAddress,
+            AccessKind,
+            InstructionBytes,
+            InstructionLength,
+            InstructionMnemonic,
+            InstructionText,
+            InstructionFlowControl,
+            Registers,
+            StackFrames,
+            GuestThreadHandle,
+            CodeWindow,
+            stackWindow);
 }
