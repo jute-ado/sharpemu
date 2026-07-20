@@ -714,6 +714,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("0x0000000000000000", registers.GetProperty("rax").GetString());
         Assert.Equal("0x0000000000000000", registers.GetProperty("rdi").GetString());
         Assert.NotEqual("0x0000000000000000", registers.GetProperty("rsp").GetString());
+        Assert.Empty(cpuTrap.GetProperty("stackFrames").EnumerateArray());
         Assert.Contains(
             "inst=mov rax,[rax]",
             root.GetProperty("diagnostics").GetString(),
@@ -724,6 +725,35 @@ public sealed class SharpEmuRuntimeTests
             StringComparison.Ordinal);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuMemoryFault").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuNotImplemented").ValueKind);
+    }
+
+    [HostX64Fact]
+    public async Task CliWritesBoundedGuestFrameChainToJsonExecutionReport()
+    {
+        var execution = await RunSyntheticExecutableInCliAsync(
+            [
+                0x55,                         // push rbp
+                0x48, 0x89, 0xE5,             // mov rbp, rsp
+                0xE8, 0x02, 0x00, 0x00, 0x00, // call nested function
+                0xC9,                         // leave
+                0xC3,                         // ret
+                0x55,                         // push rbp
+                0x48, 0x89, 0xE5,             // mov rbp, rsp
+                0x48, 0x31, 0xC0,             // xor rax, rax
+                0x48, 0x8B, 0x00,             // mov rax, [rax]
+            ],
+            requestReport: true);
+
+        Assert.Equal(4, execution.ExitCode);
+        Assert.NotNull(execution.ReportJson);
+        using var document = JsonDocument.Parse(execution.ReportJson);
+        var cpuTrap = document.RootElement.GetProperty("cpuTrap");
+        var frames = cpuTrap.GetProperty("stackFrames").EnumerateArray().ToArray();
+        Assert.InRange(frames.Length, 1, 16);
+        var frame = frames[0];
+        Assert.StartsWith("0x", frame.GetProperty("framePointer").GetString(), StringComparison.Ordinal);
+        Assert.StartsWith("0x", frame.GetProperty("nextFramePointer").GetString(), StringComparison.Ordinal);
+        Assert.Equal("0x0000000800000009", frame.GetProperty("returnAddress").GetString());
     }
 
     [Fact]

@@ -2056,8 +2056,16 @@ internal static partial class Program
             value.InstructionMnemonic,
             value.InstructionText,
             value.InstructionFlowControl,
-            BuildCpuRegisterReport(value.Registers));
+            BuildCpuRegisterReport(value.Registers),
+            BuildCpuStackFrameReports(value.StackFrames));
     }
+
+    private static IReadOnlyList<CliCpuStackFrameReport>? BuildCpuStackFrameReports(
+        IReadOnlyList<CpuStackFrame>? stackFrames) =>
+        stackFrames?.Select(frame => new CliCpuStackFrameReport(
+            FormatAddress(frame.FramePointer),
+            FormatAddress(frame.NextFramePointer),
+            FormatAddress(frame.ReturnAddress))).ToArray();
 
     private static CliCpuRegisterReport? BuildCpuRegisterReport(CpuRegisterSnapshot? registers) =>
         registers is not { } value
@@ -2592,7 +2600,13 @@ internal static partial class Program
         string? InstructionMnemonic,
         string? InstructionText,
         string? InstructionFlowControl,
-        CliCpuRegisterReport? Registers);
+        CliCpuRegisterReport? Registers,
+        IReadOnlyList<CliCpuStackFrameReport>? StackFrames);
+
+    private sealed record CliCpuStackFrameReport(
+        string FramePointer,
+        string NextFramePointer,
+        string ReturnAddress);
 
     private sealed record CliCpuRegisterReport(
         string Rax,

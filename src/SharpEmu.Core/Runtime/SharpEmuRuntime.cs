@@ -254,10 +254,11 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             var opcodeBytes = ReadOpcodePreview(trapInfo.InstructionPointer, 8);
             var decodedTrapText = string.Empty;
             var ud2Hint = string.Empty;
+            var enrichedTrapInfo = trapInfo;
             if (TryDecodeInstructionAt(trapInfo.InstructionPointer, out var trapInstruction))
             {
                 decodedTrapText = BuildDecodedInstructionFields(in trapInstruction);
-                LastCpuTrapInfo = trapInfo.WithDecodedInstruction(
+                enrichedTrapInfo = enrichedTrapInfo.WithDecodedInstruction(
                     IcedDecoder.FormatBytes(trapInstruction.Bytes),
                     trapInstruction.Length,
                     trapInstruction.Mnemonic,
@@ -272,6 +273,10 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             {
                 ud2Hint = ", trap=ud2";
             }
+
+            var stackFrames = CaptureTrapStackFrames(trapInfo.Registers);
+            enrichedTrapInfo = enrichedTrapInfo.WithStackFrames(stackFrames);
+            LastCpuTrapInfo = enrichedTrapInfo;
 
             var longModeHint = IsInvalidLongModeOpcode(trapInfo.Opcode)
                 ? ", hint=invalid opcode for x64 long mode; likely wrong jump target or decode desync"
@@ -1190,6 +1195,44 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
         value = BinaryPrimitives.ReadUInt64LittleEndian(buffer);
         return true;
+    }
+
+    private IReadOnlyList<CpuStackFrame> CaptureTrapStackFrames(CpuRegisterSnapshot? registers)
+    {
+        const int maxFrameCount = 16;
+        const ulong maxStackDistance = 8UL * 1024 * 1024;
+
+        if (registers is not { } snapshot || snapshot.Rbp == 0 || snapshot.Rbp < snapshot.Rsp)
+        {
+            return Array.Empty<CpuStackFrame>();
+        }
+
+        var stackLimit = snapshot.Rsp > ulong.MaxValue - maxStackDistance
+            ? ulong.MaxValue
+            : snapshot.Rsp + maxStackDistance;
+        var framePointer = snapshot.Rbp;
+        var frames = new List<CpuStackFrame>(maxFrameCount);
+        for (var i = 0; i < maxFrameCount; i++)
+        {
+            if ((framePointer & 7) != 0 ||
+                framePointer > stackLimit - (2 * sizeof(ulong)) ||
+                !TryReadUInt64At(framePointer, out var nextFramePointer) ||
+                !TryReadUInt64At(framePointer + sizeof(ulong), out var returnAddress) ||
+                returnAddress == 0)
+            {
+                break;
+            }
+
+            frames.Add(new CpuStackFrame(framePointer, nextFramePointer, returnAddress));
+            if (nextFramePointer <= framePointer || nextFramePointer > stackLimit)
+            {
+                break;
+            }
+
+            framePointer = nextFramePointer;
+        }
+
+        return frames.ToArray();
     }
 
     private bool TryDecodeInstructionAt(ulong instructionPointer, out DecodedInst decodedInstruction)
