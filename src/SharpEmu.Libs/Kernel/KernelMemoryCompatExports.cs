@@ -4049,7 +4049,7 @@ public static partial class KernelMemoryCompatExports
     public static int KernelDirectMemoryQuery(CpuContext ctx)
     {
         var offset = ctx[CpuRegister.Rdi];
-        var findNext = unchecked((int)ctx[CpuRegister.Rsi]) == 1;
+        var flags = ctx[CpuRegister.Rsi];
         var infoAddress = ctx[CpuRegister.Rdx];
         var infoSize = ctx[CpuRegister.Rcx];
         if (infoAddress == 0 || infoSize < 24)
@@ -4057,22 +4057,30 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
+        if (offset >= DirectMemorySizeBytes)
+        {
+            // Real hardware returns EACCES here (0x8002000D), not ENOENT.
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED;
+        }
+
+        var findNext = (flags & 1) != 0;
+        DirectAllocation block;
         lock (_memoryGate)
         {
-            if (TryFindDirectAllocationForQueryLocked(offset, findNext, out var block))
+            if (!TryFindDirectAllocationForQueryLocked(offset, findNext, out block))
             {
-                if (!ctx.TryWriteUInt64(infoAddress, block.Start) ||
-                    !ctx.TryWriteUInt64(infoAddress + sizeof(ulong), block.Start + block.Length) ||
-                    !ctx.TryWriteInt32(infoAddress + (sizeof(ulong) * 2), block.MemoryType))
-                {
-                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-                }
-
-                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
             }
         }
 
-        return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+        if (!ctx.TryWriteUInt64(infoAddress, block.Start) ||
+            !ctx.TryWriteUInt64(infoAddress + sizeof(ulong), block.Start + block.Length) ||
+            !ctx.TryWriteInt32(infoAddress + (sizeof(ulong) * 2), block.MemoryType))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
     private static bool TryFindDirectAllocationForQueryLocked(

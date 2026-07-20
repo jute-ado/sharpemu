@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Globalization;
 using Xunit;
 
 namespace SharpEmu.GUI.Tests;
@@ -93,5 +94,30 @@ public sealed class GuiSettingsTests
         Assert.Empty(settings.GameFolders);
         Assert.Empty(settings.ExcludedGames);
         Assert.Empty(settings.EnvironmentToggles);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-0.5)]
+    [InlineData(2.01)]
+    public void InvalidRenderResolutionScaleRestoresNative(double scale)
+    {
+        var json = $$"""{ "RenderResolutionScale": {{scale.ToString(CultureInfo.InvariantCulture)}} }""";
+        var settings = GuiSettings.NormalizeFromJson(json);
+
+        Assert.Equal(1.0, settings.RenderResolutionScale);
+    }
+
+    [Theory]
+    [InlineData(0.25)]
+    [InlineData(0.5)]
+    [InlineData(1.0)]
+    [InlineData(2.0)]
+    public void SupportedRenderResolutionScaleIsPreserved(double scale)
+    {
+        var json = $$"""{ "RenderResolutionScale": {{scale.ToString(CultureInfo.InvariantCulture)}} }""";
+        var settings = GuiSettings.NormalizeFromJson(json);
+
+        Assert.Equal(scale, settings.RenderResolutionScale);
     }
 }

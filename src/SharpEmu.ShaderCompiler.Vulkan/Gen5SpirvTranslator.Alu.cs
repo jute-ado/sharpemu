@@ -5176,15 +5176,23 @@ public static partial class Gen5SpirvTranslator
                     GetMixFloatSource(instruction, control, 2));
                 if (control.Clamp)
                 {
-                    value = Ext(43, _floatType, value, Float(0), Float(1));
+                    value = EmitClampToUnitInterval(value);
                 }
 
-                result = instruction.Opcode switch
+                if (instruction.Opcode == "VFmaMixF32")
                 {
-                    "VFmaMixF32" => Bitcast(_uintType, value),
-                    "VFmaMixloF16" => BitwiseAnd(PackHalf2(value, Float(0)), UInt(0xFFFF)),
-                    _ => BitwiseAnd(PackHalf2(Float(0), value), UInt(0xFFFF_0000)),
-                };
+                    result = Bitcast(_uintType, value);
+                }
+                else
+                {
+                    var half = BitwiseAnd(PackHalf2(value, Float(0)), UInt(0xFFFF));
+                    var existing = LoadV(destination);
+                    result = instruction.Opcode == "VFmaMixloF16"
+                        ? BitwiseOr(BitwiseAnd(existing, UInt(0xFFFF_0000)), half)
+                        : BitwiseOr(
+                            BitwiseAnd(existing, UInt(0x0000_FFFF)),
+                            ShiftLeftLogical(half, UInt(16)));
+                }
             }
             else
             {
