@@ -2077,7 +2077,8 @@ internal static partial class Program
             FormatAddress(frame.FramePointer),
             FormatAddress(frame.NextFramePointer),
             FormatAddress(frame.ReturnAddress),
-            BuildCodeLocationReport(frame.ReturnAddress, application, executablePath))).ToArray();
+            BuildCodeLocationReport(frame.ReturnAddress, application, executablePath),
+            BuildCpuCodeWindowReport(frame.ReturnCodeWindow))).ToArray();
 
     private static CliCpuCodeWindowReport? BuildCpuCodeWindowReport(CpuCodeWindow? codeWindow) =>
         codeWindow is not { } value
@@ -2665,7 +2666,8 @@ internal static partial class Program
         string FramePointer,
         string NextFramePointer,
         string ReturnAddress,
-        CliCodeLocationReport? ReturnLocation);
+        CliCodeLocationReport? ReturnLocation,
+        CliCpuCodeWindowReport? ReturnCodeWindow);
 
     private sealed record CliCodeLocationReport(
         string ImagePath,

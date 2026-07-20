@@ -6,4 +6,5 @@ namespace SharpEmu.Core.Cpu;
 public readonly record struct CpuStackFrame(
     ulong FramePointer,
     ulong NextFramePointer,
-    ulong ReturnAddress);
+    ulong ReturnAddress,
+    CpuCodeWindow? ReturnCodeWindow = null);
