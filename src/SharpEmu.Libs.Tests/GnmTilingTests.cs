@@ -30,6 +30,73 @@ public sealed class GnmTilingTests
         Assert.Equal(expected, actual);
     }
 
+    [Theory]
+    [InlineData(1u, 64, 64, 1, 7u, 2_304ul)]
+    [InlineData(9u, 4_096, 4_096, 4, 13u, 22_413_312ul)]
+    public void TryGetBaseMipPlacement_SumsSmallestFirstChainBeforeBaseMip(
+        uint swizzleMode,
+        int width,
+        int height,
+        int bytesPerElement,
+        uint mipLevels,
+        ulong expectedOffset)
+    {
+        Assert.True(GnmTiling.TryGetBaseMipPlacement(
+            swizzleMode,
+            width,
+            height,
+            bytesPerElement,
+            mipLevels,
+            out var byteOffset,
+            out var inMipTail,
+            out var tailElementX,
+            out var tailElementY));
+
+        Assert.Equal(expectedOffset, byteOffset);
+        Assert.False(inMipTail);
+        Assert.Equal(0, tailElementX);
+        Assert.Equal(0, tailElementY);
+    }
+
+    [Fact]
+    public void TryGetBaseMipPlacement_LocatesBaseMipInsideSixtyFourKiBTail()
+    {
+        Assert.True(GnmTiling.TryGetBaseMipPlacement(
+            swizzleMode: 9,
+            elementsWide: 4,
+            elementsHigh: 4,
+            bytesPerElement: 4,
+            resourceMipLevels: 4,
+            out var byteOffset,
+            out var inMipTail,
+            out var tailElementX,
+            out var tailElementY));
+
+        Assert.Equal(0ul, byteOffset);
+        Assert.True(inMipTail);
+        Assert.Equal(64, tailElementX);
+        Assert.Equal(0, tailElementY);
+    }
+
+    [Theory]
+    [InlineData(0u, 2u)]
+    [InlineData(9u, 1u)]
+    public void TryGetBaseMipPlacement_RejectsLinearOrSingleLevelResources(
+        uint swizzleMode,
+        uint mipLevels)
+    {
+        Assert.False(GnmTiling.TryGetBaseMipPlacement(
+            swizzleMode,
+            elementsWide: 256,
+            elementsHigh: 256,
+            bytesPerElement: 4,
+            mipLevels,
+            out _,
+            out _,
+            out _,
+            out _));
+    }
+
     [Fact]
     public void TryDetile_RejectsTruncatedSwizzleBlockWithoutChangingOutput()
     {

@@ -812,6 +812,13 @@ public static class KernelPthreadCompatExports
                     return (int)OrbisGen2Result.ORBIS_GEN2_OK;
                 }
 
+                if (!tryOnly && state.Type == MutexTypeAdaptiveNp &&
+                    IsGuestTrackedSelfLock(ctx, mutexAddress, currentThreadId))
+                {
+                    TracePthreadMutex(ctx, "lock", mutexAddress, resolvedAddress, state, currentThreadId, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DEADLOCK);
+                    return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DEADLOCK;
+                }
+
                 if (state.Type == MutexTypeAdaptiveNp)
                 {
                     if (tryOnly)
@@ -965,6 +972,16 @@ public static class KernelPthreadCompatExports
                 $"ret=0x{snapshot.LastReturnRip:X16} block={snapshot.BlockReason ?? "none"}");
         }
     }
+
+    private static bool IsGuestTrackedSelfLock(
+        CpuContext ctx,
+        ulong mutexAddress,
+        ulong currentThreadId) =>
+        KernelMemoryCompatExports.TryReadUInt64Compat(
+            ctx,
+            mutexAddress + sizeof(ulong),
+            out var guestOwner) &&
+        guestOwner == currentThreadId;
 
     private static int PthreadMutexUnlockCore(CpuContext ctx, ulong mutexAddress, bool requireOwner)
     {
