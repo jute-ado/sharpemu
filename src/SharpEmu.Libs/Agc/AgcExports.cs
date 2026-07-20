@@ -235,7 +235,7 @@ public static partial class AgcExports
         (ulong Es, ulong State, ulong AliasAlignment),
         IGuestCompiledShader> _depthOnlyVertexShaderCache = new();
     private static readonly Dictionary<ulong, ulong> _shaderHeadersByCode = new();
-    private static readonly ConcurrentDictionary<ulong, byte> _arrayUploadUnsupported = new();
+    private static readonly ArrayTextureUploadRetryTracker _arrayUploadRetryTracker = new();
     private static readonly bool _traceAgc = string.Equals(
         Environment.GetEnvironmentVariable("SHARPEMU_LOG_AGC"),
         "1",
@@ -8411,7 +8411,7 @@ public static partial class AgcExports
             (descriptor.Type == Gen5TextureType2DArray ||
              descriptor.Type == Gen5TextureType1DArray) &&
             descriptor.Depth > 1 &&
-            !_arrayUploadUnsupported.ContainsKey(descriptor.Address);
+            _arrayUploadRetryTracker.ShouldAttempt(descriptor.Address);
         var arrayUploadLayers = wantsArrayUpload ? descriptor.Depth : 1u;
 
         // Upload-known (not plain availability): the presenter's answer goes
@@ -8641,7 +8641,7 @@ public static partial class AgcExports
                 }
             }
 
-            _arrayUploadUnsupported.TryAdd(descriptor.Address, 0);
+            _arrayUploadRetryTracker.MarkUnsupported(descriptor.Address);
         }
 
         var source = new byte[(int)physicalSourceByteCount];
