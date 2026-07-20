@@ -43,7 +43,7 @@ test-driven workflow. Major downstream differences include:
   constrained to registered stack ranges with fault and return-site code
   windows, mapped-image-relative code
   locations, faulting guest-thread identity, and bounded cross-thread native
-  import traces in execution reports,
+  import traces with all six SysV register arguments in execution reports,
   and immediate teardown signaling for interruptible guest waits
 - guest virtual- and direct-memory query contracts with exact argument
   validation, registered stack classification, terminal direct-memory ranges,

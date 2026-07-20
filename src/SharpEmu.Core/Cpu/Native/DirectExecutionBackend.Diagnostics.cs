@@ -23,7 +23,10 @@ public sealed partial class DirectExecutionBackend
 		ulong returnRip,
 		ulong arg0,
 		ulong arg1,
-		ulong arg2)
+		ulong arg2,
+		ulong arg3,
+		ulong arg4,
+		ulong arg5)
 	{
 		if (_recentImportTrace.Length == 0)
 		{
@@ -39,7 +42,10 @@ public sealed partial class DirectExecutionBackend
 				returnRip,
 				arg0,
 				arg1,
-				arg2);
+				arg2,
+				arg3,
+				arg4,
+				arg5);
 			_recentImportTraceWriteIndex = (_recentImportTraceWriteIndex + 1) % _recentImportTrace.Length;
 			if (_recentImportTraceCount < _recentImportTrace.Length)
 			{
@@ -71,7 +77,9 @@ public sealed partial class DirectExecutionBackend
 				builder.Append(
 					$"#{entry.DispatchIndex} nid={entry.Nid} thread=0x{entry.ThreadHandle:X16} " +
 					$"ret=0x{entry.ReturnRip:X16} " +
-					$"rdi=0x{entry.Arg0:X16} rsi=0x{entry.Arg1:X16} rdx=0x{entry.Arg2:X16}");
+					$"rdi=0x{entry.Arg0:X16} rsi=0x{entry.Arg1:X16} " +
+					$"rdx=0x{entry.Arg2:X16} rcx=0x{entry.Arg3:X16} " +
+					$"r8=0x{entry.Arg4:X16} r9=0x{entry.Arg5:X16}");
 			}
 
 			return builder.ToString();
