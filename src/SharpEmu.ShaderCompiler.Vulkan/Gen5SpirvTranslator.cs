@@ -343,7 +343,8 @@ public static partial class Gen5SpirvTranslator
             uint VectorType,
             SpirvImageFormat Format,
             ImageComponentKind ComponentKind,
-            bool IsStorage);
+            bool IsStorage,
+            bool Arrayed);
 
         private readonly record struct SpirvVertexInput(
             uint Variable,
@@ -841,11 +842,13 @@ public static partial class Gen5SpirvTranslator
                         SpirvCapability.StorageImageExtendedFormats);
                 }
 
+                var isArrayed = !isStorage &&
+                    Gen5ShaderTranslator.IsArrayedImageBinding(binding);
                 var imageType = _module.TypeImage(
                     componentType,
                     SpirvImageDim.Dim2D,
                     depth: false,
-                    arrayed: false,
+                    arrayed: isArrayed,
                     multisampled: false,
                     sampled: isStorage ? 2u : 1u,
                     isStorage ? format : SpirvImageFormat.Unknown);
@@ -873,7 +876,8 @@ public static partial class Gen5SpirvTranslator
                         _module.TypeVector(componentType, 4),
                         format,
                         componentKind,
-                        isStorage));
+                        isStorage,
+                        isArrayed));
                 _interfaces.Add(variable);
             }
         }
