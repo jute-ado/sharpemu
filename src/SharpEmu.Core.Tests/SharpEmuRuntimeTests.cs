@@ -1,7 +1,11 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers.Binary;
 using System.Text.Json;
+using SharpEmu.Core.Cpu;
+using SharpEmu.Core.Loader;
+using SharpEmu.Core.Memory;
 using SharpEmu.Core.Runtime;
 using SharpEmu.HLE;
 using SharpEmu.Logging;
@@ -22,6 +26,53 @@ public sealed class SharpEmuRuntimeTests
           }
         }
         """;
+
+    [Fact]
+    public void TrapFrameWalkerDoesNotLeaveRegisteredGuestStack()
+    {
+        const ulong stackStart = 0x7000;
+        const ulong stackSize = 0x200;
+        const ulong mappedSize = 0x400;
+        const ulong firstFrame = stackStart + 0x80;
+        const ulong secondFrame = stackStart + 0x100;
+        const ulong outsideFrame = stackStart + stackSize + 0x40;
+        var bytes = new byte[mappedSize];
+        WriteFrame(bytes, stackStart, firstFrame, secondFrame, 0x1000);
+        WriteFrame(bytes, stackStart, secondFrame, outsideFrame, 0x2000);
+        WriteFrame(bytes, stackStart, outsideFrame, 0, 0x3000);
+        var memory = new VirtualMemory();
+        memory.Map(
+            stackStart,
+            mappedSize,
+            fileOffset: 0,
+            bytes,
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        memory.RegisterStackRange(stackStart, stackSize);
+        var registers = new CpuRegisterSnapshot(
+            0, 0, 0, 0, 0, 0,
+            firstFrame,
+            stackStart + 0x40,
+            0, 0, 0, 0, 0, 0, 0, 0);
+
+        var frames = SharpEmuRuntime.CaptureTrapStackFrames(memory, registers, _ => null);
+
+        Assert.Collection(
+            frames,
+            frame => Assert.Equal(firstFrame, frame.FramePointer),
+            frame => Assert.Equal(secondFrame, frame.FramePointer));
+    }
+
+    private static void WriteFrame(
+        byte[] bytes,
+        ulong mappedStart,
+        ulong framePointer,
+        ulong nextFramePointer,
+        ulong returnAddress)
+    {
+        var offset = checked((int)(framePointer - mappedStart));
+        BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(offset), nextFramePointer);
+        BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(offset + sizeof(ulong)), returnAddress);
+    }
 
     [Fact]
     public void InspectionRuntimeRejectsGuestExecution()
