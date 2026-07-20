@@ -861,6 +861,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	public int LastSessionImportsHit { get; private set; }
 
+	public ulong? LastEntryReturnValue { get; private set; }
+
 	private unsafe static ulong ReadCtxU64(void* contextRecord, int offset)
 	{
 		return *(ulong*)((byte*)contextRecord + offset);
@@ -1126,6 +1128,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		LastError = null;
 		LastTrapInfo = null;
 		LastSessionImportsHit = 0;
+		LastEntryReturnValue = null;
 		_sessionEntryImportCount = 0;
 		var workerImportsBefore = GetTotalGuestThreadImports();
 		InitializeRuntimeSymbolIndex(runtimeSymbols);
@@ -5378,7 +5381,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			{
 				guestEntryStarted = true;
 				var nativeReturn = RunGuestEntryStub(ptr, hostRspSlot);
-				if (ApplyActiveGuestHardwareException(context, out var hardwareExceptionDetail))
+				var entryHardwareException =
+					ApplyActiveGuestHardwareException(context, out var hardwareExceptionDetail);
+				if (entryHardwareException)
 				{
 					LastError = hardwareExceptionDetail;
 				}
@@ -5741,6 +5746,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					DumpGuestReferenceDiagnostics();
 					DumpGuestPointerWindowDiagnostics();
 				}
+				else if (!ActiveForcedGuestExit)
+				{
+					LastEntryReturnValue = num6;
+				}
 				Console.Error.WriteLine($"[LOADER][INFO] Guest returned: {num6}");
 				PumpUntilGuestThreadsIdle(context, "entry_return");
 			}
@@ -5772,10 +5781,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				RequestGuestThreadTeardown(3000);
 				return false;
 			}
-			if (num6 == 0 || returnContract == NativeEntryReturnContract.IgnoreReturnValue)
+			if (num6 == 0 || returnContract != NativeEntryReturnContract.RequireZero)
 			{
 				result = OrbisGen2Result.ORBIS_GEN2_OK;
 				LastError = null;
+				LastTrapInfo = null;
 				return true;
 			}
 			result = OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP;

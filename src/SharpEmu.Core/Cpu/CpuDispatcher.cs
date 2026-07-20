@@ -340,15 +340,21 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                 executionOptions,
                 frameKind == EntryFrameKind.ModuleInitializer
                     ? NativeEntryReturnContract.IgnoreReturnValue
-                    : NativeEntryReturnContract.RequireZero,
+                    : NativeEntryReturnContract.CaptureExitCode,
                 out var nativeResult))
         {
+            var exitCode = frameKind == EntryFrameKind.ProcessEntry &&
+                _nativeCpuBackend.LastEntryReturnValue is { } returnValue
+                    ? unchecked((int)returnValue)
+                    : (int?)null;
             LastSessionSummary = new CpuSessionSummary(
                 nativeResult,
-                nativeResult == OrbisGen2Result.ORBIS_GEN2_OK
-                    ? CpuExitReason.ReturnedToHost
-                    : CpuExitReason.UnhandledException,
-                exitCode: null,
+                nativeResult != OrbisGen2Result.ORBIS_GEN2_OK
+                    ? CpuExitReason.UnhandledException
+                    : exitCode is not null and not 0
+                        ? CpuExitReason.Exited
+                        : CpuExitReason.ReturnedToHost,
+                exitCode,
                 lastGuestRip: context.Rip,
                 lastStubRip: 0,
                 totalInstructions: 0,

@@ -172,7 +172,7 @@ public sealed class SharpEmuRuntimeTests
     }
 
     [HostX64Fact]
-    public async Task RuntimeStillRejectsNonZeroProcessEntryReturnValue()
+    public async Task RuntimeReportsNonZeroProcessEntryReturnValueAsExitCode()
     {
         var execution = await RunSyntheticExecutableInCliAsync(
         [
@@ -181,19 +181,18 @@ public sealed class SharpEmuRuntimeTests
         ],
         requestReport: true);
 
-        Assert.True(
-            execution.ExitCode == 4,
-            $"Synthetic trap exited with {execution.ExitCode}.{Environment.NewLine}" +
-            $"stdout:{Environment.NewLine}{execution.StandardOutput}{Environment.NewLine}" +
-            $"stderr:{Environment.NewLine}{execution.StandardError}");
+        Assert.Equal(0, execution.ExitCode);
         Assert.NotNull(execution.ReportJson);
         using var report = JsonDocument.Parse(execution.ReportJson);
         Assert.Equal(
-            "ORBIS_GEN2_ERROR_CPU_TRAP",
+            "ORBIS_GEN2_OK",
             report.RootElement.GetProperty("result").GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Null, report.RootElement.GetProperty("cpuTrap").ValueKind);
+        var cpuSession = report.RootElement.GetProperty("cpuSession");
         Assert.Equal(
-            "CpuTrap",
-            report.RootElement.GetProperty("cpuSession").GetProperty("reason").GetString());
+            "Exited",
+            cpuSession.GetProperty("reason").GetString());
+        Assert.Equal(1, cpuSession.GetProperty("exitCode").GetInt32());
     }
 
     [HostX64Fact]
@@ -450,6 +449,7 @@ public sealed class SharpEmuRuntimeTests
         var cpuSession = root.GetProperty("cpuSession");
         Assert.Equal("ORBIS_GEN2_OK", cpuSession.GetProperty("result").GetProperty("name").GetString());
         Assert.Equal("ReturnedToHost", cpuSession.GetProperty("reason").GetString());
+        Assert.Equal(0, cpuSession.GetProperty("exitCode").GetInt32());
         Assert.StartsWith("0x", cpuSession.GetProperty("lastGuestRip").GetString(), StringComparison.Ordinal);
         Assert.Equal(0, cpuSession.GetProperty("importsHit").GetInt32());
         Assert.Equal(JsonValueKind.Null, root.GetProperty("cpuTrap").ValueKind);

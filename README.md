@@ -37,7 +37,8 @@ test-driven workflow. Major downstream differences include:
 - a guest-thread scheduler with callback, synchronization, and lifecycle
   behavior exercised through native guest-code tests, including distinct
   POSIX `-1`/`errno` and SCE kernel semaphore contracts, plus session reports
-  that retain native import progress across guest workers
+  that retain native import progress across guest workers and distinguish
+  normal process exit codes from CPU traps
 - application plugin discovery and symbol resolution, including deferred module
   initializers that start once and can be retried after a guest failure
 - persistent save-data mutations, including quota-aware mount information,
