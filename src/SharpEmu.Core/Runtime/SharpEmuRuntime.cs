@@ -276,6 +276,10 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
             var stackFrames = CaptureTrapStackFrames(trapInfo.Registers);
             enrichedTrapInfo = enrichedTrapInfo.WithStackFrames(stackFrames);
+            if (CaptureTrapCodeWindow(trapInfo.InstructionPointer) is { } codeWindow)
+            {
+                enrichedTrapInfo = enrichedTrapInfo.WithCodeWindow(codeWindow);
+            }
             LastCpuTrapInfo = enrichedTrapInfo;
 
             var longModeHint = IsInvalidLongModeOpcode(trapInfo.Opcode)
@@ -1234,6 +1238,41 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         }
 
         return frames.ToArray();
+    }
+
+    private CpuCodeWindow? CaptureTrapCodeWindow(ulong instructionPointer)
+    {
+        const int bytesBeforeInstruction = 32;
+        const int maximumWindowBytes = 64;
+
+        Span<byte> oneByte = stackalloc byte[1];
+        var startAddress = instructionPointer;
+        for (var i = 0; i < bytesBeforeInstruction && startAddress > 0; i++)
+        {
+            if (!_virtualMemory.TryRead(startAddress - 1, oneByte))
+            {
+                break;
+            }
+            startAddress--;
+        }
+
+        var bytes = new byte[maximumWindowBytes];
+        var count = 0;
+        while (count < bytes.Length && startAddress <= ulong.MaxValue - (ulong)count)
+        {
+            if (!_virtualMemory.TryRead(startAddress + (ulong)count, oneByte))
+            {
+                break;
+            }
+            bytes[count++] = oneByte[0];
+        }
+
+        return count == 0
+            ? null
+            : new CpuCodeWindow(
+                startAddress,
+                checked((int)(instructionPointer - startAddress)),
+                IcedDecoder.FormatBytes(bytes.AsSpan(0, count)));
     }
 
     private bool TryDecodeInstructionAt(ulong instructionPointer, out DecodedInst decodedInstruction)
