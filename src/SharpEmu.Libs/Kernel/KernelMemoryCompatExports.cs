@@ -3856,7 +3856,9 @@ public static partial class KernelMemoryCompatExports
                 backingRegion,
                 out region))
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+            // The Prospero kernel reports EACCES (0x8002000D) when no virtual
+            // range contains or follows the requested address.
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED;
         }
 
         Span<byte> payload = stackalloc byte[OrbisVirtualQueryInfoSize];
