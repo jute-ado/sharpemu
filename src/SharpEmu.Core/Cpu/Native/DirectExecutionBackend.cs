@@ -135,7 +135,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		ulong ReturnRip,
 		ulong Arg0,
 		ulong Arg1,
-		ulong Arg2);
+		ulong Arg2,
+		ulong Arg3,
+		ulong Arg4,
+		ulong Arg5);
 
 	private readonly record struct DeferredBootstrapTraceEntry(
 		long DispatchIndex,

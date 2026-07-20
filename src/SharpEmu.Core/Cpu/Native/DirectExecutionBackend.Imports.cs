@@ -340,7 +340,10 @@ public sealed partial class DirectExecutionBackend
 				num7,
 				cpuContext[CpuRegister.Rdi],
 				cpuContext[CpuRegister.Rsi],
-				cpuContext[CpuRegister.Rdx]);
+				cpuContext[CpuRegister.Rdx],
+				cpuContext[CpuRegister.Rcx],
+				cpuContext[CpuRegister.R8],
+				cpuContext[CpuRegister.R9]);
 		}
 		if ((traceFlags & ImportStubTraceFlags.Memset) != 0 && num <= 256)
 		{
@@ -606,7 +609,10 @@ public sealed partial class DirectExecutionBackend
 			returnRip,
 			cpuContext[CpuRegister.Rdi],
 			cpuContext[CpuRegister.Rsi],
-			cpuContext[CpuRegister.Rdx]);
+			cpuContext[CpuRegister.Rdx],
+			cpuContext[CpuRegister.Rcx],
+			cpuContext[CpuRegister.R8],
+			cpuContext[CpuRegister.R9]);
 
 		if (_activeGuestThreadState is { } activeGuestThreadState)
 		{
