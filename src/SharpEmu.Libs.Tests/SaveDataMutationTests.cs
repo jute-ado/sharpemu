@@ -173,12 +173,39 @@ public sealed class SaveDataMutationTests
                 SaveDataExports.SaveDataDelete(context));
             Assert.True(Directory.Exists(savePath));
 
-            context[CpuRegister.Rdi] = MountResultAddress;
+            context[CpuRegister.Rdi] = 0;
+            context[CpuRegister.Rsi] = MountResultAddress;
             Assert.Equal(0, SaveDataExports.SaveDataUmount2(context));
             context[CpuRegister.Rdi] = DeleteAddress;
             Assert.Equal(0, SaveDataExports.SaveDataDelete(context));
             Assert.False(Directory.Exists(savePath));
             Assert.Equal(0, SaveDataExports.SaveDataDelete(context));
+        });
+    }
+
+    [Fact]
+    public void Umount2ReturnsNotFoundForUnknownOrAlreadyUnmountedMounts()
+    {
+        WithIsolatedSaveRoot((_, _) =>
+        {
+            var memory = new FakeGuestMemory();
+            memory.AddRegion(DirNameAddress, FixedAscii("slot00", 32));
+            memory.AddRegion(UntrackedMountPointAddress, FixedAscii("/untracked", 16));
+            var context = new CpuContext(memory, Generation.Gen5);
+
+            context[CpuRegister.Rdi] = 0;
+            context[CpuRegister.Rsi] = UntrackedMountPointAddress;
+            Assert.Equal(
+                OrbisSaveDataErrorNotFound,
+                SaveDataExports.SaveDataUmount2(context));
+
+            MountSave(context, memory);
+            context[CpuRegister.Rdi] = 0;
+            context[CpuRegister.Rsi] = MountResultAddress;
+            Assert.Equal(0, SaveDataExports.SaveDataUmount2(context));
+            Assert.Equal(
+                OrbisSaveDataErrorNotFound,
+                SaveDataExports.SaveDataUmount2(context));
         });
     }
 
