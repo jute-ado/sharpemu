@@ -3026,6 +3026,61 @@ internal static unsafe class VulkanVideoPresenter
         requestedFormat == imageFormat &&
         requestedDstSelect == baseViewDstSelect;
 
+    // Returns the source row length in texels for a recognised linearly
+    // padded upload. Oversized buffers with other layouts remain rejected
+    // so mip data is never mistaken for row padding.
+    internal static uint TryGetPaddedUploadRowLength(
+        uint width,
+        uint height,
+        ulong uploadByteCount,
+        ulong expectedByteCount)
+    {
+        if (expectedByteCount == 0 ||
+            width == 0 ||
+            height == 0 ||
+            uploadByteCount <= expectedByteCount)
+        {
+            return 0;
+        }
+
+        var texelCount = (ulong)width * height;
+        if (texelCount == 0 || expectedByteCount % texelCount != 0)
+        {
+            return 0;
+        }
+
+        var bytesPerTexel = expectedByteCount / texelCount;
+        if (bytesPerTexel == 0 || uploadByteCount % height != 0)
+        {
+            return 0;
+        }
+
+        var rowBytes = uploadByteCount / height;
+        if (rowBytes % bytesPerTexel != 0)
+        {
+            return 0;
+        }
+
+        var rowTexels = rowBytes / bytesPerTexel;
+        if (rowTexels < width || rowTexels > uint.MaxValue)
+        {
+            return 0;
+        }
+
+        foreach (var alignment in (ReadOnlySpan<uint>)[8, 16, 32, 64, 128, 256])
+        {
+            if (AlignUp(width, alignment) == rowTexels)
+            {
+                return (uint)rowTexels;
+            }
+        }
+
+        return 0;
+    }
+
+    private static uint AlignUp(uint value, uint alignment) =>
+        (value + alignment - 1) / alignment * alignment;
+
     private readonly record struct Presentation(
         byte[]? Pixels,
         uint Width,
@@ -11529,7 +11584,13 @@ internal static unsafe class VulkanVideoPresenter
                 target.Format,
                 target.Width,
                 target.Height);
-            if (expectedByteCount == 0 || (ulong)uploadPixels.Length != expectedByteCount)
+            var uploadRowLengthTexels = TryGetPaddedUploadRowLength(
+                target.Width,
+                target.Height,
+                (ulong)uploadPixels.Length,
+                expectedByteCount);
+            if (expectedByteCount == 0 ||
+                ((ulong)uploadPixels.Length != expectedByteCount && uploadRowLengthTexels == 0))
             {
                 if (_rejectedGuestImageUploads.Add(
                         (target.Address, uploadPixels.Length, expectedByteCount, target.Format)))
@@ -11603,7 +11664,7 @@ internal static unsafe class VulkanVideoPresenter
                 var copyRegion = new BufferImageCopy
                 {
                     BufferOffset = 0,
-                    BufferRowLength = 0,
+                    BufferRowLength = uploadRowLengthTexels,
                     BufferImageHeight = 0,
                     ImageSubresource = new ImageSubresourceLayers(
                         ImageAspectFlags.ColorBit,
