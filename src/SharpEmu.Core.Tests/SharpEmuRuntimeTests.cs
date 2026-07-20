@@ -710,6 +710,15 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("mov rax,[rax]", cpuTrap.GetProperty("instructionText").GetString());
         Assert.Equal("Next", cpuTrap.GetProperty("instructionFlowControl").GetString());
         Assert.Equal(3, cpuTrap.GetProperty("instructionLength").GetInt32());
+        var codeWindow = cpuTrap.GetProperty("codeWindow");
+        Assert.Equal("0x0000000800000000", codeWindow.GetProperty("startAddress").GetString());
+        Assert.Equal(6, codeWindow.GetProperty("instructionOffset").GetInt32());
+        var codeWindowBytes = codeWindow.GetProperty("bytes").GetString();
+        Assert.StartsWith(
+            "48 31 C0 48 31 FF 48 8B 00",
+            codeWindowBytes,
+            StringComparison.Ordinal);
+        Assert.Equal(64, codeWindowBytes!.Split(' ').Length);
         var registers = cpuTrap.GetProperty("registers");
         Assert.Equal("0x0000000000000000", cpuTrap.GetProperty("guestThreadHandle").GetString());
         Assert.Equal("0x0000000000000000", registers.GetProperty("rax").GetString());

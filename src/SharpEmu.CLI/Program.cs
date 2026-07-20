@@ -2064,6 +2064,7 @@ internal static partial class Program
             value.InstructionFlowControl,
             BuildCpuRegisterReport(value.Registers),
             FormatAddress(value.GuestThreadHandle),
+            BuildCpuCodeWindowReport(value.CodeWindow),
             BuildCodeLocationReport(value.InstructionPointer, application, executablePath),
             BuildCpuStackFrameReports(value.StackFrames, application, executablePath));
     }
@@ -2077,6 +2078,14 @@ internal static partial class Program
             FormatAddress(frame.NextFramePointer),
             FormatAddress(frame.ReturnAddress),
             BuildCodeLocationReport(frame.ReturnAddress, application, executablePath))).ToArray();
+
+    private static CliCpuCodeWindowReport? BuildCpuCodeWindowReport(CpuCodeWindow? codeWindow) =>
+        codeWindow is not { } value
+            ? null
+            : new CliCpuCodeWindowReport(
+                FormatAddress(value.StartAddress),
+                value.InstructionOffset,
+                value.Bytes);
 
     private static CliCodeLocationReport? BuildCodeLocationReport(
         ulong address,
@@ -2648,6 +2657,7 @@ internal static partial class Program
         string? InstructionFlowControl,
         CliCpuRegisterReport? Registers,
         string GuestThreadHandle,
+        CliCpuCodeWindowReport? CodeWindow,
         CliCodeLocationReport? Location,
         IReadOnlyList<CliCpuStackFrameReport>? StackFrames);
 
@@ -2660,6 +2670,11 @@ internal static partial class Program
     private sealed record CliCodeLocationReport(
         string ImagePath,
         string ImageOffset);
+
+    private sealed record CliCpuCodeWindowReport(
+        string StartAddress,
+        int InstructionOffset,
+        string Bytes);
 
     private sealed record CliCpuRegisterReport(
         string Rax,
