@@ -208,6 +208,13 @@ public sealed partial class DirectExecutionBackend
 			Volatile.Write(ref activeGuestThreadState.LastImportNid, importStubEntry.Nid);
 			Volatile.Write(ref activeGuestThreadState.LastReturnRip, num7);
 		}
+		else
+		{
+			if (_sessionEntryImportCount < int.MaxValue)
+			{
+				_sessionEntryImportCount++;
+			}
+		}
 		if (_logStrlenBursts)
 		{
 			TrackDistinctImportNid(importStubEntry.Nid);
@@ -599,6 +606,13 @@ public sealed partial class DirectExecutionBackend
 			Interlocked.Increment(ref activeGuestThreadState.ImportCount);
 			Volatile.Write(ref activeGuestThreadState.LastImportNid, importStubEntry.Nid);
 			Volatile.Write(ref activeGuestThreadState.LastReturnRip, returnRip);
+		}
+		else
+		{
+			if (_sessionEntryImportCount < int.MaxValue)
+			{
+				_sessionEntryImportCount++;
+			}
 		}
 		if (dispatchIndex % 100000 == 0)
 		{

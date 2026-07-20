@@ -310,6 +310,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	[ThreadStatic]
 	private static GuestThreadState? _activeGuestThreadState;
 
+	// The process/module entry executes on one dedicated native worker. Keep its
+	// hot import count separate from scheduled guest threads so dispatch does not
+	// need a second global atomic increment for every import.
+	private int _sessionEntryImportCount;
+
 	[ThreadStatic]
 	private static DirectExecutionBackend? _importCounterOwner;
 
@@ -854,6 +859,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	public CpuTrapInfo? LastTrapInfo { get; private set; }
 
+	public int LastSessionImportsHit { get; private set; }
+
 	private unsafe static ulong ReadCtxU64(void* contextRecord, int offset)
 	{
 		return *(ulong*)((byte*)contextRecord + offset);
@@ -1118,6 +1125,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		result = OrbisGen2Result.ORBIS_GEN2_OK;
 		LastError = null;
 		LastTrapInfo = null;
+		LastSessionImportsHit = 0;
+		_sessionEntryImportCount = 0;
+		var workerImportsBefore = GetTotalGuestThreadImports();
 		InitializeRuntimeSymbolIndex(runtimeSymbols);
 		ResetLazyDlsymStubState();
 		_recentImportTraceCount = 0;
@@ -1245,6 +1255,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 		finally
 		{
+			var workerImportsAfter = GetTotalGuestThreadImports();
+			var workerImports = Math.Max(workerImportsAfter - workerImportsBefore, 0);
+			LastSessionImportsHit = SaturateImportCount(
+				workerImports,
+				Volatile.Read(ref _sessionEntryImportCount));
 			shutdownRegistration.Dispose();
 			if (ReferenceEquals(_activeSessionBackend, this))
 			{
@@ -4192,6 +4207,36 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 			return snapshots;
 		}
+	}
+
+	private long GetTotalGuestThreadImports()
+	{
+		using (LockGate("GetTotalGuestThreadImports"))
+		{
+			long total = 0;
+			foreach (var thread in _guestThreads.Values)
+			{
+				var imports = Interlocked.Read(ref thread.ImportCount);
+				if (imports > long.MaxValue - total)
+				{
+					return long.MaxValue;
+				}
+
+				total += imports;
+			}
+
+			return total;
+		}
+	}
+
+	private static int SaturateImportCount(long workerImports, int entryImports)
+	{
+		if (workerImports >= int.MaxValue || entryImports >= int.MaxValue - workerImports)
+		{
+			return int.MaxValue;
+		}
+
+		return (int)workerImports + entryImports;
 	}
 
 	private void PumpUntilGuestThreadsIdle(CpuContext callerContext, string reason)

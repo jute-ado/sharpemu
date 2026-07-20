@@ -51,6 +51,44 @@ public sealed class CpuDispatcherTests
     }
 
     [Fact]
+    public void SuccessfulNativeDispatchReportsBackendImportProgress()
+    {
+        var backend = new SuccessfulNativeBackend(lastSessionImportsHit: 37);
+        using var dispatcher = new CpuDispatcher(
+            new VirtualMemory(),
+            new ModuleManager(),
+            backend);
+
+        Assert.Equal(
+            OrbisGen2Result.ORBIS_GEN2_OK,
+            dispatcher.DispatchModuleInitializer(
+                0x0000_0008_0000_0000,
+                Generation.Gen5,
+                moduleName: "native-import-progress-success"));
+        Assert.Equal(37, dispatcher.LastSessionSummary.ImportsHit);
+    }
+
+    [Fact]
+    public void FailedNativeDispatchReportsProgressBeforeFailure()
+    {
+        var backend = new FailingNativeBackend(
+            OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP,
+            lastSessionImportsHit: 41);
+        using var dispatcher = new CpuDispatcher(
+            new VirtualMemory(),
+            new ModuleManager(),
+            backend);
+
+        Assert.Equal(
+            OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP,
+            dispatcher.DispatchModuleInitializer(
+                0x0000_0008_0000_0000,
+                Generation.Gen5,
+                moduleName: "native-import-progress-failure"));
+        Assert.Equal(41, dispatcher.LastSessionSummary.ImportsHit);
+    }
+
+    [Fact]
     public void InfrastructureMappingFailureReportsExactStage()
     {
         var stackBaseAddress = OperatingSystem.IsWindows()
@@ -403,13 +441,16 @@ public sealed class CpuDispatcherTests
 
     private sealed class FailingNativeBackend(
         OrbisGen2Result result,
-        CpuTrapInfo? lastTrapInfo = null) : INativeCpuBackend
+        CpuTrapInfo? lastTrapInfo = null,
+        int lastSessionImportsHit = 0) : INativeCpuBackend
     {
         public string BackendName => "synthetic-backend";
 
         public string? LastError => "synthetic backend failure";
 
         public CpuTrapInfo? LastTrapInfo => lastTrapInfo;
+
+        public int LastSessionImportsHit => lastSessionImportsHit;
 
         public bool TryExecute(
             CpuContext context,
@@ -430,11 +471,13 @@ public sealed class CpuDispatcherTests
         }
     }
 
-    private sealed class SuccessfulNativeBackend : INativeCpuBackend
+    private sealed class SuccessfulNativeBackend(int lastSessionImportsHit = 0) : INativeCpuBackend
     {
         public string BackendName => "synthetic-backend";
 
         public string? LastError => null;
+
+        public int LastSessionImportsHit => lastSessionImportsHit;
 
         public int ExecutionCount { get; private set; }
 
