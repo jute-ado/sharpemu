@@ -8,11 +8,20 @@ using Xunit;
 
 namespace SharpEmu.Libs.Tests;
 
-public sealed class KernelSyncOnAddressCompatibilityTests
+public sealed class KernelSyncOnAddressCompatibilityTests : IDisposable
 {
     private const ulong MemoryBase = 0x1_0000_0000;
     private const ulong WaitAddress = MemoryBase + 0x100;
     private const ulong TimeoutAddress = MemoryBase + 0x200;
+
+    public KernelSyncOnAddressCompatibilityTests() =>
+        GuestThreadBlocking.BeginExecution();
+
+    public void Dispose()
+    {
+        GuestThreadBlocking.RequestShutdown();
+        GuestThreadBlocking.BeginExecution();
+    }
 
     [Fact]
     public void WaitReturnsImmediatelyWhenValueDoesNotMatch()

@@ -39,7 +39,7 @@ test-driven workflow. Major downstream differences include:
   POSIX `-1`/`errno` and SCE kernel semaphore contracts, plus session reports
   that retain native import progress across guest workers and distinguish
   normal process exit codes from CPU traps, and immediate teardown signaling
-  for interruptible guest sleeps
+  for interruptible guest waits
 - application plugin discovery and symbol resolution, including deferred module
   initializers that start once and can be retried after a guest failure
 - persistent save-data mutations, including quota-aware mount information,
@@ -137,7 +137,7 @@ window; it does not imply the game is playable.
 | Jusant | PPSA10264 | Loads seven modules and sustains a 90-second UE5 execution run without a CPU trap. No gameplay or rendered frame is validated yet. |
 | Poppy Playtime: Chapter 1 | PPSA20591 | Loads seven modules and sustains the execution-survival window without a CPU trap. No gameplay is validated yet. |
 | SILENT HILL: The Short Message | PPSA10112 | Loads six modules and sustains the execution-survival window without a CPU trap. No gameplay is validated yet. |
-| SUPER BOMBERMAN R 2 | PPSA07190 | Loads thirteen modules and reaches deferred plugin initialization; execution currently ends in a CPU trap. |
+| SUPER BOMBERMAN R 2 | PPSA07190 | Loads thirteen modules, presents a 1920×1080 guest frame, and exceeds two million import dispatches; execution currently ends in an IL2CPP null-read CPU trap. |
 | Demon's Souls | PPSA01342 | Loads the main image and one module; execution currently ends in a CPU trap after module initialization. |
 
 These results are observations, not compatibility promises. Exact progress can

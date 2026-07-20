@@ -52,6 +52,7 @@ public sealed class PthreadSemaphoreSemanticsTests
     [Fact]
     public async Task PthreadSemWaitBlocksInPlaceUntilPost()
     {
+        GuestThreadBlocking.BeginExecution();
         var memory = new FakeCpuMemory(MemoryBase, 0x1000);
         var context = new CpuContext(memory, Generation.Gen5);
         InitializeSemaphore(context, initialCount: 0);
@@ -68,19 +69,28 @@ public sealed class PthreadSemaphoreSemanticsTests
                 return KernelSemaphoreCompatExports
                     .PthreadSemWait(waitContext);
             });
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        await Task.Delay(50);
-        Assert.False(waiter.IsCompleted);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await Task.Delay(50);
+            Assert.False(waiter.IsCompleted);
 
-        context[CpuRegister.Rdi] = SemaphoreAddress;
-        Assert.Equal(
-            0,
-            KernelSemaphoreCompatExports.PthreadSemPost(context));
-        Assert.Equal(
-            0,
-            await waiter.WaitAsync(TimeSpan.FromSeconds(2)));
+            context[CpuRegister.Rdi] = SemaphoreAddress;
+            Assert.Equal(
+                0,
+                KernelSemaphoreCompatExports.PthreadSemPost(context));
+            Assert.Equal(
+                0,
+                await waiter.WaitAsync(TimeSpan.FromSeconds(2)));
 
-        DestroySemaphore(context);
+            DestroySemaphore(context);
+        }
+        finally
+        {
+            GuestThreadBlocking.RequestShutdown();
+            _ = await waiter.WaitAsync(TimeSpan.FromSeconds(2));
+            GuestThreadBlocking.BeginExecution();
+        }
     }
 
     [Fact]

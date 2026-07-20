@@ -773,6 +773,13 @@ public sealed partial class DirectExecutionBackend
 
 	private bool ShouldLogImportResult(string nid, OrbisGen2Result result)
 	{
+		if (ShouldSuppressImportResultDuringTeardown(
+				_guestTeardownRequested,
+				GuestThreadBlocking.ShutdownRequested))
+		{
+			return false;
+		}
+
 		var resultValue = unchecked((int)result);
 		if (resultValue > 0)
 		{
@@ -800,6 +807,11 @@ public sealed partial class DirectExecutionBackend
 
 		return count <= 8 || count % 10000 == 0;
 	}
+
+	internal static bool ShouldSuppressImportResultDuringTeardown(
+		bool backendTeardownRequested,
+		bool blockingShutdownRequested) =>
+		backendTeardownRequested || blockingShutdownRequested;
 
 	internal static bool IsExpectedImportResult(string nid, OrbisGen2Result result)
 	{

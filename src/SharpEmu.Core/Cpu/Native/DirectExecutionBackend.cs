@@ -4623,6 +4623,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private bool RequestGuestThreadTeardown(int timeoutMs)
 	{
 		_guestTeardownRequested = true;
+		GuestThreadBlocking.RequestShutdown();
 		Thread[] hostThreads;
 		using (LockGate("RequestGuestThreadTeardown"))
 		{

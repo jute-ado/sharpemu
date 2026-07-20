@@ -59,4 +59,21 @@ public sealed class ImportResultLoggingTests
                 "H2a+IN9TP0E",
                 OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN));
     }
+
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, true)]
+    [InlineData(false, false, false)]
+    public void TeardownImportResultsAreNotCompatibilityWarnings(
+        bool backendTeardownRequested,
+        bool blockingShutdownRequested,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            DirectExecutionBackend.ShouldSuppressImportResultDuringTeardown(
+                backendTeardownRequested,
+                blockingShutdownRequested));
+    }
 }
