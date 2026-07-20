@@ -2050,7 +2050,12 @@ internal static partial class Program
             $"0x{value.Opcode:X2}",
             value.ExceptionCode is { } exceptionCode ? $"0x{exceptionCode:X8}" : null,
             value.AccessAddress is { } accessAddress ? FormatAddress(accessAddress) : null,
-            value.AccessKind?.ToString().ToLowerInvariant());
+            value.AccessKind?.ToString().ToLowerInvariant(),
+            value.InstructionBytes,
+            value.InstructionLength,
+            value.InstructionMnemonic,
+            value.InstructionText,
+            value.InstructionFlowControl);
     }
 
     private static CliCpuMemoryFaultReport? BuildCpuMemoryFaultReport(CpuMemoryFaultInfo? fault)
@@ -2559,7 +2564,12 @@ internal static partial class Program
         string Opcode,
         string? ExceptionCode,
         string? AccessAddress,
-        string? AccessKind);
+        string? AccessKind,
+        string? InstructionBytes,
+        int? InstructionLength,
+        string? InstructionMnemonic,
+        string? InstructionText,
+        string? InstructionFlowControl);
 
     private sealed record CliCpuMemoryFaultReport(
         string InstructionPointer,

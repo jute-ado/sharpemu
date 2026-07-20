@@ -254,9 +254,15 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             var opcodeBytes = ReadOpcodePreview(trapInfo.InstructionPointer, 8);
             var decodedTrapText = string.Empty;
             var ud2Hint = string.Empty;
-            if (_cpuExecutionOptions.EnableDisasmDiagnostics && TryDecodeInstructionAt(trapInfo.InstructionPointer, out var trapInstruction))
+            if (TryDecodeInstructionAt(trapInfo.InstructionPointer, out var trapInstruction))
             {
                 decodedTrapText = BuildDecodedInstructionFields(in trapInstruction);
+                LastCpuTrapInfo = trapInfo.WithDecodedInstruction(
+                    IcedDecoder.FormatBytes(trapInstruction.Bytes),
+                    trapInstruction.Length,
+                    trapInstruction.Mnemonic,
+                    trapInstruction.Text,
+                    trapInstruction.FlowControl.ToString());
                 if (string.Equals(trapInstruction.Mnemonic, "Ud2", StringComparison.OrdinalIgnoreCase))
                 {
                     ud2Hint = ", trap=ud2";
