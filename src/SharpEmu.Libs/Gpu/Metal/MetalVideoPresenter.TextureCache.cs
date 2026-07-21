@@ -43,7 +43,11 @@ internal static partial class MetalVideoPresenter
         texture.DstSelect,
         texture.TileMode,
         texture.Pitch,
-        texture.Sampler);
+        texture.Sampler,
+        texture.ArrayedView,
+        Math.Max(texture.ArrayLayers, 1),
+        Math.Max(texture.Depth, 1),
+        texture.ThreeDimensionalView);
 
     /// <summary>Caching requires the write tracker: without page protection a
     /// guest CPU write would never evict the entry and draws would sample

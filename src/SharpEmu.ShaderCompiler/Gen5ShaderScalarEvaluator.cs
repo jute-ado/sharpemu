@@ -109,6 +109,9 @@ public static class Gen5ShaderScalarEvaluator
         var scalarRegisterSnapshots = new Dictionary<uint, IReadOnlyList<uint>>();
         var scalarConditionCode = false;
         uint? skipUntilPc = null;
+        uint[]? skippedScalarRegisters = null;
+        var skippedExecMask = execMask;
+        var skippedScalarConditionCode = scalarConditionCode;
 
         foreach (var instruction in state.Program.Instructions)
         {
@@ -116,16 +119,95 @@ public static class Gen5ShaderScalarEvaluator
             {
                 if (instruction.Pc < skipUntilPc.Value)
                 {
-                    // The Vulkan translator emits every decoded basic block,
-                    // including blocks bypassed by this evaluator's forward
-                    // scalar-branch fast path. Preserve their descriptor
-                    // bindings from the last known scalar state so one skipped
-                    // image operation cannot make the whole shader unbuildable.
+                    // The Vulkan translator emits every decoded basic block.
+                    // Evaluate a forward-skipped block on a forked scalar
+                    // state so descriptor loads inside the alternate path are
+                    // available without leaking their values into the taken
+                    // path at the join.
+                    skippedScalarRegisters ??= (uint[])scalarRegisters.Clone();
+                    scalarRegisterSnapshots[instruction.Pc] =
+                        (uint[])skippedScalarRegisters.Clone();
+                    if (instruction.Encoding == Gen5ShaderEncoding.Sopc)
+                    {
+                        if (!TryExecuteScalarCompare(
+                                instruction,
+                                skippedScalarRegisters,
+                                out skippedScalarConditionCode,
+                                out error))
+                        {
+                            return false;
+                        }
+
+                        continue;
+                    }
+
+                    if (instruction.Encoding == Gen5ShaderEncoding.Sopk &&
+                        instruction.Opcode.StartsWith("SCmpk", StringComparison.Ordinal))
+                    {
+                        if (!TryExecuteScalarCompareK(
+                                instruction,
+                                skippedScalarRegisters,
+                                out skippedScalarConditionCode,
+                                out error))
+                        {
+                            return false;
+                        }
+
+                        continue;
+                    }
+
+                    if (instruction.Encoding is
+                        Gen5ShaderEncoding.Sop1 or
+                        Gen5ShaderEncoding.Sop2 or
+                        Gen5ShaderEncoding.Sopk)
+                    {
+                        if (!TryExecuteScalarAlu(
+                                instruction,
+                                state.Program.Address,
+                                skippedScalarRegisters,
+                                ref skippedExecMask,
+                                ref skippedScalarConditionCode,
+                                out error))
+                        {
+                            return false;
+                        }
+
+                        continue;
+                    }
+
+                    if (instruction.Control is Gen5ScalarMemoryControl skippedScalarMemory)
+                    {
+                        foreach (var destination in instruction.Destinations)
+                        {
+                            if (destination.Kind == Gen5OperandKind.ScalarRegister &&
+                                destination.Value < ScalarRegisterCount)
+                            {
+                                runtimeScalarRegisters.Add(destination.Value);
+                            }
+                        }
+
+                        if (!TryExecuteScalarLoad(
+                                ctx,
+                                state,
+                                instruction,
+                                skippedScalarMemory,
+                                skippedScalarRegisters,
+                                globalMemoryBindings,
+                                globalMemoryByAddress,
+                                runtimeScalarRegisters,
+                                out error))
+                        {
+                            return false;
+                        }
+
+                        continue;
+                    }
+
                     if (instruction.Control is Gen5ImageControl &&
                         !TryAddImageBinding(
                             state.Program,
                             instruction,
-                            scalarRegisters,
+                            skippedScalarRegisters,
                             resolved,
                             out error))
                     {
@@ -136,6 +218,7 @@ public static class Gen5ShaderScalarEvaluator
                 }
 
                 skipUntilPc = null;
+                skippedScalarRegisters = null;
             }
 
             scalarRegisterSnapshots[instruction.Pc] = (uint[])scalarRegisters.Clone();
@@ -149,6 +232,9 @@ public static class Gen5ShaderScalarEvaluator
                 TryGetSoppBranchTargetPc(instruction, out var targetPc) &&
                 targetPc > instruction.Pc)
             {
+                skippedScalarRegisters = (uint[])scalarRegisters.Clone();
+                skippedExecMask = execMask;
+                skippedScalarConditionCode = scalarConditionCode;
                 skipUntilPc = targetPc;
                 continue;
             }

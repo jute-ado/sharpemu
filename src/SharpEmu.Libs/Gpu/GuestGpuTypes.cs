@@ -34,7 +34,9 @@ internal sealed record GuestDrawTexture(
     // from; -1 when the range is untracked or the pixels were not read here.
     long WriteGeneration = -1,
     bool ArrayedView = false,
-    uint ArrayLayers = 1);
+    uint ArrayLayers = 1,
+    uint Depth = 1,
+    bool ThreeDimensionalView = false);
 
 /// <summary>Raw guest sampler descriptor dwords, copied verbatim from guest memory.</summary>
 internal readonly record struct GuestSampler(
@@ -57,7 +59,9 @@ internal readonly record struct TextureContentIdentity(
     uint Pitch,
     GuestSampler Sampler,
     bool Arrayed = false,
-    uint ArrayLayers = 1);
+    uint ArrayLayers = 1,
+    uint Depth = 1,
+    bool ThreeDimensional = false);
 
 internal sealed record GuestMemoryBuffer(
     ulong BaseAddress,
