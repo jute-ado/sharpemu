@@ -1006,6 +1006,24 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 	}
 
+	private static void RefreshActiveGuestStackRange(CpuContext context)
+	{
+		var stackPointer = context[CpuRegister.Rsp];
+		if (_activeGuestStackStart != 0 &&
+			stackPointer >= _activeGuestStackStart &&
+			stackPointer < _activeGuestStackEnd)
+		{
+			return;
+		}
+
+		BindActiveGuestStackRange(context);
+	}
+
+	internal static bool IsActiveGuestStackPointer(ulong stackPointer) =>
+		_activeGuestStackStart != 0 &&
+		stackPointer >= _activeGuestStackStart &&
+		stackPointer < _activeGuestStackEnd;
+
 	private bool ApplyActiveGuestHardwareException(CpuContext context, out string? detail)
 	{
 		if (_activeGuestHardwareExceptionCode == 0)
@@ -4478,6 +4496,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				return false;
 			}
 			callbackStackSize = GuestThreadStackSize;
+		}
+		if (virtualMemory is IGuestStackMemory stackMemory)
+		{
+			stackMemory.RegisterStackRange(callbackStackBase, callbackStackSize);
 		}
 
 		var trackedMemory = new TrackedCpuMemory(virtualMemory);

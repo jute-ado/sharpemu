@@ -359,7 +359,8 @@ public sealed partial class DirectExecutionBackend
 		// runs with CET context-IP validation disabled and unwinds through the same
 		// return stub used by forced guest exits. Restrict this to a registered guest
 		// stack so a host fault can never be mistaken for an emulated CPU trap.
-		if (!IsRecoverableGuestProcessorException(exceptionCode) ||
+		var recoverable = IsRecoverableGuestProcessorException(exceptionCode);
+		if (!recoverable ||
 			!ReferenceEquals(_activeExecutionBackend, this) ||
 			_guestReturnStub == 0 ||
 			ActiveEntryReturnSentinelRip != (ulong)_guestReturnStub ||
@@ -367,6 +368,13 @@ public sealed partial class DirectExecutionBackend
 			rsp < _activeGuestStackStart ||
 			rsp >= _activeGuestStackEnd)
 		{
+			if (_logGuestContext && recoverable)
+			{
+				Console.Error.WriteLine(
+					$"[LOADER][TRACE] guest_exception.redirect_rejected active={ReferenceEquals(_activeExecutionBackend, this)} " +
+					$"return_stub=0x{(ulong)_guestReturnStub:X16} sentinel=0x{ActiveEntryReturnSentinelRip:X16} " +
+					$"stack=0x{_activeGuestStackStart:X16}-0x{_activeGuestStackEnd:X16} rsp=0x{rsp:X16}");
+			}
 			return false;
 		}
 

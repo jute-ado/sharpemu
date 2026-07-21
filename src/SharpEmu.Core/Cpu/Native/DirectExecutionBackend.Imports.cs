@@ -167,6 +167,7 @@ public sealed partial class DirectExecutionBackend
 		cpuContext[CpuRegister.R14] = *(ulong*)(argPackPtr + 80);
 		cpuContext[CpuRegister.R15] = *(ulong*)(argPackPtr + 88);
 		cpuContext[CpuRegister.Rsp] = (ulong)argPackPtr + 96uL;
+		RefreshActiveGuestStackRange(cpuContext);
 		if (importStubEntry.Kind == ImportStubKind.BootstrapBridge)
 		{
 			NormalizeKernelDynlibDlsymArguments(cpuContext, out _, out _);

@@ -12,6 +12,8 @@ namespace SharpEmu.Core.Tests;
 public sealed class GuestCallbackIntegrationTests
 {
     private const ulong CodeAddress = 0x0000_0008_3000_0000;
+    private const ulong CallbackStackAddress = 0x0000_7FFE_1000_0000;
+    private const ulong CallbackStackSize = 0x1_0000;
 
     [HostX64Fact]
     public async Task CallbackCarriesThreeArgumentsAndFullWidthReturnValue()
@@ -38,6 +40,13 @@ public sealed class GuestCallbackIntegrationTests
                 0x48, 0x01, 0xD0, // add rax, rdx
                 0xC3,             // ret
             ]));
+        Assert.Equal(
+            CallbackStackAddress,
+            memory.AllocateAt(
+                CallbackStackAddress,
+                CallbackStackSize,
+                executable: false,
+                allowAlternative: false));
 
         var modules = new ModuleManager();
         modules.Freeze();
@@ -55,12 +64,15 @@ public sealed class GuestCallbackIntegrationTests
                 arg0,
                 arg1,
                 arg2,
-                stackAddress: 0,
-                stackSize: 0,
+                stackAddress: CallbackStackAddress,
+                stackSize: CallbackStackSize,
                 reason: "three-argument-callback",
                 returnValue: out var returnValue,
                 error: out var error),
             error);
         Assert.Equal(arg0 + arg1 + arg2, returnValue);
+        Assert.True(memory.TryGetStackRange(CallbackStackAddress, out var stackStart, out var stackEnd));
+        Assert.Equal(CallbackStackAddress, stackStart);
+        Assert.Equal(CallbackStackAddress + CallbackStackSize, stackEnd);
     }
 }
