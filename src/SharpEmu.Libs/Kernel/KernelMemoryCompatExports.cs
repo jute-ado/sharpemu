@@ -137,6 +137,48 @@ public static partial class KernelMemoryCompatExports
         }
     }
 
+    internal static void ResetIoRuntimeState()
+    {
+        FileStream[] streams;
+        lock (_fdGate)
+        {
+            streams = _openFiles.Values
+                .Distinct<FileStream>(ReferenceEqualityComparer.Instance)
+                .ToArray();
+            _openFiles.Clear();
+            _openDirectories.Clear();
+            _openRandomDevices.Clear();
+            Interlocked.Exchange(ref _nextFileDescriptor, 2);
+        }
+
+        foreach (var stream in streams)
+        {
+            try
+            {
+                stream.Dispose();
+            }
+            catch (IOException)
+            {
+            }
+        }
+
+        _aioResults.Clear();
+        Interlocked.Exchange(ref _nextAioSubmitId, 1);
+        lock (_guestMountGate)
+        {
+            _guestMounts.Clear();
+        }
+        lock (_statCacheGate)
+        {
+            _negativeStatCache.Clear();
+        }
+        lock (_ioTraceGate)
+        {
+            _tracedStatResults.Clear();
+        }
+        _aprFileSizeCache.Clear();
+    }
+
     private static ulong _nextPhysicalAddress;
     private static ulong _nextVirtualAddress;
     // First guest virtual address handed out for direct/flexible mappings

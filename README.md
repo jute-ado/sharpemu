@@ -73,7 +73,9 @@ test-driven workflow. Major downstream differences include:
 - sandboxed guest filesystem handling with virtual `/dev/random` and
   `/dev/urandom` descriptors that support entropy-read, stat, and close
   lifecycles, plus a consistent virtual `/devlog` container for stat, directory
-  enumeration, open, and fstat without exposing host device paths
+  enumeration, open, and fstat without exposing host device paths; session
+  reset disposes open host files and sockets, clears guest mounts and I/O
+  caches, and restarts file-descriptor and AIO allocation
 - distinct four-argument POSIX and named five-argument Sony pthread creation
   ABIs, so unused registers cannot become guest thread names, with transactional
   output validation and rollback when guest scheduling fails

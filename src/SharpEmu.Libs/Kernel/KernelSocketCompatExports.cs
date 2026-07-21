@@ -27,6 +27,23 @@ internal static class KernelSocketCompatExports
     private static readonly object Gate = new();
     private static readonly Dictionary<int, EmulatedSocketState> Sockets = new();
 
+    internal static void ResetRuntimeState()
+    {
+        EmulatedSocketState[] sockets;
+        lock (Gate)
+        {
+            sockets = Sockets.Values
+                .Distinct<EmulatedSocketState>(ReferenceEqualityComparer.Instance)
+                .ToArray();
+            Sockets.Clear();
+        }
+
+        foreach (var socket in sockets)
+        {
+            DisposeEmulatedSocket(socket);
+        }
+    }
+
     internal static bool IsEmulatedSocketFd(int fd)
     {
         lock (Gate)
