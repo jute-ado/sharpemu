@@ -321,6 +321,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private ImportStubEntry[] _importEntries = Array.Empty<ImportStubEntry>();
 
+	private readonly object _sessionImportEntryHitsGate = new();
+	private int[] _sessionImportEntryHits = Array.Empty<int>();
+
 	private readonly List<nint> _importHandlerTrampolines = new List<nint>();
 
 	private const int GuestContextTransferFrameQwords = 15;
@@ -852,6 +855,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	public int LastSessionImportsHit { get; private set; }
 
+	public int LastSessionUniqueNidsHit { get; private set; }
+
 	public string? LastImportResolutionTrace { get; private set; }
 
 	public ulong? LastEntryReturnValue { get; private set; }
@@ -1123,6 +1128,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		LastError = null;
 		LastTrapInfo = null;
 		LastSessionImportsHit = 0;
+		LastSessionUniqueNidsHit = 0;
+		_sessionImportEntryHits = Array.Empty<int>();
 		LastImportResolutionTrace = null;
 		LastEntryReturnValue = null;
 		_sessionEntryImportCount = 0;
@@ -1211,6 +1218,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				result = OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
 				return false;
 			}
+			_sessionImportEntryHits = new int[_importEntries.Length];
 			importSetupCheckpoint = completedImportSetup;
 			tlsSetupCheckpoint = CaptureTlsSetupCheckpoint();
 			if (!TryCreateTlsHandler())
@@ -1263,6 +1271,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			LastSessionImportsHit = SaturateImportCount(
 				workerImports,
 				Volatile.Read(ref _sessionEntryImportCount));
+			LastSessionUniqueNidsHit = CountSessionUniqueImportNids();
 			LastImportResolutionTrace = executionOptions.ImportTraceLimit > 0
 				? BuildRecentImportTrace(
 					executionOptions.ImportTraceLimit,

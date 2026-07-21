@@ -14,6 +14,8 @@ internal readonly record struct SyntheticGuestExecutionResult(
 {
     public int ImportsHit { get; init; }
 
+    public int UniqueNidsHit { get; init; }
+
     public string? ImportTrace { get; init; }
 }
 
@@ -112,6 +114,7 @@ internal static class SyntheticNativeGuest
                     dispatcher.LastNotImplementedInfo?.Detail)
                 {
                     ImportsHit = dispatcher.LastSessionSummary.ImportsHit,
+                    UniqueNidsHit = dispatcher.LastSessionSummary.UniqueNidsHit,
                     ImportTrace = dispatcher.LastImportResolutionTrace,
                 };
             }

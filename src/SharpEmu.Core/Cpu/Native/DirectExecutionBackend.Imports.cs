@@ -133,6 +133,7 @@ public sealed partial class DirectExecutionBackend
 			return 18446744071562199042uL;
 		}
 		ImportStubEntry importStubEntry = importEntries[importIndex];
+		MarkSessionImportEntryHit(importIndex);
 		int num2 = Volatile.Read(in _rawSentinelRecoveries);
 		if (num2 != _lastReportedRawSentinelRecoveries)
 		{
@@ -575,6 +576,47 @@ public sealed partial class DirectExecutionBackend
 			recentImportTraceEntry?.Complete(cpuContext[CpuRegister.Rax]);
 			return 18446744071562199298uL;
 		}
+	}
+
+	private void MarkSessionImportEntryHit(int importIndex)
+	{
+		var hits = Volatile.Read(ref _sessionImportEntryHits);
+		if ((uint)importIndex < (uint)hits.Length)
+		{
+			Volatile.Write(ref hits[importIndex], 1);
+			return;
+		}
+
+		lock (_sessionImportEntryHitsGate)
+		{
+			hits = _sessionImportEntryHits;
+			if (importIndex >= hits.Length)
+			{
+				var expanded = new int[Math.Max(importIndex + 1, _importEntries.Length)];
+				hits.CopyTo(expanded, 0);
+				Volatile.Write(ref _sessionImportEntryHits, expanded);
+				hits = expanded;
+			}
+
+			Volatile.Write(ref hits[importIndex], 1);
+		}
+	}
+
+	private int CountSessionUniqueImportNids()
+	{
+		var entries = _importEntries;
+		var hits = Volatile.Read(ref _sessionImportEntryHits);
+		var count = Math.Min(entries.Length, hits.Length);
+		var uniqueNids = new HashSet<string>(StringComparer.Ordinal);
+		for (var index = 0; index < count; index++)
+		{
+			if (Volatile.Read(ref hits[index]) != 0)
+			{
+				uniqueNids.Add(entries[index].Nid);
+			}
+		}
+
+		return uniqueNids.Count;
 	}
 
 	private unsafe bool TryDispatchLeafImport(
