@@ -25,6 +25,34 @@ public static class AvPlayerExports
     private static readonly Dictionary<ulong, PlayerState> Players = new();
     private static int _traceCount;
 
+    internal static void ResetRuntimeState()
+    {
+        PlayerState[] players;
+        lock (StateGate)
+        {
+            players = [.. Players.Values];
+            Players.Clear();
+            Interlocked.Exchange(ref _traceCount, 0);
+        }
+
+        foreach (var player in players)
+        {
+            try
+            {
+                player.Dispose();
+            }
+            catch (Exception exception) when (
+                exception is IOException or
+                InvalidOperationException or
+                System.ComponentModel.Win32Exception or
+                NotSupportedException)
+            {
+                Console.Error.WriteLine(
+                    $"[AVPLAYER][ERROR] Failed to dispose player 0x{player.Handle:X16}: {exception.Message}");
+            }
+        }
+    }
+
     private sealed class PlayerState : IDisposable
     {
         public required ulong Handle { get; init; }
@@ -568,7 +596,8 @@ public static class AvPlayerExports
         ulong handle,
         int width,
         int height,
-        ulong durationMilliseconds)
+        ulong durationMilliseconds,
+        Stream? decoderOutput = null)
     {
         PlayerState? previous;
         lock (StateGate)
@@ -580,6 +609,7 @@ public static class AvPlayerExports
                 Width = width,
                 Height = height,
                 DurationMilliseconds = durationMilliseconds,
+                DecoderOutput = decoderOutput,
             };
         }
 
