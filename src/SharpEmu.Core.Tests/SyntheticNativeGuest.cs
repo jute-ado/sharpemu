@@ -33,7 +33,8 @@ internal static class SyntheticNativeGuest
         IReadOnlyDictionary<ulong, string>? importStubs = null,
         Action<ModuleManager>? configureModules = null,
         ulong codeAddress = DefaultCodeAddress,
-        CpuExecutionOptions executionOptions = default)
+        CpuExecutionOptions executionOptions = default,
+        Action<PhysicalVirtualMemory>? configureMemory = null)
     {
         return ExecuteModuleInitializers(
             code,
@@ -43,7 +44,8 @@ internal static class SyntheticNativeGuest
             importStubs,
             configureModules,
             codeAddress,
-            executionOptions: executionOptions)[0];
+            executionOptions: executionOptions,
+            configureMemory: configureMemory)[0];
     }
 
     public static IReadOnlyList<SyntheticGuestExecutionResult> ExecuteModuleInitializers(
@@ -56,7 +58,8 @@ internal static class SyntheticNativeGuest
         ulong codeAddress = DefaultCodeAddress,
         ulong guestThreadHandle = 0,
         bool useDedicatedHostThreads = false,
-        CpuExecutionOptions executionOptions = default)
+        CpuExecutionOptions executionOptions = default,
+        Action<PhysicalVirtualMemory>? configureMemory = null)
     {
         ArgumentNullException.ThrowIfNull(code);
         ArgumentException.ThrowIfNullOrWhiteSpace(moduleName);
@@ -84,6 +87,7 @@ internal static class SyntheticNativeGuest
         {
             MapImportStubs(memory, importStubs.Keys, codeAddress);
         }
+        configureMemory?.Invoke(memory);
 
         var moduleManager = new ModuleManager();
         configureModules?.Invoke(moduleManager);

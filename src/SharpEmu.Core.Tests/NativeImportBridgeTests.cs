@@ -3,6 +3,7 @@
 
 using System.Buffers.Binary;
 using SharpEmu.Core.Cpu;
+using SharpEmu.Core.Cpu.Native;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
 using Xunit;
@@ -20,6 +21,7 @@ public sealed class NativeImportBridgeTests
     private const string ColdHandlerNid = "test-cold-handler-nid";
     private const string BlockingYieldNid = "test-blocking-yield-nid";
     private const string RegisterExternalThreadNid = "test-register-external-thread-nid";
+    private const string RegisteredStackProbeNid = "test-registered-stack-probe-nid";
     private const string MemalignNid = "Ujf3KzMvRmI";
     private const string PluginInitializeNid = "Mglc7amPW4k";
     private const ulong CodeAddress = 0x0000_0008_1000_0000;
@@ -706,6 +708,107 @@ public sealed class NativeImportBridgeTests
         Assert.Equal(executionCount, SyntheticExports.BlockingYieldCalls);
     }
 
+    [HostX64Fact]
+    public async Task HostShutdownUnwindsActiveNativeGuestWithoutFailFast()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
+        SyntheticExports.BlockingYieldCalls = 0;
+        byte[] code =
+        [
+            0xE8, 0xFB, 0x00, 0x00, 0x00, // loop: call ImportAddress
+            0xEB, 0xF9,                   // jmp loop
+        ];
+        var shutdownRequest = Task.Run(() =>
+        {
+            Assert.True(
+                SpinWait.SpinUntil(
+                    () => Volatile.Read(ref SyntheticExports.BlockingYieldCalls) >= 4,
+                    TimeSpan.FromSeconds(10)),
+                "Synthetic guest did not reach the import loop.");
+            HostSessionControl.RequestShutdown("synthetic-native-shutdown");
+        });
+
+        var execution = Assert.Single(SyntheticNativeGuest.ExecuteModuleInitializers(
+            code,
+            Generation.Gen5,
+            "synthetic-host-shutdown",
+            executionCount: 1,
+            new Dictionary<ulong, string> { [ImportAddress] = BlockingYieldNid },
+            moduleManager =>
+            {
+                var registered = moduleManager.RegisterExports(
+                    SharpEmu.Core.Tests.Generated.SysAbiExportRegistry.CreateExports(
+                        Generation.Gen5));
+                Assert.True(registered > 0);
+                Assert.True(moduleManager.TryGetExport(BlockingYieldNid, out _));
+            },
+            CodeAddress,
+            guestThreadHandle: 0xCAFE,
+            useDedicatedHostThreads: true));
+        await shutdownRequest.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP, execution.Result);
+    }
+
+    [HostX64Fact]
+    public async Task ImportAfterSwitchingToRegisteredStackRefreshesExceptionBoundary()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
+        const ulong alternateStackStart = 0x0000_7FFE_0000_0000;
+        const ulong alternateStackSize = 0x1_0000;
+        var alternateRsp = alternateStackStart + alternateStackSize - 0x10;
+        SyntheticExports.RegisteredStackObserved = false;
+        byte[] code =
+        [
+            0x49, 0x89, 0xE4,                      // mov r12, rsp
+            0x48, 0xBC,
+            .. BitConverter.GetBytes(alternateRsp), // mov rsp, alternateRsp
+            0xE8, 0xEE, 0x00, 0x00, 0x00,          // call ImportAddress
+            0x4C, 0x89, 0xE4,                      // mov rsp, r12
+            0x31, 0xC0,                            // xor eax, eax
+            0xC3,                                  // ret
+        ];
+
+        var execution = SyntheticNativeGuest.ExecuteModuleInitializer(
+            code,
+            Generation.Gen5,
+            "synthetic-registered-stack-refresh",
+            new Dictionary<ulong, string> { [ImportAddress] = RegisteredStackProbeNid },
+            moduleManager => moduleManager.RegisterExports(
+                [
+                    new ExportedFunction(
+                        "libSyntheticTest",
+                        RegisteredStackProbeNid,
+                        "syntheticRegisteredStackProbe",
+                        Generation.Gen5,
+                        SyntheticExports.RegisteredStackProbe),
+                ]),
+            codeAddress: CodeAddress,
+            executionOptions: default,
+            configureMemory: memory =>
+            {
+                Assert.Equal(
+                    alternateStackStart,
+                    memory.AllocateAt(
+                        alternateStackStart,
+                        alternateStackSize,
+                        executable: false,
+                        allowAlternative: false));
+                memory.RegisterStackRange(alternateStackStart, alternateStackSize);
+            });
+
+        AssertSuccessful(execution);
+        Assert.True(SyntheticExports.RegisteredStackObserved);
+    }
+
     private static SyntheticGuestExecutionResult ExecuteImport(
         byte[] code,
         string nid,
@@ -798,6 +901,8 @@ public sealed class NativeImportBridgeTests
 
         public static ulong ApplicationHeapSize { get; set; }
 
+        public static bool RegisteredStackObserved { get; set; }
+
         public static int ApplicationHeapAllocate(CpuContext context)
         {
             ApplicationHeapAlignment = context[CpuRegister.Rdi];
@@ -817,6 +922,13 @@ public sealed class NativeImportBridgeTests
                 context[CpuRegister.Rdi] +
                 context[CpuRegister.Rsi]));
             return context.SetReturn(result);
+        }
+
+        public static int RegisteredStackProbe(CpuContext context)
+        {
+            RegisteredStackObserved = DirectExecutionBackend.IsActiveGuestStackPointer(
+                context[CpuRegister.Rsp]);
+            return context.SetReturn(0);
         }
 
         [SysAbiExport(
