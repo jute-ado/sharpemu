@@ -259,6 +259,37 @@ public sealed class CpuDispatcherTests
     }
 
     [Fact]
+    public void NativeBackendTrapWithoutBackendErrorReportsStructuredFailureDetail()
+    {
+        const ulong entryPoint = 0x0000_0008_0000_0000;
+        const ulong trapRip = entryPoint + 0x24;
+        var backend = new FailingNativeBackend(
+            OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP,
+            new CpuTrapInfo(
+                trapRip,
+                0x4C,
+                exceptionCode: 0xC0000005,
+                accessAddress: 0x68,
+                accessKind: CpuMemoryAccessKind.Read),
+            lastError: null);
+        using var dispatcher = new CpuDispatcher(
+            new VirtualMemory(),
+            new ModuleManager(),
+            backend);
+
+        var result = dispatcher.DispatchModuleInitializer(
+            entryPoint,
+            Generation.Gen5,
+            moduleName: "structured-trap-detail-test");
+
+        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP, result);
+        Assert.Contains($"CPU trap at RIP=0x{trapRip:X16}", dispatcher.LastMilestoneLog);
+        Assert.Contains("exception=0xC0000005", dispatcher.LastMilestoneLog);
+        Assert.Contains("access=read@0x0000000000000068", dispatcher.LastMilestoneLog);
+        Assert.DoesNotContain("unknown backend error", dispatcher.LastMilestoneLog);
+    }
+
+    [Fact]
     public void RepeatedModuleInitializersReuseDispatcherMemoryRegions()
     {
         var memory = new VirtualMemory();
@@ -468,11 +499,12 @@ public sealed class CpuDispatcherTests
         OrbisGen2Result result,
         CpuTrapInfo? lastTrapInfo = null,
         int lastSessionImportsHit = 0,
-        int lastSessionUniqueNidsHit = 0) : INativeCpuBackend
+        int lastSessionUniqueNidsHit = 0,
+        string? lastError = "synthetic backend failure") : INativeCpuBackend
     {
         public string BackendName => "synthetic-backend";
 
-        public string? LastError => "synthetic backend failure";
+        public string? LastError => lastError;
 
         public CpuTrapInfo? LastTrapInfo => lastTrapInfo;
 
