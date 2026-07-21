@@ -48,6 +48,26 @@ public sealed class RecentImportTraceBufferTests
     }
 
     [Fact]
+    public void CombinedFaultThreadAndGlobalHistoryRemainsChronological()
+    {
+        var trace = new RecentImportTraceBuffer(capacity: 4);
+        trace.Record(Entry(1, threadHandle: 1));
+        trace.Record(Entry(2, threadHandle: 2));
+        trace.Record(Entry(3, threadHandle: 0xCAFE));
+        trace.Record(Entry(4, threadHandle: 0xCAFE));
+
+        var formatted = trace.Build(requestedLimit: 4, prioritizedThreadHandle: 0xCAFE);
+
+        Assert.NotNull(formatted);
+        var lines = formatted.Split(Environment.NewLine);
+        Assert.Equal(4, lines.Length);
+        Assert.StartsWith("#1 ", lines[0], StringComparison.Ordinal);
+        Assert.StartsWith("#2 ", lines[1], StringComparison.Ordinal);
+        Assert.StartsWith("#3 ", lines[2], StringComparison.Ordinal);
+        Assert.StartsWith("#4 ", lines[3], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CompletionAddsReturnValueWithoutAppendingAnotherTraceEntry()
     {
         var trace = new RecentImportTraceBuffer(capacity: 2);
