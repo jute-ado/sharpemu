@@ -9,11 +9,21 @@ internal static class KernelPthreadLifecycle
 {
     static KernelPthreadLifecycle()
     {
+        GuestThreadExecution.GuestThreadExiting += RunThreadSpecificDestructors;
         GuestThreadExecution.GuestThreadExited += ReleaseSynchronizationState;
     }
 
     internal static void EnsureInitialized()
     {
+    }
+
+    private static void RunThreadSpecificDestructors(
+        ulong threadHandle,
+        CpuContext context)
+    {
+        KernelPthreadExtendedCompatExports.RunThreadSpecificDestructors(
+            threadHandle,
+            context);
     }
 
     private static void ReleaseSynchronizationState(ulong threadHandle)

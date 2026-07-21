@@ -5011,7 +5011,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 			if (notifyThreadExited)
 			{
-				GuestThreadExecution.NotifyGuestThreadExited(thread.ThreadHandle);
+				GuestThreadExecution.NotifyGuestThreadExited(thread.ThreadHandle, thread.Context);
 			}
 			if (_logGuestThreads)
 			{

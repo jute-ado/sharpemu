@@ -39,8 +39,9 @@ test-driven workflow. Major downstream differences include:
   POSIX `-1`/`errno` and SCE kernel semaphore contracts, distinct POSIX errno
   and encoded SCE error contracts for mutex and read/write-lock operations,
   rollback of failed read/write-lock initialization, input-only equeue timeout
-  handling that avoids mutating guest polling intervals, thread-specific value
-  cleanup when guest threads exit, plus session
+  handling that avoids mutating guest polling intervals, bounded pthread-key
+  destructor callbacks and thread-specific value cleanup when guest threads
+  exit, plus session
   reports
   that retain native import progress and exact per-session unique-NID counts
   across guest workers and distinguish

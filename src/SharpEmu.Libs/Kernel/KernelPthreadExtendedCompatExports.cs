@@ -10,6 +10,7 @@ namespace SharpEmu.Libs.Kernel;
 
 public static class KernelPthreadExtendedCompatExports
 {
+    private const int PthreadDestructorIterations = 4;
     private const int DefaultThreadPriority = 700;
     private const ulong DefaultThreadAffinityMask = 0x7FUL;
     private const int DefaultDetachState = 0;
@@ -1441,6 +1442,54 @@ public static class KernelPthreadExtendedCompatExports
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
     public static int OrbisPthreadGetspecific(CpuContext ctx) => PosixPthreadGetspecific(ctx);
+
+    internal static void RunThreadSpecificDestructors(
+        ulong threadHandle,
+        CpuContext context)
+    {
+        for (var iteration = 0; iteration < PthreadDestructorIterations; iteration++)
+        {
+            if (!_threadLocalSpecific.TryGetValue(threadHandle, out var values))
+            {
+                return;
+            }
+
+            var pending = values.ToArray();
+            var invokedDestructor = false;
+            foreach (var (key, _) in pending)
+            {
+                if (!values.TryRemove(key, out var value) || value == 0 ||
+                    !_tlsKeys.TryGetValue(key, out var keyState) || keyState.Destructor == 0)
+                {
+                    continue;
+                }
+
+                invokedDestructor = true;
+                string? error = null;
+                var succeeded = GuestThreadExecution.Scheduler is { } scheduler &&
+                    scheduler.TryCallGuestFunction(
+                        context,
+                        keyState.Destructor,
+                        value,
+                        0,
+                        0,
+                        0,
+                        $"pthread destructor key={key}",
+                        out error);
+                if (!succeeded)
+                {
+                    Console.Error.WriteLine(
+                        $"[LOADER][WARN] pthread destructor failed: thread=0x{threadHandle:X16} " +
+                        $"key={key} entry=0x{keyState.Destructor:X16}: {error ?? "guest callback scheduler unavailable"}");
+                }
+            }
+
+            if (!invokedDestructor)
+            {
+                return;
+            }
+        }
+    }
 
     internal static void ReleaseThreadSpecificValues(ulong threadHandle)
     {

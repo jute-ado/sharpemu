@@ -153,6 +153,8 @@ public readonly record struct GuestCpuContinuation(
 
 public static class GuestThreadExecution
 {
+    public static event Action<ulong, CpuContext>? GuestThreadExiting;
+
     public static event Action<ulong>? GuestThreadExited;
 
     [ThreadStatic]
@@ -200,6 +202,15 @@ public static class GuestThreadExecution
     {
         if (threadHandle != 0)
         {
+            GuestThreadExited?.Invoke(threadHandle);
+        }
+    }
+
+    public static void NotifyGuestThreadExited(ulong threadHandle, CpuContext context)
+    {
+        if (threadHandle != 0)
+        {
+            GuestThreadExiting?.Invoke(threadHandle, context);
             GuestThreadExited?.Invoke(threadHandle);
         }
     }

@@ -39,6 +39,19 @@ public sealed class GuestThreadLifecycleIntegrationTests
         var creatorContext = new CpuContext(memory, Generation.Gen5);
         var exited = new TaskCompletionSource<ulong>(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        var exiting = new TaskCompletionSource<(ulong Handle, ulong CurrentHandle, CpuContext Context)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        void HandleGuestThreadExiting(ulong threadHandle, CpuContext context)
+        {
+            if (threadHandle == ThreadHandle)
+            {
+                exiting.TrySetResult((
+                    threadHandle,
+                    GuestThreadExecution.CurrentGuestThreadHandle,
+                    context));
+            }
+        }
 
         void HandleGuestThreadExited(ulong threadHandle)
         {
@@ -48,6 +61,7 @@ public sealed class GuestThreadLifecycleIntegrationTests
             }
         }
 
+        GuestThreadExecution.GuestThreadExiting += HandleGuestThreadExiting;
         GuestThreadExecution.GuestThreadExited += HandleGuestThreadExited;
         try
         {
@@ -72,12 +86,17 @@ public sealed class GuestThreadLifecycleIntegrationTests
                     out var joinError),
                 joinError);
             Assert.Equal(0UL, returnValue);
+            var exitingState = await exiting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(ThreadHandle, exitingState.Handle);
+            Assert.Equal(ThreadHandle, exitingState.CurrentHandle);
+            Assert.Equal(Generation.Gen5, exitingState.Context.TargetGeneration);
             Assert.Equal(
                 ThreadHandle,
                 await exited.Task.WaitAsync(TimeSpan.FromSeconds(5)));
         }
         finally
         {
+            GuestThreadExecution.GuestThreadExiting -= HandleGuestThreadExiting;
             GuestThreadExecution.GuestThreadExited -= HandleGuestThreadExited;
         }
     }
