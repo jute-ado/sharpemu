@@ -4750,8 +4750,13 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private void ClearGuestThreads()
 	{
 		GuestContinuationRunner[] runners;
+		ulong[] threadHandles;
 		using (LockGate("ClearGuestThreads"))
 		{
+			threadHandles = _guestThreads.Keys
+				.Concat(_externalGuestThreads.Keys)
+				.Distinct()
+				.ToArray();
 			runners = _guestThreads.Values
 				.Select(static thread => thread.ContinuationRunner)
 				.Where(static runner => runner is not null)
@@ -4768,6 +4773,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		foreach (var runner in runners)
 		{
 			runner.Dispose();
+		}
+
+		foreach (var threadHandle in threadHandles)
+		{
+			GuestThreadExecution.NotifyGuestThreadReaped(threadHandle);
 		}
 	}
 
@@ -6344,6 +6354,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		// Native guest workers park idle once every guest thread has unwound; stop
 		// them before any executable stub or TLS index they reference is freed.
 		DisposeNativeGuestExecutors();
+		ClearGuestThreads();
 
 		if (ReferenceEquals(_posixSignalBackend, this))
 		{
