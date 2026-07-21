@@ -210,8 +210,16 @@ public static class GuestThreadExecution
     {
         if (threadHandle != 0)
         {
+            NotifyGuestThreadExiting(threadHandle, context);
+            NotifyGuestThreadExited(threadHandle);
+        }
+    }
+
+    public static void NotifyGuestThreadExiting(ulong threadHandle, CpuContext context)
+    {
+        if (threadHandle != 0)
+        {
             GuestThreadExiting?.Invoke(threadHandle, context);
-            GuestThreadExited?.Invoke(threadHandle);
         }
     }
 
