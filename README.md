@@ -36,7 +36,8 @@ test-driven workflow. Major downstream differences include:
 - generated HLE export registration instead of runtime reflection discovery
 - a guest-thread scheduler with callback, synchronization, and lifecycle
   behavior exercised through native guest-code tests, including distinct
-  POSIX `-1`/`errno` and SCE kernel semaphore contracts, input-only equeue
+  POSIX `-1`/`errno` and SCE kernel semaphore contracts, distinct POSIX errno
+  and encoded SCE error contracts for mutex operations, input-only equeue
   timeout handling that avoids mutating guest polling intervals, plus session
   reports
   that retain native import progress across guest workers and distinguish

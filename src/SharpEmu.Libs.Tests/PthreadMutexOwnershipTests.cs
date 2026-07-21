@@ -34,6 +34,9 @@ public sealed class PthreadMutexOwnershipTests : IDisposable
 
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+                KernelPthreadCompatExports.PthreadMutexUnlock(context));
+            Assert.Equal(
+                22, // EINVAL
                 KernelPthreadCompatExports.PosixPthreadMutexUnlock(context));
         }
         finally
@@ -92,11 +95,41 @@ public sealed class PthreadMutexOwnershipTests : IDisposable
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 ownerLockResult);
             Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED,
+                1, // EPERM
                 foreignResult);
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 ownerUnlockResult);
+        }
+        finally
+        {
+            DestroyMutex(context);
+        }
+    }
+
+    [Fact]
+    public void PosixTrylockReturnsErrnoWhileSceAliasKeepsKernelError()
+    {
+        var context = CreateInitializedMutex(mutexType: 3);
+        try
+        {
+            context[CpuRegister.Rdi] = MutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadMutexLock(context));
+
+            context[CpuRegister.Rdi] = MutexAddress;
+            Assert.Equal(
+                16, // EBUSY
+                KernelPthreadCompatExports.PosixPthreadMutexTrylock(context));
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY,
+                KernelPthreadCompatExports.PthreadMutexTrylock(context));
+
+            context[CpuRegister.Rdi] = MutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadMutexUnlock(context));
         }
         finally
         {
@@ -117,7 +150,7 @@ public sealed class PthreadMutexOwnershipTests : IDisposable
 
             context[CpuRegister.Rdi] = MutexAddress;
             Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY,
+                16, // EBUSY
                 KernelPthreadCompatExports.PosixPthreadMutexDestroy(context));
 
             context[CpuRegister.Rdi] = MutexAddress;
@@ -169,7 +202,7 @@ public sealed class PthreadMutexOwnershipTests : IDisposable
 
             context[CpuRegister.Rdi] = MutexAddress;
             Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY,
+                16, // EBUSY
                 KernelPthreadCompatExports.PosixPthreadMutexDestroy(context));
 
             context[CpuRegister.Rdi] = MutexAddress;
