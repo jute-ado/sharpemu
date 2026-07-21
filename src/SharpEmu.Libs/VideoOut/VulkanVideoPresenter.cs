@@ -3038,12 +3038,51 @@ internal static unsafe class VulkanVideoPresenter
             return false;
         }
 
-        var signature = ComputeShaderSignature(spirv);
+        return GuestImageShaderSignatureFilterMatches(
+            configuredSignatures,
+            ComputeShaderSignature(spirv));
+    }
+
+    internal static bool GuestImageShaderSignatureFilterMatches(
+        string? configuredSignatures,
+        string? shaderSignature)
+    {
+        if (string.IsNullOrWhiteSpace(configuredSignatures))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(shaderSignature))
+        {
+            return false;
+        }
+
         return configuredSignatures.Split(
                 [',', ';', ' ', '\t'],
                 StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Any(token => string.Equals(token, signature, StringComparison.OrdinalIgnoreCase));
+            .Any(token =>
+                token == "*" ||
+                string.Equals(
+                    token,
+                    shaderSignature,
+                    StringComparison.OrdinalIgnoreCase));
     }
+
+    internal static bool GuestImageTraceSelectorMatches(
+        bool addressMatched,
+        string? configuredSignatures,
+        string? shaderSignature) =>
+        addressMatched ||
+        (!string.IsNullOrWhiteSpace(configuredSignatures) &&
+         GuestImageShaderSignatureFilterMatches(
+             configuredSignatures,
+             shaderSignature));
+
+    internal static bool ShouldCollectGuestImageTraceCandidate(
+        bool isStorage,
+        bool addressFilterEnabled,
+        bool signatureFilterEnabled) =>
+        isStorage || addressFilterEnabled || signatureFilterEnabled;
 
     // Returns the source row length in texels for a recognised linearly
     // padded upload. Oversized buffers with other layouts remain rejected
@@ -6105,10 +6144,12 @@ internal static unsafe class VulkanVideoPresenter
         private IReadOnlyList<GuestImageResource> GetTraceImages(
             TranslatedDrawResources resources,
             IReadOnlyList<GuestImageResource>? renderTargets = null,
-            ulong shaderAddress = 0)
+            ulong shaderAddress = 0,
+            string? shaderSignature = null)
         {
             if (!_traceGuestImagesEnabled &&
                 !_traceGuestImageAddressFilterEnabled &&
+                !_traceGuestImageShaderSignatureFilterEnabled &&
                 GuestImageTraceInterval() is null)
             {
                 return Array.Empty<GuestImageResource>();
@@ -6122,16 +6163,32 @@ internal static unsafe class VulkanVideoPresenter
 
             foreach (var texture in resources.Textures)
             {
-                if ((texture.IsStorage || _traceGuestImageAddressFilterEnabled) &&
+                if (ShouldCollectGuestImageTraceCandidate(
+                        texture.IsStorage,
+                        _traceGuestImageAddressFilterEnabled,
+                        _traceGuestImageShaderSignatureFilterEnabled) &&
                     texture.GuestImage is { } image)
                 {
                     candidates.Add(image);
                 }
             }
 
-            return candidates
-                .Where(image => ShouldTraceGuestImageContents(image, shaderAddress))
+            var selected = candidates
+                .Where(image => ShouldTraceGuestImageContents(
+                    image,
+                    shaderAddress,
+                    shaderSignature))
                 .ToArray();
+            if (_traceGuestImageShaderSignatureFilterEnabled && selected.Length != 0)
+            {
+                Console.Error.WriteLine(
+                    $"[LOADER][TRACE] vk.guest_image_selected " +
+                    $"shader=0x{shaderAddress:X16} sig={shaderSignature ?? "none"} " +
+                    $"images={string.Join(',', selected.Select(image =>
+                        $"0x{image.Address:X16}:{image.Width}x{image.Height}:{image.Format}"))}");
+            }
+
+            return selected;
         }
 
         private void CreateGuestDrawResources()
@@ -10282,7 +10339,10 @@ internal static unsafe class VulkanVideoPresenter
                         SubmitGuestCommandBuffer(
                             commandBuffer,
                             [resources],
-                            GetTraceImages(resources, shaderAddress: work.ShaderAddress));
+                            GetTraceImages(
+                                resources,
+                                shaderAddress: work.ShaderAddress,
+                                shaderSignature: ComputeShaderSignature(work.ComputeSpirv)));
                         submitted = true;
                     }
                     else
@@ -11178,7 +11238,11 @@ internal static unsafe class VulkanVideoPresenter
 
                 EndDebugLabel(_commandBuffer);
 
-                var traceImages = GetTraceImages(resources, targets, work.ShaderAddress);
+                var traceImages = GetTraceImages(
+                    resources,
+                    targets,
+                    work.ShaderAddress,
+                    ComputeShaderSignature(work.Draw.PixelSpirv));
                 _batchTraceImages.AddRange(traceImages);
                 if (++_batchDrawCount >= 64 ||
                     (_traceGuestImageShaderFilterEnabled && traceImages.Count != 0))
@@ -14870,7 +14934,8 @@ internal static unsafe class VulkanVideoPresenter
 
         private bool ShouldTraceGuestImageContents(
             GuestImageResource image,
-            ulong shaderAddress = 0)
+            ulong shaderAddress = 0,
+            string? shaderSignature = null)
         {
             if (image.Address == 0)
             {
@@ -14881,6 +14946,13 @@ internal static unsafe class VulkanVideoPresenter
                 !AddressListContains(
                     "SHARPEMU_TRACE_GUEST_IMAGE_SHADER_ADDRS",
                     shaderAddress))
+            {
+                return false;
+            }
+
+            if (!GuestImageShaderSignatureFilterMatches(
+                    _traceGuestImageShaderSignatures,
+                    shaderSignature))
             {
                 return false;
             }
@@ -14943,7 +15015,11 @@ internal static unsafe class VulkanVideoPresenter
                 return count % interval == 0;
             }
 
-            return (addressMatched || broadTrace) &&
+            return (GuestImageTraceSelectorMatches(
+                        addressMatched,
+                        _traceGuestImageShaderSignatures,
+                        shaderSignature) ||
+                    broadTrace) &&
                    _tracedGuestImageContents.Add(image.Address);
         }
 
@@ -15066,6 +15142,11 @@ internal static unsafe class VulkanVideoPresenter
             !string.IsNullOrWhiteSpace(
                 Environment.GetEnvironmentVariable(
                     "SHARPEMU_TRACE_GUEST_IMAGE_SHADER_ADDRS"));
+        private static readonly string? _traceGuestImageShaderSignatures =
+            Environment.GetEnvironmentVariable(
+                "SHARPEMU_TRACE_GUEST_IMAGE_SHADER_SIGNATURES");
+        private static readonly bool _traceGuestImageShaderSignatureFilterEnabled =
+            !string.IsNullOrWhiteSpace(_traceGuestImageShaderSignatures);
         private static readonly bool _traceGuestImageAddressFilterEnabled =
             !string.IsNullOrWhiteSpace(
                 Environment.GetEnvironmentVariable(
