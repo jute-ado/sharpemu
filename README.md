@@ -54,7 +54,8 @@ test-driven workflow. Major downstream differences include:
   windows spanning the 128-byte area on both sides of RSP, with executable
   code-pointer candidates, extended context, and bounded decoded instruction
   paths with mapped-image-relative branch/data targets and exact-boundary
-  preceding-call hints plus bounded direct-callee context for frameless code,
+  prefix-preserving preceding-call hints plus bounded direct-callee context for
+  frameless code,
   faulting guest-thread identity, and bounded cross-thread native
   import traces with resolved library/export identities, chronological combined
   history, all six SysV register arguments, guest-visible return values, and a

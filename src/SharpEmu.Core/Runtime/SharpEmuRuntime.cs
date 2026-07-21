@@ -1468,8 +1468,13 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         ulong address)
     {
         const int maximumInstructionBytes = 15;
-        for (var length = 2; length <= maximumInstructionBytes && address >= (ulong)length; length++)
+        for (var length = maximumInstructionBytes; length >= 2; length--)
         {
+            if (address < (ulong)length)
+            {
+                continue;
+            }
+
             var instructionAddress = address - (ulong)length;
             if (!IcedDecoder.TryReadGuestBytes(virtualMemory, instructionAddress, length, out var bytes) ||
                 bytes.Length != length ||

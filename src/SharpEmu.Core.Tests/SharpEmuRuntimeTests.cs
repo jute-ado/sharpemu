@@ -244,6 +244,21 @@ public sealed class SharpEmuRuntimeTests
         Assert.NotNull(precedingIndirectCall);
         Assert.Equal("call rbp", precedingIndirectCall.Value.Text);
         Assert.Null(precedingIndirectCall.Value.NearBranchTarget);
+
+        var rexPrefixedBytes = new byte[] { 0x41, 0xFF, 0xD5 }; // call r13
+        var rexPrefixedStart = codeStart + (ulong)bytes.Length;
+        memory.Map(
+            rexPrefixedStart,
+            (ulong)rexPrefixedBytes.Length,
+            fileOffset: 0,
+            rexPrefixedBytes,
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+        var rexPrefixedCall = SharpEmuRuntime.CaptureTrapStackCandidatePrecedingCall(
+            memory,
+            rexPrefixedStart + (ulong)rexPrefixedBytes.Length);
+        Assert.NotNull(rexPrefixedCall);
+        Assert.Equal(rexPrefixedStart, rexPrefixedCall.Value.Address);
+        Assert.Equal("call r13", rexPrefixedCall.Value.Text);
     }
 
     [Fact]
