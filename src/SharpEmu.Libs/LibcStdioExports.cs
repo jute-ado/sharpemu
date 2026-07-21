@@ -19,6 +19,26 @@ public static class LibcStdioExports
     private static readonly ConcurrentDictionary<ulong, FileStream> _fileHandles = new();
     private static long _nextHandle = 0x1000 - 8;
 
+    internal static void ResetRuntimeState()
+    {
+        var streams = _fileHandles.Values
+            .Distinct<FileStream>(ReferenceEqualityComparer.Instance)
+            .ToArray();
+        _fileHandles.Clear();
+        Interlocked.Exchange(ref _nextHandle, 0x1000 - 8);
+
+        foreach (var stream in streams)
+        {
+            try
+            {
+                stream.Dispose();
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
+
     private static readonly bool _traceStdio =
         string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_STDIO"), "1", StringComparison.Ordinal);
 
