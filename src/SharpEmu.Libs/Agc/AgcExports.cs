@@ -589,6 +589,7 @@ public static partial class AgcExports
         public Queue<PendingSubmission> PendingSubmissions { get; } = new();
         public bool HasActiveSubmission { get; set; }
         public bool IsSuspended { get; set; }
+        public bool ResetBeforeNextSubmission { get; set; }
         public ulong CompletionEventNotifiedSubmissionId { get; set; }
         public Dictionary<(uint Op, uint Register), uint> FramePacketCounts { get; } = new();
         public uint FramePacketCount { get; set; }
@@ -3106,7 +3107,23 @@ public static partial class AgcExports
         LibraryName = "libSceAgc")]
     public static int SuspendPoint(CpuContext ctx)
     {
-        TraceAgc("agc.suspend_point");
+        GuestGpu.Current.AttachGuestMemory(ctx.Memory);
+        var gpuState = _submittedGpuStates.GetValue(
+            ctx.Memory,
+            static _ => new SubmittedGpuState());
+        lock (gpuState.Gate)
+        {
+            _ = DrainResumableDcbs(ctx, gpuState, tracePackets: _traceAgc);
+
+            // sce::Agc uses a suspend point as the graphics command-processor
+            // frame boundary. Kyty's reference path marks the ring done and
+            // resets its command processor when the next submission starts.
+            // Defer the reset so an in-flight DCB suspended on WAIT_REG_MEM
+            // keeps the state needed to finish that same submission.
+            gpuState.Graphics.ResetBeforeNextSubmission = true;
+        }
+
+        TraceAgc("agc.suspend_point boundary=graphics");
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -3165,6 +3182,15 @@ public static partial class AgcExports
         while (!state.HasActiveSubmission &&
                state.PendingSubmissions.TryDequeue(out var submission))
         {
+            if (state.ResetBeforeNextSubmission)
+            {
+                ResetSubmittedParserState(state);
+                state.ResetBeforeNextSubmission = false;
+                TraceAgc(
+                    $"agc.suspend_point_reset queue={state.QueueName} " +
+                    $"submission={submission.SubmissionId}");
+            }
+
             state.HasActiveSubmission = true;
             state.ActiveSubmissionId = submission.SubmissionId;
             state.IsSuspended = ParseSubmittedDcb(
