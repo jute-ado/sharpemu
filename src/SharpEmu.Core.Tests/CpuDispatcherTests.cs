@@ -73,7 +73,8 @@ public sealed class CpuDispatcherTests
     {
         var backend = new FailingNativeBackend(
             OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP,
-            lastSessionImportsHit: 41);
+            lastSessionImportsHit: 41,
+            lastSessionUniqueNidsHit: 7);
         using var dispatcher = new CpuDispatcher(
             new VirtualMemory(),
             new ModuleManager(),
@@ -86,6 +87,7 @@ public sealed class CpuDispatcherTests
                 Generation.Gen5,
                 moduleName: "native-import-progress-failure"));
         Assert.Equal(41, dispatcher.LastSessionSummary.ImportsHit);
+        Assert.Equal(7, dispatcher.LastSessionSummary.UniqueNidsHit);
     }
 
     [Fact]
@@ -465,7 +467,8 @@ public sealed class CpuDispatcherTests
     private sealed class FailingNativeBackend(
         OrbisGen2Result result,
         CpuTrapInfo? lastTrapInfo = null,
-        int lastSessionImportsHit = 0) : INativeCpuBackend
+        int lastSessionImportsHit = 0,
+        int lastSessionUniqueNidsHit = 0) : INativeCpuBackend
     {
         public string BackendName => "synthetic-backend";
 
@@ -474,6 +477,8 @@ public sealed class CpuDispatcherTests
         public CpuTrapInfo? LastTrapInfo => lastTrapInfo;
 
         public int LastSessionImportsHit => lastSessionImportsHit;
+
+        public int LastSessionUniqueNidsHit => lastSessionUniqueNidsHit;
 
         public bool TryExecute(
             CpuContext context,

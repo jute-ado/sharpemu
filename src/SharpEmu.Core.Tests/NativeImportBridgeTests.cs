@@ -24,6 +24,7 @@ public sealed class NativeImportBridgeTests
     private const ulong CodeAddress = 0x0000_0008_1000_0000;
     private const ulong ImportAddress = CodeAddress + 0x100;
     private const ulong SecondImportAddress = ImportAddress + 0x10;
+    private const ulong ThirdImportAddress = SecondImportAddress + 0x10;
     private const ulong FallbackImportAddress = 0x0000_6FFF_FF00_0000;
     private const ulong DlsymImportAddress = 0x0000_7000_0000_0000;
     private const ulong DlsymResultAddress = CodeAddress + 0x280;
@@ -55,6 +56,55 @@ public sealed class NativeImportBridgeTests
         var execution = ExecuteImport(code, AddNid, "synthetic-import-roundtrip");
         AssertSuccessful(execution);
         Assert.Equal(1, execution.ImportsHit);
+    }
+
+    [HostX64Fact]
+    public async Task NativeSessionCountsUniqueNidsAcrossRepeatedImports()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
+        byte[] code =
+        [
+            0xE8, 0xFB, 0x00, 0x00, 0x00, // call ImportAddress
+            0xE8, 0xF6, 0x00, 0x00, 0x00, // call ImportAddress again
+            0xE8, 0x01, 0x01, 0x00, 0x00, // call SecondImportAddress
+            0xE8, 0x0C, 0x01, 0x00, 0x00, // call ThirdImportAddress (same NID as first)
+            0x31, 0xC0,                   // xor eax, eax
+            0xC3,                         // ret
+        ];
+        var execution = SyntheticNativeGuest.ExecuteModuleInitializer(
+            code,
+            Generation.Gen5,
+            "synthetic-unique-native-imports",
+            new Dictionary<ulong, string>
+            {
+                [ImportAddress] = AddNid,
+                [SecondImportAddress] = SixArgumentSumNid,
+                [ThirdImportAddress] = AddNid,
+            },
+            moduleManager => moduleManager.RegisterExports(
+            [
+                new ExportedFunction(
+                    "libSyntheticTest",
+                    AddNid,
+                    "syntheticAdd",
+                    Generation.Gen5,
+                    SyntheticExports.Add),
+                new ExportedFunction(
+                    "libSyntheticTest",
+                    SixArgumentSumNid,
+                    "syntheticSecondAdd",
+                    Generation.Gen5,
+                    SyntheticExports.Add),
+            ]),
+            CodeAddress);
+
+        AssertSuccessful(execution);
+        Assert.Equal(4, execution.ImportsHit);
+        Assert.Equal(2, execution.UniqueNidsHit);
     }
 
     [HostX64Fact]

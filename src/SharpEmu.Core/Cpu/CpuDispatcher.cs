@@ -171,7 +171,8 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
             CpuExitReason reason = CpuExitReason.UnhandledException,
             ulong? lastGuestRip = null,
             string? stage = null,
-            int importsHit = 0)
+            int importsHit = 0,
+            int uniqueNidsHit = 0)
         {
             if (!string.IsNullOrWhiteSpace(stage))
             {
@@ -189,7 +190,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                 lastStubRip: 0,
                 totalInstructions: 0,
                 importsHit,
-                uniqueNidsHit: 0);
+                uniqueNidsHit);
             return result;
         }
 
@@ -361,7 +362,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                 lastStubRip: 0,
                 totalInstructions: 0,
                 importsHit: _nativeCpuBackend.LastSessionImportsHit,
-                uniqueNidsHit: 0);
+                uniqueNidsHit: _nativeCpuBackend.LastSessionUniqueNidsHit);
             return nativeResult;
         }
 
@@ -410,7 +411,8 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
             nativeResult,
             failureReason,
             context.Rip,
-            importsHit: _nativeCpuBackend.LastSessionImportsHit);
+            importsHit: _nativeCpuBackend.LastSessionImportsHit,
+            uniqueNidsHit: _nativeCpuBackend.LastSessionUniqueNidsHit);
     }
 
     private ulong TryMapStackRegion()
