@@ -21,6 +21,8 @@ public sealed class KernelFilesystemContractTests : IDisposable
         (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
     private const int PermissionDenied =
         (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED;
+    private const int AlreadyExists =
+        (int)OrbisGen2Result.ORBIS_GEN2_ERROR_ALREADY_EXISTS;
 
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
@@ -194,6 +196,9 @@ public sealed class KernelFilesystemContractTests : IDisposable
         var pathStat = new byte[KernelStatSize];
         Assert.True(_context.Memory.TryRead(StatAddress, pathStat));
         Assert.Equal(0x41FF, BinaryPrimitives.ReadUInt16LittleEndian(pathStat.AsSpan(8)));
+
+        WritePath("/devlog");
+        Assert.Equal(AlreadyExists, KernelMemoryCompatExports.KernelMkdir(_context));
 
         WritePath("/devlog");
         _context[CpuRegister.Rsi] = OpenDirectory;

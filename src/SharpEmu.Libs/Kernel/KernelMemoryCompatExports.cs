@@ -2523,6 +2523,12 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
+        if (IsGuestMountRootPath(guestPath) || IsDevlogContainerPath(guestPath))
+        {
+            LogOpenTrace($"mkdir existing virtual-dir path='{guestPath}'");
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_ALREADY_EXISTS;
+        }
+
         if (!TryResolveGuestPath(guestPath, out var hostPath))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED;
