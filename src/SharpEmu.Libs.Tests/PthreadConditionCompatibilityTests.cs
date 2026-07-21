@@ -82,7 +82,7 @@ public sealed class PthreadConditionCompatibilityTests : IDisposable
         context[CpuRegister.Rsi] = 0;
 
         Assert.Equal(
-            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            14, // EFAULT
             KernelPthreadCompatExports.PosixPthreadMutexInit(context));
         Assert.Equal(0, memory.GuestAllocationCount);
     }
@@ -292,7 +292,7 @@ public sealed class PthreadConditionCompatibilityTests : IDisposable
                 KernelPthreadCompatExports.PthreadCondDestroy(context));
             context[CpuRegister.Rdi] = MutexAddress;
             Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY,
+                16, // EBUSY
                 KernelPthreadCompatExports.PosixPthreadMutexDestroy(
                     context));
 
@@ -348,7 +348,7 @@ public sealed class PthreadConditionCompatibilityTests : IDisposable
             UnlockMutex(context);
             context[CpuRegister.Rdi] = MutexAddress;
             Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+                22, // EINVAL
                 KernelPthreadCompatExports.PosixPthreadMutexUnlock(context));
         }
         finally
