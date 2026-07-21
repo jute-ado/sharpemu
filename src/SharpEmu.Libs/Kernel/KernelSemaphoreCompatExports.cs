@@ -159,12 +159,22 @@ public static class KernelSemaphoreCompatExports
             if (semaphore.Count < needCount)
             {
                 semaphore.WaitingThreads++;
-                GuestThreadBlocking.NoteBlocked(guestThreadHandle, "sceKernelWaitSema");
+                GuestThreadBlocking.NoteBlocked(
+                    guestThreadHandle,
+                    FormatWaitBlockDescription(handle, semaphore.Name));
                 if (_traceSema)
                 {
-                    TraceSemaphore(
-                        $"wait-block handle=0x{handle:X8} name='{semaphore.Name}' " +
-                        $"need={needCount} count={semaphore.Count} waiters={semaphore.WaitingThreads}");
+                    var returnRip = GuestThreadExecution.TryGetCurrentImportCallFrame(out var importFrame)
+                        ? importFrame.ReturnRip
+                        : 0;
+                    TraceSemaphore(FormatWaitBlockTrace(
+                        handle,
+                        semaphore.Name,
+                        needCount,
+                        semaphore.Count,
+                        semaphore.WaitingThreads,
+                        guestThreadHandle,
+                        returnRip));
                 }
 
                 try
@@ -724,6 +734,21 @@ public static class KernelSemaphoreCompatExports
     // strings would otherwise be allocated on every semaphore op even with tracing off.
     private static readonly bool _traceSema =
         string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_SEMA"), "1", StringComparison.Ordinal);
+
+    internal static string FormatWaitBlockTrace(
+        uint handle,
+        string name,
+        int needCount,
+        int count,
+        int waitingThreads,
+        ulong guestThreadHandle,
+        ulong returnRip) =>
+        $"wait-block handle=0x{handle:X8} name='{name}' " +
+        $"need={needCount} count={count} waiters={waitingThreads} " +
+        $"guest_thread=0x{guestThreadHandle:X16} ret=0x{returnRip:X16}";
+
+    internal static string FormatWaitBlockDescription(uint handle, string name) =>
+        $"sceKernelWaitSema(handle=0x{handle:X8} name='{name}')";
 
     private static void TraceSemaphore(string message)
     {
