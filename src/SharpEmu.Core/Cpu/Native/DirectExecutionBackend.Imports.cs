@@ -139,19 +139,30 @@ public sealed partial class DirectExecutionBackend
 			var importName = export is null
 				? importStubEntry.Nid
 				: $"{export.LibraryName}:{export.Name}";
+			var returnRip = *(ulong*)(argPackPtr + 96);
+			var callSite = TryFormatNearestRuntimeSymbol(returnRip, out var formattedCallSite)
+				? formattedCallSite
+				: null;
 			_importProfile.Record(
 				importName,
 				GetCurrentGuestThreadHandle(),
-				*(ulong*)(argPackPtr + 96));
+				returnRip,
+				callSite);
 			if (_importProfileBoundary.ShouldTakeSnapshot(num))
 			{
-				var snapshot = _importProfile.TakeTop(12);
+				var snapshot = _importProfile.TakeTop(32);
 				Console.Error.WriteLine(
-					$"[LOADER][PROFILE] Import#{num} imports: {FormatHotspots(snapshot.Imports)}");
+					$"[LOADER][PROFILE] Import#{num} imports: {FormatHotspots(snapshot.Imports, 12)}");
 				Console.Error.WriteLine(
-					$"[LOADER][PROFILE] Import#{num} threads: {FormatHotspots(snapshot.Threads)}");
+					$"[LOADER][PROFILE] Import#{num} threads: {FormatHotspots(snapshot.Threads, 12)}");
 				Console.Error.WriteLine(
-					$"[LOADER][PROFILE] Import#{num} callsites: {FormatHotspots(snapshot.CallSites)}");
+					$"[LOADER][PROFILE] Import#{num} callsites: {FormatHotspots(snapshot.CallSites, 12)}");
+				Console.Error.WriteLine(
+					$"[LOADER][PROFILE] Import#{num} thread-imports: " +
+					FormatHotspots(snapshot.ThreadImports, 32));
+				Console.Error.WriteLine(
+					$"[LOADER][PROFILE] Import#{num} thread-callsites: " +
+					FormatHotspots(snapshot.ThreadCallSites, 32));
 			}
 		}
 		MarkSessionImportEntryHit(importIndex);
@@ -602,8 +613,11 @@ public sealed partial class DirectExecutionBackend
 		}
 	}
 
-	private static string FormatHotspots(IEnumerable<ImportHotspot> hotspots) =>
-		string.Join(", ", hotspots.Select(static hotspot => $"{hotspot.Name}={hotspot.Count}"));
+	private static string FormatHotspots(
+		IEnumerable<ImportHotspot> hotspots,
+		int limit) =>
+		string.Join(", ", hotspots.Take(limit).Select(static hotspot =>
+			$"{hotspot.Name}={hotspot.Count}"));
 
 	private void MarkSessionImportEntryHit(int importIndex)
 	{
