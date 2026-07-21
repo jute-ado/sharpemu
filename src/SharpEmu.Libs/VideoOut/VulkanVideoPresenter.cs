@@ -3026,6 +3026,25 @@ internal static unsafe class VulkanVideoPresenter
         requestedFormat == imageFormat &&
         requestedDstSelect == baseViewDstSelect;
 
+    internal static string ComputeShaderSignature(ReadOnlySpan<byte> spirv) =>
+        Convert.ToHexString(SHA256.HashData(spirv).AsSpan(0, 8));
+
+    internal static bool ComputeShaderSignatureListContains(
+        string? configuredSignatures,
+        ReadOnlySpan<byte> spirv)
+    {
+        if (string.IsNullOrWhiteSpace(configuredSignatures))
+        {
+            return false;
+        }
+
+        var signature = ComputeShaderSignature(spirv);
+        return configuredSignatures.Split(
+                [',', ';', ' ', '\t'],
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(token => string.Equals(token, signature, StringComparison.OrdinalIgnoreCase));
+    }
+
     // Returns the source row length in texels for a recognised linearly
     // padded upload. Oversized buffers with other layouts remain rejected
     // so mip data is never mistaken for row padding.
@@ -3802,9 +3821,11 @@ internal static unsafe class VulkanVideoPresenter
         {
             var storage = dispatch.Textures.FirstOrDefault(texture => texture.IsStorage && texture.Address != 0);
             return storage is null
-                ? $"SharpEmu compute cs=0x{dispatch.ShaderAddress:X16} " +
+                ? $"SharpEmu compute sig={ComputeShaderSignature(dispatch.ComputeSpirv)} " +
+                  $"cs=0x{dispatch.ShaderAddress:X16} " +
                   $"{dispatch.GroupCountX}x{dispatch.GroupCountY}x{dispatch.GroupCountZ}"
-                : $"SharpEmu compute cs=0x{dispatch.ShaderAddress:X16} " +
+                : $"SharpEmu compute sig={ComputeShaderSignature(dispatch.ComputeSpirv)} " +
+                  $"cs=0x{dispatch.ShaderAddress:X16} " +
                   $"storage=0x{storage.Address:X16} " +
                   $"{storage.Width}x{storage.Height} fmt{storage.Format} " +
                   $"{dispatch.GroupCountX}x{dispatch.GroupCountY}x{dispatch.GroupCountZ}";
@@ -10112,10 +10133,14 @@ internal static unsafe class VulkanVideoPresenter
 
             if (_skipAllCompute ||
                 AddressListContains("SHARPEMU_SKIP_COMPUTE_CS", work.ShaderAddress) ||
+                ComputeShaderSignatureListContains(
+                    Environment.GetEnvironmentVariable("SHARPEMU_SKIP_COMPUTE_SIGNATURES"),
+                    work.ComputeSpirv) ||
                 (_skipTallComputeZ > 0 && work.GroupCountZ >= _skipTallComputeZ))
             {
                 TraceVulkanShader(
-                    $"vk.compute_skip cs=0x{work.ShaderAddress:X16} " +
+                    $"vk.compute_skip sig={ComputeShaderSignature(work.ComputeSpirv)} " +
+                    $"cs=0x{work.ShaderAddress:X16} " +
                     $"groups={work.GroupCountX}x{work.GroupCountY}x{work.GroupCountZ} " +
                     $"textures={work.Textures.Count}");
                 return;
@@ -10249,7 +10274,8 @@ internal static unsafe class VulkanVideoPresenter
                     Check(_vk.EndCommandBuffer(_commandBuffer), "vkEndCommandBuffer(compute)");
 
                     TraceVulkanShader(
-                        $"vk.compute_submit cs=0x{work.ShaderAddress:X16} " +
+                        $"vk.compute_submit sig={ComputeShaderSignature(work.ComputeSpirv)} " +
+                        $"cs=0x{work.ShaderAddress:X16} " +
                         $"batch={batchIndex}/{batchCount} z={zStart}..{zStart + zCount}");
                     if (isLastBatch)
                     {
@@ -10277,7 +10303,9 @@ internal static unsafe class VulkanVideoPresenter
                     $"vk.compute_dispatch groups={work.GroupCountX}x" +
                     $"{work.GroupCountY}x{work.GroupCountZ} " +
                     $"base={work.BaseGroupX}x{work.BaseGroupY}x{work.BaseGroupZ} " +
-                    $"textures={work.Textures.Count} cs=0x{work.ShaderAddress:X16} " +
+                    $"textures={work.Textures.Count} " +
+                    $"sig={ComputeShaderSignature(work.ComputeSpirv)} " +
+                    $"cs=0x{work.ShaderAddress:X16} " +
                     $"batches={batchCount}");
             }
             catch (Exception exception)
@@ -10289,6 +10317,7 @@ internal static unsafe class VulkanVideoPresenter
 
                 Console.Error.WriteLine(
                     $"[LOADER][ERROR] Vulkan compute dispatch failed " +
+                    $"sig={ComputeShaderSignature(work.ComputeSpirv)} " +
                     $"cs=0x{work.ShaderAddress:X16}: {exception.Message}");
             }
             finally
