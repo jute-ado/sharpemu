@@ -63,6 +63,43 @@ public sealed class SharpEmuRuntimeTests
     }
 
     [Fact]
+    public void TrapFrameWalkerRetainsRexPrefixedPrecedingCall()
+    {
+        const ulong stackStart = 0x7000;
+        const ulong framePointer = stackStart + 0x80;
+        const ulong codeStart = 0x9000;
+        var stackBytes = new byte[0x100];
+        WriteFrame(stackBytes, stackStart, framePointer, 0, codeStart + 3);
+        var memory = new VirtualMemory();
+        memory.Map(
+            stackStart,
+            (ulong)stackBytes.Length,
+            fileOffset: 0,
+            stackBytes,
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        memory.RegisterStackRange(stackStart, (ulong)stackBytes.Length);
+        memory.Map(
+            codeStart,
+            3,
+            fileOffset: 0,
+            [0x41, 0xFF, 0xD5], // call r13
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+        var registers = new CpuRegisterSnapshot(
+            0, 0, 0, 0, 0, 0,
+            framePointer,
+            stackStart + 0x40,
+            0, 0, 0, 0, 0, 0, 0, 0);
+
+        var frame = Assert.Single(
+            SharpEmuRuntime.CaptureTrapStackFrames(memory, registers, _ => null));
+
+        Assert.NotNull(frame.PrecedingCall);
+        Assert.Equal(codeStart, frame.PrecedingCall.Value.Address);
+        Assert.Equal("call r13", frame.PrecedingCall.Value.Text);
+        Assert.Null(frame.PrecedingCallTarget);
+    }
+
+    [Fact]
     public void TrapStackWindowIsBoundedAndStopsAtUnreadableMemory()
     {
         const ulong stackStart = 0x7000;
@@ -718,7 +755,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.NotNull(execution.ReportJson);
         using var document = JsonDocument.Parse(execution.ReportJson);
         var root = document.RootElement;
-        Assert.Equal(4, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(5, root.GetProperty("schemaVersion").GetInt32());
         Assert.Equal(JsonValueKind.Null, root.GetProperty("importTraceEntries").ValueKind);
         Assert.Equal("execution", root.GetProperty("mode").GetString());
         Assert.Equal("ORBIS_GEN2_OK", root.GetProperty("result").GetProperty("name").GetString());
@@ -788,7 +825,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.NotNull(execution.ReportJson);
         using var document = JsonDocument.Parse(execution.ReportJson);
         var root = document.RootElement;
-        Assert.Equal(4, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(5, root.GetProperty("schemaVersion").GetInt32());
         Assert.Equal("load-only", root.GetProperty("mode").GetString());
         Assert.Equal("IMAGE_LOADED", root.GetProperty("result").GetProperty("name").GetString());
         Assert.Equal(0, root.GetProperty("result").GetProperty("code").GetInt32());
@@ -1069,6 +1106,21 @@ public sealed class SharpEmuRuntimeTests
             "55 48 89 E5 E8 0B 00 00 00 48 8D 05 00 00 00 00 EB 00 C9 C3",
             returnCodeWindow.GetProperty("bytes").GetString(),
             StringComparison.Ordinal);
+        var framePrecedingCall = frame.GetProperty("precedingCall");
+        Assert.Equal("call 0000000800000014h", framePrecedingCall.GetProperty("text").GetString());
+        Assert.Equal(
+            "0x0000000000000014",
+            framePrecedingCall
+                .GetProperty("nearBranchTargetLocation")
+                .GetProperty("imageOffset")
+                .GetString());
+        var framePrecedingCallTarget = frame.GetProperty("precedingCallTarget");
+        Assert.Equal(
+            "0x0000000800000014",
+            framePrecedingCallTarget.GetProperty("address").GetString());
+        Assert.Equal(
+            "0x0000000800000014",
+            framePrecedingCallTarget.GetProperty("instructions")[0].GetProperty("address").GetString());
         var stackCodeCandidates = cpuTrap.GetProperty("stackCodeCandidates").EnumerateArray().ToArray();
         var returnCandidate = Assert.Single(
             stackCodeCandidates,

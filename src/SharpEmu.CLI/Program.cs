@@ -1590,7 +1590,7 @@ internal static partial class Program
                 executablePath,
                 runtime?.LastPreparedApplication);
             var report = new CliExecutionReport(
-                SchemaVersion: 4,
+                SchemaVersion: 5,
                 Mode: mode,
                 GeneratedAtUtc: DateTimeOffset.UtcNow,
                 ExecutablePath: executablePath,
@@ -2105,7 +2105,13 @@ internal static partial class Program
             FormatAddress(frame.NextFramePointer),
             FormatAddress(frame.ReturnAddress),
             BuildCodeLocationReport(frame.ReturnAddress, application, executablePath),
-            BuildCpuCodeWindowReport(frame.ReturnCodeWindow))).ToArray();
+            BuildCpuCodeWindowReport(frame.ReturnCodeWindow),
+            frame.PrecedingCall is { } precedingCall
+                ? BuildCpuDecodedInstructionReport(precedingCall, application, executablePath)
+                : null,
+            frame.PrecedingCallTarget is { } precedingCallTarget
+                ? BuildCpuCodePathReport(precedingCallTarget, application, executablePath)
+                : null)).ToArray();
 
     private static CliCpuCodeWindowReport? BuildCpuCodeWindowReport(CpuCodeWindow? codeWindow) =>
         codeWindow is not { } value
@@ -2773,7 +2779,9 @@ internal static partial class Program
         string NextFramePointer,
         string ReturnAddress,
         CliCodeLocationReport? ReturnLocation,
-        CliCpuCodeWindowReport? ReturnCodeWindow);
+        CliCpuCodeWindowReport? ReturnCodeWindow,
+        CliCpuDecodedInstructionReport? PrecedingCall,
+        CliCpuCodePathReport? PrecedingCallTarget);
 
     private sealed record CliCodeLocationReport(
         string ImagePath,

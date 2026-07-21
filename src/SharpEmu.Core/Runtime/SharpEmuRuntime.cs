@@ -282,7 +282,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             var stackFrames = CaptureTrapStackFrames(
                 _virtualMemory,
                 trapInfo.Registers,
-                CaptureTrapCodeWindow);
+                CaptureTrapCodeWindow,
+                address => CaptureTrapStackCandidateInstructions(_virtualMemory, address));
             enrichedTrapInfo = enrichedTrapInfo.WithStackFrames(stackFrames);
             if (CaptureTrapCodeWindow(trapInfo.InstructionPointer) is { } codeWindow)
             {
@@ -1214,7 +1215,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
     internal static IReadOnlyList<CpuStackFrame> CaptureTrapStackFrames(
         IVirtualMemory virtualMemory,
         CpuRegisterSnapshot? registers,
-        Func<ulong, CpuCodeWindow?> captureCodeWindow)
+        Func<ulong, CpuCodeWindow?> captureCodeWindow,
+        Func<ulong, IReadOnlyList<CpuDecodedInstruction>>? captureInstructions = null)
     {
         const int maxFrameCount = 16;
         const ulong maxStackDistance = 8UL * 1024 * 1024;
@@ -1223,6 +1225,11 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         {
             return Array.Empty<CpuStackFrame>();
         }
+
+        var executableRegions = virtualMemory.SnapshotRegions()
+            .Where(static region =>
+                (region.Protection & ProgramHeaderFlags.Execute) != 0)
+            .ToArray();
 
         var stackLimit = snapshot.Rsp > ulong.MaxValue - maxStackDistance
             ? ulong.MaxValue
@@ -1252,11 +1259,29 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 break;
             }
 
+            var precedingCall = CaptureTrapStackCandidatePrecedingCall(
+                virtualMemory,
+                returnAddress);
+            CpuCodePath? precedingCallTarget = null;
+            if (precedingCall?.NearBranchTarget is { } targetAddress &&
+                executableRegions.Any(region =>
+                    targetAddress >= region.VirtualAddress &&
+                    targetAddress - region.VirtualAddress < region.MemorySize) &&
+                captureCodeWindow(targetAddress) is { } targetWindow)
+            {
+                precedingCallTarget = new CpuCodePath(
+                    targetAddress,
+                    targetWindow,
+                    captureInstructions?.Invoke(targetAddress));
+            }
+
             frames.Add(new CpuStackFrame(
                 framePointer,
                 nextFramePointer,
                 returnAddress,
-                captureCodeWindow(returnAddress)));
+                captureCodeWindow(returnAddress),
+                precedingCall,
+                precedingCallTarget));
             if (nextFramePointer <= framePointer || nextFramePointer > stackLimit)
             {
                 break;

@@ -59,8 +59,9 @@ test-driven workflow. Major downstream differences include:
   faulting guest-thread identity, and bounded cross-thread native
   import traces with resolved library/export identities, chronological combined
   history, all six SysV register arguments, guest-visible return values, and a
-  reserved fault-thread slice in execution reports; schema-v4 JSON also exposes
-  these entries structurally with module-relative return locations,
+  reserved fault-thread slice in execution reports; schema-v5 JSON also exposes
+  these entries structurally with module-relative return locations and retains
+  exact preceding-call evidence on every walked frame,
   and immediate teardown signaling for interruptible guest waits
 - guest virtual- and direct-memory query contracts with exact argument
   validation, registered stack classification, terminal direct-memory ranges,
