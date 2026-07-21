@@ -20,5 +20,6 @@ internal static class KernelPthreadLifecycle
     {
         KernelPthreadCompatExports.ReleaseOwnedMutexes(threadHandle);
         KernelPthreadExtendedCompatExports.ReleaseOwnedRwlocks(threadHandle);
+        KernelPthreadExtendedCompatExports.ReleaseThreadSpecificValues(threadHandle);
     }
 }

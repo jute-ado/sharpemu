@@ -1442,6 +1442,11 @@ public static class KernelPthreadExtendedCompatExports
         LibraryName = "libKernel")]
     public static int OrbisPthreadGetspecific(CpuContext ctx) => PosixPthreadGetspecific(ctx);
 
+    internal static void ReleaseThreadSpecificValues(ulong threadHandle)
+    {
+        _threadLocalSpecific.TryRemove(threadHandle, out _);
+    }
+
     private static int PthreadRwlockLockCore(CpuContext ctx, ulong rwlockAddress, bool write)
     {
         if (rwlockAddress == 0)
