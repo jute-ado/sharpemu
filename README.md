@@ -69,7 +69,8 @@ test-driven workflow. Major downstream differences include:
 - NP telemetry compatibility with guest-memory-validated event construction,
   bounded JSON serialization, and exact required-size reporting
 - offline user-service defaults with the size-aware two-argument PS5 game-preset
-  ABI used by commercial titles
+  ABI and guest-memory-validated accessibility preference queries used by
+  commercial titles
 - a bounded, local-only game regression harness with redacted manifests suitable
   for source control
 - Windows, Linux, and macOS x64 build, test, packaging, and release validation
@@ -160,7 +161,7 @@ window; it does not imply the game is playable.
 | Jusant | PPSA10264 | Loads seven modules and sustains a 90-second UE5 execution run without a CPU trap. No gameplay or rendered frame is validated yet. |
 | Poppy Playtime: Chapter 1 | PPSA20591 | Loads seven modules and sustains the execution-survival window without a CPU trap. No gameplay is validated yet. |
 | SILENT HILL: The Short Message | PPSA10112 | Loads six modules and sustains the execution-survival window without a CPU trap. No gameplay is validated yet. |
-| SUPER BOMBERMAN R 2 | PPSA07190 | Loads thirteen modules, presents a 1920×1080 guest frame, and reaches more than one million import dispatches across 194 unique NIDs with a successful size-aware game-preset query and without timeout-copyout-induced busy polling in the observed run; execution currently ends in a null-read CPU trap at `Il2CppUserAssemblies.prx+0x141F26A`, with bounded frame, decoded stack-code-candidate paths, module-relative branch/data targets, and bounded direct-callee context for the `+0x25CF1A` to `+0x29A0F0` call available alongside fault-thread-prioritized import argument/return traces. |
+| SUPER BOMBERMAN R 2 | PPSA07190 | Loads thirteen modules, presents a 1920×1080 guest frame, and reaches more than one million import dispatches across 206 unique NIDs with successful size-aware game-preset and accessibility-preference queries and without timeout-copyout-induced busy polling in the observed run; execution currently ends in a null-read CPU trap at `Il2CppUserAssemblies.prx+0x141F26A`, with bounded frame, decoded stack-code-candidate paths, module-relative branch/data targets, and bounded direct-callee context for the `+0x25CF1A` to `+0x29A0F0` call available alongside fault-thread-prioritized import argument/return traces. |
 | Demon's Souls | PPSA01342 | Loads the main image and one module, presents a 3840×2160 splash, and reaches more than 670,000 import dispatches after canonical transaction-resource handling removes the earlier address-`0x9` fault; execution currently ends at an `int 41h` trap in `eboot.bin+0x1F403A3`. |
 
 These results are observations, not compatibility promises. Exact progress can

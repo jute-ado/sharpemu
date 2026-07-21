@@ -11,7 +11,7 @@ public static class UserServiceExports
 {
     private const int OrbisUserServiceErrorInvalidArgument = unchecked((int)0x80960005);
     private const int OrbisUserServiceErrorNoEvent = unchecked((int)0x80960007);
-    private const int OrbisUserServiceErrorInvalidParameter = unchecked((int)0x80960009);
+    private const int OrbisUserServiceErrorNotLoggedIn = unchecked((int)0x80960009);
     private const int OrbisUserServiceErrorBufferTooShort = unchecked((int)0x8096000A);
     private const int GamePresetsSize = 40;
     private const int InvalidUserId = -1;
@@ -114,7 +114,7 @@ public static class UserServiceExports
         // Zero selects the current user.
         if (userId != 0 && userId != EmulatedUser.PrimaryId)
         {
-            return ctx.SetReturn(OrbisUserServiceErrorInvalidParameter);
+            return ctx.SetReturn(OrbisUserServiceErrorNotLoggedIn);
         }
 
         if (nameAddress == 0)
@@ -149,7 +149,7 @@ public static class UserServiceExports
         var ageLevelAddress = ctx[CpuRegister.Rsi];
         if (userId != EmulatedUser.PrimaryId)
         {
-            return ctx.SetReturn(OrbisUserServiceErrorInvalidParameter);
+            return ctx.SetReturn(OrbisUserServiceErrorNotLoggedIn);
         }
 
         if (ageLevelAddress == 0)
@@ -176,7 +176,7 @@ public static class UserServiceExports
         var presetsAddress = ctx[CpuRegister.Rsi];
         if (userId != EmulatedUser.PrimaryId)
         {
-            return ctx.SetReturn(OrbisUserServiceErrorInvalidParameter);
+            return ctx.SetReturn(OrbisUserServiceErrorNotLoggedIn);
         }
 
         if (presetsAddress == 0)
@@ -211,6 +211,54 @@ public static class UserServiceExports
     }
 
     [SysAbiExport(
+        Nid = "rnEhHqG-4xo",
+        ExportName = "sceUserServiceGetAccessibilityChatTranscription",
+        Target = Generation.Gen5,
+        LibraryName = "libSceUserService")]
+    public static int UserServiceGetAccessibilityChatTranscription(CpuContext ctx) =>
+        GetAccessibilitySetting(ctx, 0, "chat_transcription");
+
+    [SysAbiExport(
+        Nid = "ZKJtxdgvzwg",
+        ExportName = "sceUserServiceGetAccessibilityPressAndHoldDelay",
+        Target = Generation.Gen5,
+        LibraryName = "libSceUserService")]
+    public static int UserServiceGetAccessibilityPressAndHoldDelay(CpuContext ctx) =>
+        GetAccessibilitySetting(ctx, 0, "press_and_hold_delay");
+
+    [SysAbiExport(
+        Nid = "qWYHOFwqCxY",
+        ExportName = "sceUserServiceGetAccessibilityVibration",
+        Target = Generation.Gen5,
+        LibraryName = "libSceUserService")]
+    public static int UserServiceGetAccessibilityVibration(CpuContext ctx) =>
+        GetAccessibilitySetting(ctx, 1, "vibration");
+
+    [SysAbiExport(
+        Nid = "-3Y5GO+-i78",
+        ExportName = "sceUserServiceGetAccessibilityTriggerEffect",
+        Target = Generation.Gen5,
+        LibraryName = "libSceUserService")]
+    public static int UserServiceGetAccessibilityTriggerEffect(CpuContext ctx) =>
+        GetAccessibilitySetting(ctx, 1, "trigger_effect");
+
+    [SysAbiExport(
+        Nid = "hD-H81EN9Vg",
+        ExportName = "sceUserServiceGetAccessibilityZoomEnabled",
+        Target = Generation.Gen5,
+        LibraryName = "libSceUserService")]
+    public static int UserServiceGetAccessibilityZoomEnabled(CpuContext ctx) =>
+        GetAccessibilitySetting(ctx, 0, "zoom_enabled");
+
+    [SysAbiExport(
+        Nid = "O6IW1-Dwm-w",
+        ExportName = "sceUserServiceGetAccessibilityZoomFollowFocus",
+        Target = Generation.Gen5,
+        LibraryName = "libSceUserService")]
+    public static int UserServiceGetAccessibilityZoomFollowFocus(CpuContext ctx) =>
+        GetAccessibilitySetting(ctx, 0, "zoom_follow_focus");
+
+    [SysAbiExport(
         Nid = "D-CzAxQL0XI",
         ExportName = "sceUserServiceGetPlatformPrivacySetting",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -221,7 +269,7 @@ public static class UserServiceExports
         var valueAddress = ctx[CpuRegister.Rsi];
         if (parameterId != 1000)
         {
-            return ctx.SetReturn(OrbisUserServiceErrorInvalidParameter);
+            return ctx.SetReturn(OrbisUserServiceErrorNotLoggedIn);
         }
 
         if (valueAddress == 0)
@@ -232,6 +280,29 @@ public static class UserServiceExports
         return ctx.TryWriteInt32(valueAddress, 0)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    private static int GetAccessibilitySetting(CpuContext ctx, int value, string settingName)
+    {
+        var userId = unchecked((int)ctx[CpuRegister.Rdi]);
+        var valueAddress = ctx[CpuRegister.Rsi];
+        if (valueAddress == 0)
+        {
+            return ctx.SetReturn(OrbisUserServiceErrorInvalidArgument);
+        }
+
+        if (userId != EmulatedUser.PrimaryId)
+        {
+            return ctx.SetReturn(OrbisUserServiceErrorNotLoggedIn);
+        }
+
+        var result = ctx.TryWriteInt32(valueAddress, value)
+            ? 0
+            : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        TraceUserService(
+            $"get_accessibility_{settingName} user={userId} out=0x{valueAddress:X16} " +
+            $"value={value} result=0x{result:X8}");
+        return ctx.SetReturn(result);
     }
 
     private static void TraceUserService(string message)
