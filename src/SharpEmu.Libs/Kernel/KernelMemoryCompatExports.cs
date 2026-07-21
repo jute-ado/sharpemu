@@ -10,6 +10,7 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Runtime.InteropServices;
 using System.Globalization;
+using System.Security.Cryptography;
 
 namespace SharpEmu.Libs.Kernel;
 
@@ -99,6 +100,7 @@ public static partial class KernelMemoryCompatExports
     private static readonly object _fdGate = new();
     private static readonly Dictionary<int, FileStream> _openFiles = new();
     private static readonly Dictionary<int, OpenDirectory> _openDirectories = new();
+    private static readonly Dictionary<int, string> _openRandomDevices = new();
     private static readonly object _libcAllocGate = new();
     private static readonly object _memoryGate = new();
     private static readonly object _ioTraceGate = new();
@@ -1894,6 +1896,28 @@ public static partial class KernelMemoryCompatExports
         var access = ResolveOpenAccess(flags);
         var mode = ResolveOpenMode(flags, access);
         var wantsDirectory = (flags & O_DIRECTORY) != 0;
+        if (IsRandomDevicePath(guestPath))
+        {
+            if (access != FileAccess.Read ||
+                wantsDirectory ||
+                (flags & (O_CREAT | O_TRUNC | O_APPEND)) != 0)
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            }
+
+            int randomFd;
+            lock (_fdGate)
+            {
+                randomFd = AllocateGuestFileDescriptor();
+                _openRandomDevices[randomFd] = guestPath;
+            }
+
+            LogOpenTrace(
+                $"_open random-device path='{guestPath}' flags=0x{flags:X8} fd={randomFd}");
+            ctx[CpuRegister.Rax] = unchecked((ulong)randomFd);
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
         if (IsGuestMountRootPath(guestPath))
         {
             if (access != FileAccess.Read ||
@@ -2082,6 +2106,18 @@ public static partial class KernelMemoryCompatExports
         if (!TryReadNullTerminatedUtf8(ctx, pathAddress, MaxGuestStringLength, out var guestPath))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        if (IsRandomDevicePath(guestPath))
+        {
+            if (!TryWriteVirtualRandomDeviceStat(ctx, statAddress, guestPath))
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+
+            LogIoTrace("stat", guestPath, "virtual=random found=1");
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
         if (IsGuestMountRootPath(guestPath))
@@ -2597,7 +2633,12 @@ public static partial class KernelMemoryCompatExports
         FileStream? stream;
         lock (_fdGate)
         {
-            if (_openFiles.Remove(fd, out stream))
+            if (_openRandomDevices.Remove(fd))
+            {
+                ctx[CpuRegister.Rax] = 0;
+                return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+            }
+            else if (_openFiles.Remove(fd, out stream))
             {
             }
             else if (_openDirectories.Remove(fd))
@@ -2645,6 +2686,29 @@ public static partial class KernelMemoryCompatExports
             }
 
             ctx[CpuRegister.Rax] = socketBytesRead;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        string? randomDevicePath;
+        lock (_fdGate)
+        {
+            _openRandomDevices.TryGetValue(fd, out randomDevicePath);
+        }
+
+        if (randomDevicePath is not null)
+        {
+            var entropy = GC.AllocateUninitializedArray<byte>(requested);
+            RandomNumberGenerator.Fill(entropy);
+            if (!ctx.Memory.TryWrite(bufferAddress, entropy))
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+
+            LogIoTrace(
+                "read",
+                randomDevicePath,
+                $"fd={fd} req={requested} read={requested} virtual=random");
+            ctx[CpuRegister.Rax] = unchecked((ulong)requested);
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
@@ -8197,20 +8261,29 @@ public static partial class KernelMemoryCompatExports
         }
 
         string? hostPath = null;
+        string? randomDevicePath = null;
         bool isDirectory = false;
         bool isVirtualDirectory = false;
         lock (_fdGate)
         {
-            if (_openDirectories.TryGetValue(fd, out var directory))
+            if (!_openRandomDevices.TryGetValue(fd, out randomDevicePath) &&
+                _openDirectories.TryGetValue(fd, out var directory))
             {
                 hostPath = directory.Path;
                 isDirectory = true;
                 isVirtualDirectory = directory.IsVirtual;
             }
-            else if (_openFiles.TryGetValue(fd, out var stream))
+            else if (randomDevicePath is null &&
+                     _openFiles.TryGetValue(fd, out var stream))
             {
                 hostPath = stream.Name;
             }
+        }
+
+        if (randomDevicePath is not null)
+        {
+            LogIoTrace("fstat", randomDevicePath, $"fd={fd} size=0 virtual=random");
+            return TryWriteVirtualRandomDeviceStat(ctx, statAddress, randomDevicePath);
         }
 
         if (isVirtualDirectory)
@@ -8254,6 +8327,20 @@ public static partial class KernelMemoryCompatExports
             DateTime.UnixEpoch,
             "guest-mount-root");
     }
+
+    private static bool TryWriteVirtualRandomDeviceStat(
+        CpuContext ctx,
+        ulong statAddress,
+        string guestPath) =>
+        TryWriteKernelStat(
+            ctx,
+            statAddress,
+            isDirectory: false,
+            size: 0,
+            DateTime.UnixEpoch,
+            DateTime.UnixEpoch,
+            DateTime.UnixEpoch,
+            $"virtual-random:{guestPath}");
 
     private static bool TryWriteHostPathStat(CpuContext ctx, ulong statAddress, string hostPath)
     {
@@ -8453,6 +8540,10 @@ public static partial class KernelMemoryCompatExports
             .OrderBy(static name => name, StringComparer.OrdinalIgnoreCase)
             .ToArray()!;
     }
+
+    private static bool IsRandomDevicePath(string guestPath) =>
+        string.Equals(guestPath, "/dev/random", StringComparison.Ordinal) ||
+        string.Equals(guestPath, "/dev/urandom", StringComparison.Ordinal);
 
     private static bool IsGuestMountRootPath(string guestPath)
     {
