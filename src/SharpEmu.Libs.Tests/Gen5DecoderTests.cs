@@ -7873,6 +7873,55 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void EvaluatesScalarConditionCodeAsSop2Source()
+    {
+        // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
+        // with llvm-objdump. Source encoding 253 reads the current SCC value.
+        var ctx = CreateContext(
+        [
+            0xBF000000u, // s_cmp_eq_u32 s0, s0 -> SCC=1
+            0x8801FD02u, // s_or_b32 s1, s2, scc
+            0xBF010000u, // s_cmp_lg_u32 s0, s0 -> SCC=0
+            0x8803FD02u, // s_or_b32 s3, s2, scc
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            ["SCmpEqI32", "SOrB32", "SCmpLgI32", "SOrB32", "SEndpgm"],
+            program.Instructions.Select(instruction => instruction.Opcode));
+
+        var state = new Gen5ShaderState(
+            program,
+            [0u, 0u, 0xA5A5_0000u, 0u],
+            Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.Equal(0xA5A5_0001u, evaluation.ScalarRegisters[1]);
+        Assert.Equal(0xA5A5_0000u, evaluation.ScalarRegisters[3]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out _,
+                out var compileError),
+            compileError);
+    }
+
+    [Fact]
     public void RejectsReservedRdna2Sop2Opcode2D()
     {
         var ctx = CreateContext(
