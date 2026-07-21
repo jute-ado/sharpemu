@@ -26,6 +26,18 @@ public static class Ngs2Exports
     private static long _nextUid;
     private static long _renderCount;
 
+    internal static void ResetRuntimeState()
+    {
+        lock (StateGate)
+        {
+            Systems.Clear();
+            Racks.Clear();
+            Voices.Clear();
+            Interlocked.Exchange(ref _nextUid, 0);
+            Interlocked.Exchange(ref _renderCount, 0);
+        }
+    }
+
     // NGS2 renders one grain of interleaved float32 per sceNgs2SystemRender.
     // The grain length defaults to 256 frames (matching the 8192-byte AudioOut
     // buffers games copy it into) until the title overrides it.

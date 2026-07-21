@@ -85,8 +85,9 @@ test-driven workflow. Major downstream differences include:
 - process-scoped network teardown that disposes `libSceNet` sockets, releases
   per-thread errno storage, clears pool, resolver, SSL, HTTP/2, template, and
   NetCtl callback registries, and restarts guest-visible IDs between titles
-- AudioOut session teardown that disposes host audio streams, clears the
-  presentation-shutdown state, and restarts guest port handles between titles
+- audio session teardown that disposes host AudioOut streams, clears the
+  presentation-shutdown state, resets AudioOut2, ACM, NGS2, and FMOD compatibility
+  registries, and restarts guest-visible audio handles between titles
 - process-scoped event queues, event flags, semaphores, and exception handlers
   reset between sessions with blocked waiters woken through normal deleted-object
   semantics and deterministic handle allocation for the next process
