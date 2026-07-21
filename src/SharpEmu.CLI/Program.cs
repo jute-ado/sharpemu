@@ -2107,21 +2107,31 @@ internal static partial class Program
             FormatAddress(candidate.Address),
             BuildCodeLocationReport(candidate.Address, application, executablePath),
             BuildCpuCodeWindowReport(candidate.CodeWindow),
-            candidate.Instructions?.Select(instruction => new CliCpuDecodedInstructionReport(
-                FormatAddress(instruction.Address),
-                instruction.Length,
-                instruction.Bytes,
-                instruction.Mnemonic,
-                instruction.Text,
-                instruction.FlowControl,
-                instruction.NearBranchTarget is { } branchTarget ? FormatAddress(branchTarget) : null,
-                instruction.NearBranchTarget is { } locatedBranchTarget
-                    ? BuildCodeLocationReport(locatedBranchTarget, application, executablePath)
-                    : null,
-                instruction.MemoryAddress is { } memoryAddress ? FormatAddress(memoryAddress) : null,
-                instruction.MemoryAddress is { } locatedMemoryAddress
-                    ? BuildCodeLocationReport(locatedMemoryAddress, application, executablePath)
-                    : null)).ToArray())).ToArray();
+            candidate.Instructions?.Select(instruction =>
+                BuildCpuDecodedInstructionReport(instruction, application, executablePath)).ToArray(),
+            candidate.PrecedingCall is { } precedingCall
+                ? BuildCpuDecodedInstructionReport(precedingCall, application, executablePath)
+                : null)).ToArray();
+
+    private static CliCpuDecodedInstructionReport BuildCpuDecodedInstructionReport(
+        CpuDecodedInstruction instruction,
+        PreparedApplication? application,
+        string executablePath) =>
+        new(
+            FormatAddress(instruction.Address),
+            instruction.Length,
+            instruction.Bytes,
+            instruction.Mnemonic,
+            instruction.Text,
+            instruction.FlowControl,
+            instruction.NearBranchTarget is { } branchTarget ? FormatAddress(branchTarget) : null,
+            instruction.NearBranchTarget is { } locatedBranchTarget
+                ? BuildCodeLocationReport(locatedBranchTarget, application, executablePath)
+                : null,
+            instruction.MemoryAddress is { } memoryAddress ? FormatAddress(memoryAddress) : null,
+            instruction.MemoryAddress is { } locatedMemoryAddress
+                ? BuildCodeLocationReport(locatedMemoryAddress, application, executablePath)
+                : null);
 
     private static CliCodeLocationReport? BuildCodeLocationReport(
         ulong address,
@@ -2725,7 +2735,8 @@ internal static partial class Program
         string Address,
         CliCodeLocationReport? Location,
         CliCpuCodeWindowReport? CodeWindow,
-        IReadOnlyList<CliCpuDecodedInstructionReport>? Instructions);
+        IReadOnlyList<CliCpuDecodedInstructionReport>? Instructions,
+        CliCpuDecodedInstructionReport? PrecedingCall);
 
     private sealed record CliCpuDecodedInstructionReport(
         string Address,

@@ -7,4 +7,5 @@ public readonly record struct CpuStackCodeCandidate(
     int StackOffset,
     ulong Address,
     CpuCodeWindow? CodeWindow = null,
-    IReadOnlyList<CpuDecodedInstruction>? Instructions = null);
+    IReadOnlyList<CpuDecodedInstruction>? Instructions = null,
+    CpuDecodedInstruction? PrecedingCall = null);
