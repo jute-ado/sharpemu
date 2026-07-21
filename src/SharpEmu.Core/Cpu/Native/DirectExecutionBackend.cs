@@ -311,7 +311,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	// The process/module entry executes on one dedicated native worker. Keep its
 	// hot import count separate from scheduled guest threads so dispatch does not
 	// need a second global atomic increment for every import.
-	private int _sessionEntryImportCount;
+	private readonly EntryThreadDiagnosticState _entryThreadDiagnostics = new();
 
 	[ThreadStatic]
 	private static DirectExecutionBackend? _importCounterOwner;
@@ -1166,7 +1166,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		LastImportResolutionTrace = null;
 		LastImportTraceEntries = null;
 		LastEntryReturnValue = null;
-		_sessionEntryImportCount = 0;
+		_entryThreadDiagnostics.Reset();
 		var workerImportsBefore = GetTotalGuestThreadImports();
 		InitializeRuntimeSymbolIndex(runtimeSymbols);
 		ResetLazyDlsymStubState();
@@ -1308,7 +1308,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			var workerImports = Math.Max(workerImportsAfter - workerImportsBefore, 0);
 			LastSessionImportsHit = SaturateImportCount(
 				workerImports,
-				Volatile.Read(ref _sessionEntryImportCount));
+				_entryThreadDiagnostics.Snapshot().ImportCount);
 			LastSessionUniqueNidsHit = CountSessionUniqueImportNids();
 			var importTraceSnapshot = executionOptions.ImportTraceLimit > 0
 				? _recentImportTrace?.BuildSnapshot(
@@ -5922,6 +5922,9 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				Console.Error.WriteLine("[LOADER][INFO] Sentinel probe returned.");
 			}
 			Console.Error.WriteLine("[LOADER][INFO] Calling guest entry...");
+			_entryThreadDiagnostics.Begin(
+				unchecked((int)_hostThreading.CurrentThreadId),
+				GetCurrentGuestThreadHandle());
 			StartStallWatchdog();
 			ulong num6 = ulong.MaxValue;
 			try
@@ -5995,6 +5998,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				context.TryWriteUInt64(guestStackSlotAddress, originalGuestStackValue);
 			}
 			StopStallWatchdog();
+			_entryThreadDiagnostics.End();
 			ActiveEntryReturnSentinelRip = 0uL;
 			_hostThreading.SetTlsValue(_hostRspSlotTlsIndex, previousHostRspSlotValue);
 			if (_hostRspSlotStorage != 0)
@@ -6101,6 +6105,24 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 					snapshotText.AppendLine(
 						$"[LOADER][DIAG] Periodic snapshot: gate_owner={gateOwnerSite ?? "none"} " +
 						$"gate_tid={gateOwnerTid} gate_held_ms={gateHeldMs:0}");
+					var entrySnapshot = _entryThreadDiagnostics.Snapshot();
+					if (entrySnapshot.IsRunning)
+					{
+						var entryHostContextAvailable = TryCaptureHostThreadContext(
+							entrySnapshot.HostThreadId,
+							out var capturedEntryHostContext);
+						var entryHostContext = entryHostContextAvailable
+							? $" host_rip=0x{capturedEntryHostContext.Rip:X16} host_rsp=0x{capturedEntryHostContext.Rsp:X16}"
+							: " host_ctx=unavailable";
+						var entryBlock = entrySnapshot.GuestThreadHandle == 0
+							? null
+							: GuestThreadBlocking.DescribeBlock(entrySnapshot.GuestThreadHandle);
+						snapshotText.AppendLine(
+							$"[LOADER][DIAG] external entry-thread: handle=0x{entrySnapshot.GuestThreadHandle:X16} " +
+							$"host_tid={entrySnapshot.HostThreadId} state=Running imports={entrySnapshot.ImportCount} " +
+							$"nid={entrySnapshot.LastImportNid ?? "none"} ret=0x{entrySnapshot.LastReturnRip:X16} " +
+							$"block={entryBlock ?? "none"}{entryHostContext}");
+					}
 					// Never touch the gate here: the periodic snapshot must keep
 					// reporting even (especially) when the gate is wedged.
 					// Dump guest threads without the lock; tolerate torn reads.
