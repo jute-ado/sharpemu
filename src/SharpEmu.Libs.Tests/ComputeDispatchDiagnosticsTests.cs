@@ -57,4 +57,62 @@ public sealed class ComputeDispatchDiagnosticsTests
                 configuredSignatures,
                 [1, 2, 3, 4]));
     }
+
+    [Theory]
+    [InlineData(null, null, true)]
+    [InlineData("", "", true)]
+    [InlineData("9f64a747e1b97f13", "9F64A747E1B97F13", true)]
+    [InlineData("DEADBEEF; 9F64A747E1B97F13", "9f64a747e1b97f13", true)]
+    [InlineData("*", "9F64A747E1B97F13", true)]
+    [InlineData("DEADBEEF", "9F64A747E1B97F13", false)]
+    [InlineData("9F64A747E1B97F13", null, false)]
+    public void GuestImageTraceMatchesOptionalShaderSignatureFilter(
+        string? configuredSignatures,
+        string? shaderSignature,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            VulkanVideoPresenter.GuestImageShaderSignatureFilterMatches(
+                configuredSignatures,
+                shaderSignature));
+    }
+
+    [Theory]
+    [InlineData(false, null, null, false)]
+    [InlineData(true, null, null, true)]
+    [InlineData(false, "9F64A747E1B97F13", "9f64a747e1b97f13", true)]
+    [InlineData(false, "DEADBEEF", "9F64A747E1B97F13", false)]
+    public void GuestImageTraceTreatsMatchingShaderSignatureAsExplicitSelector(
+        bool addressMatched,
+        string? configuredSignatures,
+        string? shaderSignature,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            VulkanVideoPresenter.GuestImageTraceSelectorMatches(
+                addressMatched,
+                configuredSignatures,
+                shaderSignature));
+    }
+
+    [Theory]
+    [InlineData(true, false, false, true)]
+    [InlineData(false, true, false, true)]
+    [InlineData(false, false, true, true)]
+    [InlineData(false, false, false, false)]
+    public void GuestImageTraceIncludesSampledImagesForSignatureDiagnostics(
+        bool isStorage,
+        bool addressFilterEnabled,
+        bool signatureFilterEnabled,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            VulkanVideoPresenter.ShouldCollectGuestImageTraceCandidate(
+                isStorage,
+                addressFilterEnabled,
+                signatureFilterEnabled));
+    }
 }
