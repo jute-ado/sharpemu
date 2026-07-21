@@ -217,13 +217,16 @@ public static class KernelExports
         ExportName = "scePthreadCreate",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PthreadCreate(CpuContext ctx)
+    public static int PthreadCreate(CpuContext ctx) =>
+        PthreadCreateCore(ctx, hasNameArgument: true);
+
+    private static int PthreadCreateCore(CpuContext ctx, bool hasNameArgument)
     {
         var threadIdAddress = ctx[CpuRegister.Rdi];
         var attrAddress = ctx[CpuRegister.Rsi];
         var entryAddress = ctx[CpuRegister.Rdx];
         var argument = ctx[CpuRegister.Rcx];
-        var nameAddress = ctx[CpuRegister.R8];
+        var nameAddress = hasNameArgument ? ctx[CpuRegister.R8] : 0;
         var name = nameAddress == 0 ? string.Empty : ReadCString(ctx, nameAddress, 256);
         var threadHandle = KernelPthreadState.CreateThreadHandle(name);
         KernelPthreadExtendedCompatExports.GetThreadStartScheduling(
@@ -278,14 +281,16 @@ public static class KernelExports
         ExportName = "pthread_create",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadCreate(CpuContext ctx) => PthreadCreate(ctx);
+    public static int PosixPthreadCreate(CpuContext ctx) =>
+        PthreadCreateCore(ctx, hasNameArgument: false);
 
     [SysAbiExport(
         Nid = "Jmi+9w9u0E4",
         ExportName = "pthread_create_name_np",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadCreateNameNp(CpuContext ctx) => PthreadCreate(ctx);
+    public static int PosixPthreadCreateNameNp(CpuContext ctx) =>
+        PthreadCreateCore(ctx, hasNameArgument: true);
 
     [SysAbiExport(
         Nid = "3kg7rT0NQIs",
