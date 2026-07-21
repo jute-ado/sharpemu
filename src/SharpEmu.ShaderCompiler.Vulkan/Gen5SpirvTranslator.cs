@@ -421,16 +421,6 @@ public static partial class Gen5SpirvTranslator
         {
             shader = default!;
             error = string.Empty;
-            var localInvocationCount =
-                (ulong)_localSizeX * _localSizeY * _localSizeZ;
-            if (_emulateWave64 && localInvocationCount > 64)
-            {
-                error =
-                    "wave64 translation currently requires at most 64 local invocations " +
-                    "when the shader uses guest-wave coordination";
-                return false;
-            }
-
             try
             {
                 DeclareModule();
@@ -749,10 +739,13 @@ public static partial class Gen5SpirvTranslator
                 return;
             }
 
-            // A translated wave64 workgroup is exactly one guest wave. Keeping
-            // lane exchange in its own 64-dword allocation avoids aliasing guest
-            // LDS and makes the bridge independent of the host subgroup width.
-            var scratchArrayType = _module.TypeArray(_uintType, 64);
+            // Each 64-lane guest wave owns one aligned slice. Workgroup barriers
+            // still rendezvous every invocation, but distinct waves must never
+            // overwrite one another's ballot or lane-exchange values.
+            var localInvocationCount = checked(
+                (uint)((ulong)_localSizeX * _localSizeY * _localSizeZ));
+            var scratchDwordCount = checked((localInvocationCount + 63u) & ~63u);
+            var scratchArrayType = _module.TypeArray(_uintType, scratchDwordCount);
             var scratchArrayPointer =
                 _module.TypePointer(SpirvStorageClass.Workgroup, scratchArrayType);
             _waveScratchElementPointer =
@@ -6307,15 +6300,24 @@ public static partial class Gen5SpirvTranslator
         {
             var localInvocationCount = checked(
                 (uint)((ulong)_localSizeX * _localSizeY * _localSizeZ));
-            if (localInvocationCount >= 64)
+            var partialWaveLaneCount = localInvocationCount & 63u;
+            if (partialWaveLaneCount == 0)
             {
                 return;
             }
 
             var currentLane = GuestWaveLane();
-            for (var offset = localInvocationCount;
+            var localInvocationIndex = Load(_uintType, _localInvocationIndexInput);
+            var currentWaveBase = BitwiseAnd(localInvocationIndex, UInt(~63u));
+            var partialWaveBase = UInt(localInvocationCount & ~63u);
+            var isPartialWave = _module.AddInstruction(
+                SpirvOp.IEqual,
+                _boolType,
+                currentWaveBase,
+                partialWaveBase);
+            for (var offset = partialWaveLaneCount;
                  offset < 64;
-                 offset += localInvocationCount)
+                 offset += partialWaveLaneCount)
             {
                 var inactiveLane = IAdd(currentLane, UInt(offset));
                 var isInsideWave = _module.AddInstruction(
@@ -6323,20 +6325,30 @@ public static partial class Gen5SpirvTranslator
                     _boolType,
                     inactiveLane,
                     UInt(64));
+                var shouldInitialize = _module.AddInstruction(
+                    SpirvOp.LogicalAnd,
+                    _boolType,
+                    isPartialWave,
+                    isInsideWave);
                 EmitConditional(
-                    isInsideWave,
+                    shouldInitialize,
                     () => Store(WaveScratchPointer(inactiveLane), UInt(0)));
             }
 
             EmitWave64Barrier();
         }
 
-        private uint WaveScratchPointer(uint index) =>
-            _module.AddInstruction(
+        private uint WaveScratchPointer(uint index)
+        {
+            var waveBase = BitwiseAnd(
+                Load(_uintType, _localInvocationIndexInput),
+                UInt(~63u));
+            return _module.AddInstruction(
                 SpirvOp.AccessChain,
                 _waveScratchElementPointer,
                 _waveScratch,
-                index);
+                IAdd(waveBase, index));
+        }
 
         private void EmitWave64Barrier()
         {

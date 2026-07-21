@@ -313,27 +313,34 @@ public sealed class GuestWave64SpirvTests
     }
 
     [Theory]
-    [InlineData(65u, 1u, 1u)]
-    [InlineData(128u, 1u, 1u)]
-    [InlineData(8u, 8u, 2u)]
-    public void Wave64RejectsWorkgroupsLargerThanOneGuestWave(
+    [InlineData(65u, 1u, 1u, 128u)]
+    [InlineData(96u, 1u, 1u, 128u)]
+    [InlineData(128u, 1u, 1u, 128u)]
+    [InlineData(8u, 8u, 2u, 128u)]
+    [InlineData(256u, 1u, 1u, 256u)]
+    public void Wave64IsolatesMultipleGuestWavesInOneWorkgroup(
         uint localSizeX,
         uint localSizeY,
-        uint localSizeZ)
+        uint localSizeZ,
+        uint expectedScratchDwords)
     {
         var (state, evaluation) = CreateLaneProgram();
 
-        Assert.False(
+        Assert.True(
             Gen5SpirvTranslator.TryCompileComputeShader(
                 state,
                 evaluation,
                 localSizeX,
                 localSizeY,
                 localSizeZ,
-                out _,
+                out var shader,
                 out var error,
-                waveLaneCount: 64));
-        Assert.Contains("at most 64 local invocations", error, StringComparison.Ordinal);
+                waveLaneCount: 64),
+            error);
+        Assert.True(ContainsOpcode(shader.Spirv, SpirvOp.ControlBarrier));
+        Assert.Equal(
+            expectedScratchDwords,
+            GetSingleWorkgroupArrayLength(shader.Spirv));
     }
 
     [Theory]
@@ -498,6 +505,28 @@ public sealed class GuestWave64SpirvTests
         => CountStorageClassVariables(
             spirv,
             SpirvStorageClass.Workgroup);
+
+    private static uint GetSingleWorkgroupArrayLength(byte[] spirv)
+    {
+        var instructions = EnumerateInstructions(spirv).ToArray();
+        var variable = Assert.Single(instructions, instruction =>
+            instruction.Opcode == SpirvOp.Variable &&
+            instruction.Operands.Length >= 3 &&
+            instruction.Operands[2] == (uint)SpirvStorageClass.Workgroup);
+        var pointerType = Assert.Single(instructions, instruction =>
+            instruction.Opcode == SpirvOp.TypePointer &&
+            instruction.Operands.Length >= 3 &&
+            instruction.Operands[0] == variable.Operands[0]);
+        var arrayType = Assert.Single(instructions, instruction =>
+            instruction.Opcode == SpirvOp.TypeArray &&
+            instruction.Operands.Length >= 3 &&
+            instruction.Operands[0] == pointerType.Operands[2]);
+        var length = Assert.Single(instructions, instruction =>
+            instruction.Opcode == SpirvOp.Constant &&
+            instruction.Operands.Length >= 3 &&
+            instruction.Operands[1] == arrayType.Operands[2]);
+        return length.Operands[2];
+    }
 
     private static int CountStorageClassVariables(
         byte[] spirv,
