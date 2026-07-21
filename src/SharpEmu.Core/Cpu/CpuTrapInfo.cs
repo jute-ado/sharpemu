@@ -20,7 +20,8 @@ public readonly struct CpuTrapInfo
         IReadOnlyList<CpuStackFrame>? stackFrames = null,
         ulong guestThreadHandle = 0,
         CpuCodeWindow? codeWindow = null,
-        CpuMemoryWindow? stackWindow = null)
+        CpuMemoryWindow? stackWindow = null,
+        IReadOnlyList<CpuStackCodeCandidate>? stackCodeCandidates = null)
     {
         InstructionPointer = instructionPointer;
         Opcode = opcode;
@@ -37,6 +38,7 @@ public readonly struct CpuTrapInfo
         GuestThreadHandle = guestThreadHandle;
         CodeWindow = codeWindow;
         StackWindow = stackWindow;
+        StackCodeCandidates = stackCodeCandidates;
     }
 
     public ulong InstructionPointer { get; }
@@ -69,6 +71,8 @@ public readonly struct CpuTrapInfo
 
     public CpuMemoryWindow? StackWindow { get; }
 
+    public IReadOnlyList<CpuStackCodeCandidate>? StackCodeCandidates { get; }
+
     public CpuTrapInfo WithDecodedInstruction(
         string instructionBytes,
         int instructionLength,
@@ -90,7 +94,8 @@ public readonly struct CpuTrapInfo
             StackFrames,
             GuestThreadHandle,
             CodeWindow,
-            StackWindow);
+            StackWindow,
+            StackCodeCandidates);
 
     public CpuTrapInfo WithStackFrames(IReadOnlyList<CpuStackFrame> stackFrames) =>
         new(
@@ -108,7 +113,8 @@ public readonly struct CpuTrapInfo
             stackFrames,
             GuestThreadHandle,
             CodeWindow,
-            StackWindow);
+            StackWindow,
+            StackCodeCandidates);
 
     public CpuTrapInfo WithCodeWindow(CpuCodeWindow codeWindow) =>
         new(
@@ -126,7 +132,8 @@ public readonly struct CpuTrapInfo
             StackFrames,
             GuestThreadHandle,
             codeWindow,
-            StackWindow);
+            StackWindow,
+            StackCodeCandidates);
 
     public CpuTrapInfo WithStackWindow(CpuMemoryWindow stackWindow) =>
         new(
@@ -144,5 +151,26 @@ public readonly struct CpuTrapInfo
             StackFrames,
             GuestThreadHandle,
             CodeWindow,
-            stackWindow);
+            stackWindow,
+            StackCodeCandidates);
+
+    public CpuTrapInfo WithStackCodeCandidates(
+        IReadOnlyList<CpuStackCodeCandidate> stackCodeCandidates) =>
+        new(
+            InstructionPointer,
+            Opcode,
+            ExceptionCode,
+            AccessAddress,
+            AccessKind,
+            InstructionBytes,
+            InstructionLength,
+            InstructionMnemonic,
+            InstructionText,
+            InstructionFlowControl,
+            Registers,
+            StackFrames,
+            GuestThreadHandle,
+            CodeWindow,
+            StackWindow,
+            stackCodeCandidates);
 }

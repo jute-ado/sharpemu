@@ -87,6 +87,49 @@ public sealed class SharpEmuRuntimeTests
         Assert.StartsWith("10 11 12 13", window.Value.Bytes, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void TrapStackCodeCandidatesIncludeOnlyExecutableMappedPointers()
+    {
+        const ulong stackStart = 0x7000;
+        const ulong codeStart = 0x9000;
+        var stackBytes = new byte[32];
+        BinaryPrimitives.WriteUInt64LittleEndian(stackBytes, stackStart);
+        BinaryPrimitives.WriteUInt64LittleEndian(stackBytes.AsSpan(8), codeStart + 4);
+        BinaryPrimitives.WriteUInt64LittleEndian(stackBytes.AsSpan(16), 0xA004);
+        var memory = new VirtualMemory();
+        memory.Map(
+            stackStart,
+            (ulong)stackBytes.Length,
+            fileOffset: 0,
+            stackBytes,
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        memory.Map(
+            codeStart,
+            16,
+            fileOffset: 0,
+            new byte[16],
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+        memory.Map(
+            0xA000,
+            16,
+            fileOffset: 0,
+            new byte[16],
+            ProgramHeaderFlags.Read);
+        var registers = new CpuRegisterSnapshot(
+            0, 0, 0, 0, 0, 0, 0, stackStart,
+            0, 0, 0, 0, 0, 0, 0, 0);
+
+        var candidates = SharpEmuRuntime.CaptureTrapStackCodeCandidates(
+            memory,
+            registers,
+            address => new CpuCodeWindow(address, 0, "CC"));
+
+        var candidate = Assert.Single(candidates);
+        Assert.Equal(8, candidate.StackOffset);
+        Assert.Equal(codeStart + 4, candidate.Address);
+        Assert.Equal("CC", candidate.CodeWindow?.Bytes);
+    }
+
     private static void WriteFrame(
         byte[] bytes,
         ulong mappedStart,
@@ -856,6 +899,10 @@ public sealed class SharpEmuRuntimeTests
             "55 48 89 E5 E8 02 00 00 00 C9 C3",
             returnCodeWindow.GetProperty("bytes").GetString(),
             StringComparison.Ordinal);
+        var stackCodeCandidates = cpuTrap.GetProperty("stackCodeCandidates").EnumerateArray().ToArray();
+        Assert.Contains(
+            stackCodeCandidates,
+            candidate => candidate.GetProperty("address").GetString() == "0x0000000800000009");
     }
 
     [Fact]

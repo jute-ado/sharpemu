@@ -287,6 +287,11 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             {
                 enrichedTrapInfo = enrichedTrapInfo.WithStackWindow(stackWindow);
             }
+            enrichedTrapInfo = enrichedTrapInfo.WithStackCodeCandidates(
+                CaptureTrapStackCodeCandidates(
+                    _virtualMemory,
+                    trapInfo.Registers,
+                    CaptureTrapCodeWindow));
             LastCpuTrapInfo = enrichedTrapInfo;
 
             var longModeHint = IsInvalidLongModeOpcode(trapInfo.Opcode)
@@ -1281,6 +1286,52 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             : new CpuMemoryWindow(
                 snapshot.Rsp,
                 IcedDecoder.FormatBytes(bytes.AsSpan(0, count)));
+    }
+
+    internal static IReadOnlyList<CpuStackCodeCandidate> CaptureTrapStackCodeCandidates(
+        IVirtualMemory virtualMemory,
+        CpuRegisterSnapshot? registers,
+        Func<ulong, CpuCodeWindow?> captureCodeWindow)
+    {
+        const int maximumStackBytes = 128;
+        if (registers is not { Rsp: > 0 } snapshot)
+        {
+            return Array.Empty<CpuStackCodeCandidate>();
+        }
+
+        var executableRegions = virtualMemory.SnapshotRegions()
+            .Where(region =>
+                region.MemorySize > 0 &&
+                (region.Protection & ProgramHeaderFlags.Execute) != 0)
+            .ToArray();
+        if (executableRegions.Length == 0)
+        {
+            return Array.Empty<CpuStackCodeCandidate>();
+        }
+
+        var candidates = new List<CpuStackCodeCandidate>();
+        for (var offset = 0; offset <= maximumStackBytes - sizeof(ulong); offset += sizeof(ulong))
+        {
+            if (snapshot.Rsp > ulong.MaxValue - (ulong)offset ||
+                !TryReadUInt64At(virtualMemory, snapshot.Rsp + (ulong)offset, out var address))
+            {
+                break;
+            }
+
+            if (!executableRegions.Any(region =>
+                    address >= region.VirtualAddress &&
+                    address - region.VirtualAddress < region.MemorySize))
+            {
+                continue;
+            }
+
+            candidates.Add(new CpuStackCodeCandidate(
+                offset,
+                address,
+                captureCodeWindow(address)));
+        }
+
+        return candidates;
     }
 
     private static bool TryReadUInt64At(
