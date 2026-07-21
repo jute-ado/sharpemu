@@ -949,7 +949,9 @@ public sealed class SharpEmuRuntimeTests
             [
                 0x55,                         // push rbp
                 0x48, 0x89, 0xE5,             // mov rbp, rsp
-                0xE8, 0x02, 0x00, 0x00, 0x00, // call nested function
+                0xE8, 0x0B, 0x00, 0x00, 0x00, // call nested function
+                0x48, 0x8D, 0x05, 0x00, 0x00, 0x00, 0x00, // lea rax, [rip]
+                0xEB, 0x00,                   // jmp continuation
                 0xC9,                         // leave
                 0xC3,                         // ret
                 0x55,                         // push rbp
@@ -965,7 +967,7 @@ public sealed class SharpEmuRuntimeTests
         var cpuTrap = document.RootElement.GetProperty("cpuTrap");
         var trapLocation = cpuTrap.GetProperty("location");
         Assert.Equal("eboot.bin", trapLocation.GetProperty("imagePath").GetString());
-        Assert.Equal("0x0000000000000012", trapLocation.GetProperty("imageOffset").GetString());
+        Assert.Equal("0x000000000000001B", trapLocation.GetProperty("imageOffset").GetString());
         var frames = cpuTrap.GetProperty("stackFrames").EnumerateArray().ToArray();
         Assert.InRange(frames.Length, 1, 16);
         var frame = frames[0];
@@ -979,7 +981,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("0x0000000800000000", returnCodeWindow.GetProperty("startAddress").GetString());
         Assert.Equal(9, returnCodeWindow.GetProperty("instructionOffset").GetInt32());
         Assert.StartsWith(
-            "55 48 89 E5 E8 02 00 00 00 C9 C3",
+            "55 48 89 E5 E8 0B 00 00 00 48 8D 05 00 00 00 00 EB 00 C9 C3",
             returnCodeWindow.GetProperty("bytes").GetString(),
             StringComparison.Ordinal);
         var stackCodeCandidates = cpuTrap.GetProperty("stackCodeCandidates").EnumerateArray().ToArray();
@@ -991,6 +993,12 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(
             "0x0000000800000009",
             candidateInstructions[0].GetProperty("address").GetString());
+        var memoryAddressLocation = candidateInstructions[0].GetProperty("memoryAddressLocation");
+        Assert.Equal("eboot.bin", memoryAddressLocation.GetProperty("imagePath").GetString());
+        Assert.Equal("0x0000000000000010", memoryAddressLocation.GetProperty("imageOffset").GetString());
+        var nearBranchTargetLocation = candidateInstructions[1].GetProperty("nearBranchTargetLocation");
+        Assert.Equal("eboot.bin", nearBranchTargetLocation.GetProperty("imagePath").GetString());
+        Assert.Equal("0x0000000000000012", nearBranchTargetLocation.GetProperty("imageOffset").GetString());
     }
 
     [Fact]
