@@ -174,6 +174,9 @@ public static class GuestThreadExecution
     private static ulong _currentGuestThreadHandle;
 
     [ThreadStatic]
+    private static ulong _currentExternalGuestThreadHandle;
+
+    [ThreadStatic]
     private static ulong _currentFiberAddress;
 
     [ThreadStatic]
@@ -207,7 +210,18 @@ public static class GuestThreadExecution
 
     public static bool IsGuestThread => _currentGuestThreadHandle != 0;
 
-    public static ulong CurrentGuestThreadHandle => _currentGuestThreadHandle;
+    public static ulong CurrentGuestThreadHandle => _currentGuestThreadHandle != 0
+        ? _currentGuestThreadHandle
+        : _currentExternalGuestThreadHandle;
+
+    /// <summary>
+    /// Publishes the identity of a primary guest executor that did not enter
+    /// through the scheduled guest-thread worker path. This deliberately does
+    /// not change <see cref="IsGuestThread"/>, which distinguishes workers that
+    /// may yield back to the native scheduler.
+    /// </summary>
+    internal static void SetCurrentExternalGuestThread(ulong threadHandle) =>
+        _currentExternalGuestThreadHandle = threadHandle;
 
     public static ulong CurrentFiberAddress => _currentFiberAddress;
 
