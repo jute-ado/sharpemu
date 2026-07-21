@@ -511,6 +511,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         _moduleInitializerExecutions.Clear();
         FiberExports.ResetRuntimeState();
         KernelPthreadLifecycle.ResetRuntimeState();
+        KernelIoLifecycle.ResetRuntimeState();
     }
 
     private PreparedApplication PrepareApplicationCore(string normalizedEbootPath)
