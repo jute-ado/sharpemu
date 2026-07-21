@@ -7,4 +7,6 @@ public readonly record struct CpuStackFrame(
     ulong FramePointer,
     ulong NextFramePointer,
     ulong ReturnAddress,
-    CpuCodeWindow? ReturnCodeWindow = null);
+    CpuCodeWindow? ReturnCodeWindow = null,
+    CpuDecodedInstruction? PrecedingCall = null,
+    CpuCodePath? PrecedingCallTarget = null);
