@@ -42,6 +42,23 @@ public static class KernelPthreadExtendedCompatExports
         KernelPthreadLifecycle.EnsureInitialized();
     }
 
+    internal static void ResetRuntimeState()
+    {
+        _tlsKeys.Clear();
+        _threadLocalSpecific.Clear();
+        lock (_stateGate)
+        {
+            _threadStates.Clear();
+            _attrStates.Clear();
+            _rwlockStates.Clear();
+        }
+
+        Interlocked.Exchange(ref _nextTlsKey, 1);
+        Interlocked.Exchange(ref _nextSyntheticRwlockHandleId, 1);
+        Interlocked.Exchange(ref _nextSyntheticPthreadAttrHandleId, 1);
+        Interlocked.Exchange(ref _nextSyntheticRwlockAttrHandleId, 1);
+    }
+
     internal static void GetThreadStartScheduling(
         CpuContext ctx,
         ulong attrAddress,
