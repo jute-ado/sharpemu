@@ -14,6 +14,8 @@ public sealed class GuestThreadLifecycleIntegrationTests
     private const ulong CodeAddress = 0x0000_0008_2000_0000;
     private const ulong ThreadHandle = 0x1234_5678;
     private const ulong DetachedThreadHandle = 0x1234_5679;
+    private const ulong TeardownThreadHandle = 0x1234_5680;
+    private const ulong ExternalThreadHandle = 0x1234_5681;
 
     [HostX64Fact]
     public async Task ReturningGuestThreadFinishesExitCallbacksBeforeBecomingJoinable()
@@ -201,6 +203,125 @@ public sealed class GuestThreadLifecycleIntegrationTests
         finally
         {
             GuestThreadExecution.GuestThreadExited -= HandleGuestThreadExited;
+            GuestThreadExecution.GuestThreadReaped -= HandleGuestThreadReaped;
+        }
+    }
+
+    [HostX64Fact]
+    public async Task BackendDisposalPublishesReapingForUnjoinedThread()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(
+                typeof(GuestThreadLifecycleIntegrationTests)))
+        {
+            return;
+        }
+
+        using var memory = new PhysicalVirtualMemory();
+        Assert.Equal(
+            CodeAddress,
+            memory.AllocateAt(
+                CodeAddress,
+                0x1000,
+                executable: true,
+                allowAlternative: false));
+        Assert.True(memory.TryWrite(CodeAddress, [0x31, 0xC0, 0xC3]));
+        var modules = new ModuleManager();
+        modules.Freeze();
+        using var backend = new DirectExecutionBackend(modules);
+        var creatorContext = new CpuContext(memory, Generation.Gen5);
+        var exited = new TaskCompletionSource<ulong>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var reaped = new TaskCompletionSource<ulong>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        void HandleGuestThreadExited(ulong threadHandle)
+        {
+            if (threadHandle == TeardownThreadHandle)
+            {
+                exited.TrySetResult(threadHandle);
+            }
+        }
+
+        void HandleGuestThreadReaped(ulong threadHandle)
+        {
+            if (threadHandle == TeardownThreadHandle)
+            {
+                reaped.TrySetResult(threadHandle);
+            }
+        }
+
+        GuestThreadExecution.GuestThreadExited += HandleGuestThreadExited;
+        GuestThreadExecution.GuestThreadReaped += HandleGuestThreadReaped;
+        try
+        {
+            Assert.True(
+                backend.TryStartThread(
+                    creatorContext,
+                    new GuestThreadStartRequest(
+                        TeardownThreadHandle,
+                        CodeAddress,
+                        Argument: 0,
+                        AttributeAddress: 0,
+                        Name: "teardown-lifecycle-test",
+                        Priority: 700,
+                        AffinityMask: 0),
+                    out var startError),
+                startError);
+            Assert.Equal(
+                TeardownThreadHandle,
+                await exited.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+
+            backend.Dispose();
+
+            Assert.Equal(
+                TeardownThreadHandle,
+                await reaped.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        finally
+        {
+            GuestThreadExecution.GuestThreadExited -= HandleGuestThreadExited;
+            GuestThreadExecution.GuestThreadReaped -= HandleGuestThreadReaped;
+        }
+    }
+
+    [HostX64Fact]
+    public async Task BackendDisposalPublishesReapingForExternalPrimaryThread()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(
+                typeof(GuestThreadLifecycleIntegrationTests)))
+        {
+            return;
+        }
+
+        using var memory = new PhysicalVirtualMemory();
+        var modules = new ModuleManager();
+        modules.Freeze();
+        using var backend = new DirectExecutionBackend(modules);
+        var context = new CpuContext(memory, Generation.Gen5);
+        var reaped = new TaskCompletionSource<ulong>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        void HandleGuestThreadReaped(ulong threadHandle)
+        {
+            if (threadHandle == ExternalThreadHandle)
+            {
+                reaped.TrySetResult(threadHandle);
+            }
+        }
+
+        GuestThreadExecution.GuestThreadReaped += HandleGuestThreadReaped;
+        try
+        {
+            backend.RegisterGuestThreadContext(ExternalThreadHandle, context);
+
+            backend.Dispose();
+
+            Assert.Equal(
+                ExternalThreadHandle,
+                await reaped.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        finally
+        {
             GuestThreadExecution.GuestThreadReaped -= HandleGuestThreadReaped;
         }
     }
