@@ -116,6 +116,22 @@ public static class Gen5ShaderScalarEvaluator
             {
                 if (instruction.Pc < skipUntilPc.Value)
                 {
+                    // The Vulkan translator emits every decoded basic block,
+                    // including blocks bypassed by this evaluator's forward
+                    // scalar-branch fast path. Preserve their descriptor
+                    // bindings from the last known scalar state so one skipped
+                    // image operation cannot make the whole shader unbuildable.
+                    if (instruction.Control is Gen5ImageControl &&
+                        !TryAddImageBinding(
+                            state.Program,
+                            instruction,
+                            scalarRegisters,
+                            resolved,
+                            out error))
+                    {
+                        return false;
+                    }
+
                     continue;
                 }
 
@@ -419,55 +435,20 @@ public static class Gen5ShaderScalarEvaluator
                 continue;
             }
 
-            if (instruction.Control is not Gen5ImageControl image)
+            if (instruction.Control is not Gen5ImageControl)
             {
                 continue;
             }
 
-            if (!TryCopyRegisters(
+            if (!TryAddImageBinding(
+                    state.Program,
+                    instruction,
                     scalarRegisters,
-                    image.ScalarResource,
-                    ImageDescriptorDwords,
-                    out var resourceDescriptor))
+                    resolved,
+                    out error))
             {
-                error = $"resource-register-range pc=0x{instruction.Pc:X} s{image.ScalarResource}";
                 return false;
             }
-
-            IReadOnlyList<uint> samplerDescriptor = [];
-            if (UsesSampler(instruction.Opcode) &&
-                !TryCopyRegisters(
-                    scalarRegisters,
-                    image.ScalarSampler,
-                    SamplerDescriptorDwords,
-                    out samplerDescriptor))
-            {
-                error = $"sampler-register-range pc=0x{instruction.Pc:X} s{image.ScalarSampler}";
-                return false;
-            }
-
-            resolved.Add(new Gen5ImageBinding(
-                instruction.Pc,
-                instruction.Opcode,
-                image,
-                resourceDescriptor,
-                samplerDescriptor,
-                instruction.Opcode is "ImageLoadMip" or "ImageStoreMip" &&
-                TryResolveVectorConstantBefore(
-                    state.Program,
-                    instruction.Pc,
-                    image.GetAddressRegister(2),
-                    out var mipLevel)
-                    ? mipLevel
-                    : null,
-                instruction.Opcode.EndsWith("O", StringComparison.Ordinal) &&
-                TryResolveVectorConstantBefore(
-                    state.Program,
-                    instruction.Pc,
-                    image.GetAddressRegister(0),
-                    out var packedOffset)
-                    ? packedOffset
-                    : null));
         }
 
         evaluation = new Gen5ShaderEvaluation(
@@ -480,6 +461,62 @@ public static class Gen5ShaderScalarEvaluator
             runtimeScalarRegisters,
             vertexInputBindings,
             bufferFormatBindings);
+        return true;
+    }
+
+    private static bool TryAddImageBinding(
+        Gen5ShaderProgram program,
+        Gen5ShaderInstruction instruction,
+        uint[] scalarRegisters,
+        ICollection<Gen5ImageBinding> resolved,
+        out string error)
+    {
+        error = string.Empty;
+        var image = (Gen5ImageControl)instruction.Control!;
+        if (!TryCopyRegisters(
+                scalarRegisters,
+                image.ScalarResource,
+                ImageDescriptorDwords,
+                out var resourceDescriptor))
+        {
+            error = $"resource-register-range pc=0x{instruction.Pc:X} s{image.ScalarResource}";
+            return false;
+        }
+
+        IReadOnlyList<uint> samplerDescriptor = [];
+        if (UsesSampler(instruction.Opcode) &&
+            !TryCopyRegisters(
+                scalarRegisters,
+                image.ScalarSampler,
+                SamplerDescriptorDwords,
+                out samplerDescriptor))
+        {
+            error = $"sampler-register-range pc=0x{instruction.Pc:X} s{image.ScalarSampler}";
+            return false;
+        }
+
+        resolved.Add(new Gen5ImageBinding(
+            instruction.Pc,
+            instruction.Opcode,
+            image,
+            resourceDescriptor,
+            samplerDescriptor,
+            instruction.Opcode is "ImageLoadMip" or "ImageStoreMip" &&
+            TryResolveVectorConstantBefore(
+                program,
+                instruction.Pc,
+                image.GetAddressRegister(2),
+                out var mipLevel)
+                ? mipLevel
+                : null,
+            instruction.Opcode.EndsWith("O", StringComparison.Ordinal) &&
+            TryResolveVectorConstantBefore(
+                program,
+                instruction.Pc,
+                image.GetAddressRegister(0),
+                out var packedOffset)
+                ? packedOffset
+                : null));
         return true;
     }
 

@@ -1936,6 +1936,49 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void ResolvesImageBindingInsideForwardSkippedScalarBlock()
+    {
+        var ctx = CreateContext(
+        [
+            0xBF82_0002u,              // s_branch +2 -> s_endpgm
+            0xF000_0108u, 0x0000_0800u, // image_load v8, v[0:1], s[0:7] dmask:0x1 dim:2d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[1] = 0xC140_0000u;
+        scalarRegisters[2] = 0x0003_C003u;
+        var state = new Gen5ShaderState(program, scalarRegisters, Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+
+        var binding = Assert.Single(evaluation.ImageBindings);
+        Assert.Equal(4u, binding.Pc);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out _,
+                out var compileError),
+            compileError);
+    }
+
+    [Fact]
     public void CompilesConstantImageStoreMipWithMipSizedBounds()
     {
         var ctx = CreateContext(
