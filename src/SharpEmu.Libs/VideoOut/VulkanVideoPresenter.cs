@@ -107,6 +107,17 @@ internal readonly record struct VulkanTextureImageShape(
 
 internal static unsafe class VulkanVideoPresenter
 {
+    internal static bool ShouldForceSolidFragmentOverride(
+        bool isTitleDraw,
+        bool forceTitleDraw,
+        bool forceAll,
+        bool targetMatched,
+        bool shaderMatched) =>
+        forceAll ||
+        forceTitleDraw && isTitleDraw ||
+        targetMatched ||
+        shaderMatched;
+
     // Standalone CLI launches use a desktop-sized surface. The embedded GUI
     // always takes its dimensions from the native child control instead.
     private const uint DefaultWindowWidth = 1920;
@@ -470,7 +481,6 @@ internal static unsafe class VulkanVideoPresenter
         uint.TryParse(Environment.GetEnvironmentVariable("SHARPEMU_SKIP_TALL_COMPUTE_Z"), out var z)
             ? z
             : 0;
-    private const uint GuestPrimitiveRectList = 0x11;
 
     private static readonly object _gate = new();
     private readonly record struct PendingGuestWork(
@@ -3042,6 +3052,9 @@ internal static unsafe class VulkanVideoPresenter
         uint requestedDstSelect) =>
         requestedFormat == imageFormat &&
         requestedDstSelect == baseViewDstSelect;
+
+    internal static bool IsRectangleListPrimitive(uint primitiveType) =>
+        GuestPrimitivePolicy.IsRectangleList(primitiveType);
 
     internal static string ComputeShaderSignature(ReadOnlySpan<byte> spirv) =>
         Convert.ToHexString(SHA256.HashData(spirv).AsSpan(0, 8));
@@ -6446,7 +6459,8 @@ internal static unsafe class VulkanVideoPresenter
             Extent2D extent,
             IReadOnlyList<GuestImageResource>? feedbackTargets = null,
             bool hasDepthAttachment = false,
-            GuestDepthResource? feedbackDepth = null)
+            GuestDepthResource? feedbackDepth = null,
+            ulong shaderAddress = 0)
         {
             var isTitleDraw = IsTitleDraw(draw.VertexBuffers);
             var forceFullscreenVertex = _forceFullscreenPipeline ||
@@ -6461,15 +6475,16 @@ internal static unsafe class VulkanVideoPresenter
                 AnyTargetAddressMatches(
                     feedbackTargets,
                     "SHARPEMU_FORCE_DEFAULT_RASTER_STATE_TARGETS");
-            var forceTitleSolidFragment =
-                _forceTitleSolidFragment &&
-                isTitleDraw;
-            var forceSolidFragment = forceTitleSolidFragment ||
-                _forceFullscreenPipeline ||
-                _forceSolidFragment ||
+            var forceSolidFragment = ShouldForceSolidFragmentOverride(
+                isTitleDraw,
+                _forceTitleSolidFragment,
+                _forceFullscreenPipeline || _forceSolidFragment,
                 AnyTargetAddressMatches(
                     feedbackTargets,
-                    "SHARPEMU_FORCE_SOLID_FRAGMENT_TARGETS");
+                    "SHARPEMU_FORCE_SOLID_FRAGMENT_TARGETS"),
+                AddressListContains(
+                    "SHARPEMU_FORCE_SOLID_FRAGMENT_SHADERS",
+                    shaderAddress));
             var attributeFragmentLocation =
                 _forceAttributeFragmentLocation.GetValueOrDefault();
             var forceAttributeFragment =
@@ -6477,11 +6492,21 @@ internal static unsafe class VulkanVideoPresenter
                 AnyTargetAddressMatches(
                     feedbackTargets,
                     "SHARPEMU_FORCE_ATTRIBUTE_FRAGMENT_TARGETS");
+            var forceArrayCopyFragment = AddressListContains(
+                "SHARPEMU_FORCE_ARRAY_COPY_FRAGMENT_SHADERS",
+                shaderAddress);
+            var forceArrayFetchFragment = AddressListContains(
+                "SHARPEMU_FORCE_ARRAY_FETCH_FRAGMENT_SHADERS",
+                shaderAddress);
             var vertexSpirv = forceFullscreenVertex
                 ? SpirvFixedShaders.CreateFullscreenVertex(0)
                 : draw.VertexSpirv;
             var fragmentSpirv = forceSolidFragment
                 ? SpirvFixedShaders.CreateSolidFragment(1f, 0f, 1f, 1f)
+                : forceArrayFetchFragment
+                    ? SpirvFixedShaders.CreateArrayFetchFragment(binding: 2)
+                : forceArrayCopyFragment
+                    ? SpirvFixedShaders.CreateArrayCopyFragment(binding: 2)
                 : forceAttributeFragment
                     ? SpirvFixedShaders.CreateAttributeFragment(attributeFragmentLocation)
                 : draw.PixelSpirv;
@@ -9545,7 +9570,7 @@ internal static unsafe class VulkanVideoPresenter
                 3 => PrimitiveTopology.LineStrip,
                 5 => PrimitiveTopology.TriangleFan,
                 6 => PrimitiveTopology.TriangleStrip,
-                GuestPrimitiveRectList => PrimitiveTopology.TriangleStrip,
+                7 or 17 => PrimitiveTopology.TriangleStrip,
                 _ => PrimitiveTopology.TriangleList,
             };
 
@@ -9661,15 +9686,11 @@ internal static unsafe class VulkanVideoPresenter
         private static uint GetDrawVertexCount(
             uint primitiveType,
             uint vertexCount,
-            GuestIndexBuffer? indexBuffer)
-        {
-            if (primitiveType == GuestPrimitiveRectList && indexBuffer is null)
-            {
-                return 4;
-            }
-
-            return vertexCount;
-        }
+            GuestIndexBuffer? indexBuffer) =>
+            GuestPrimitivePolicy.GetDrawVertexCount(
+                primitiveType,
+                vertexCount,
+                indexBuffer is not null);
 
         private static BlendFactor ToVkBlendFactor(uint factor) =>
             factor switch
@@ -11116,7 +11137,8 @@ internal static unsafe class VulkanVideoPresenter
                     extent,
                     targets,
                     hasDepthAttachment: depth is not null && !clearDepthSeparately,
-                    feedbackDepth: clearDepthSeparately ? null : depth);
+                    feedbackDepth: clearDepthSeparately ? null : depth,
+                    shaderAddress: work.ShaderAddress);
                 resources.TransientRenderPass = transientRenderPass;
                 resources.TransientFramebuffer = transientFramebuffer;
                 transientRenderPass = default;
@@ -11442,6 +11464,19 @@ internal static unsafe class VulkanVideoPresenter
                                     $"fingerprint=0x{captured.Fingerprint:X16} " +
                                     $"nonblack_pixels={captured.NonBlackPixels} " +
                                     $"distinct_colors={captured.DistinctColors}");
+
+                                foreach (var sampled in resources.Textures
+                                    .Select(static texture => texture.GuestImage)
+                                    .Where(static image => image is not null)
+                                    .Distinct())
+                                {
+                                    Console.Error.WriteLine(
+                                        "[LOADER][TRACE] " +
+                                        "vk.guest_image_write_input " +
+                                        $"selector={_guestImageWriteCaptureRequest} " +
+                                        $"addr=0x{sampled!.Address:X16}");
+                                    TraceGuestImageContents(sampled);
+                                }
                             }
                         }
                     }

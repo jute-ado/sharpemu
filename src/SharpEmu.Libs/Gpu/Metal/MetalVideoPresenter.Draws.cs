@@ -981,9 +981,10 @@ internal static partial class MetalVideoPresenter
     private static void EncodeDrawCall(nint encoder, TranslatedGuestDraw draw)
     {
         var primitive = GetPrimitiveType(draw.PrimitiveType);
-        var vertexCount = draw.PrimitiveType == 0x11 && draw.IndexBuffer is null
-            ? 4u
-            : draw.VertexCount;
+        var vertexCount = GuestPrimitivePolicy.GetDrawVertexCount(
+            draw.PrimitiveType,
+            draw.VertexCount,
+            draw.IndexBuffer is not null);
         if (draw.IndexBuffer is { } indexBuffer)
         {
             var device = MetalNative.Send(encoder, MetalNative.Selector("device"));
@@ -2023,7 +2024,8 @@ internal static partial class MetalVideoPresenter
 
                 return 3;
             case 6:
-            case 0x11:
+            case 7:
+            case 17:
                 return 4;
             default:
                 return 3;
