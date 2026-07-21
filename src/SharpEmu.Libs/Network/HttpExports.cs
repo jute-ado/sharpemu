@@ -20,6 +20,14 @@ public static class HttpExports
 
     private sealed record HttpTemplate(int ContextId, ulong UserAgentAddress, int HttpVersion, bool AutoProxyConfig);
 
+    internal static void ResetRuntimeState()
+    {
+        Contexts.Clear();
+        Templates.Clear();
+        Interlocked.Exchange(ref _nextContextId, 0);
+        Interlocked.Exchange(ref _nextTemplateId, 0x1000);
+    }
+
     [SysAbiExport(
         Nid = "A9cVMUtEp4Y",
         ExportName = "sceHttpInit",

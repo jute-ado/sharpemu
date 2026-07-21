@@ -82,6 +82,9 @@ test-driven workflow. Major downstream differences include:
 - distinct four-argument POSIX and named five-argument Sony pthread creation
   ABIs, so unused registers cannot become guest thread names, with transactional
   output validation and rollback when guest scheduling fails
+- process-scoped network teardown that disposes `libSceNet` sockets, releases
+  per-thread errno storage, clears pool, resolver, SSL, HTTP/2, template, and
+  NetCtl callback registries, and restarts guest-visible IDs between titles
 - process-scoped event queues, event flags, semaphores, and exception handlers
   reset between sessions with blocked waiters woken through normal deleted-object
   semantics and deterministic handle allocation for the next process

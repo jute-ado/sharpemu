@@ -13,6 +13,7 @@ using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.AppContent;
 using SharpEmu.Libs.SaveData;
 using SharpEmu.Libs.Fiber;
+using SharpEmu.Libs.Network;
 using SharpEmu.Libs.SystemService;
 using SharpEmu.Logging;
 using System.Buffers.Binary;
@@ -513,6 +514,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         KernelPthreadLifecycle.ResetRuntimeState();
         KernelIoLifecycle.ResetRuntimeState();
         KernelEventObjectLifecycle.ResetRuntimeState();
+        NetworkLifecycle.ResetRuntimeState();
         KernelMemoryLifecycle.ResetRuntimeState();
     }
 

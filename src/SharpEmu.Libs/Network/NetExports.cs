@@ -36,12 +36,49 @@ public static class NetExports
     // explicit sceNetInit call reaches application code.
     private static bool _initialized = true;
 
-    [ThreadStatic]
-    private static nint _errnoAddress;
+    private static ThreadLocal<nint> _errnoAddresses = new(trackAllValues: true);
 
     private sealed record NetPool(string Name, int Size, int Flags);
 
     private sealed record ResolverContext(string Name, int PoolId, int Flags, int LastError);
+
+    internal static void ResetRuntimeState()
+    {
+        var sockets = _sockets.Values
+            .Distinct<Socket>(ReferenceEqualityComparer.Instance)
+            .ToArray();
+        _sockets.Clear();
+        _pools.Clear();
+        _resolvers.Clear();
+        Interlocked.Exchange(ref _nextPoolId, 0);
+        Interlocked.Exchange(ref _nextResolverId, 0x2000);
+        Interlocked.Exchange(ref _nextSocketId, 0x4000);
+        _initialized = true;
+
+        foreach (var socket in sockets)
+        {
+            try
+            {
+                socket.Dispose();
+            }
+            catch (SocketException)
+            {
+            }
+        }
+
+        var errnoAddresses = Interlocked.Exchange(
+            ref _errnoAddresses,
+            new ThreadLocal<nint>(trackAllValues: true));
+        var allocations = errnoAddresses.Values
+            .Where(static address => address != 0)
+            .Distinct()
+            .ToArray();
+        errnoAddresses.Dispose();
+        foreach (var allocation in allocations)
+        {
+            Marshal.FreeHGlobal(allocation);
+        }
+    }
 
     [SysAbiExport(
         Nid = "Nlev7Lg8k3A",
@@ -487,13 +524,13 @@ public static class NetExports
         LibraryName = "libSceNet")]
     public static int NetErrnoLoc(CpuContext ctx)
     {
-        if (_errnoAddress == 0)
+        if (_errnoAddresses.Value == 0)
         {
-            _errnoAddress = Marshal.AllocHGlobal(sizeof(int));
-            Marshal.WriteInt32(_errnoAddress, 0);
+            _errnoAddresses.Value = Marshal.AllocHGlobal(sizeof(int));
+            Marshal.WriteInt32(_errnoAddresses.Value, 0);
         }
 
-        ctx[CpuRegister.Rax] = unchecked((ulong)_errnoAddress);
+        ctx[CpuRegister.Rax] = unchecked((ulong)_errnoAddresses.Value);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -664,11 +701,11 @@ public static class NetExports
 
     private static int SetNetError(CpuContext ctx, int result, int errno)
     {
-        if (_errnoAddress == 0)
+        if (_errnoAddresses.Value == 0)
         {
-            _errnoAddress = Marshal.AllocHGlobal(sizeof(int));
+            _errnoAddresses.Value = Marshal.AllocHGlobal(sizeof(int));
         }
-        Marshal.WriteInt32(_errnoAddress, errno);
+        Marshal.WriteInt32(_errnoAddresses.Value, errno);
         return ctx.SetReturn(result);
     }
 
