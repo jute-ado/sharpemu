@@ -17,6 +17,8 @@ internal readonly record struct SyntheticGuestExecutionResult(
     public int UniqueNidsHit { get; init; }
 
     public string? ImportTrace { get; init; }
+
+    public IReadOnlyList<CpuImportTraceEntry>? ImportTraceEntries { get; init; }
 }
 
 internal static class SyntheticNativeGuest
@@ -116,6 +118,7 @@ internal static class SyntheticNativeGuest
                     ImportsHit = dispatcher.LastSessionSummary.ImportsHit,
                     UniqueNidsHit = dispatcher.LastSessionSummary.UniqueNidsHit,
                     ImportTrace = dispatcher.LastImportResolutionTrace,
+                    ImportTraceEntries = dispatcher.LastImportTraceEntries,
                 };
             }
             finally

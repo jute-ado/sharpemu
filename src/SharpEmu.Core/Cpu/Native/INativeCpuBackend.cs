@@ -26,6 +26,8 @@ public interface INativeCpuBackend
 
     string? LastImportResolutionTrace => null;
 
+    IReadOnlyList<CpuImportTraceEntry>? LastImportTraceEntries => null;
+
     ulong? LastEntryReturnValue => null;
 
     bool TryExecute(

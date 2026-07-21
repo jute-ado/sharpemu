@@ -13,6 +13,8 @@ public interface ISharpEmuRuntime : IDisposable
 
     string? LastExecutionTrace { get; }
 
+    IReadOnlyList<CpuImportTraceEntry>? LastExecutionTraceEntries { get; }
+
     string? LastSessionSummary { get; }
 
     string? LastBasicBlockTrace { get; }

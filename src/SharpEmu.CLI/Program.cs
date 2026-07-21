@@ -1590,7 +1590,7 @@ internal static partial class Program
                 executablePath,
                 runtime?.LastPreparedApplication);
             var report = new CliExecutionReport(
-                SchemaVersion: 3,
+                SchemaVersion: 4,
                 Mode: mode,
                 GeneratedAtUtc: DateTimeOffset.UtcNow,
                 ExecutablePath: executablePath,
@@ -1618,6 +1618,10 @@ internal static partial class Program
                 SessionSummary: runtime?.LastSessionSummary,
                 Diagnostics: runtime?.LastExecutionDiagnostics,
                 ImportTrace: runtime?.LastExecutionTrace,
+                ImportTraceEntries: BuildCpuImportTraceReports(
+                    runtime?.LastExecutionTraceEntries,
+                    runtime?.LastPreparedApplication,
+                    executablePath),
                 MilestoneLog: runtime?.LastMilestoneLog,
                 BasicBlockTrace: runtime?.LastBasicBlockTrace,
                 HostError: hostError);
@@ -2040,6 +2044,27 @@ internal static partial class Program
             value.ImportsHit,
             value.UniqueNidsHit);
     }
+
+    private static IReadOnlyList<CliCpuImportTraceReport>? BuildCpuImportTraceReports(
+        IReadOnlyList<CpuImportTraceEntry>? entries,
+        PreparedApplication? application,
+        string executablePath) =>
+        entries?.Select(entry => new CliCpuImportTraceReport(
+            entry.DispatchIndex,
+            entry.Nid,
+            entry.LibraryName,
+            entry.ExportName,
+            FormatAddress(entry.GuestThreadHandle),
+            FormatAddress(entry.ReturnAddress),
+            BuildCodeLocationReport(entry.ReturnAddress, application, executablePath),
+            new CliCpuImportArgumentsReport(
+                FormatAddress(entry.Arg0),
+                FormatAddress(entry.Arg1),
+                FormatAddress(entry.Arg2),
+                FormatAddress(entry.Arg3),
+                FormatAddress(entry.Arg4),
+                FormatAddress(entry.Arg5)),
+            entry.ReturnValue is { } returnValue ? FormatAddress(returnValue) : null)).ToArray();
 
     private static CliCpuTrapReport? BuildCpuTrapReport(
         CpuTrapInfo? trap,
@@ -2612,6 +2637,7 @@ internal static partial class Program
         string? SessionSummary,
         string? Diagnostics,
         string? ImportTrace,
+        IReadOnlyList<CliCpuImportTraceReport>? ImportTraceEntries,
         string? MilestoneLog,
         string? BasicBlockTrace,
         string? HostError);
@@ -2703,6 +2729,25 @@ internal static partial class Program
         int TotalInstructions,
         int ImportsHit,
         int UniqueNidsHit);
+
+    private sealed record CliCpuImportTraceReport(
+        long DispatchIndex,
+        string Nid,
+        string? LibraryName,
+        string? ExportName,
+        string GuestThreadHandle,
+        string ReturnAddress,
+        CliCodeLocationReport? ReturnLocation,
+        CliCpuImportArgumentsReport Arguments,
+        string? ReturnValue);
+
+    private sealed record CliCpuImportArgumentsReport(
+        string Rdi,
+        string Rsi,
+        string Rdx,
+        string Rcx,
+        string R8,
+        string R9);
 
     private sealed record CliCpuTrapReport(
         string InstructionPointer,

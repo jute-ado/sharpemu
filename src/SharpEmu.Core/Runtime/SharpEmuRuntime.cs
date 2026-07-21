@@ -49,6 +49,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
     public string? LastExecutionTrace { get; private set; }
 
+    public IReadOnlyList<CpuImportTraceEntry>? LastExecutionTraceEntries { get; private set; }
+
     public string? LastSessionSummary { get; private set; }
 
     public string? LastBasicBlockTrace { get; private set; }
@@ -225,6 +227,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             Log.Error($"Initializer dispatch failed: {failedInitializerResult}");
             CaptureCpuOutcome();
             LastExecutionTrace = _cpuDispatcher.LastImportResolutionTrace;
+            LastExecutionTraceEntries = _cpuDispatcher.LastImportTraceEntries;
             LastMilestoneLog = _cpuDispatcher.LastMilestoneLog;
             LastSessionSummary = BuildSessionSummary(_cpuDispatcher.LastSessionSummary);
             LastBasicBlockTrace = _cpuDispatcher.LastBasicBlockTrace;
@@ -247,6 +250,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         Log.Info($"Dispatch result: {result}");
         CaptureCpuOutcome();
         LastExecutionTrace = _cpuDispatcher.LastImportResolutionTrace;
+        LastExecutionTraceEntries = _cpuDispatcher.LastImportTraceEntries;
         LastMilestoneLog = _cpuDispatcher.LastMilestoneLog;
         LastSessionSummary = BuildSessionSummary(_cpuDispatcher.LastSessionSummary);
         LastBasicBlockTrace = _cpuDispatcher.LastBasicBlockTrace;
@@ -492,6 +496,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
     {
         LastExecutionDiagnostics = null;
         LastExecutionTrace = null;
+        LastExecutionTraceEntries = null;
         LastSessionSummary = null;
         LastBasicBlockTrace = null;
         LastMilestoneLog = null;

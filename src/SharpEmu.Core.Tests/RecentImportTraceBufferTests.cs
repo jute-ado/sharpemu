@@ -89,6 +89,24 @@ public sealed class RecentImportTraceBufferTests
         Assert.Contains("rax=<pending>", formatted, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void StructuredSnapshotRetainsTheSameCompletionStateAsFormattedText()
+    {
+        var trace = new RecentImportTraceBuffer(capacity: 1);
+        var entry = Entry(1, threadHandle: 1);
+        trace.Record(entry);
+
+        var pending = trace.BuildSnapshot(1, prioritizedThreadHandle: null);
+        entry.Complete(returnValue: 0x1234);
+
+        Assert.Contains("rax=<pending>", pending.Formatted, StringComparison.Ordinal);
+        Assert.Null(Assert.Single(pending.Entries!).ReturnValue);
+
+        var completed = trace.BuildSnapshot(1, prioritizedThreadHandle: null);
+        Assert.Contains("rax=0x0000000000001234", completed.Formatted, StringComparison.Ordinal);
+        Assert.Equal(0x1234UL, Assert.Single(completed.Entries!).ReturnValue);
+    }
+
     private static RecentImportTraceEntry Entry(long dispatchIndex, ulong threadHandle) =>
         new(
             dispatchIndex,
