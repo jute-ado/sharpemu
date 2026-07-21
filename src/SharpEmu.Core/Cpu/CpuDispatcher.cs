@@ -82,6 +82,8 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
 
     public string? LastImportResolutionTrace { get; private set; }
 
+    public IReadOnlyList<CpuImportTraceEntry>? LastImportTraceEntries { get; private set; }
+
     public string? LastBasicBlockTrace { get; private set; }
 
     public string? LastMilestoneLog { get; private set; }
@@ -160,6 +162,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         LastControlTransferInfo = null;
         LastNotImplementedInfo = null;
         LastImportResolutionTrace = null;
+        LastImportTraceEntries = null;
         LastBasicBlockTrace = null;
         LastMilestoneLog = null;
         LastRecentInstructionWindow = null;
@@ -344,6 +347,7 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                     : NativeEntryReturnContract.CaptureExitCode,
                 out var nativeResult);
         LastImportResolutionTrace = _nativeCpuBackend.LastImportResolutionTrace;
+        LastImportTraceEntries = _nativeCpuBackend.LastImportTraceEntries;
         if (nativeExecutionCompleted)
         {
             var exitCode = frameKind == EntryFrameKind.ProcessEntry &&

@@ -17,6 +17,8 @@ public interface ICpuDispatcher
 
     string? LastImportResolutionTrace { get; }
 
+    IReadOnlyList<CpuImportTraceEntry>? LastImportTraceEntries { get; }
+
     string? LastBasicBlockTrace { get; }
 
     string? LastMilestoneLog { get; }

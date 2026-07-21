@@ -94,63 +94,79 @@ internal sealed class RecentImportTraceBuffer
     }
 
     public string? Build(int requestedLimit, ulong? prioritizedThreadHandle)
+        => BuildSnapshot(requestedLimit, prioritizedThreadHandle).Formatted;
+
+    public (string? Formatted, IReadOnlyList<CpuImportTraceEntry>? Entries) BuildSnapshot(
+        int requestedLimit,
+        ulong? prioritizedThreadHandle)
     {
         lock (_gate)
         {
-            var limit = Math.Min(Math.Max(requestedLimit, 0), Capacity);
-            if (limit == 0)
+            var selected = Select(requestedLimit, prioritizedThreadHandle);
+            if (selected.Count == 0)
             {
-                return null;
+                return (null, null);
             }
 
-            var global = _global.SnapshotLast(limit);
-            if (global.Count == 0)
-            {
-                return null;
-            }
-
-            if (prioritizedThreadHandle is not { } threadHandle ||
-                !_byThread.TryGetValue(threadHandle, out var prioritizedTrace))
-            {
-                return Format(global);
-            }
-
-            var reservedCount = Math.Min(
-                prioritizedTrace.Count,
-                Math.Max(1, limit / 2));
-            var prioritized = prioritizedTrace.SnapshotLast(reservedCount);
-            var selectedKeys = new HashSet<(long DispatchIndex, ulong ThreadHandle)>();
-            foreach (var entry in prioritized)
-            {
-                selectedKeys.Add((entry.DispatchIndex, entry.ThreadHandle));
-            }
-
-            var globalTail = new List<RecentImportTraceEntry>(limit - prioritized.Count);
-            for (var index = global.Count - 1;
-                 index >= 0 && globalTail.Count < limit - prioritized.Count;
-                 index--)
-            {
-                var entry = global[index];
-                if (selectedKeys.Add((entry.DispatchIndex, entry.ThreadHandle)))
-                {
-                    globalTail.Add(entry);
-                }
-            }
-
-            globalTail.Reverse();
-            prioritized.AddRange(globalTail);
-            prioritized.Sort(static (left, right) =>
-            {
-                var dispatchOrder = left.DispatchIndex.CompareTo(right.DispatchIndex);
-                return dispatchOrder != 0
-                    ? dispatchOrder
-                    : left.ThreadHandle.CompareTo(right.ThreadHandle);
-            });
-            return Format(prioritized);
+            var entries = selected.Select(ToSnapshot).ToArray();
+            return (Format(entries), entries);
         }
     }
 
-    private static string Format(IReadOnlyList<RecentImportTraceEntry> entries)
+    private List<RecentImportTraceEntry> Select(int requestedLimit, ulong? prioritizedThreadHandle)
+    {
+        var limit = Math.Min(Math.Max(requestedLimit, 0), Capacity);
+        var global = _global.SnapshotLast(limit);
+        if (limit == 0 || global.Count == 0 ||
+            prioritizedThreadHandle is not { } threadHandle ||
+            !_byThread.TryGetValue(threadHandle, out var prioritizedTrace))
+        {
+            return global;
+        }
+
+        var reservedCount = Math.Min(prioritizedTrace.Count, Math.Max(1, limit / 2));
+        var selected = prioritizedTrace.SnapshotLast(reservedCount);
+        var selectedKeys = selected
+            .Select(entry => (entry.DispatchIndex, entry.ThreadHandle))
+            .ToHashSet();
+        for (var index = global.Count - 1;
+             index >= 0 && selected.Count < limit;
+             index--)
+        {
+            var entry = global[index];
+            if (selectedKeys.Add((entry.DispatchIndex, entry.ThreadHandle)))
+            {
+                selected.Add(entry);
+            }
+        }
+
+        selected.Sort(static (left, right) =>
+        {
+            var dispatchOrder = left.DispatchIndex.CompareTo(right.DispatchIndex);
+            return dispatchOrder != 0
+                ? dispatchOrder
+                : left.ThreadHandle.CompareTo(right.ThreadHandle);
+        });
+        return selected;
+    }
+
+    private static CpuImportTraceEntry ToSnapshot(RecentImportTraceEntry entry) =>
+        new(
+            entry.DispatchIndex,
+            entry.Nid,
+            entry.LibraryName,
+            entry.ExportName,
+            entry.ThreadHandle,
+            entry.ReturnRip,
+            entry.Arg0,
+            entry.Arg1,
+            entry.Arg2,
+            entry.Arg3,
+            entry.Arg4,
+            entry.Arg5,
+            entry.TryGetReturnValue(out var returnValue) ? returnValue : null);
+
+    private static string Format(IReadOnlyList<CpuImportTraceEntry> entries)
     {
         var builder = new StringBuilder(entries.Count * 192);
         for (var index = 0; index < entries.Count; index++)
@@ -161,7 +177,7 @@ internal sealed class RecentImportTraceBuffer
             }
 
             var entry = entries[index];
-            var returnValue = entry.TryGetReturnValue(out var completedReturnValue)
+            var returnValue = entry.ReturnValue is { } completedReturnValue
                 ? $"0x{completedReturnValue:X16}"
                 : "<pending>";
             var symbol = entry.LibraryName is { Length: > 0 } libraryName &&
@@ -169,8 +185,8 @@ internal sealed class RecentImportTraceBuffer
                 ? $"{libraryName}:{exportName}"
                 : "<unresolved>";
             builder.Append(
-                $"#{entry.DispatchIndex} nid={entry.Nid} symbol={symbol} thread=0x{entry.ThreadHandle:X16} " +
-                $"ret=0x{entry.ReturnRip:X16} " +
+                $"#{entry.DispatchIndex} nid={entry.Nid} symbol={symbol} thread=0x{entry.GuestThreadHandle:X16} " +
+                $"ret=0x{entry.ReturnAddress:X16} " +
                 $"rdi=0x{entry.Arg0:X16} rsi=0x{entry.Arg1:X16} " +
                 $"rdx=0x{entry.Arg2:X16} rcx=0x{entry.Arg3:X16} " +
                 $"r8=0x{entry.Arg4:X16} r9=0x{entry.Arg5:X16} rax={returnValue}");

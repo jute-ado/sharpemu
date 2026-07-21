@@ -158,6 +158,27 @@ public sealed class NativeImportBridgeTests
         Assert.All(
             lines,
             line => Assert.Contains("symbol=libSyntheticTest:syntheticAdd", line, StringComparison.Ordinal));
+        Assert.NotNull(execution.ImportTraceEntries);
+        Assert.Collection(
+            execution.ImportTraceEntries,
+            entry =>
+            {
+                Assert.Equal(2, entry.DispatchIndex);
+                Assert.Equal(AddNid, entry.Nid);
+                Assert.Equal("libSyntheticTest", entry.LibraryName);
+                Assert.Equal("syntheticAdd", entry.ExportName);
+                Assert.Equal(CodeAddress + 10, entry.ReturnAddress);
+                Assert.Equal(0UL, entry.ReturnValue);
+            },
+            entry =>
+            {
+                Assert.Equal(3, entry.DispatchIndex);
+                Assert.Equal(AddNid, entry.Nid);
+                Assert.Equal("libSyntheticTest", entry.LibraryName);
+                Assert.Equal("syntheticAdd", entry.ExportName);
+                Assert.Equal(CodeAddress + 15, entry.ReturnAddress);
+                Assert.Equal(0UL, entry.ReturnValue);
+            });
     }
 
     [HostX64Fact]

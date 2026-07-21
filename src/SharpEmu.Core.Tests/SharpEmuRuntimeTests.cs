@@ -703,7 +703,8 @@ public sealed class SharpEmuRuntimeTests
         Assert.NotNull(execution.ReportJson);
         using var document = JsonDocument.Parse(execution.ReportJson);
         var root = document.RootElement;
-        Assert.Equal(3, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(4, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("importTraceEntries").ValueKind);
         Assert.Equal("execution", root.GetProperty("mode").GetString());
         Assert.Equal("ORBIS_GEN2_OK", root.GetProperty("result").GetProperty("name").GetString());
         Assert.Equal(0, root.GetProperty("result").GetProperty("code").GetInt32());
@@ -772,7 +773,7 @@ public sealed class SharpEmuRuntimeTests
         Assert.NotNull(execution.ReportJson);
         using var document = JsonDocument.Parse(execution.ReportJson);
         var root = document.RootElement;
-        Assert.Equal(3, root.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(4, root.GetProperty("schemaVersion").GetInt32());
         Assert.Equal("load-only", root.GetProperty("mode").GetString());
         Assert.Equal("IMAGE_LOADED", root.GetProperty("result").GetProperty("name").GetString());
         Assert.Equal(0, root.GetProperty("result").GetProperty("code").GetInt32());

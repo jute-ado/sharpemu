@@ -862,6 +862,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	public string? LastImportResolutionTrace { get; private set; }
 
+	public IReadOnlyList<CpuImportTraceEntry>? LastImportTraceEntries { get; private set; }
+
 	public ulong? LastEntryReturnValue { get; private set; }
 
 	private unsafe static ulong ReadCtxU64(void* contextRecord, int offset)
@@ -1136,6 +1138,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		LastSessionUniqueNidsHit = 0;
 		_sessionImportEntryHits = Array.Empty<int>();
 		LastImportResolutionTrace = null;
+		LastImportTraceEntries = null;
 		LastEntryReturnValue = null;
 		_sessionEntryImportCount = 0;
 		var workerImportsBefore = GetTotalGuestThreadImports();
@@ -1277,11 +1280,13 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 				workerImports,
 				Volatile.Read(ref _sessionEntryImportCount));
 			LastSessionUniqueNidsHit = CountSessionUniqueImportNids();
-			LastImportResolutionTrace = executionOptions.ImportTraceLimit > 0
-				? BuildRecentImportTrace(
+			var importTraceSnapshot = executionOptions.ImportTraceLimit > 0
+				? _recentImportTrace?.BuildSnapshot(
 					executionOptions.ImportTraceLimit,
 					LastTrapInfo?.GuestThreadHandle)
 				: null;
+			LastImportResolutionTrace = importTraceSnapshot?.Formatted;
+			LastImportTraceEntries = importTraceSnapshot?.Entries;
 			shutdownRegistration.Dispose();
 			if (ReferenceEquals(_activeSessionBackend, this))
 			{
