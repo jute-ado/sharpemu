@@ -84,6 +84,14 @@ public static class KernelPthreadExtendedCompatExports
         }
     }
 
+    internal static void ReleaseThreadState(ulong threadHandle)
+    {
+        lock (_stateGate)
+        {
+            _threadStates.Remove(threadHandle);
+        }
+    }
+
     internal static void ReleaseOwnedRwlocks(ulong threadHandle)
     {
         if (threadHandle == 0)

@@ -41,7 +41,8 @@ test-driven workflow. Major downstream differences include:
   rollback of failed read/write-lock initialization, input-only equeue timeout
   handling that avoids mutating guest polling intervals, bounded pthread-key
   destructor callbacks and thread-specific value cleanup when guest threads
-  exit before they become joinable, plus session
+  exit before they become joinable, and post-join scheduler, metadata, and
+  unmanaged-handle reaping, plus session
   reports
   that retain native import progress and exact per-session unique-NID counts
   across guest workers and distinguish

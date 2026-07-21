@@ -59,6 +59,17 @@ internal static class KernelPthreadState
         return Threads.TryGetValue(threadHandle, out identity);
     }
 
+    internal static bool ReleaseThreadHandle(ulong threadHandle)
+    {
+        if (!Threads.TryRemove(threadHandle, out _))
+        {
+            return false;
+        }
+
+        Marshal.FreeHGlobal(new IntPtr(unchecked((long)threadHandle)));
+        return true;
+    }
+
     private static void EnsureCurrentThreadRegistered()
     {
         if (_currentThreadHandle != 0)
