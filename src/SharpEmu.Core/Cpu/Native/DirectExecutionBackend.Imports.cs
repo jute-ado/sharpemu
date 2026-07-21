@@ -339,6 +339,8 @@ public sealed partial class DirectExecutionBackend
 			recentImportTraceEntry = RecordRecentImportTrace(
 				num,
 				importStubEntry.Nid,
+				matchedExport?.LibraryName,
+				matchedExport?.Name,
 				num7,
 				cpuContext[CpuRegister.Rdi],
 				cpuContext[CpuRegister.Rsi],
@@ -653,6 +655,8 @@ public sealed partial class DirectExecutionBackend
 		var recentImportTraceEntry = RecordRecentImportTrace(
 			dispatchIndex,
 			importStubEntry.Nid,
+			export.LibraryName,
+			export.Name,
 			returnRip,
 			cpuContext[CpuRegister.Rdi],
 			cpuContext[CpuRegister.Rsi],

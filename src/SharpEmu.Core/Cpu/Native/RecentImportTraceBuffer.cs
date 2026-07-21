@@ -8,6 +8,8 @@ namespace SharpEmu.Core.Cpu.Native;
 internal sealed class RecentImportTraceEntry(
     long DispatchIndex,
     string Nid,
+    string? LibraryName,
+    string? ExportName,
     ulong ThreadHandle,
     ulong ReturnRip,
     ulong Arg0,
@@ -22,6 +24,8 @@ internal sealed class RecentImportTraceEntry(
 
     public long DispatchIndex { get; } = DispatchIndex;
     public string Nid { get; } = Nid;
+    public string? LibraryName { get; } = LibraryName;
+    public string? ExportName { get; } = ExportName;
     public ulong ThreadHandle { get; } = ThreadHandle;
     public ulong ReturnRip { get; } = ReturnRip;
     public ulong Arg0 { get; } = Arg0;
@@ -153,8 +157,12 @@ internal sealed class RecentImportTraceBuffer
             var returnValue = entry.TryGetReturnValue(out var completedReturnValue)
                 ? $"0x{completedReturnValue:X16}"
                 : "<pending>";
+            var symbol = entry.LibraryName is { Length: > 0 } libraryName &&
+                entry.ExportName is { Length: > 0 } exportName
+                ? $"{libraryName}:{exportName}"
+                : "<unresolved>";
             builder.Append(
-                $"#{entry.DispatchIndex} nid={entry.Nid} thread=0x{entry.ThreadHandle:X16} " +
+                $"#{entry.DispatchIndex} nid={entry.Nid} symbol={symbol} thread=0x{entry.ThreadHandle:X16} " +
                 $"ret=0x{entry.ReturnRip:X16} " +
                 $"rdi=0x{entry.Arg0:X16} rsi=0x{entry.Arg1:X16} " +
                 $"rdx=0x{entry.Arg2:X16} rcx=0x{entry.Arg3:X16} " +
