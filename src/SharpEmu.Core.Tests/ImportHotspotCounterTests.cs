@@ -33,7 +33,11 @@ public sealed class ImportHotspotCounterTests
 
         profile.Record("libc:memcpy", 0x12, 0x8001234);
         profile.Record("libc:memcpy", 0x12, 0x8001234);
-        profile.Record("libKernel:sceKernelWaitSema", 0x34, 0x8005678);
+        profile.Record(
+            "libKernel:sceKernelWaitSema",
+            0x34,
+            0x8005678,
+            "libSceJobManager+0x5678");
 
         var snapshot = profile.TakeTop(4);
 
@@ -42,6 +46,19 @@ public sealed class ImportHotspotCounterTests
         Assert.Equal(
             new ImportHotspot("libc:memcpy@0x0000000008001234", 2),
             snapshot.CallSites[0]);
+        Assert.Equal(
+            new ImportHotspot(
+                "0x0000000000000012:libc:memcpy@0x0000000008001234",
+                2),
+            snapshot.ThreadCallSites[0]);
+        Assert.Equal(
+            new ImportHotspot("0x0000000000000012:libc:memcpy", 2),
+            snapshot.ThreadImports[0]);
+        Assert.Contains(
+            new ImportHotspot(
+                "libKernel:sceKernelWaitSema@libSceJobManager+0x5678",
+                1),
+            snapshot.CallSites);
         Assert.Empty(profile.TakeTop(4).Imports);
     }
 

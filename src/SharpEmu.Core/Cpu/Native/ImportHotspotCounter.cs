@@ -10,7 +10,9 @@ internal readonly record struct ImportHotspot(string Name, long Count);
 internal readonly record struct ImportProfileSnapshot(
     ImportHotspot[] Imports,
     ImportHotspot[] Threads,
-    ImportHotspot[] CallSites);
+    ImportHotspot[] CallSites,
+    ImportHotspot[] ThreadImports,
+    ImportHotspot[] ThreadCallSites);
 
 internal sealed class ImportHotspotCounter
 {
@@ -47,18 +49,32 @@ internal sealed class ImportProfileWindow
     private readonly ImportHotspotCounter _imports = new();
     private readonly ImportHotspotCounter _threads = new();
     private readonly ImportHotspotCounter _callSites = new();
+    private readonly ImportHotspotCounter _threadImports = new();
+    private readonly ImportHotspotCounter _threadCallSites = new();
 
-    public void Record(string importName, ulong guestThreadHandle, ulong returnRip)
+    public void Record(
+        string importName,
+        ulong guestThreadHandle,
+        ulong returnRip,
+        string? callSite = null)
     {
+        var site = string.IsNullOrWhiteSpace(callSite)
+            ? $"0x{returnRip:X16}"
+            : callSite;
         _imports.Record(importName);
         _threads.Record($"0x{guestThreadHandle:X16}");
-        _callSites.Record($"{importName}@0x{returnRip:X16}");
+        _callSites.Record($"{importName}@{site}");
+        _threadImports.Record($"0x{guestThreadHandle:X16}:{importName}");
+        _threadCallSites.Record(
+            $"0x{guestThreadHandle:X16}:{importName}@{site}");
     }
 
     public ImportProfileSnapshot TakeTop(int limit) => new(
         _imports.TakeTop(limit),
         _threads.TakeTop(limit),
-        _callSites.TakeTop(limit));
+        _callSites.TakeTop(limit),
+        _threadImports.TakeTop(limit),
+        _threadCallSites.TakeTop(limit));
 }
 
 internal sealed class ImportProfileBoundary
