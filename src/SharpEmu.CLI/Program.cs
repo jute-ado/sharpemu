@@ -2115,7 +2115,13 @@ internal static partial class Program
                 instruction.Text,
                 instruction.FlowControl,
                 instruction.NearBranchTarget is { } branchTarget ? FormatAddress(branchTarget) : null,
-                instruction.MemoryAddress is { } memoryAddress ? FormatAddress(memoryAddress) : null)).ToArray())).ToArray();
+                instruction.NearBranchTarget is { } locatedBranchTarget
+                    ? BuildCodeLocationReport(locatedBranchTarget, application, executablePath)
+                    : null,
+                instruction.MemoryAddress is { } memoryAddress ? FormatAddress(memoryAddress) : null,
+                instruction.MemoryAddress is { } locatedMemoryAddress
+                    ? BuildCodeLocationReport(locatedMemoryAddress, application, executablePath)
+                    : null)).ToArray())).ToArray();
 
     private static CliCodeLocationReport? BuildCodeLocationReport(
         ulong address,
@@ -2729,7 +2735,9 @@ internal static partial class Program
         string Text,
         string FlowControl,
         string? NearBranchTarget,
-        string? MemoryAddress);
+        CliCodeLocationReport? NearBranchTargetLocation,
+        string? MemoryAddress,
+        CliCodeLocationReport? MemoryAddressLocation);
 
     private sealed record CliCpuRegisterReport(
         string Rax,
