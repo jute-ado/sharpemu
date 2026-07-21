@@ -43,7 +43,8 @@ test-driven workflow. Major downstream differences include:
   reports
   that retain native import progress and exact per-session unique-NID counts
   across guest workers and distinguish
-  normal process exit codes from CPU traps, structured faulting-instruction
+  normal process exit codes from CPU traps, preserve structured native trap
+  details instead of generic backend failures, include faulting-instruction
   decoding, cross-platform general-register snapshots, guest frame chains
   constrained to registered stack ranges with fault and return-site code
   windows, mapped-image-relative code locations, bounded fault-time guest stack

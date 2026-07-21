@@ -369,24 +369,6 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         var backendName = string.IsNullOrWhiteSpace(_nativeCpuBackend.BackendName)
             ? "native-backend"
             : _nativeCpuBackend.BackendName;
-        var backendError = string.IsNullOrWhiteSpace(_nativeCpuBackend.LastError)
-            ? "unknown backend error"
-            : _nativeCpuBackend.LastError;
-        if (nativeResult == OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_IMPLEMENTED)
-        {
-            LastNotImplementedInfo = new CpuNotImplementedInfo(
-                CpuNotImplementedSource.NativeBackend,
-                entryPoint,
-                nid: null,
-                exportName: "cpu_engine_native_only",
-                libraryName: backendName,
-                detail: backendError);
-        }
-        LastMilestoneLog = string.Concat(
-            LastMilestoneLog,
-            Environment.NewLine,
-            $"CpuEngine native-only failed: {backendError}");
-        Log.Error($"Native backend FAILED: {backendError}");
         var failureReason = nativeResult switch
         {
             OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP => CpuExitReason.CpuTrap,
@@ -407,12 +389,59 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
                     context.Memory.TryRead(context.Rip, opcode) ? opcode[0] : (byte)0);
             }
         }
+        var backendError = BuildNativeFailureDetail(
+            nativeResult,
+            _nativeCpuBackend.LastError,
+            LastTrapInfo);
+        if (nativeResult == OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_IMPLEMENTED)
+        {
+            LastNotImplementedInfo = new CpuNotImplementedInfo(
+                CpuNotImplementedSource.NativeBackend,
+                entryPoint,
+                nid: null,
+                exportName: "cpu_engine_native_only",
+                libraryName: backendName,
+                detail: backendError);
+        }
+        LastMilestoneLog = string.Concat(
+            LastMilestoneLog,
+            Environment.NewLine,
+            $"CpuEngine native-only failed: {backendError}");
+        Log.Error($"Native backend FAILED: {backendError}");
         return FailEarly(
             nativeResult,
             failureReason,
             context.Rip,
             importsHit: _nativeCpuBackend.LastSessionImportsHit,
             uniqueNidsHit: _nativeCpuBackend.LastSessionUniqueNidsHit);
+    }
+
+    private static string BuildNativeFailureDetail(
+        OrbisGen2Result result,
+        string? backendError,
+        CpuTrapInfo? trapInfo)
+    {
+        if (!string.IsNullOrWhiteSpace(backendError))
+        {
+            return backendError;
+        }
+
+        if (result != OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP || trapInfo is not { } trap)
+        {
+            return result.ToString();
+        }
+
+        var detail = $"CPU trap at RIP=0x{trap.InstructionPointer:X16}";
+        if (trap.ExceptionCode is { } exceptionCode)
+        {
+            detail += $", exception=0x{exceptionCode:X8}";
+        }
+        if (trap.AccessKind is { } accessKind && trap.AccessAddress is { } accessAddress)
+        {
+            detail += $", access={accessKind.ToString().ToLowerInvariant()}@0x{accessAddress:X16}";
+        }
+
+        return detail;
     }
 
     private ulong TryMapStackRegion()
