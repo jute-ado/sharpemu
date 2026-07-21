@@ -107,6 +107,14 @@ public sealed class GuestThreadLifecycleIntegrationTests
             Assert.Equal(
                 ThreadHandle,
                 await exited.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.True(backend.TryReapThread(ThreadHandle));
+            Assert.False(
+                backend.TryJoinThread(
+                    creatorContext,
+                    ThreadHandle,
+                    out _,
+                    out var repeatedJoinError));
+            Assert.Contains("unknown guest thread", repeatedJoinError, StringComparison.Ordinal);
         }
         finally
         {

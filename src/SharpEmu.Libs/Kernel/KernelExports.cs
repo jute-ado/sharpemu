@@ -340,7 +340,8 @@ public static class KernelExports
         }
 
         var returnValue = 0UL;
-        if (GuestThreadExecution.Scheduler is { } scheduler &&
+        var scheduler = GuestThreadExecution.Scheduler;
+        if (scheduler is not null &&
             !scheduler.TryJoinThread(ctx, threadId, out returnValue, out var error))
         {
             Console.Error.WriteLine(
@@ -361,6 +362,12 @@ public static class KernelExports
             ctx[CpuRegister.Rax] =
                 unchecked((ulong)(int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        if (scheduler?.TryReapThread(threadId) == true)
+        {
+            KernelPthreadExtendedCompatExports.ReleaseThreadState(threadId);
+            KernelPthreadState.ReleaseThreadHandle(threadId);
         }
 
         ctx[CpuRegister.Rax] = 0;

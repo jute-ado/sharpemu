@@ -43,6 +43,11 @@ public interface IGuestThreadScheduler
         out ulong returnValue,
         out string? error);
 
+    /// <summary>
+    /// Removes a successfully joined, fully exited thread from scheduler state.
+    /// </summary>
+    bool TryReapThread(ulong threadHandle) => false;
+
     void Pump(CpuContext callerContext, string reason);
 
     /// <summary>

@@ -4149,6 +4149,49 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return false;
 	}
 
+	public bool TryReapThread(ulong threadHandle)
+	{
+		Thread? hostThread;
+		using (LockGate("TryReapThread.inspect"))
+		{
+			if (!_guestThreads.TryGetValue(threadHandle, out var thread) ||
+				thread.State != GuestThreadRunState.Exited)
+			{
+				return false;
+			}
+
+			hostThread = thread.HostThread;
+		}
+
+		if (hostThread is not null && hostThread.IsAlive)
+		{
+			if (ReferenceEquals(hostThread, Thread.CurrentThread))
+			{
+				return false;
+			}
+
+			hostThread.Join();
+		}
+
+		GuestContinuationRunner? continuationRunner;
+		using (LockGate("TryReapThread.remove"))
+		{
+			if (!_guestThreads.TryGetValue(threadHandle, out var thread) ||
+				thread.State != GuestThreadRunState.Exited)
+			{
+				return false;
+			}
+
+			_guestThreads.Remove(threadHandle);
+			Volatile.Write(ref _guestThreadCount, _guestThreads.Count);
+			continuationRunner = thread.ContinuationRunner;
+			thread.ContinuationRunner = null;
+		}
+
+		continuationRunner?.Dispose();
+		return true;
+	}
+
 	public void Pump(CpuContext callerContext, string reason)
 	{
 		_ = callerContext;
