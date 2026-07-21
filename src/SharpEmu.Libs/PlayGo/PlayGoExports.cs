@@ -837,7 +837,7 @@ public static class PlayGoExports
         }
     }
 
-    internal static void ResetForTests()
+    internal static void ResetRuntimeState()
     {
         lock (_stateGate)
         {

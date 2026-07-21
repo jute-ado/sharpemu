@@ -50,7 +50,7 @@ public sealed class JsonExportRegistrationTests
     [Fact]
     public void SetGlobalNullAccessCallback_StoresHookAndReturnsOk()
     {
-        JsonExports.ResetForTests();
+        JsonExports.ResetRuntimeState();
         var manager = CreateRegisteredManager();
         var ctx = new CpuContext(new FakeCpuMemory(0x1_0000_0000, 0x1000), Generation.Gen5);
         ctx[CpuRegister.Rdi] = 0x1_0000_0000; // Initializer instance
@@ -71,7 +71,7 @@ public sealed class JsonExportRegistrationTests
     [Fact]
     public void DispatchValueConstructor_RunsHandlerAndReturnsThis()
     {
-        JsonExports.ResetForTests();
+        JsonExports.ResetRuntimeState();
         var manager = CreateRegisteredManager();
         var ctx = new CpuContext(new FakeCpuMemory(0x1_0000_0000, 0x1000), Generation.Gen5);
         ctx[CpuRegister.Rdi] = 0x1_0000_0000;

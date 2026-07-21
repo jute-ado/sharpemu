@@ -94,6 +94,8 @@ test-driven workflow. Major downstream differences include:
   decoder registries and restarts their guest-visible IDs between titles
 - C++ ABI session teardown that releases abandoned static-initializer guards so
   later titles cannot skip initialization or spin on stale owner threads
+- application-service session teardown that resets PlayGo initialization and
+  clears JSON guest objects and callback pointers between titles
 - process-scoped event queues, event flags, semaphores, and exception handlers
   reset between sessions with blocked waiters woken through normal deleted-object
   semantics and deterministic handle allocation for the next process
