@@ -184,6 +184,43 @@ public sealed class KernelFilesystemContractTests : IDisposable
         Assert.Equal(0, KernelMemoryCompatExports.KernelClose(_context));
     }
 
+    [Fact]
+    public void DevlogContainerSupportsStatDirectoryEnumerationAndFstat()
+    {
+        WritePath("/devlog");
+        _context[CpuRegister.Rsi] = StatAddress;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelStat(_context));
+
+        var pathStat = new byte[KernelStatSize];
+        Assert.True(_context.Memory.TryRead(StatAddress, pathStat));
+        Assert.Equal(0x41FF, BinaryPrimitives.ReadUInt16LittleEndian(pathStat.AsSpan(8)));
+
+        WritePath("/devlog");
+        _context[CpuRegister.Rsi] = OpenDirectory;
+        Assert.Equal(0, KernelExports.KernelOpen(_context));
+        var fd = unchecked((int)_context[CpuRegister.Rax]);
+
+        _context[CpuRegister.Rdi] = unchecked((ulong)fd);
+        _context[CpuRegister.Rsi] = StatAddress + 0x100;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelFstat(_context));
+        var descriptorStat = new byte[KernelStatSize];
+        Assert.True(_context.Memory.TryRead(StatAddress + 0x100, descriptorStat));
+        Assert.Equal(pathStat, descriptorStat);
+
+        _context[CpuRegister.Rdi] = unchecked((ulong)fd);
+        _context[CpuRegister.Rsi] = StatAddress;
+        _context[CpuRegister.Rdx] = 512;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelGetdents(_context));
+        Assert.Equal(512, unchecked((int)_context[CpuRegister.Rax]));
+        Assert.True(_context.TryReadByte(StatAddress + 7, out var nameLength));
+        var nameBytes = new byte[nameLength];
+        Assert.True(_context.Memory.TryRead(StatAddress + 8, nameBytes));
+        Assert.Equal("app", Encoding.UTF8.GetString(nameBytes));
+
+        _context[CpuRegister.Rdi] = unchecked((ulong)fd);
+        Assert.Equal(0, KernelMemoryCompatExports.KernelClose(_context));
+    }
+
     public void Dispose()
     {
         Environment.SetEnvironmentVariable(

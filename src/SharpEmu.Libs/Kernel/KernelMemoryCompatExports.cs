@@ -101,6 +101,7 @@ public static partial class KernelMemoryCompatExports
     private static readonly Dictionary<int, FileStream> _openFiles = new();
     private static readonly Dictionary<int, OpenDirectory> _openDirectories = new();
     private static readonly Dictionary<int, string> _openRandomDevices = new();
+    private static readonly string[] DevlogContainerEntries = ["app"];
     private static readonly object _libcAllocGate = new();
     private static readonly object _memoryGate = new();
     private static readonly object _ioTraceGate = new();
@@ -1918,7 +1919,9 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        if (IsGuestMountRootPath(guestPath))
+        var isGuestMountRoot = IsGuestMountRootPath(guestPath);
+        var isDevlogContainer = IsDevlogContainerPath(guestPath);
+        if (isGuestMountRoot || isDevlogContainer)
         {
             if (access != FileAccess.Read ||
                 (flags & (O_CREAT | O_TRUNC | O_APPEND)) != 0)
@@ -1932,15 +1935,17 @@ public static partial class KernelMemoryCompatExports
                 directoryFd = AllocateGuestFileDescriptor();
                 _openDirectories[directoryFd] = new OpenDirectory
                 {
-                    Path = "/",
-                    Entries = GetGuestMountRootEntries(),
+                    Path = isGuestMountRoot ? "/" : "/devlog",
+                    Entries = isGuestMountRoot
+                        ? GetGuestMountRootEntries()
+                        : DevlogContainerEntries,
                     IsVirtual = true,
                     NextIndex = 0
                 };
             }
 
             LogOpenTrace(
-                $"_open guest-root path='{guestPath}' flags=0x{flags:X8} fd={directoryFd}");
+                $"_open virtual-dir path='{guestPath}' flags=0x{flags:X8} fd={directoryFd}");
             ctx[CpuRegister.Rax] = unchecked((ulong)directoryFd);
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
@@ -2120,20 +2125,21 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
-        if (IsGuestMountRootPath(guestPath))
+        if (IsGuestMountRootPath(guestPath) || IsDevlogContainerPath(guestPath))
         {
             if (!TryWriteGuestMountRootStat(ctx, statAddress))
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
             }
 
-            LogIoTrace("stat", "/", "virtual=1 found=1");
+            LogIoTrace("stat", guestPath, "virtual=1 found=1");
             ctx[CpuRegister.Rax] = 0;
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
         if (!TryResolveGuestPath(guestPath, out var hostPath))
         {
+            LogIoTrace("stat", guestPath, "result=invalid_path");
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
@@ -8544,6 +8550,12 @@ public static partial class KernelMemoryCompatExports
     private static bool IsRandomDevicePath(string guestPath) =>
         string.Equals(guestPath, "/dev/random", StringComparison.Ordinal) ||
         string.Equals(guestPath, "/dev/urandom", StringComparison.Ordinal);
+
+    private static bool IsDevlogContainerPath(string guestPath) =>
+        string.Equals(
+            guestPath.Replace('\\', '/').TrimEnd('/'),
+            "/devlog",
+            StringComparison.OrdinalIgnoreCase);
 
     private static bool IsGuestMountRootPath(string guestPath)
     {

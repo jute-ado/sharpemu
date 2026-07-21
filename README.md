@@ -64,8 +64,9 @@ test-driven workflow. Major downstream differences include:
   Prospero-compatible gap errors, subrange direct-memory release, and
   idempotent fixed-range reservations
 - sandboxed guest filesystem handling with virtual `/dev/random` and
-  `/dev/urandom` descriptors that support entropy reads, stat, and close
-  lifecycles without exposing host device paths
+  `/dev/urandom` descriptors that support entropy-read, stat, and close
+  lifecycles, plus a consistent virtual `/devlog` container for stat, directory
+  enumeration, open, and fstat without exposing host device paths
 - distinct four-argument POSIX and named five-argument Sony pthread creation
   ABIs, so unused registers cannot become guest thread names
 - application plugin discovery and symbol resolution, including deferred module
@@ -169,7 +170,7 @@ window; it does not imply the game is playable.
 | Jusant | PPSA10264 | Loads seven modules and sustains a 90-second UE5 execution run without a CPU trap. No gameplay or rendered frame is validated yet. |
 | Poppy Playtime: Chapter 1 | PPSA20591 | Loads seven modules and sustains the execution-survival window without a CPU trap. No gameplay is validated yet. |
 | SILENT HILL: The Short Message | PPSA10112 | Loads six modules and sustains the execution-survival window without a CPU trap. No gameplay is validated yet. |
-| SUPER BOMBERMAN R 2 | PPSA07190 | Loads thirteen modules, presents a 1920×1080 guest frame, and reaches more than one million import dispatches across 206 unique NIDs with successful size-aware game-preset and accessibility-preference queries, virtual `/dev/urandom` entropy reads, and correct unnamed POSIX thread creation instead of treating stale register data as a name; execution currently ends on the registered primary pthread in a null-read CPU trap at `Il2CppUserAssemblies.prx+0x141F26A`, with bounded frame, decoded stack-code-candidate paths, module-relative branch/data targets, and bounded direct-callee context for the `+0x25CF1A` to `+0x29A0F0` call available alongside symbolized, fault-thread-prioritized import argument/return traces. |
+| SUPER BOMBERMAN R 2 | PPSA07190 | Loads thirteen modules, presents a 1920×1080 guest frame, and reaches more than one million import dispatches across 205 unique NIDs with successful size-aware game-preset and accessibility-preference queries, virtual `/dev/urandom` entropy reads, a consistent virtual `/devlog` container that avoids invalid stat/mkdir fallbacks, and correct unnamed POSIX thread creation instead of treating stale register data as a name; execution currently ends on the registered primary pthread in a null-read CPU trap at `Il2CppUserAssemblies.prx+0x141F26A`, with bounded frame, decoded stack-code-candidate paths, module-relative branch/data targets, and bounded direct-callee context for the `+0x25CF1A` to `+0x29A0F0` call available alongside structured, symbolized, fault-thread-prioritized import argument/return traces. |
 | Demon's Souls | PPSA01342 | Loads the main image and one module, presents a 3840×2160 splash, and reaches more than 670,000 import dispatches after canonical transaction-resource handling removes the earlier address-`0x9` fault; execution currently ends at an `int 41h` trap in `eboot.bin+0x1F403A3`. |
 
 These results are observations, not compatibility promises. Exact progress can
