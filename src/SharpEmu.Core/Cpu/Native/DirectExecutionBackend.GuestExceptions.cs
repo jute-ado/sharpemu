@@ -23,6 +23,14 @@ public sealed unsafe partial class DirectExecutionBackend
     [ThreadStatic]
     private static ulong _currentExternalGuestThreadHandle;
 
+    private static ulong GetCurrentGuestThreadHandle()
+    {
+        var scheduledThreadHandle = GuestThreadExecution.CurrentGuestThreadHandle;
+        return scheduledThreadHandle != 0
+            ? scheduledThreadHandle
+            : _currentExternalGuestThreadHandle;
+    }
+
     private readonly Dictionary<ulong, ExternalGuestThreadState>
         _externalGuestThreads = [];
     private readonly Dictionary<ulong, PendingGuestException>

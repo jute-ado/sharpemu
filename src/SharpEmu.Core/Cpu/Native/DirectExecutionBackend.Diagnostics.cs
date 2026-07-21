@@ -36,7 +36,7 @@ public sealed partial class DirectExecutionBackend
 		var entry = new RecentImportTraceEntry(
 				dispatchIndex,
 				nid,
-				GuestThreadExecution.CurrentGuestThreadHandle,
+				GetCurrentGuestThreadHandle(),
 				returnRip,
 				arg0,
 				arg1,
