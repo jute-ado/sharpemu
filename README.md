@@ -69,7 +69,9 @@ test-driven workflow. Major downstream differences include:
 - guest virtual- and direct-memory query contracts with exact argument
   validation, registered stack classification, terminal direct-memory ranges,
   Prospero-compatible gap errors, subrange direct-memory release, and
-  idempotent fixed-range reservations
+  idempotent fixed-range reservations; process reset also releases tracked libc
+  heap allocations, discards stale mappings and names, and restarts direct and
+  flexible-memory accounting for the next title
 - sandboxed guest filesystem handling with virtual `/dev/random` and
   `/dev/urandom` descriptors that support entropy-read, stat, and close
   lifecycles, plus a consistent virtual `/devlog` container for stat, directory
