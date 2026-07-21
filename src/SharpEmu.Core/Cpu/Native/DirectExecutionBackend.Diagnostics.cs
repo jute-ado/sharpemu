@@ -20,6 +20,8 @@ public sealed partial class DirectExecutionBackend
 	private RecentImportTraceEntry? RecordRecentImportTrace(
 		long dispatchIndex,
 		string nid,
+		string? libraryName,
+		string? exportName,
 		ulong returnRip,
 		ulong arg0,
 		ulong arg1,
@@ -36,6 +38,8 @@ public sealed partial class DirectExecutionBackend
 		var entry = new RecentImportTraceEntry(
 				dispatchIndex,
 				nid,
+				libraryName,
+				exportName,
 				GetCurrentGuestThreadHandle(),
 				returnRip,
 				arg0,

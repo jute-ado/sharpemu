@@ -155,6 +155,9 @@ public sealed class NativeImportBridgeTests
         Assert.Contains($"ret=0x{CodeAddress + 10:X16}", lines[0], StringComparison.Ordinal);
         Assert.Contains($"ret=0x{CodeAddress + 15:X16}", lines[1], StringComparison.Ordinal);
         Assert.All(lines, line => Assert.Contains($"nid={AddNid}", line, StringComparison.Ordinal));
+        Assert.All(
+            lines,
+            line => Assert.Contains("symbol=libSyntheticTest:syntheticAdd", line, StringComparison.Ordinal));
     }
 
     [HostX64Fact]

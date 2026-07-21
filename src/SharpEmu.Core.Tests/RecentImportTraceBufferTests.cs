@@ -73,6 +73,8 @@ public sealed class RecentImportTraceBufferTests
         new(
             dispatchIndex,
             $"nid-{dispatchIndex}",
+            LibraryName: "libTest",
+            ExportName: "testExport",
             threadHandle,
             ReturnRip: (ulong)dispatchIndex,
             Arg0: 1,
