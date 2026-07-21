@@ -23,7 +23,7 @@ public sealed class JsonValueExportsTests
 
     public JsonValueExportsTests()
     {
-        JsonExports.ResetForTests();
+        JsonExports.ResetRuntimeState();
         _ctx = new CpuContext(_memory, Generation.Gen5);
     }
 

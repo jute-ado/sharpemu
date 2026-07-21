@@ -38,7 +38,7 @@ public sealed class PlayGoExportsTests : IDisposable
         _app0Root = Path.Combine(Path.GetTempPath(), $"sharpemu-playgo-{Guid.NewGuid():N}");
         Directory.CreateDirectory(_app0Root);
         Environment.SetEnvironmentVariable("SHARPEMU_APP0_DIR", _app0Root);
-        PlayGoExports.ResetForTests();
+        PlayGoExports.ResetRuntimeState();
         _ctx = new CpuContext(_memory, Generation.Gen5);
     }
 
@@ -132,7 +132,7 @@ public sealed class PlayGoExportsTests : IDisposable
 
     public void Dispose()
     {
-        PlayGoExports.ResetForTests();
+        PlayGoExports.ResetRuntimeState();
         Environment.SetEnvironmentVariable("SHARPEMU_APP0_DIR", _originalApp0Root);
         Directory.Delete(_app0Root, recursive: true);
     }

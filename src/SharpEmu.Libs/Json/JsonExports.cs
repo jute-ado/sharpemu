@@ -556,7 +556,7 @@ public static class JsonExports
     internal static ulong GlobalNullAccessCallbackContextForTests =>
         _globalNullAccessCallbackContext;
 
-    internal static void ResetForTests()
+    internal static void ResetRuntimeState()
     {
         _values.Clear();
         _strings.Clear();

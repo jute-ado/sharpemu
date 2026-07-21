@@ -11,6 +11,7 @@ using SharpEmu.HLE.Host;
 using SharpEmu.Libs.VideoOut;
 using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.AppContent;
+using SharpEmu.Libs.Application;
 using SharpEmu.Libs.Audio;
 using SharpEmu.Libs.AvPlayer;
 using SharpEmu.Libs.Codec;
@@ -523,6 +524,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         AvPlayerLifecycle.ResetRuntimeState();
         MediaCodecLifecycle.ResetRuntimeState();
         CxxAbiLifecycle.ResetRuntimeState();
+        ApplicationServicesLifecycle.ResetRuntimeState();
         KernelMemoryLifecycle.ResetRuntimeState();
     }
 
