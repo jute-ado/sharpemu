@@ -102,6 +102,11 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
         ulong storageBufferOffsetAlignment = 1)
     {
         shader = null;
+        var translationWaveLaneCount = ResolveComputeTranslationWaveLaneCount(
+            waveLaneCount,
+            localSizeX,
+            localSizeY,
+            localSizeZ);
         if (!Gen5SpirvTranslator.TryCompileComputeShader(
                 state,
                 evaluation,
@@ -112,7 +117,7 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
                 out error,
                 totalGlobalBufferCount,
                 initialScalarBufferIndex,
-                waveLaneCount,
+                translationWaveLaneCount,
                 storageBufferOffsetAlignment))
         {
             return false;
@@ -120,6 +125,24 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
 
         shader = new VulkanCompiledGuestShader(compiled.Spirv);
         return true;
+    }
+
+    internal static uint ResolveComputeTranslationWaveLaneCount(
+        uint guestWaveLaneCount,
+        uint localSizeX,
+        uint localSizeY,
+        uint localSizeZ)
+    {
+        var localInvocationCount =
+            (ulong)localSizeX * localSizeY * localSizeZ;
+        // The wave64 bridge uses workgroup barriers. Partial guest waves have
+        // fewer than 64 host invocations, and complex scalar control flow can
+        // strand the bridge and reset the Vulkan device. Native 32-lane
+        // subgroup translation is an approximation for cross-half operations,
+        // but it preserves active work and cannot deadlock on absent lanes.
+        return guestWaveLaneCount == 64 && localInvocationCount < 64
+            ? 32u
+            : guestWaveLaneCount;
     }
 
     public IGuestCompiledShader GetDepthOnlyFragmentShader() =>
