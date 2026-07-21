@@ -466,20 +466,6 @@ public static class KernelEventQueueCompatExports
                     return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
                 }
 
-                if (timeoutAddress != 0)
-                {
-                    var remainingTicks = Math.Max(
-                        0L,
-                        deadlineTimestamp - Stopwatch.GetTimestamp());
-                    var remainingMicros = (uint)Math.Min(
-                        uint.MaxValue,
-                        remainingTicks * 1_000_000d / Stopwatch.Frequency);
-                    if (!ctx.TryWriteUInt32(timeoutAddress, remainingMicros))
-                    {
-                        return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
-                    }
-                }
-
                 deliveredCount = DequeueEvents(
                     ctx,
                     handle,
