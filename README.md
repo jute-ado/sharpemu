@@ -67,6 +67,10 @@ test-driven workflow. Major downstream differences include:
   these entries structurally with module-relative return locations and retains
   exact preceding-call evidence on every walked frame,
   and immediate teardown signaling for interruptible guest waits
+- current guest pthread attribute queries report the registered low stack
+  address and size derived from the executing stack pointer, so conservative
+  guest garbage collectors scan live roots without attributing that stack to
+  other threads
 - guest virtual- and direct-memory query contracts with exact argument
   validation, registered stack classification, terminal direct-memory ranges,
   Prospero-compatible gap errors, subrange direct-memory release, and
@@ -202,7 +206,7 @@ window; it does not imply the game is playable.
 | Jusant | PPSA10264 | Loads seven modules and sustains a 90-second UE5 execution run without a CPU trap. No gameplay or rendered frame is validated yet. |
 | Poppy Playtime: Chapter 1 | PPSA20591 | Loads seven modules and sustains the execution-survival window without a CPU trap. No gameplay is validated yet. |
 | SILENT HILL: The Short Message | PPSA10112 | Loads six modules and sustains the execution-survival window without a CPU trap. No gameplay is validated yet. |
-| SUPER BOMBERMAN R 2 | PPSA07190 | Loads thirteen modules, presents a 1920×1080 guest frame, and reaches more than one million import dispatches across 205 unique NIDs with successful size-aware game-preset and accessibility-preference queries, virtual `/dev/urandom` entropy reads, a consistent virtual `/devlog` container that avoids invalid stat/mkdir fallbacks, and correct unnamed POSIX thread creation instead of treating stale register data as a name. IL2CPP metadata resolves the current primary-pthread null-read trap at `Il2CppUserAssemblies.prx+0x141F26A` to `System.Func<NativeInputUpdateType, bool>.Invoke`, reached through `NativeInputRuntime.<set_onShouldRunUpdate>b__0`; a research-only null-callback bypass survives beyond this trap into Unity job-worker startup, confirming it is a progression gate. Structured reports now retain the bounded stack, register-pointer graph, managed caller evidence, decoded code paths, and symbolized fault-thread import arguments needed to isolate the callback-lifetime/ABI cause without shipping a title-specific workaround. |
+| SUPER BOMBERMAN R 2 | PPSA07190 | Loads thirteen modules and presents a 1920×1080 guest frame. Correct current-pthread stack attributes now let IL2CPP's conservative collector retain live stack roots, removing the former `System.Func<NativeInputUpdateType, bool>.Invoke` null-callback trap without a title-specific bypass. The game survives the 30-second window through Unity job-worker startup and nearly three million import dispatches; later native-exception/teardown behavior and newly reached compatibility warnings remain under investigation, so gameplay is not yet validated. |
 | Demon's Souls | PPSA01342 | Loads the main image and one module, presents a 3840×2160 splash, and reaches more than 670,000 import dispatches after canonical transaction-resource handling removes the earlier address-`0x9` fault; execution currently ends at an `int 41h` trap in `eboot.bin+0x1F403A3`. |
 
 These results are observations, not compatibility promises. Exact progress can

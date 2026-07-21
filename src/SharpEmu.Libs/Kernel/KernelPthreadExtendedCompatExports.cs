@@ -654,6 +654,21 @@ public static class KernelPthreadExtendedCompatExports
         lock (_stateGate)
         {
             var threadState = GetOrCreateThreadStateLocked(thread);
+            if (thread == KernelPthreadState.GetCurrentThreadHandle() &&
+                ctx.Memory is IGuestStackMemory stackMemory &&
+                stackMemory.TryGetStackRange(
+                    ctx[CpuRegister.Rsp],
+                    out var stackStart,
+                    out var stackEnd) &&
+                stackEnd > stackStart)
+            {
+                threadState.Attributes = threadState.Attributes with
+                {
+                    StackAddress = stackStart,
+                    StackSize = stackEnd - stackStart,
+                };
+            }
+
             _attrStates[outAttrAddress] = threadState.Attributes;
         }
 
