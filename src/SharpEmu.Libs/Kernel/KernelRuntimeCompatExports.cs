@@ -1372,6 +1372,8 @@ public static class KernelRuntimeCompatExports
     public static int KernelLoadStartModule(CpuContext ctx)
     {
         var modulePathAddress = ctx[CpuRegister.Rdi];
+        var moduleArgumentSize = ctx[CpuRegister.Rsi];
+        var moduleArgumentAddress = ctx[CpuRegister.Rdx];
         var resultAddress = ctx[CpuRegister.R9];
         if (resultAddress != 0 && !ctx.TryWriteInt32(resultAddress, 0))
         {
@@ -1429,8 +1431,8 @@ public static class KernelRuntimeCompatExports
                     if (!scheduler.TryCallGuestFunction(
                             ctx,
                             initializers[index],
-                            0,
-                            0,
+                            moduleArgumentSize,
+                            moduleArgumentAddress,
                             0,
                             0,
                             0,
