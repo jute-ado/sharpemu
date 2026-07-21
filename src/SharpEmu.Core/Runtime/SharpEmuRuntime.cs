@@ -513,6 +513,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         KernelPthreadLifecycle.ResetRuntimeState();
         KernelIoLifecycle.ResetRuntimeState();
         KernelEventObjectLifecycle.ResetRuntimeState();
+        KernelMemoryLifecycle.ResetRuntimeState();
     }
 
     private PreparedApplication PrepareApplicationCore(string normalizedEbootPath)

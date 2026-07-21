@@ -179,6 +179,51 @@ public static partial class KernelMemoryCompatExports
         _aprFileSizeCache.Clear();
     }
 
+    internal static void ResetMemoryRuntimeState()
+    {
+        LibcHeapAllocation[] libcAllocations;
+        lock (_libcAllocGate)
+        {
+            libcAllocations = _libcAllocations.Values.ToArray();
+            _libcAllocations.Clear();
+        }
+
+        foreach (var allocation in libcAllocations)
+        {
+            if (allocation.IsGuarded)
+            {
+                _ = HostMemory.Free(unchecked((ulong)allocation.BaseAddress));
+            }
+            else
+            {
+                Marshal.FreeHGlobal(allocation.BaseAddress);
+            }
+        }
+
+        lock (_memoryGate)
+        {
+            _directAllocations.Clear();
+            _mappedRegions.Clear();
+            _mappedRegionNames.Clear();
+            _nextPhysicalAddress = 0;
+            _nextVirtualAddress = 0;
+            _mainDirectMemoryPoolBase = UnsetMainDirectMemoryPoolBase;
+            _allocatedFlexibleBytes = 0;
+            _threadAtexitCountCallback = 0;
+            _threadAtexitReportCallback = 0;
+            _threadDtorsCallback = 0;
+            _dummyVtableAddress = 0;
+        }
+
+        Interlocked.Exchange(ref _nullMemsetRecoveryCount, 0);
+        Interlocked.Exchange(ref _nonCanonicalMemsetRecoveryCount, 0);
+        Interlocked.Exchange(ref _inaccessibleMemsetRecoveryCount, 0);
+        Interlocked.Exchange(ref _hostMemoryWriteFallbackCount, 0);
+        Interlocked.Exchange(ref _hostMemoryReadFallbackCount, 0);
+        Interlocked.Exchange(ref _nullWcscpyRecoveryCount, 0);
+        Interlocked.Exchange(ref _nullStrcasecmpRecoveryCount, 0);
+    }
+
     private static ulong _nextPhysicalAddress;
     private static ulong _nextVirtualAddress;
     // First guest virtual address handed out for direct/flexible mappings
