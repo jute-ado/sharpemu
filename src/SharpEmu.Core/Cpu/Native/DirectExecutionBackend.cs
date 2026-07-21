@@ -415,6 +415,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private bool _logImportRecent;
 
+	private bool _profileImports;
+
+	private readonly ImportProfileWindow _importProfile = new();
+
+	private readonly ImportProfileBoundary _importProfileBoundary = new(1_000_000);
+
 	private bool _logStackCheck;
 
 	private string? _probeImportReturn;
@@ -1187,6 +1193,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_SETUP"));
 		_logImportFrames = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_FRAMES"), "1", StringComparison.Ordinal);
 		_logImportRecent = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_RECENT"), "1", StringComparison.Ordinal);
+		_profileImports = string.Equals(
+			Environment.GetEnvironmentVariable("SHARPEMU_PROFILE_IMPORTS"),
+			"1",
+			StringComparison.Ordinal);
 		var importTraceCapacity = executionOptions.ImportTraceLimit > 0
 			? Math.Min(executionOptions.ImportTraceLimit, 4096)
 			: _logImportRecent ? 64 : 0;

@@ -133,6 +133,27 @@ public sealed partial class DirectExecutionBackend
 			return 18446744071562199042uL;
 		}
 		ImportStubEntry importStubEntry = importEntries[importIndex];
+		if (_profileImports)
+		{
+			var export = importStubEntry.Export;
+			var importName = export is null
+				? importStubEntry.Nid
+				: $"{export.LibraryName}:{export.Name}";
+			_importProfile.Record(
+				importName,
+				GetCurrentGuestThreadHandle(),
+				*(ulong*)(argPackPtr + 96));
+			if (_importProfileBoundary.ShouldTakeSnapshot(num))
+			{
+				var snapshot = _importProfile.TakeTop(12);
+				Console.Error.WriteLine(
+					$"[LOADER][PROFILE] Import#{num} imports: {FormatHotspots(snapshot.Imports)}");
+				Console.Error.WriteLine(
+					$"[LOADER][PROFILE] Import#{num} threads: {FormatHotspots(snapshot.Threads)}");
+				Console.Error.WriteLine(
+					$"[LOADER][PROFILE] Import#{num} callsites: {FormatHotspots(snapshot.CallSites)}");
+			}
+		}
 		MarkSessionImportEntryHit(importIndex);
 		int num2 = Volatile.Read(in _rawSentinelRecoveries);
 		if (num2 != _lastReportedRawSentinelRecoveries)
@@ -580,6 +601,9 @@ public sealed partial class DirectExecutionBackend
 			return 18446744071562199298uL;
 		}
 	}
+
+	private static string FormatHotspots(IEnumerable<ImportHotspot> hotspots) =>
+		string.Join(", ", hotspots.Select(static hotspot => $"{hotspot.Name}={hotspot.Count}"));
 
 	private void MarkSessionImportEntryHit(int importIndex)
 	{
