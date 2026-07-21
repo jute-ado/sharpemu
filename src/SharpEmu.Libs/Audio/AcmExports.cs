@@ -13,6 +13,13 @@ public static class AcmExports
     private static int _nextContextId;
     private static int _nextBatchId;
 
+    internal static void ResetRuntimeState()
+    {
+        Contexts.Clear();
+        Interlocked.Exchange(ref _nextContextId, 0);
+        Interlocked.Exchange(ref _nextBatchId, 0);
+    }
+
     private sealed class ContextState
     {
         public ConcurrentDictionary<uint, byte> Batches { get; } = new();

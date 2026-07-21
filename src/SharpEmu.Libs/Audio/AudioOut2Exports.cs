@@ -24,6 +24,15 @@ public static class AudioOut2Exports
     private static long _nextUserHandle = 1;
     private static int _nextPortId;
 
+    internal static void ResetRuntimeState()
+    {
+        Contexts.Clear();
+        Ports.Clear();
+        Interlocked.Exchange(ref _nextContextHandle, 1);
+        Interlocked.Exchange(ref _nextUserHandle, 1);
+        Interlocked.Exchange(ref _nextPortId, 0);
+    }
+
     [SysAbiExport(
         Nid = "g2tViFIohHE",
         ExportName = "sceAudioOut2Initialize",

@@ -516,7 +516,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         KernelIoLifecycle.ResetRuntimeState();
         KernelEventObjectLifecycle.ResetRuntimeState();
         NetworkLifecycle.ResetRuntimeState();
-        AudioOutLifecycle.ResetRuntimeState();
+        AudioSubsystemLifecycle.ResetRuntimeState();
         KernelMemoryLifecycle.ResetRuntimeState();
     }
 

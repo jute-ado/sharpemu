@@ -11,6 +11,11 @@ public static class FmodCompatExports
 {
     private static readonly ConcurrentDictionary<ulong, int> SetOutputCalls = new();
 
+    internal static void ResetRuntimeState()
+    {
+        SetOutputCalls.Clear();
+    }
+
     [SysAbiExport(
         Nid = "uPLTdl3psGk",
         ExportName = "FMOD_System_SetOutput",
