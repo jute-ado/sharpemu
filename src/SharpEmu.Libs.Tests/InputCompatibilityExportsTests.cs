@@ -13,7 +13,7 @@ public sealed class InputCompatibilityExportsTests
 {
     private const ulong OutputAddress = 0x1000;
     private const int OrbisUserServiceErrorInvalidArgument = unchecked((int)0x80960005);
-    private const int OrbisUserServiceErrorInvalidParameter = unchecked((int)0x80960009);
+    private const int OrbisUserServiceErrorNotLoggedIn = unchecked((int)0x80960009);
 
     [Fact]
     public void MouseInitReturnsSuccess()
@@ -48,8 +48,8 @@ public sealed class InputCompatibilityExportsTests
 
         var result = UserServiceExports.UserServiceGetAgeLevel(context);
 
-        Assert.Equal(OrbisUserServiceErrorInvalidParameter, result);
-        Assert.Equal(unchecked((ulong)OrbisUserServiceErrorInvalidParameter), context[CpuRegister.Rax]);
+        Assert.Equal(OrbisUserServiceErrorNotLoggedIn, result);
+        Assert.Equal(unchecked((ulong)OrbisUserServiceErrorNotLoggedIn), context[CpuRegister.Rax]);
         Assert.Equal(0, BinaryPrimitives.ReadInt32LittleEndian(output));
     }
 
