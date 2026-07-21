@@ -90,6 +90,47 @@ public sealed class KernelModulePathSafetyTests : IDisposable
     }
 
     [Fact]
+    public void LoadStartModuleForwardsGuestStartArgumentsToInitializers()
+    {
+        const string registeredPath = @"F:\game\Media\Plugins\plugin.prx";
+        const ulong initializer = 0x21000;
+        const ulong argumentSize = 0x34;
+        const ulong argumentAddress = 0x0000_0001_0002_50F0;
+        var handle = KernelModuleRegistry.RegisterModule(
+            registeredPath,
+            baseAddress: 0x20000,
+            size: 0x20000,
+            entryPoint: 0,
+            isMain: false);
+        KernelModuleRegistry.RegisterModuleInitializers(handle, [initializer]);
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(
+            PathAddress,
+            CreateReadChunk("/app0/Media/Plugins/plugin.prx"u8));
+        var context = CreateContext(memory, PathAddress);
+        context[CpuRegister.Rsi] = argumentSize;
+        context[CpuRegister.Rdx] = argumentAddress;
+        var scheduler = new RecordingScheduler();
+        var previousScheduler = GuestThreadExecution.Scheduler;
+        GuestThreadExecution.Scheduler = scheduler;
+
+        try
+        {
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelRuntimeCompatExports.KernelLoadStartModule(context));
+
+            Assert.Equal(
+                [(initializer, argumentSize, argumentAddress, 0UL)],
+                scheduler.Calls);
+        }
+        finally
+        {
+            GuestThreadExecution.Scheduler = previousScheduler;
+        }
+    }
+
+    [Fact]
     public void LoadStartModuleRetriesInitializationAfterGuestFailure()
     {
         const string registeredPath = @"F:\game\Media\Plugins\plugin.prx";
@@ -174,6 +215,8 @@ public sealed class KernelModulePathSafetyTests : IDisposable
 
         public List<ulong> EntryPoints { get; } = [];
 
+        public List<(ulong EntryPoint, ulong Arg0, ulong Arg1, ulong Arg2)> Calls { get; } = [];
+
         public void RegisterGuestThreadContext(ulong threadHandle, CpuContext context)
         {
         }
@@ -217,6 +260,7 @@ public sealed class KernelModulePathSafetyTests : IDisposable
             out string? error)
         {
             EntryPoints.Add(entryPoint);
+            Calls.Add((entryPoint, arg0, arg1, arg2));
             returnValue = 0;
             if (FailuresRemaining > 0)
             {
