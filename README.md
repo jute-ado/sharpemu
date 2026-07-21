@@ -54,9 +54,9 @@ test-driven workflow. Major downstream differences include:
   paths with mapped-image-relative branch/data targets and exact-boundary
   preceding-call hints plus bounded direct-callee context for frameless code,
   faulting guest-thread identity, and bounded cross-thread native
-  import traces with resolved library/export identities, all six SysV register
-  arguments, guest-visible return values, and a reserved fault-thread slice in
-  execution reports,
+  import traces with resolved library/export identities, chronological combined
+  history, all six SysV register arguments, guest-visible return values, and a
+  reserved fault-thread slice in execution reports,
   and immediate teardown signaling for interruptible guest waits
 - guest virtual- and direct-memory query contracts with exact argument
   validation, registered stack classification, terminal direct-memory ranges,

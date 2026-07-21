@@ -139,6 +139,13 @@ internal sealed class RecentImportTraceBuffer
 
             globalTail.Reverse();
             prioritized.AddRange(globalTail);
+            prioritized.Sort(static (left, right) =>
+            {
+                var dispatchOrder = left.DispatchIndex.CompareTo(right.DispatchIndex);
+                return dispatchOrder != 0
+                    ? dispatchOrder
+                    : left.ThreadHandle.CompareTo(right.ThreadHandle);
+            });
             return Format(prioritized);
         }
     }
