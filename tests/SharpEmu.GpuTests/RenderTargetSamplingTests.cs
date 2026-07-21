@@ -138,7 +138,9 @@ public sealed class RenderTargetSamplingTests
                 CreateTranslatedPassthroughVertex(),
                 globalMemoryBuffers);
 
-            var capturePath = WaitForCapture(captureDirectory);
+            var capturePath = WaitForCapture(
+                captureDirectory,
+                FirstDisplayAddress);
             var pixels = File.ReadAllBytes(capturePath);
             Assert.Equal(
                 checked((int)(DestinationWidth * DestinationHeight * 4)),
@@ -1331,17 +1333,55 @@ public sealed class RenderTargetSamplingTests
         return module.Build();
     }
 
-    private static string WaitForCapture(string captureDirectory)
+    [Fact]
+    public void WaitForCapture_SelectsRequestedGuestImageWhenInputsAreAlsoCaptured()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            $"sharpemu-capture-selection-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllBytes(
+                Path.Combine(directory, "0001-0x0000000000200000-96x54.rgba"),
+                [1]);
+            File.WriteAllBytes(
+                Path.Combine(directory, "0001-0x0000000000200000-96x54.bmp"),
+                [1]);
+            File.WriteAllBytes(
+                Path.Combine(directory, "0002-0x0000000000420000-1280x720.rgba"),
+                [2]);
+            File.WriteAllBytes(
+                Path.Combine(directory, "0002-0x0000000000420000-1280x720.bmp"),
+                [2]);
+
+            Assert.Contains(
+                "0x0000000000200000",
+                WaitForCapture(directory, FirstDisplayAddress));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static string WaitForCapture(
+        string captureDirectory,
+        ulong guestAddress)
     {
         var stopwatch = Stopwatch.StartNew();
+        var addressToken = $"-0x{guestAddress:X16}-";
         while (stopwatch.Elapsed < TimeSpan.FromSeconds(30))
         {
-            var captures = Directory.GetFiles(captureDirectory, "*.rgba");
-            var previews = Directory.GetFiles(captureDirectory, "*.bmp");
-            if (captures.Length != 0 && previews.Length != 0)
+            var captures = Directory.GetFiles(captureDirectory, "*.rgba")
+                .Where(path => Path.GetFileName(path).Contains(
+                    addressToken,
+                    StringComparison.Ordinal))
+                .ToArray();
+            if (captures.Length != 0 &&
+                captures.All(path => File.Exists(Path.ChangeExtension(path, ".bmp"))))
             {
                 Assert.Single(captures);
-                Assert.Single(previews);
                 return captures[0];
             }
 
