@@ -21,7 +21,8 @@ public readonly struct CpuTrapInfo
         ulong guestThreadHandle = 0,
         CpuCodeWindow? codeWindow = null,
         CpuMemoryWindow? stackWindow = null,
-        IReadOnlyList<CpuStackCodeCandidate>? stackCodeCandidates = null)
+        IReadOnlyList<CpuStackCodeCandidate>? stackCodeCandidates = null,
+        IReadOnlyList<CpuRegisterMemoryWindow>? registerMemoryWindows = null)
     {
         InstructionPointer = instructionPointer;
         Opcode = opcode;
@@ -39,6 +40,7 @@ public readonly struct CpuTrapInfo
         CodeWindow = codeWindow;
         StackWindow = stackWindow;
         StackCodeCandidates = stackCodeCandidates;
+        RegisterMemoryWindows = registerMemoryWindows;
     }
 
     public ulong InstructionPointer { get; }
@@ -73,6 +75,8 @@ public readonly struct CpuTrapInfo
 
     public IReadOnlyList<CpuStackCodeCandidate>? StackCodeCandidates { get; }
 
+    public IReadOnlyList<CpuRegisterMemoryWindow>? RegisterMemoryWindows { get; }
+
     public CpuTrapInfo WithDecodedInstruction(
         string instructionBytes,
         int instructionLength,
@@ -95,7 +99,8 @@ public readonly struct CpuTrapInfo
             GuestThreadHandle,
             CodeWindow,
             StackWindow,
-            StackCodeCandidates);
+            StackCodeCandidates,
+            RegisterMemoryWindows);
 
     public CpuTrapInfo WithStackFrames(IReadOnlyList<CpuStackFrame> stackFrames) =>
         new(
@@ -114,7 +119,8 @@ public readonly struct CpuTrapInfo
             GuestThreadHandle,
             CodeWindow,
             StackWindow,
-            StackCodeCandidates);
+            StackCodeCandidates,
+            RegisterMemoryWindows);
 
     public CpuTrapInfo WithCodeWindow(CpuCodeWindow codeWindow) =>
         new(
@@ -133,7 +139,8 @@ public readonly struct CpuTrapInfo
             GuestThreadHandle,
             codeWindow,
             StackWindow,
-            StackCodeCandidates);
+            StackCodeCandidates,
+            RegisterMemoryWindows);
 
     public CpuTrapInfo WithStackWindow(CpuMemoryWindow stackWindow) =>
         new(
@@ -152,7 +159,8 @@ public readonly struct CpuTrapInfo
             GuestThreadHandle,
             CodeWindow,
             stackWindow,
-            StackCodeCandidates);
+            StackCodeCandidates,
+            RegisterMemoryWindows);
 
     public CpuTrapInfo WithStackCodeCandidates(
         IReadOnlyList<CpuStackCodeCandidate> stackCodeCandidates) =>
@@ -172,5 +180,27 @@ public readonly struct CpuTrapInfo
             GuestThreadHandle,
             CodeWindow,
             StackWindow,
-            stackCodeCandidates);
+            stackCodeCandidates,
+            RegisterMemoryWindows);
+
+    public CpuTrapInfo WithRegisterMemoryWindows(
+        IReadOnlyList<CpuRegisterMemoryWindow> registerMemoryWindows) =>
+        new(
+            InstructionPointer,
+            Opcode,
+            ExceptionCode,
+            AccessAddress,
+            AccessKind,
+            InstructionBytes,
+            InstructionLength,
+            InstructionMnemonic,
+            InstructionText,
+            InstructionFlowControl,
+            Registers,
+            StackFrames,
+            GuestThreadHandle,
+            CodeWindow,
+            StackWindow,
+            StackCodeCandidates,
+            registerMemoryWindows);
 }

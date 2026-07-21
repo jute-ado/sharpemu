@@ -2091,6 +2091,7 @@ internal static partial class Program
             FormatAddress(value.GuestThreadHandle),
             BuildCpuCodeWindowReport(value.CodeWindow),
             BuildCpuMemoryWindowReport(value.StackWindow),
+            BuildCpuRegisterMemoryWindowReports(value.RegisterMemoryWindows),
             BuildCpuStackCodeCandidateReports(value.StackCodeCandidates, application, executablePath),
             BuildCodeLocationReport(value.InstructionPointer, application, executablePath),
             BuildCpuStackFrameReports(value.StackFrames, application, executablePath));
@@ -2128,6 +2129,12 @@ internal static partial class Program
                 FormatAddress(value.StartAddress),
                 value.Bytes,
                 value.ReferenceOffset);
+
+    private static IReadOnlyList<CliCpuRegisterMemoryWindowReport>? BuildCpuRegisterMemoryWindowReports(
+        IReadOnlyList<CpuRegisterMemoryWindow>? windows) =>
+        windows?.Select(window => new CliCpuRegisterMemoryWindowReport(
+            window.RegisterName,
+            BuildCpuMemoryWindowReport(window.Window)!)).ToArray();
 
     private static IReadOnlyList<CliCpuStackCodeCandidateReport>? BuildCpuStackCodeCandidateReports(
         IReadOnlyList<CpuStackCodeCandidate>? candidates,
@@ -2770,6 +2777,7 @@ internal static partial class Program
         string GuestThreadHandle,
         CliCpuCodeWindowReport? CodeWindow,
         CliCpuMemoryWindowReport? StackWindow,
+        IReadOnlyList<CliCpuRegisterMemoryWindowReport>? RegisterMemoryWindows,
         IReadOnlyList<CliCpuStackCodeCandidateReport>? StackCodeCandidates,
         CliCodeLocationReport? Location,
         IReadOnlyList<CliCpuStackFrameReport>? StackFrames);
@@ -2796,6 +2804,10 @@ internal static partial class Program
         string StartAddress,
         string Bytes,
         int ReferenceOffset);
+
+    private sealed record CliCpuRegisterMemoryWindowReport(
+        string RegisterName,
+        CliCpuMemoryWindowReport Window);
 
     private sealed record CliCpuStackCodeCandidateReport(
         int StackOffset,
