@@ -39,18 +39,20 @@ public sealed class StorageImageBindingTests
     [InlineData("ImageSample")]
     [InlineData("ImageSampleL")]
     [InlineData("ImageGather4")]
-    public void ArraySamplingOperationsUseArrayedImageBindings(string opcode)
+    [InlineData("ImageLoad")]
+    [InlineData("ImageLoadMip")]
+    public void ArrayReadOperationsUseArrayedImageBindings(string opcode)
     {
         Assert.True(Gen5ShaderTranslator.IsArrayedImageBinding(
             CreateBinding(opcode, [1u, 2u, 3u], isArray: true)));
     }
 
     [Theory]
-    [InlineData("ImageLoad", true)]
     [InlineData("ImageStore", true)]
+    [InlineData("ImageLoad", false)]
     [InlineData("ImageSample", false)]
     [InlineData("ImageGather4", false)]
-    public void NonArraySamplingBindingsRemainNonArrayed(string opcode, bool isArray)
+    public void NonArrayReadsAndArrayStoresRemainNonArrayed(string opcode, bool isArray)
     {
         Assert.False(Gen5ShaderTranslator.IsArrayedImageBinding(
             CreateBinding(opcode, [1u, 2u, 3u], isArray)));

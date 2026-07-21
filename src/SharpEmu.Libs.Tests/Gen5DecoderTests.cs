@@ -1405,6 +1405,60 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesTwoDimensionalArrayImageLoadWithLayerCoordinate()
+    {
+        var ctx = CreateContext(
+        [
+            0xF0000128u, 0x00000800u, // image_load v8, v[0:2], s[0:7] dmask:0x1 dim:2darray
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var instruction = program.Instructions[0];
+        var control = Assert.IsType<Gen5ImageControl>(instruction.Control);
+        Assert.Equal(5u, control.Dimension);
+        Assert.True(control.IsArray);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[1] = 0xC140_0000u;
+        scalarRegisters[2] = 0x0003_C003u;
+        var state = new Gen5ShaderState(program, scalarRegisters, Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompilePixelShader(
+                state,
+                evaluation,
+                Gen5PixelOutputKind.Float,
+                out var shader,
+                out var compileError),
+            compileError);
+
+        var imageType = GetSpirvInstruction(shader.Spirv, SpirvOp.TypeImage);
+        Assert.Equal((uint)SpirvImageDim.Dim2D, imageType[3]);
+        Assert.Equal(1u, imageType[5]);
+        var fetch = GetSpirvInstruction(shader.Spirv, SpirvOp.ImageFetch);
+        var coordinates = GetSpirvInstructionWithResult(
+            shader.Spirv,
+            SpirvOp.CompositeConstruct,
+            fetch[4]);
+        Assert.Contains(
+            GetSpirvInstructions(shader.Spirv, SpirvOp.TypeVector),
+            type => type[1] == coordinates[1] && type[3] == 3u);
+    }
+
+    [Fact]
     public void SkippedForwardBlockResolvesItsOwnImageDescriptorLoad()
     {
         const ulong tableAddress = 0x0000_2000_0000UL;
