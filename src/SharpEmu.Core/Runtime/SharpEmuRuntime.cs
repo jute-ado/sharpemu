@@ -11,6 +11,7 @@ using SharpEmu.HLE.Host;
 using SharpEmu.Libs.VideoOut;
 using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.AppContent;
+using SharpEmu.Libs.Audio;
 using SharpEmu.Libs.SaveData;
 using SharpEmu.Libs.Fiber;
 using SharpEmu.Libs.Network;
@@ -515,6 +516,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         KernelIoLifecycle.ResetRuntimeState();
         KernelEventObjectLifecycle.ResetRuntimeState();
         NetworkLifecycle.ResetRuntimeState();
+        AudioOutLifecycle.ResetRuntimeState();
         KernelMemoryLifecycle.ResetRuntimeState();
     }
 

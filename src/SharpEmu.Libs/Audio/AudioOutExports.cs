@@ -361,6 +361,20 @@ public static class AudioOutExports
     public static void ShutdownAllPorts()
     {
         Volatile.Write(ref _shutdown, true);
+        DisposeAllPorts();
+    }
+
+    internal static void ResetRuntimeState()
+    {
+        Volatile.Write(ref _shutdown, true);
+        DisposeAllPorts();
+        Interlocked.Exchange(ref _nextPortHandle, 0);
+        Interlocked.Exchange(ref _outputCount, 0);
+        Volatile.Write(ref _shutdown, false);
+    }
+
+    private static void DisposeAllPorts()
+    {
         foreach (var handle in Ports.Keys)
         {
             if (Ports.TryRemove(handle, out var port))
