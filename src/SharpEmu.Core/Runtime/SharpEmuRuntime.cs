@@ -291,7 +291,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 CaptureTrapStackCodeCandidates(
                     _virtualMemory,
                     trapInfo.Registers,
-                    CaptureTrapCodeWindow));
+                    address => CaptureTrapStackCandidateCodeWindow(_virtualMemory, address)));
             LastCpuTrapInfo = enrichedTrapInfo;
 
             var longModeHint = IsInvalidLongModeOpcode(trapInfo.Opcode)
@@ -1350,16 +1350,33 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         return true;
     }
 
-    private CpuCodeWindow? CaptureTrapCodeWindow(ulong instructionPointer)
-    {
-        const int bytesBeforeInstruction = 32;
-        const int maximumWindowBytes = 64;
+    internal static CpuCodeWindow? CaptureTrapStackCandidateCodeWindow(
+        IVirtualMemory virtualMemory,
+        ulong instructionPointer) =>
+        CaptureCodeWindow(
+            virtualMemory,
+            instructionPointer,
+            bytesBeforeInstruction: 16,
+            maximumWindowBytes: 128);
 
+    private CpuCodeWindow? CaptureTrapCodeWindow(ulong instructionPointer) =>
+        CaptureCodeWindow(
+            _virtualMemory,
+            instructionPointer,
+            bytesBeforeInstruction: 32,
+            maximumWindowBytes: 64);
+
+    private static CpuCodeWindow? CaptureCodeWindow(
+        IVirtualMemory virtualMemory,
+        ulong instructionPointer,
+        int bytesBeforeInstruction,
+        int maximumWindowBytes)
+    {
         Span<byte> oneByte = stackalloc byte[1];
         var startAddress = instructionPointer;
         for (var i = 0; i < bytesBeforeInstruction && startAddress > 0; i++)
         {
-            if (!_virtualMemory.TryRead(startAddress - 1, oneByte))
+            if (!virtualMemory.TryRead(startAddress - 1, oneByte))
             {
                 break;
             }
@@ -1370,7 +1387,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         var count = 0;
         while (count < bytes.Length && startAddress <= ulong.MaxValue - (ulong)count)
         {
-            if (!_virtualMemory.TryRead(startAddress + (ulong)count, oneByte))
+            if (!virtualMemory.TryRead(startAddress + (ulong)count, oneByte))
             {
                 break;
             }
