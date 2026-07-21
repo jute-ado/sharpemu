@@ -42,8 +42,8 @@ test-driven workflow. Major downstream differences include:
   decoding, cross-platform general-register snapshots, guest frame chains
   constrained to registered stack ranges with fault and return-site code
   windows, mapped-image-relative code locations, bounded fault-time guest stack
-  windows with executable code-pointer candidates and extended context for
-  frameless code,
+  windows with executable code-pointer candidates, extended context, and
+  bounded decoded instruction paths for frameless code,
   faulting guest-thread identity, and bounded cross-thread native
   import traces with all six SysV register arguments, guest-visible return
   values, and a reserved fault-thread slice in execution reports,
@@ -150,7 +150,7 @@ window; it does not imply the game is playable.
 | Jusant | PPSA10264 | Loads seven modules and sustains a 90-second UE5 execution run without a CPU trap. No gameplay or rendered frame is validated yet. |
 | Poppy Playtime: Chapter 1 | PPSA20591 | Loads seven modules and sustains the execution-survival window without a CPU trap. No gameplay is validated yet. |
 | SILENT HILL: The Short Message | PPSA10112 | Loads six modules and sustains the execution-survival window without a CPU trap. No gameplay is validated yet. |
-| SUPER BOMBERMAN R 2 | PPSA07190 | Loads thirteen modules, presents a 1920×1080 guest frame, and reaches more than 2.5 million import dispatches; execution currently ends in a null-read CPU trap at `Il2CppUserAssemblies.prx+0x141F26A`, with bounded frame, stack-window/code-candidate, and fault-thread-prioritized import argument/return traces available for diagnosis. |
+| SUPER BOMBERMAN R 2 | PPSA07190 | Loads thirteen modules, presents a 1920×1080 guest frame, and reaches more than 2.5 million import dispatches; execution currently ends in a null-read CPU trap at `Il2CppUserAssemblies.prx+0x141F26A`, with bounded frame, decoded stack-code-candidate, and fault-thread-prioritized import argument/return traces available for diagnosis. |
 | Demon's Souls | PPSA01342 | Loads the main image and one module, presents a 3840×2160 splash, and reaches more than 670,000 import dispatches after canonical transaction-resource handling removes the earlier address-`0x9` fault; execution currently ends at an `int 41h` trap in `eboot.bin+0x1F403A3`. |
 
 These results are observations, not compatibility promises. Exact progress can

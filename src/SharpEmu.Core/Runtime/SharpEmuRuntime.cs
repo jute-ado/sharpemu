@@ -20,6 +20,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.IO;
+using Iced.Intel;
 
 namespace SharpEmu.Core.Runtime;
 
@@ -291,7 +292,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 CaptureTrapStackCodeCandidates(
                     _virtualMemory,
                     trapInfo.Registers,
-                    address => CaptureTrapStackCandidateCodeWindow(_virtualMemory, address)));
+                    address => CaptureTrapStackCandidateCodeWindow(_virtualMemory, address),
+                    address => CaptureTrapStackCandidateInstructions(_virtualMemory, address)));
             LastCpuTrapInfo = enrichedTrapInfo;
 
             var longModeHint = IsInvalidLongModeOpcode(trapInfo.Opcode)
@@ -1291,7 +1293,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
     internal static IReadOnlyList<CpuStackCodeCandidate> CaptureTrapStackCodeCandidates(
         IVirtualMemory virtualMemory,
         CpuRegisterSnapshot? registers,
-        Func<ulong, CpuCodeWindow?> captureCodeWindow)
+        Func<ulong, CpuCodeWindow?> captureCodeWindow,
+        Func<ulong, IReadOnlyList<CpuDecodedInstruction>>? captureInstructions = null)
     {
         const int maximumStackBytes = 128;
         if (registers is not { Rsp: > 0 } snapshot)
@@ -1328,7 +1331,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             candidates.Add(new CpuStackCodeCandidate(
                 offset,
                 address,
-                captureCodeWindow(address)));
+                captureCodeWindow(address),
+                captureInstructions?.Invoke(address)));
         }
 
         return candidates;
@@ -1358,6 +1362,53 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             instructionPointer,
             bytesBeforeInstruction: 16,
             maximumWindowBytes: 128);
+
+    internal static IReadOnlyList<CpuDecodedInstruction> CaptureTrapStackCandidateInstructions(
+        IVirtualMemory virtualMemory,
+        ulong address)
+    {
+        const int maximumBytes = 112;
+        const int maximumInstructions = 32;
+        var instructions = new List<CpuDecodedInstruction>();
+        var consumedBytes = 0;
+        while (consumedBytes < maximumBytes && instructions.Count < maximumInstructions)
+        {
+            var instructionAddress = address + (ulong)consumedBytes;
+            var maximumRead = Math.Min(15, maximumBytes - consumedBytes);
+            if (!IcedDecoder.TryReadGuestBytes(
+                    virtualMemory,
+                    instructionAddress,
+                    maximumRead,
+                    out var bytes) ||
+                !IcedDecoder.TryDecode(instructionAddress, bytes, out var instruction) ||
+                instruction.Length > bytes.Length)
+            {
+                break;
+            }
+
+            instructions.Add(new CpuDecodedInstruction(
+                instruction.Rip,
+                instruction.Length,
+                IcedDecoder.FormatBytes(instruction.Bytes),
+                instruction.Mnemonic,
+                instruction.Text,
+                instruction.FlowControl.ToString(),
+                instruction.NearBranchTarget,
+                instruction.MemoryAddress));
+            consumedBytes += instruction.Length;
+            if (instruction.FlowControl is
+                FlowControl.Return or
+                FlowControl.UnconditionalBranch or
+                FlowControl.IndirectBranch or
+                FlowControl.Interrupt or
+                FlowControl.Exception)
+            {
+                break;
+            }
+        }
+
+        return instructions;
+    }
 
     private CpuCodeWindow? CaptureTrapCodeWindow(ulong instructionPointer) =>
         CaptureCodeWindow(
