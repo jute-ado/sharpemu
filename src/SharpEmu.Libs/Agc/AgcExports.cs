@@ -1061,6 +1061,29 @@ public static partial class AgcExports
         return ReturnPointer(ctx, commandAddress);
     }
 
+    private static uint EncodeWaitPoll(uint pollCycles) =>
+        Math.Min(pollCycles >> 4, ushort.MaxValue);
+
+    private static uint EncodeWaitMem32Control(
+        uint compareFunction,
+        uint operation,
+        uint cachePolicy) =>
+        0x10u |
+        (compareFunction & 0x7u) |
+        ((operation & 0x3u) << 8) |
+        ((operation & 0xCu) << 4) |
+        ((cachePolicy & 0x3u) << 25);
+
+    private static uint EncodeWaitMem64Control(
+        uint compareFunction,
+        uint operation,
+        uint cachePolicy) =>
+        0x10u |
+        (compareFunction & 0x7u) |
+        ((operation & 0x1u) << 8) |
+        ((operation & 0x6u) << 5) |
+        ((cachePolicy & 0x3u) << 25);
+
     [SysAbiExport(
         Nid = "k3GhuSNmBLU",
         ExportName = "sceAgcCbDispatch",
@@ -1282,12 +1305,12 @@ public static partial class AgcExports
             return ReturnPointer(ctx, 0);
         }
 
-        var packetDwords = size == 0 ? 6u : 9u;
+        var packetDwords = size == 0 ? 7u : 9u;
         var packetRegister = size == 0 ? RWaitMem32 : RWaitMem64;
         if (!TryAllocateCommandDwords(ctx, commandBufferAddress, packetDwords, out var commandAddress) ||
             !TryWriteUInt32(ctx, commandAddress, Pm4(packetDwords, ItNop, packetRegister)) ||
-            !TryWriteUInt32(ctx, commandAddress + 4, (uint)address) ||
-            !TryWriteUInt32(ctx, commandAddress + 8, (uint)(address >> 32)) ||
+            !TryWriteUInt32(ctx, commandAddress + 4, (uint)address & (size == 0 ? ~3u : ~7u)) ||
+            !TryWriteUInt32(ctx, commandAddress + 8, (uint)(address >> 32) & 0x3FFFFu) ||
             !TryWriteUInt32(ctx, commandAddress + 12, (uint)mask))
         {
             return ReturnPointer(ctx, 0);
@@ -1295,8 +1318,10 @@ public static partial class AgcExports
 
         if (size == 0)
         {
-            if (!TryWriteUInt32(ctx, commandAddress + 16, compareFunction) ||
-                !TryWriteUInt32(ctx, commandAddress + 20, (uint)reference))
+            if (!TryWriteUInt32(ctx, commandAddress + 16, (uint)reference) ||
+                !TryWriteUInt32(ctx, commandAddress + 20,
+                    EncodeWaitMem32Control(compareFunction, 0, cachePolicy)) ||
+                !TryWriteUInt32(ctx, commandAddress + 24, EncodeWaitPoll(pollCycles)))
             {
                 return ReturnPointer(ctx, 0);
             }
@@ -1304,8 +1329,9 @@ public static partial class AgcExports
         else if (!TryWriteUInt32(ctx, commandAddress + 16, (uint)(mask >> 32)) ||
                  !TryWriteUInt32(ctx, commandAddress + 20, (uint)reference) ||
                  !TryWriteUInt32(ctx, commandAddress + 24, (uint)(reference >> 32)) ||
-                 !TryWriteUInt32(ctx, commandAddress + 28, compareFunction) ||
-                 !TryWriteUInt32(ctx, commandAddress + 32, pollCycles / 40))
+                 !TryWriteUInt32(ctx, commandAddress + 28,
+                     EncodeWaitMem64Control(compareFunction, 0, cachePolicy)) ||
+                 !TryWriteUInt32(ctx, commandAddress + 32, EncodeWaitPoll(pollCycles)))
         {
             return ReturnPointer(ctx, 0);
         }
@@ -1988,7 +2014,7 @@ public static partial class AgcExports
         }
 
         var standardWait = operation is 2 or 3;
-        var packetDwords = standardWait ? 7u : size == 0 ? 6u : 9u;
+        var packetDwords = standardWait ? 7u : size == 0 ? 7u : 9u;
         var packetRegister = size == 0 ? RWaitMem32 : RWaitMem64;
         if (!TryAllocateCommandDwords(ctx, commandBufferAddress, packetDwords, out var commandAddress))
         {
@@ -2009,16 +2035,18 @@ public static partial class AgcExports
             }
         }
         else if (!TryWriteUInt32(ctx, commandAddress, Pm4(packetDwords, ItNop, packetRegister)) ||
-                 !TryWriteUInt32(ctx, commandAddress + 4, (uint)address) ||
-                 !TryWriteUInt32(ctx, commandAddress + 8, (uint)(address >> 32)) ||
+                 !TryWriteUInt32(ctx, commandAddress + 4, (uint)address & (size == 0 ? ~3u : ~7u)) ||
+                 !TryWriteUInt32(ctx, commandAddress + 8, (uint)(address >> 32) & 0x3FFFFu) ||
                  !TryWriteUInt32(ctx, commandAddress + 12, (uint)mask))
         {
             return ReturnPointer(ctx, 0);
         }
         else if (size == 0)
         {
-            if (!TryWriteUInt32(ctx, commandAddress + 16, compareFunction | (operation << 8)) ||
-                !TryWriteUInt32(ctx, commandAddress + 20, (uint)reference))
+            if (!TryWriteUInt32(ctx, commandAddress + 16, (uint)reference) ||
+                !TryWriteUInt32(ctx, commandAddress + 20,
+                    EncodeWaitMem32Control(compareFunction, operation, cachePolicy)) ||
+                !TryWriteUInt32(ctx, commandAddress + 24, EncodeWaitPoll(pollCycles)))
             {
                 return ReturnPointer(ctx, 0);
             }
@@ -2026,8 +2054,9 @@ public static partial class AgcExports
         else if (!TryWriteUInt32(ctx, commandAddress + 16, (uint)(mask >> 32)) ||
                  !TryWriteUInt32(ctx, commandAddress + 20, (uint)reference) ||
                  !TryWriteUInt32(ctx, commandAddress + 24, (uint)(reference >> 32)) ||
-                 !TryWriteUInt32(ctx, commandAddress + 28, compareFunction | (operation << 8)) ||
-                 !TryWriteUInt32(ctx, commandAddress + 32, pollCycles / 40))
+                 !TryWriteUInt32(ctx, commandAddress + 28,
+                     EncodeWaitMem64Control(compareFunction, operation, cachePolicy)) ||
+                 !TryWriteUInt32(ctx, commandAddress + 32, EncodeWaitPoll(pollCycles)))
         {
             return ReturnPointer(ctx, 0);
         }
@@ -2489,7 +2518,7 @@ public static partial class AgcExports
         var fieldOffset = op == ItWaitRegMem
             ? 4UL
             : op == ItNop && register == RWaitMem32
-                ? 16UL
+                ? 20UL
                 : op == ItNop && register == RWaitMem64
                     ? 28UL
                     : 0;
@@ -2518,7 +2547,7 @@ public static partial class AgcExports
         var wrote = op == ItWaitRegMem
             ? TryWriteUInt32(ctx, commandAddress + 16, (uint)reference)
             : op == ItNop && register == RWaitMem32
-                ? TryWriteUInt32(ctx, commandAddress + 20, (uint)reference)
+                ? TryWriteUInt32(ctx, commandAddress + 16, (uint)reference)
                 : op == ItNop && register == RWaitMem64 &&
                   ctx.TryWriteUInt64(commandAddress + 20, reference);
         return wrote
@@ -3544,7 +3573,7 @@ public static partial class AgcExports
 
             if (op == ItNop &&
                 register is RWaitMem32 or RWaitMem64 &&
-                length >= (register == RWaitMem32 ? 6u : 9u))
+                length >= (register == RWaitMem32 ? 7u : 9u))
             {
                 if (HandleSubmittedWaitRegMem(
                         ctx, state, commandAddress, currentAddress, offset, length,
@@ -4894,7 +4923,7 @@ public static partial class AgcExports
         }
 
         if (!TryReadUInt64(ctx, packetAddress + 4, out waitAddress) ||
-            !TryReadUInt32(ctx, packetAddress + (is64Bit ? 28u : 16u), out var control))
+            !TryReadUInt32(ctx, packetAddress + (is64Bit ? 28u : 20u), out var control))
         {
             return false;
         }
@@ -4908,7 +4937,7 @@ public static partial class AgcExports
         }
 
         if (!TryReadUInt32(ctx, packetAddress + 12, out var mask32) ||
-            !TryReadUInt32(ctx, packetAddress + 20, out var reference32))
+            !TryReadUInt32(ctx, packetAddress + 16, out var reference32))
         {
             return false;
         }
