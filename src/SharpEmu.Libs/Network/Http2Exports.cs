@@ -16,6 +16,12 @@ public static class Http2Exports
 
     private sealed record Http2Context(int NetId, int SslId, ulong PoolSize, int MaxRequests);
 
+    internal static void ResetRuntimeState()
+    {
+        _contexts.Clear();
+        Interlocked.Exchange(ref _nextContextId, 0);
+    }
+
     [SysAbiExport(
         Nid = "3JCe3lCbQ8A",
         ExportName = "sceHttp2Init",

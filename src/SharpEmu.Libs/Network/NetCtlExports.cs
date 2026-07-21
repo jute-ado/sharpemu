@@ -36,6 +36,14 @@ public static class NetCtlExports
 
     private readonly record struct CallbackRegistration(ulong Function, ulong Argument);
 
+    internal static void ResetRuntimeState()
+    {
+        lock (CallbackGate)
+        {
+            Array.Clear(Callbacks);
+        }
+    }
+
     [SysAbiExport(
         Nid = "gky0+oaNM4k",
         ExportName = "sceNetCtlInit",

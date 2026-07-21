@@ -16,6 +16,12 @@ public static class SslExports
 
     private sealed record SslContext(ulong PoolSize);
 
+    internal static void ResetRuntimeState()
+    {
+        _contexts.Clear();
+        Interlocked.Exchange(ref _nextContextId, 0);
+    }
+
     [SysAbiExport(
         Nid = "hdpVEUDFW3s",
         ExportName = "sceSslInit",
