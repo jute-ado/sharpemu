@@ -1148,7 +1148,11 @@ public static class Gen5ShaderScalarEvaluator
         }
 
         if (instruction.Sources.Count == 0 ||
-            !TryEvaluateScalarOperand(instruction.Sources[0], registers, out var left))
+            !TryEvaluateScalarOperand(
+                instruction.Sources[0],
+                registers,
+                scalarConditionCode,
+                out var left))
         {
             var source = instruction.Sources.Count == 0
                 ? "<missing>"
@@ -1221,7 +1225,11 @@ public static class Gen5ShaderScalarEvaluator
         }
 
         if (instruction.Sources.Count < 2 ||
-            !TryEvaluateScalarOperand(instruction.Sources[1], registers, out var right))
+            !TryEvaluateScalarOperand(
+                instruction.Sources[1],
+                registers,
+                scalarConditionCode,
+                out var right))
         {
             var source = instruction.Sources.Count < 2
                 ? "<missing>"
@@ -2122,6 +2130,19 @@ public static class Gen5ShaderScalarEvaluator
         uint[] scalarRegisters,
         out uint value)
     {
+        return TryEvaluateScalarOperand(
+            operand,
+            scalarRegisters,
+            scalarConditionCode: false,
+            out value);
+    }
+
+    private static bool TryEvaluateScalarOperand(
+        Gen5Operand operand,
+        uint[] scalarRegisters,
+        bool scalarConditionCode,
+        out uint value)
+    {
         if (operand.Kind == Gen5OperandKind.ScalarRegister &&
             operand.Value < ScalarRegisterCount)
         {
@@ -2137,6 +2158,12 @@ public static class Gen5ShaderScalarEvaluator
 
         if (operand.Kind == Gen5OperandKind.EncodedConstant)
         {
+            if (operand.Value == 253)
+            {
+                value = scalarConditionCode ? 1u : 0u;
+                return true;
+            }
+
             return TryDecodeInlineConstant(operand.Value, out value);
         }
 
