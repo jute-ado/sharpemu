@@ -299,6 +299,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             {
                 enrichedTrapInfo = enrichedTrapInfo.WithStackWindow(stackWindow);
             }
+            enrichedTrapInfo = enrichedTrapInfo.WithRegisterMemoryWindows(
+                CaptureTrapRegisterMemoryWindows(_virtualMemory, trapInfo.Registers));
             enrichedTrapInfo = enrichedTrapInfo.WithStackCodeCandidates(
                 CaptureTrapStackCodeCandidates(
                     _virtualMemory,
@@ -1314,7 +1316,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         CpuRegisterSnapshot? registers)
     {
         const int maximumBytesBeforeRsp = 128;
-        const int maximumWindowBytes = 256;
+        const int maximumWindowBytes = 4096;
         if (registers is not { Rsp: > 0 } snapshot)
         {
             return null;
@@ -1347,6 +1349,108 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 startAddress,
                 IcedDecoder.FormatBytes(bytes.AsSpan(0, count)),
                 checked((int)(snapshot.Rsp - startAddress)));
+    }
+
+    internal static IReadOnlyList<CpuRegisterMemoryWindow> CaptureTrapRegisterMemoryWindows(
+        IVirtualMemory virtualMemory,
+        CpuRegisterSnapshot? registers)
+    {
+        const int maximumWindowBytes = 128;
+        if (registers is not { } snapshot)
+        {
+            return Array.Empty<CpuRegisterMemoryWindow>();
+        }
+
+        (string Name, ulong Address)[] pointers =
+        [
+            ("rax", snapshot.Rax),
+            ("rbx", snapshot.Rbx),
+            ("rcx", snapshot.Rcx),
+            ("rdx", snapshot.Rdx),
+            ("rsi", snapshot.Rsi),
+            ("rdi", snapshot.Rdi),
+            ("rbp", snapshot.Rbp),
+            ("r8", snapshot.R8),
+            ("r9", snapshot.R9),
+            ("r10", snapshot.R10),
+            ("r11", snapshot.R11),
+            ("r12", snapshot.R12),
+            ("r13", snapshot.R13),
+            ("r14", snapshot.R14),
+            ("r15", snapshot.R15),
+        ];
+
+        Span<byte> oneByte = stackalloc byte[1];
+        var windows = new List<CpuRegisterMemoryWindow>();
+        var primaryWindows = new List<(string Name, ulong Address, byte[] Bytes, int Count)>();
+        var capturedAddresses = new HashSet<ulong>();
+        foreach (var (name, address) in pointers)
+        {
+            if (address < 0x1000 ||
+                !capturedAddresses.Add(address) ||
+                !virtualMemory.TryRead(address, oneByte))
+            {
+                continue;
+            }
+
+            var bytes = new byte[maximumWindowBytes];
+            var count = 0;
+            while (count < bytes.Length &&
+                   address <= ulong.MaxValue - (ulong)count &&
+                   virtualMemory.TryRead(address + (ulong)count, oneByte))
+            {
+                bytes[count++] = oneByte[0];
+            }
+
+            windows.Add(new CpuRegisterMemoryWindow(
+                name,
+                new CpuMemoryWindow(
+                    address,
+                    IcedDecoder.FormatBytes(bytes.AsSpan(0, count)),
+                    ReferenceOffset: 0)));
+            primaryWindows.Add((name, address, bytes, count));
+        }
+
+        const int maximumWindows = 32;
+        foreach (var source in primaryWindows)
+        {
+            for (var offset = 0;
+                 offset <= source.Count - sizeof(ulong) && windows.Count < maximumWindows;
+                 offset += sizeof(ulong))
+            {
+                var address = BinaryPrimitives.ReadUInt64LittleEndian(
+                    source.Bytes.AsSpan(offset, sizeof(ulong)));
+                if (address < 0x1000 ||
+                    !capturedAddresses.Add(address) ||
+                    !virtualMemory.TryRead(address, oneByte))
+                {
+                    continue;
+                }
+
+                var bytes = new byte[maximumWindowBytes];
+                var count = 0;
+                while (count < bytes.Length &&
+                       address <= ulong.MaxValue - (ulong)count &&
+                       virtualMemory.TryRead(address + (ulong)count, oneByte))
+                {
+                    bytes[count++] = oneByte[0];
+                }
+
+                windows.Add(new CpuRegisterMemoryWindow(
+                    $"{source.Name}+0x{offset:X}",
+                    new CpuMemoryWindow(
+                        address,
+                        IcedDecoder.FormatBytes(bytes.AsSpan(0, count)),
+                        ReferenceOffset: 0)));
+            }
+
+            if (windows.Count >= maximumWindows)
+            {
+                break;
+            }
+        }
+
+        return windows.ToArray();
     }
 
     internal static IReadOnlyList<CpuStackCodeCandidate> CaptureTrapStackCodeCandidates(

@@ -126,6 +126,69 @@ public sealed class SharpEmuRuntimeTests
     }
 
     [Fact]
+    public void TrapStackWindowIsBoundedAtFourKilobytes()
+    {
+        const ulong stackStart = 0x7000;
+        var bytes = new byte[0x2000];
+        var memory = new VirtualMemory();
+        memory.Map(
+            stackStart,
+            (ulong)bytes.Length,
+            fileOffset: 0,
+            bytes,
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        var registers = new CpuRegisterSnapshot(
+            0, 0, 0, 0, 0, 0, 0,
+            stackStart + 0x100,
+            0, 0, 0, 0, 0, 0, 0, 0);
+
+        var window = SharpEmuRuntime.CaptureTrapStackWindow(memory, registers);
+
+        Assert.NotNull(window);
+        Assert.Equal(4096, window.Value.Bytes.Split(' ').Length);
+        Assert.Equal(128, window.Value.ReferenceOffset);
+    }
+
+    [Fact]
+    public void TrapRegisterMemoryWindowsCaptureReadablePointerTargets()
+    {
+        const ulong objectAddress = 0x9000;
+        const ulong referencedAddress = 0xA000;
+        var bytes = Enumerable.Range(0, 80).Select(value => (byte)(0x80 + value)).ToArray();
+        BinaryPrimitives.WriteUInt64LittleEndian(bytes.AsSpan(16), referencedAddress);
+        var memory = new VirtualMemory();
+        memory.Map(
+            objectAddress,
+            (ulong)bytes.Length,
+            fileOffset: 0,
+            bytes,
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        memory.Map(
+            referencedAddress,
+            16,
+            fileOffset: 0,
+            Enumerable.Repeat((byte)0xDD, 16).ToArray(),
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        var registers = new CpuRegisterSnapshot(
+            0, objectAddress, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0);
+
+        var windows = SharpEmuRuntime.CaptureTrapRegisterMemoryWindows(memory, registers);
+
+        Assert.Equal(2, windows.Count);
+        var window = windows[0];
+        Assert.Equal("rbx", window.RegisterName);
+        Assert.Equal(objectAddress, window.Window.StartAddress);
+        Assert.Equal(0, window.Window.ReferenceOffset);
+        Assert.Equal(80, window.Window.Bytes.Split(' ').Length);
+        Assert.StartsWith("80 81 82 83", window.Window.Bytes, StringComparison.Ordinal);
+        var referencedWindow = windows[1];
+        Assert.Equal("rbx+0x10", referencedWindow.RegisterName);
+        Assert.Equal(referencedAddress, referencedWindow.Window.StartAddress);
+        Assert.Equal(16, referencedWindow.Window.Bytes.Split(' ').Length);
+    }
+
+    [Fact]
     public void TrapStackCodeCandidatesIncludeOnlyExecutableMappedPointers()
     {
         const ulong stackStart = 0x7000;
