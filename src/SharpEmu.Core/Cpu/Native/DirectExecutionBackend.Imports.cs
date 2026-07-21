@@ -244,10 +244,10 @@ public sealed partial class DirectExecutionBackend
 		}
 		else
 		{
-			if (_sessionEntryImportCount < int.MaxValue)
-			{
-				_sessionEntryImportCount++;
-			}
+			_entryThreadDiagnostics.RecordImport(
+				importStubEntry.Nid,
+				num7,
+				GetCurrentGuestThreadHandle());
 		}
 		if (_logStrlenBursts)
 		{
@@ -712,10 +712,10 @@ public sealed partial class DirectExecutionBackend
 		}
 		else
 		{
-			if (_sessionEntryImportCount < int.MaxValue)
-			{
-				_sessionEntryImportCount++;
-			}
+			_entryThreadDiagnostics.RecordImport(
+				importStubEntry.Nid,
+				returnRip,
+				GetCurrentGuestThreadHandle());
 		}
 		if (dispatchIndex % 100000 == 0)
 		{
