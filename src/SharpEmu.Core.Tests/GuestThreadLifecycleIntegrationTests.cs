@@ -15,7 +15,7 @@ public sealed class GuestThreadLifecycleIntegrationTests
     private const ulong ThreadHandle = 0x1234_5678;
 
     [HostX64Fact]
-    public async Task ReturningGuestThreadPublishesExitAfterBecomingJoinable()
+    public async Task ReturningGuestThreadFinishesExitCallbacksBeforeBecomingJoinable()
     {
         if (await NativeTestProcess.RunIfNeededAsync(
                 typeof(GuestThreadLifecycleIntegrationTests)))
@@ -41,6 +41,7 @@ public sealed class GuestThreadLifecycleIntegrationTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         var exiting = new TaskCompletionSource<(ulong Handle, ulong CurrentHandle, CpuContext Context)>(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowExitCallbacks = new ManualResetEventSlim(initialState: false);
 
         void HandleGuestThreadExiting(ulong threadHandle, CpuContext context)
         {
@@ -50,6 +51,7 @@ public sealed class GuestThreadLifecycleIntegrationTests
                     threadHandle,
                     GuestThreadExecution.CurrentGuestThreadHandle,
                     context));
+                allowExitCallbacks.Wait(TimeSpan.FromSeconds(5));
             }
         }
 
@@ -78,24 +80,37 @@ public sealed class GuestThreadLifecycleIntegrationTests
                         AffinityMask: 0),
                     out var startError),
                 startError);
-            Assert.True(
-                backend.TryJoinThread(
+            var joinStarted = new TaskCompletionSource(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var join = Task.Run(() =>
+            {
+                joinStarted.TrySetResult();
+                var joined = backend.TryJoinThread(
                     creatorContext,
                     ThreadHandle,
                     out var returnValue,
-                    out var joinError),
-                joinError);
-            Assert.Equal(0UL, returnValue);
+                    out var joinError);
+                return (Joined: joined, ReturnValue: returnValue, Error: joinError);
+            });
+            await joinStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var exitingState = await exiting.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(ThreadHandle, exitingState.Handle);
             Assert.Equal(ThreadHandle, exitingState.CurrentHandle);
             Assert.Equal(Generation.Gen5, exitingState.Context.TargetGeneration);
+            await Task.Delay(100);
+            Assert.False(join.IsCompleted);
+
+            allowExitCallbacks.Set();
+            var joinResult = await join.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(joinResult.Joined, joinResult.Error);
+            Assert.Equal(0UL, joinResult.ReturnValue);
             Assert.Equal(
                 ThreadHandle,
                 await exited.Task.WaitAsync(TimeSpan.FromSeconds(5)));
         }
         finally
         {
+            allowExitCallbacks.Set();
             GuestThreadExecution.GuestThreadExiting -= HandleGuestThreadExiting;
             GuestThreadExecution.GuestThreadExited -= HandleGuestThreadExited;
         }
