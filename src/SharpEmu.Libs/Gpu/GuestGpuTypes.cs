@@ -5,6 +5,22 @@ using SharpEmu.HLE;
 
 namespace SharpEmu.Libs.Gpu;
 
+internal static class GuestPrimitivePolicy
+{
+    // Prospero uses 7 for rectangle lists. Value 17 is the legacy GCN
+    // encoding still accepted by the PS5 command processor.
+    public static bool IsRectangleList(uint primitiveType) =>
+        primitiveType is 7 or 17;
+
+    public static uint GetDrawVertexCount(
+        uint primitiveType,
+        uint requestedVertexCount,
+        bool indexed) =>
+        IsRectangleList(primitiveType) && !indexed
+            ? 4u
+            : requestedVertexCount;
+}
+
 // The types that cross the guest-GPU backend seam. Every field is either a neutral
 // primitive (dimensions, counts, host pixel bytes) or a raw guest/AGC value (guest
 // addresses, guest format and number-type codes, guest register bitfields). Host

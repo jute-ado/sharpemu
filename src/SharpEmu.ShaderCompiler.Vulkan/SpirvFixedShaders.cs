@@ -92,7 +92,109 @@ public static class SpirvFixedShaders
         return module.Build();
     }
 
-    public static byte[] CreateCopyFragment()
+    public static byte[] CreateCopyFragment() =>
+        CreateCopyFragment(binding: 1, arrayed: false);
+
+    public static byte[] CreateArrayCopyFragment(uint binding) =>
+        CreateCopyFragment(binding, arrayed: true);
+
+    public static byte[] CreateArrayFetchFragment(uint binding)
+    {
+        var module = new SpirvModuleBuilder();
+        module.AddCapability(SpirvCapability.Shader);
+
+        var voidType = module.TypeVoid();
+        var intType = module.TypeInt(32, signed: true);
+        var floatType = module.TypeFloat(32);
+        var vec4Type = module.TypeVector(floatType, 4);
+        var ivec3Type = module.TypeVector(intType, 3);
+        var inputPointer = module.TypePointer(SpirvStorageClass.Input, vec4Type);
+        var outputPointer = module.TypePointer(SpirvStorageClass.Output, vec4Type);
+        var imageType = module.TypeImage(
+            floatType,
+            SpirvImageDim.Dim2D,
+            depth: false,
+            arrayed: true,
+            multisampled: false,
+            sampled: 1,
+            SpirvImageFormat.Unknown);
+        var sampledImageType = module.TypeSampledImage(imageType);
+        var sampledImagePointer =
+            module.TypePointer(SpirvStorageClass.UniformConstant, sampledImageType);
+
+        var fragmentCoordinate = module.AddGlobalVariable(
+            inputPointer,
+            SpirvStorageClass.Input);
+        module.AddName(fragmentCoordinate, "fragCoord");
+        module.AddDecoration(
+            fragmentCoordinate,
+            SpirvDecoration.BuiltIn,
+            (uint)SpirvBuiltIn.FragCoord);
+        var texture = module.AddGlobalVariable(
+            sampledImagePointer,
+            SpirvStorageClass.UniformConstant);
+        module.AddName(texture, "tex");
+        module.AddDecoration(texture, SpirvDecoration.DescriptorSet, 0);
+        module.AddDecoration(texture, SpirvDecoration.Binding, binding);
+        var output = module.AddGlobalVariable(outputPointer, SpirvStorageClass.Output);
+        module.AddName(output, "outColor");
+        module.AddDecoration(output, SpirvDecoration.Location, 0);
+
+        var functionType = module.TypeFunction(voidType);
+        var main = module.BeginFunction(voidType, functionType);
+        module.AddName(main, "main");
+        module.AddLabel();
+        var fragCoordValue = module.AddInstruction(
+            SpirvOp.Load,
+            vec4Type,
+            fragmentCoordinate);
+        var x = module.AddInstruction(
+            SpirvOp.ConvertFToS,
+            intType,
+            module.AddInstruction(
+                SpirvOp.CompositeExtract,
+                floatType,
+                fragCoordValue,
+                0));
+        var y = module.AddInstruction(
+            SpirvOp.ConvertFToS,
+            intType,
+            module.AddInstruction(
+                SpirvOp.CompositeExtract,
+                floatType,
+                fragCoordValue,
+                1));
+        var coordinates = module.AddInstruction(
+            SpirvOp.CompositeConstruct,
+            ivec3Type,
+            x,
+            y,
+            module.Constant(intType, 0));
+        var sampledImage = module.AddInstruction(
+            SpirvOp.Load,
+            sampledImageType,
+            texture);
+        var image = module.AddInstruction(SpirvOp.Image, imageType, sampledImage);
+        var color = module.AddInstruction(
+            SpirvOp.ImageFetch,
+            vec4Type,
+            image,
+            coordinates,
+            2,
+            module.Constant(intType, 0));
+        module.AddStatement(SpirvOp.Store, output, color);
+        module.AddStatement(SpirvOp.Return);
+        module.EndFunction();
+        module.AddEntryPoint(
+            SpirvExecutionModel.Fragment,
+            main,
+            "main",
+            [fragmentCoordinate, texture, output]);
+        module.AddExecutionMode(main, SpirvExecutionMode.OriginUpperLeft);
+        return module.Build();
+    }
+
+    private static byte[] CreateCopyFragment(uint binding, bool arrayed)
     {
         var module = new SpirvModuleBuilder();
         module.AddCapability(SpirvCapability.Shader);
@@ -100,6 +202,7 @@ public static class SpirvFixedShaders
         var voidType = module.TypeVoid();
         var floatType = module.TypeFloat(32);
         var vec2Type = module.TypeVector(floatType, 2);
+        var vec3Type = module.TypeVector(floatType, 3);
         var vec4Type = module.TypeVector(floatType, 4);
         var inputVec4Pointer = module.TypePointer(SpirvStorageClass.Input, vec4Type);
         var outputVec4Pointer = module.TypePointer(SpirvStorageClass.Output, vec4Type);
@@ -107,7 +210,7 @@ public static class SpirvFixedShaders
             floatType,
             SpirvImageDim.Dim2D,
             depth: false,
-            arrayed: false,
+            arrayed,
             multisampled: false,
             sampled: 1,
             SpirvImageFormat.Unknown);
@@ -124,7 +227,7 @@ public static class SpirvFixedShaders
             SpirvStorageClass.UniformConstant);
         module.AddName(texture, "tex0");
         module.AddDecoration(texture, SpirvDecoration.DescriptorSet, 0);
-        module.AddDecoration(texture, SpirvDecoration.Binding, 1);
+        module.AddDecoration(texture, SpirvDecoration.Binding, binding);
 
         var output = module.AddGlobalVariable(outputVec4Pointer, SpirvStorageClass.Output);
         module.AddName(output, "outColor");
@@ -136,13 +239,29 @@ public static class SpirvFixedShaders
         module.AddLabel();
 
         var attributeValue = module.AddInstruction(SpirvOp.Load, vec4Type, attribute);
-        var coordinates = module.AddInstruction(
+        var twoDimensionalCoordinates = module.AddInstruction(
             SpirvOp.VectorShuffle,
             vec2Type,
             attributeValue,
             attributeValue,
             0,
             1);
+        var coordinates = arrayed
+            ? module.AddInstruction(
+                SpirvOp.CompositeConstruct,
+                vec3Type,
+                module.AddInstruction(
+                    SpirvOp.CompositeExtract,
+                    floatType,
+                    twoDimensionalCoordinates,
+                    0),
+                module.AddInstruction(
+                    SpirvOp.CompositeExtract,
+                    floatType,
+                    twoDimensionalCoordinates,
+                    1),
+                module.ConstantFloat(floatType, 0f))
+            : twoDimensionalCoordinates;
         var sampledImage = module.AddInstruction(SpirvOp.Load, sampledImageType, texture);
         var lod = module.ConstantFloat(floatType, 0f);
         var color = module.AddInstruction(
