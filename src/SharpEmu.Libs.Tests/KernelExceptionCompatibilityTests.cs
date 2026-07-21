@@ -19,6 +19,25 @@ public sealed class SchedulerCollection
 public sealed class KernelExceptionCompatibilityTests
 {
     [Fact]
+    public void PthreadSelfRecreatesPrimaryThreadIdentityAfterReaping()
+    {
+        var reapedHandle = KernelPthreadState.GetCurrentThreadHandle();
+        Assert.True(
+            KernelPthreadState.TryGetThreadIdentity(
+                reapedHandle,
+                out var reapedIdentity));
+        Assert.True(KernelPthreadState.ReleaseThreadHandle(reapedHandle));
+
+        var replacementHandle = KernelPthreadState.GetCurrentThreadHandle();
+
+        Assert.True(
+            KernelPthreadState.TryGetThreadIdentity(
+                replacementHandle,
+                out var replacementIdentity));
+        Assert.NotEqual(reapedIdentity.UniqueId, replacementIdentity.UniqueId);
+    }
+
+    [Fact]
     public void PthreadSelfRegistersPrimaryExecutorContext()
     {
         var scheduler = new RecordingScheduler();

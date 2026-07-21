@@ -43,8 +43,9 @@ test-driven workflow. Major downstream differences include:
   destructor callbacks and thread-specific value cleanup when guest threads
   exit before they become joinable, and post-join scheduler, metadata, and
   unmanaged-handle reaping with deferred and late-detach cleanup; backend
-  teardown also reaps unjoined workers and registered primary threads; session
-  reports retain native import progress and exact per-session unique-NID counts
+  teardown also reaps unjoined workers and registered primary threads, with
+  stale primary-thread identities recreated safely for the next session;
+  session reports retain native import progress and exact per-session unique-NID counts
   across guest workers and distinguish
   normal process exit codes from CPU traps, preserve structured native trap
   details and the faulting guest pthread identity across native workers instead

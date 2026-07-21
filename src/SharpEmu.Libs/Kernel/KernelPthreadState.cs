@@ -72,11 +72,15 @@ internal static class KernelPthreadState
 
     private static void EnsureCurrentThreadRegistered()
     {
-        if (_currentThreadHandle != 0)
+        if (_currentThreadHandle != 0 &&
+            Threads.TryGetValue(_currentThreadHandle, out var identity))
         {
+            _currentThreadUniqueId = identity.UniqueId;
             return;
         }
 
+        _currentThreadHandle = 0;
+        _currentThreadUniqueId = 0;
         var uniqueId = unchecked((ulong)Interlocked.Increment(ref _nextUniqueThreadId));
         var name = $"Thread-{uniqueId:X}";
         _currentThreadHandle = AllocateThreadHandle(uniqueId, name);
