@@ -5,4 +5,5 @@ namespace SharpEmu.Core.Cpu;
 
 public readonly record struct CpuMemoryWindow(
     ulong StartAddress,
-    string Bytes);
+    string Bytes,
+    int ReferenceOffset = 0);

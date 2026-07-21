@@ -42,8 +42,9 @@ test-driven workflow. Major downstream differences include:
   decoding, cross-platform general-register snapshots, guest frame chains
   constrained to registered stack ranges with fault and return-site code
   windows, mapped-image-relative code locations, bounded fault-time guest stack
-  windows with executable code-pointer candidates, extended context, and
-  bounded decoded instruction paths for frameless code,
+  windows spanning the 128-byte area on both sides of RSP, with executable
+  code-pointer candidates, extended context, and bounded decoded instruction
+  paths for frameless code,
   faulting guest-thread identity, and bounded cross-thread native
   import traces with all six SysV register arguments, guest-visible return
   values, and a reserved fault-thread slice in execution reports,
