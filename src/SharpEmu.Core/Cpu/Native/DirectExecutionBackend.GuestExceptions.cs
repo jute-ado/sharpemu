@@ -50,6 +50,7 @@ public sealed unsafe partial class DirectExecutionBackend
         using (LockGate("RegisterGuestThreadContext"))
         {
             _currentExternalGuestThreadHandle = threadHandle;
+            GuestThreadExecution.SetCurrentExternalGuestThread(threadHandle);
             if (_guestThreads.ContainsKey(threadHandle))
             {
                 return;
@@ -471,6 +472,7 @@ public sealed unsafe partial class DirectExecutionBackend
         Volatile.Write(ref _pendingGuestExceptionCount, 0);
         _activeGuestExceptionDeliveries.Clear();
         _currentExternalGuestThreadHandle = 0;
+        GuestThreadExecution.SetCurrentExternalGuestThread(0);
     }
 
     private static bool ShouldLogGuestExceptions() =>

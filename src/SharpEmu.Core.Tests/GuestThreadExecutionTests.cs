@@ -86,6 +86,24 @@ public sealed class GuestThreadExecutionTests : IDisposable
     }
 
     [Fact]
+    public void ExternalThreadIdentityIsVisibleWithoutReclassifyingPrimaryExecutor()
+    {
+        GuestThreadExecution.SetCurrentExternalGuestThread(0x1234);
+
+        Assert.Equal(0x1234UL, GuestThreadExecution.CurrentGuestThreadHandle);
+        Assert.False(GuestThreadExecution.IsGuestThread);
+
+        var previous = GuestThreadExecution.EnterGuestThread(0x5678);
+        Assert.Equal(0UL, previous);
+        Assert.Equal(0x5678UL, GuestThreadExecution.CurrentGuestThreadHandle);
+        Assert.True(GuestThreadExecution.IsGuestThread);
+
+        GuestThreadExecution.RestoreGuestThread(previous);
+        Assert.Equal(0x1234UL, GuestThreadExecution.CurrentGuestThreadHandle);
+        Assert.False(GuestThreadExecution.IsGuestThread);
+    }
+
+    [Fact]
     public void DeadlineCalculationHandlesImmediateFiniteAndSaturatedTimeouts()
     {
         var beforeImmediate = Stopwatch.GetTimestamp();
@@ -102,6 +120,7 @@ public sealed class GuestThreadExecutionTests : IDisposable
     private static void ResetAmbientState()
     {
         GuestThreadExecution.RestoreGuestThread(0);
+        GuestThreadExecution.SetCurrentExternalGuestThread(0);
         GuestThreadExecution.RestoreFiber(0);
         GuestThreadExecution.Scheduler = null;
     }

@@ -150,6 +150,9 @@ public sealed class NativeBackendConstructionTests
         const ulong threadHandle = 0x1234;
         backend.RegisterGuestThreadContext(threadHandle, context);
 
+        Assert.Equal(threadHandle, GuestThreadExecution.CurrentGuestThreadHandle);
+        Assert.False(GuestThreadExecution.IsGuestThread);
+
         Assert.True(
             backend.TryRaiseGuestException(
                 context,
