@@ -519,6 +519,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
         public GuestContinuationRunner? ContinuationRunner { get; set; }
 
         public ulong ExceptionStackBase { get; set; }
+
+		public bool ReapRequested { get; set; }
 	}
 
 	private sealed class GuestContinuationRunner : IDisposable
@@ -4192,6 +4194,32 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return true;
 	}
 
+	public bool RequestThreadReap(ulong threadHandle)
+	{
+		using (LockGate("RequestThreadReap"))
+		{
+			if (!_guestThreads.TryGetValue(threadHandle, out var thread) ||
+				thread.State != GuestThreadRunState.Exited)
+			{
+				return false;
+			}
+
+			if (Volatile.Read(ref thread.HostThreadId) != 0)
+			{
+				thread.ReapRequested = true;
+				return true;
+			}
+		}
+
+		if (!TryReapThread(threadHandle))
+		{
+			return false;
+		}
+
+		GuestThreadExecution.NotifyGuestThreadReaped(threadHandle);
+		return true;
+	}
+
 	public void Pump(CpuContext callerContext, string reason)
 	{
 		_ = callerContext;
@@ -5085,6 +5113,33 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			Volatile.Write(ref thread.HostThreadId, 0);
 			GuestThreadExecution.RestoreGuestThread(previousGuestThreadHandle);
 			LastError = previousLastError;
+			CompleteDeferredThreadReap(thread);
+		}
+	}
+
+	private void CompleteDeferredThreadReap(GuestThreadState thread)
+	{
+		GuestContinuationRunner? continuationRunner = null;
+		var reaped = false;
+		using (LockGate("CompleteDeferredThreadReap"))
+		{
+			if (thread.ReapRequested &&
+				thread.State == GuestThreadRunState.Exited &&
+				_guestThreads.TryGetValue(thread.ThreadHandle, out var registeredThread) &&
+				ReferenceEquals(thread, registeredThread))
+			{
+				_guestThreads.Remove(thread.ThreadHandle);
+				Volatile.Write(ref _guestThreadCount, _guestThreads.Count);
+				continuationRunner = thread.ContinuationRunner;
+				thread.ContinuationRunner = null;
+				reaped = true;
+			}
+		}
+
+		continuationRunner?.Dispose();
+		if (reaped)
+		{
+			GuestThreadExecution.NotifyGuestThreadReaped(thread.ThreadHandle);
 		}
 	}
 

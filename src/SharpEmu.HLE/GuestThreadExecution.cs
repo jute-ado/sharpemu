@@ -48,6 +48,12 @@ public interface IGuestThreadScheduler
     /// </summary>
     bool TryReapThread(ulong threadHandle) => false;
 
+    /// <summary>
+    /// Requests reaping from an exit callback. Implementations may defer the
+    /// removal until the exiting worker has left its guest-thread path.
+    /// </summary>
+    bool RequestThreadReap(ulong threadHandle) => TryReapThread(threadHandle);
+
     void Pump(CpuContext callerContext, string reason);
 
     /// <summary>
@@ -162,6 +168,8 @@ public static class GuestThreadExecution
 
     public static event Action<ulong>? GuestThreadExited;
 
+    public static event Action<ulong>? GuestThreadReaped;
+
     [ThreadStatic]
     private static ulong _currentGuestThreadHandle;
 
@@ -225,6 +233,14 @@ public static class GuestThreadExecution
         if (threadHandle != 0)
         {
             GuestThreadExiting?.Invoke(threadHandle, context);
+        }
+    }
+
+    public static void NotifyGuestThreadReaped(ulong threadHandle)
+    {
+        if (threadHandle != 0)
+        {
+            GuestThreadReaped?.Invoke(threadHandle);
         }
     }
 
