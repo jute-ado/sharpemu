@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using System.Buffers.Binary;
+using System.Text;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Mouse;
 using SharpEmu.Libs.Pad;
@@ -14,6 +15,7 @@ public sealed class UserIdentityIntegrationTests
 {
     private const ulong UserIdAddress = 0x1000;
     private const ulong ImeParameterAddress = 0x2000;
+    private const ulong UserNameAddress = 0x3000;
 
     [Fact]
     public void InitialUserCanOpenPrimaryPad()
@@ -53,6 +55,21 @@ public sealed class UserIdentityIntegrationTests
         context[CpuRegister.Rsi] = ImeParameterAddress;
 
         AssertCall(0, context, ImeExports.ImeKeyboardOpen);
+    }
+
+    [Fact]
+    public void CapturedUserNameAliasAcceptsLegacyPrimaryUser()
+    {
+        var memory = new FakeGuestMemory();
+        var userName = new byte[32];
+        memory.AddRegion(UserNameAddress, userName);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = 1;
+        context[CpuRegister.Rsi] = UserNameAddress;
+        context[CpuRegister.Rdx] = (ulong)userName.Length;
+
+        AssertCall(0, context, UserServiceExports.UserServiceGetUserNameAlt);
+        Assert.Equal("SharpEmu", Encoding.UTF8.GetString(userName).TrimEnd('\0'));
     }
 
     private static CpuContext CreateContext(out int userId)

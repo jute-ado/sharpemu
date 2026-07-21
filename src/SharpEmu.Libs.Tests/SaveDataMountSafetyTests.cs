@@ -15,6 +15,7 @@ public sealed class SaveDataMountSafetyTests
     private const ulong MountAddress = 0x1000;
     private const ulong DirNameAddress = 0x2000;
     private const ulong ResultAddress = 0x3000;
+    private const ulong TitleIdAddress = 0x4000;
     private const int MountSize = 0x2C;
     private const int ResultSize = 0x40;
 
@@ -50,6 +51,28 @@ public sealed class SaveDataMountSafetyTests
             Assert.Equal(
                 unchecked((ulong)(int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT),
                 context[CpuRegister.Rax]);
+        });
+    }
+
+    [Fact]
+    public void TransferringMountUsesGuestTitleAndDirectorySafely()
+    {
+        var mount = new byte[0x18];
+        BinaryPrimitives.WriteInt32LittleEndian(mount, 1000);
+        BinaryPrimitives.WriteUInt64LittleEndian(mount.AsSpan(0x08), TitleIdAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(mount.AsSpan(0x10), DirNameAddress);
+        var memory = CreateMemory(mount, MountAddress);
+        var titleId = new byte[16];
+        Encoding.ASCII.GetBytes("TEST00002\0").CopyTo(titleId, 0);
+        memory.AddRegion(TitleIdAddress, titleId);
+        var context = CreateContext(memory, MountAddress);
+
+        WithIsolatedSaveRoot(() =>
+        {
+            Assert.Equal(
+                OrbisSaveDataErrorNotFound,
+                SaveDataExports.SaveDataTransferringMount(context));
+            Assert.Equal(unchecked((ulong)OrbisSaveDataErrorNotFound), context[CpuRegister.Rax]);
         });
     }
 

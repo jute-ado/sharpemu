@@ -3613,19 +3613,27 @@ internal static unsafe class VulkanVideoPresenter
                 }
             }
 
-            WaitForRenderDocAttachIfRequested();
-            _vk = Vk.GetApi();
-            CreateInstance();
-            CreateSurface();
-            SelectPhysicalDevice();
-            CreateDevice();
-            CreatePipelineCache();
-            CreateSwapchain();
-            CreateCommandResources();
-            CreateGuestDrawResources();
-            _vulkanReady = true;
-            Console.Error.WriteLine(
-                $"[LOADER][INFO] Vulkan VideoOut ready: {_extent.Width}x{_extent.Height}, format={_swapchainFormat}");
+            try
+            {
+                WaitForRenderDocAttachIfRequested();
+                _vk = Vk.GetApi();
+                CreateInstance();
+                CreateSurface();
+                SelectPhysicalDevice();
+                CreateDevice();
+                CreatePipelineCache();
+                CreateSwapchain();
+                CreateCommandResources();
+                CreateGuestDrawResources();
+                _vulkanReady = true;
+                Console.Error.WriteLine(
+                    $"[LOADER][INFO] Vulkan VideoOut ready: {_extent.Width}x{_extent.Height}, format={_swapchainFormat}");
+            }
+            catch (Exception exception)
+            {
+                _vulkanReady = false;
+                Console.Error.WriteLine($"[LOADER][WARN] Vulkan VideoOut disabled: {exception.Message}");
+            }
         }
 
         private static void WaitForRenderDocAttachIfRequested()

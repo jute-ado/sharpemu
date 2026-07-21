@@ -112,7 +112,7 @@ public static class UserServiceExports
         var nameAddress = ctx[CpuRegister.Rsi];
         var capacity = ctx[CpuRegister.Rdx];
         // Zero selects the current user.
-        if (userId != 0 && userId != EmulatedUser.PrimaryId)
+        if (userId != 0 && userId != 1 && userId != EmulatedUser.PrimaryId)
         {
             return ctx.SetReturn(OrbisUserServiceErrorNotLoggedIn);
         }
@@ -258,6 +258,18 @@ public static class UserServiceExports
     public static int UserServiceGetAccessibilityZoomFollowFocus(CpuContext ctx) =>
         GetAccessibilitySetting(ctx, 0, "zoom_follow_focus");
 
+    // Title-captured alias NID for the same username query.
+    #pragma warning disable SHEM004
+    [SysAbiExport(
+        Nid = "znaWI0gpuo8",
+        ExportName = "sceUserServiceGetUserName",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceUserService")]
+    public static int UserServiceGetUserNameAlt(CpuContext ctx) => UserServiceGetUserName(ctx);
+    #pragma warning restore SHEM004
+
+    // Name not yet in ps5_names.txt and the NID was captured from titles; revisit when the symbol is catalogued.
+    #pragma warning disable SHEM006
     [SysAbiExport(
         Nid = "D-CzAxQL0XI",
         ExportName = "sceUserServiceGetPlatformPrivacySetting",
@@ -281,6 +293,7 @@ public static class UserServiceExports
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
+    #pragma warning restore SHEM006
 
     private static int GetAccessibilitySetting(CpuContext ctx, int value, string settingName)
     {
