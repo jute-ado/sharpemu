@@ -92,6 +92,8 @@ test-driven workflow. Major downstream differences include:
   closes their streams, and invalidates stale AvPlayer handles between titles
 - media-codec session teardown that clears AJM contexts plus audio and video
   decoder registries and restarts their guest-visible IDs between titles
+- C++ ABI session teardown that releases abandoned static-initializer guards so
+  later titles cannot skip initialization or spin on stale owner threads
 - process-scoped event queues, event flags, semaphores, and exception handlers
   reset between sessions with blocked waiters woken through normal deleted-object
   semantics and deterministic handle allocation for the next process

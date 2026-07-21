@@ -22,6 +22,11 @@ public static class CxaGuardExports
 
     private static readonly ConcurrentDictionary<ulong, GuardState> _inProgress = new();
 
+    internal static void ResetRuntimeState()
+    {
+        _inProgress.Clear();
+    }
+
     [SysAbiExport(
         Nid = "3GPpjQdAMTw",
         ExportName = "__cxa_guard_acquire",
