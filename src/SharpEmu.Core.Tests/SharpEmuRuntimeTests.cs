@@ -153,6 +153,37 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(128, window.Value.Bytes.Split(' ').Length);
     }
 
+    [Fact]
+    public void StackCandidateInstructionsDecodeForwardFromCandidateAddress()
+    {
+        const ulong codeStart = 0x9000;
+        byte[] bytes =
+        [
+            0x55,                   // push rbp
+            0x48, 0x89, 0xE5,       // mov rbp, rsp
+            0x31, 0xC0,             // xor eax, eax
+            0xC3,                   // ret
+        ];
+        var memory = new VirtualMemory();
+        memory.Map(
+            codeStart,
+            (ulong)bytes.Length,
+            fileOffset: 0,
+            bytes,
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+
+        var instructions = SharpEmuRuntime.CaptureTrapStackCandidateInstructions(
+            memory,
+            codeStart);
+
+        Assert.Collection(
+            instructions,
+            instruction => Assert.Equal("push rbp", instruction.Text),
+            instruction => Assert.Equal("mov rbp,rsp", instruction.Text),
+            instruction => Assert.Equal("xor eax,eax", instruction.Text),
+            instruction => Assert.Equal("ret", instruction.Text));
+    }
+
     private static void WriteFrame(
         byte[] bytes,
         ulong mappedStart,
@@ -923,9 +954,14 @@ public sealed class SharpEmuRuntimeTests
             returnCodeWindow.GetProperty("bytes").GetString(),
             StringComparison.Ordinal);
         var stackCodeCandidates = cpuTrap.GetProperty("stackCodeCandidates").EnumerateArray().ToArray();
-        Assert.Contains(
+        var returnCandidate = Assert.Single(
             stackCodeCandidates,
             candidate => candidate.GetProperty("address").GetString() == "0x0000000800000009");
+        var candidateInstructions = returnCandidate.GetProperty("instructions").EnumerateArray().ToArray();
+        Assert.NotEmpty(candidateInstructions);
+        Assert.Equal(
+            "0x0000000800000009",
+            candidateInstructions[0].GetProperty("address").GetString());
     }
 
     [Fact]

@@ -2105,7 +2105,16 @@ internal static partial class Program
             candidate.StackOffset,
             FormatAddress(candidate.Address),
             BuildCodeLocationReport(candidate.Address, application, executablePath),
-            BuildCpuCodeWindowReport(candidate.CodeWindow))).ToArray();
+            BuildCpuCodeWindowReport(candidate.CodeWindow),
+            candidate.Instructions?.Select(instruction => new CliCpuDecodedInstructionReport(
+                FormatAddress(instruction.Address),
+                instruction.Length,
+                instruction.Bytes,
+                instruction.Mnemonic,
+                instruction.Text,
+                instruction.FlowControl,
+                instruction.NearBranchTarget is { } branchTarget ? FormatAddress(branchTarget) : null,
+                instruction.MemoryAddress is { } memoryAddress ? FormatAddress(memoryAddress) : null)).ToArray())).ToArray();
 
     private static CliCodeLocationReport? BuildCodeLocationReport(
         ulong address,
@@ -2707,7 +2716,18 @@ internal static partial class Program
         int StackOffset,
         string Address,
         CliCodeLocationReport? Location,
-        CliCpuCodeWindowReport? CodeWindow);
+        CliCpuCodeWindowReport? CodeWindow,
+        IReadOnlyList<CliCpuDecodedInstructionReport>? Instructions);
+
+    private sealed record CliCpuDecodedInstructionReport(
+        string Address,
+        int Length,
+        string Bytes,
+        string Mnemonic,
+        string Text,
+        string FlowControl,
+        string? NearBranchTarget,
+        string? MemoryAddress);
 
     private sealed record CliCpuRegisterReport(
         string Rax,

@@ -6,4 +6,5 @@ namespace SharpEmu.Core.Cpu;
 public readonly record struct CpuStackCodeCandidate(
     int StackOffset,
     ulong Address,
-    CpuCodeWindow? CodeWindow = null);
+    CpuCodeWindow? CodeWindow = null,
+    IReadOnlyList<CpuDecodedInstruction>? Instructions = null);
