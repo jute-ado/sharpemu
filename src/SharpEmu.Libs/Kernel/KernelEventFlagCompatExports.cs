@@ -23,6 +23,24 @@ public static class KernelEventFlagCompatExports
     private static readonly ConcurrentDictionary<ulong, EventFlagState> _eventFlags = new();
     private static long _nextEventFlagHandle = 1;
 
+    internal static void ResetRuntimeState()
+    {
+        var states = _eventFlags.Values
+            .Distinct<EventFlagState>(ReferenceEqualityComparer.Instance)
+            .ToArray();
+        _eventFlags.Clear();
+        Interlocked.Exchange(ref _nextEventFlagHandle, 1);
+
+        foreach (var state in states)
+        {
+            lock (state.Gate)
+            {
+                state.Deleted = true;
+                Monitor.PulseAll(state.Gate);
+            }
+        }
+    }
+
     // Cached once: gating every call site avoids building the interpolated
     // trace string (and FormatFrameChain/FormatGuestWaitObject) when disabled.
     private static readonly bool _traceEventFlag = string.Equals(

@@ -14,6 +14,24 @@ public static class KernelSemaphoreCompatExports
     private static readonly ConcurrentDictionary<uint, KernelSemaphoreState> _semaphores = new();
     private static int _nextSemaphoreHandle = 1;
 
+    internal static void ResetRuntimeState()
+    {
+        var states = _semaphores.Values
+            .Distinct<KernelSemaphoreState>(ReferenceEqualityComparer.Instance)
+            .ToArray();
+        _semaphores.Clear();
+        Interlocked.Exchange(ref _nextSemaphoreHandle, 1);
+
+        foreach (var state in states)
+        {
+            lock (state.Gate)
+            {
+                state.Deleted = true;
+                Monitor.PulseAll(state.Gate);
+            }
+        }
+    }
+
     private sealed class KernelSemaphoreState
     {
         public required string Name { get; init; }

@@ -11,6 +11,14 @@ public static class KernelExceptionCompatExports
     private static readonly Dictionary<int, ulong> _installedHandlers = new();
     private static readonly object _gate = new();
 
+    internal static void ResetRuntimeState()
+    {
+        lock (_gate)
+        {
+            _installedHandlers.Clear();
+        }
+    }
+
     [SysAbiExport(
         Nid = "WkwEd3N7w0Y",
         ExportName = "sceKernelInstallExceptionHandler",
