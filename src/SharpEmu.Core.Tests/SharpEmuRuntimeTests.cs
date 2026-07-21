@@ -82,9 +82,10 @@ public sealed class SharpEmuRuntimeTests
         var window = SharpEmuRuntime.CaptureTrapStackWindow(memory, registers);
 
         Assert.NotNull(window);
-        Assert.Equal(stackStart + 16, window.Value.StartAddress);
-        Assert.Equal(32, window.Value.Bytes.Split(' ').Length);
-        Assert.StartsWith("10 11 12 13", window.Value.Bytes, StringComparison.Ordinal);
+        Assert.Equal(stackStart, window.Value.StartAddress);
+        Assert.Equal(16, window.Value.ReferenceOffset);
+        Assert.Equal(48, window.Value.Bytes.Split(' ').Length);
+        Assert.StartsWith("00 01 02 03", window.Value.Bytes, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -128,6 +129,30 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(8, candidate.StackOffset);
         Assert.Equal(codeStart + 4, candidate.Address);
         Assert.Equal("CC", candidate.CodeWindow?.Bytes);
+    }
+
+    [Fact]
+    public void TrapStackCodeCandidatesIncludeReadableSlotsBelowRsp()
+    {
+        const ulong stackStart = 0x7000;
+        const ulong codeStart = 0x9000;
+        var stackBytes = new byte[32];
+        BinaryPrimitives.WriteUInt64LittleEndian(stackBytes, codeStart + 4);
+        var memory = new VirtualMemory();
+        memory.Map(stackStart, 32, 0, stackBytes, ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+        memory.Map(codeStart, 16, 0, new byte[16], ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+        var registers = new CpuRegisterSnapshot(
+            0, 0, 0, 0, 0, 0, 0, stackStart + 16,
+            0, 0, 0, 0, 0, 0, 0, 0);
+
+        var candidates = SharpEmuRuntime.CaptureTrapStackCodeCandidates(
+            memory,
+            registers,
+            _ => null);
+
+        var candidate = Assert.Single(candidates);
+        Assert.Equal(-16, candidate.StackOffset);
+        Assert.Equal(codeStart + 4, candidate.Address);
     }
 
     [Fact]
@@ -898,8 +923,12 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("0x0000000000000000", registers.GetProperty("rdi").GetString());
         Assert.NotEqual("0x0000000000000000", registers.GetProperty("rsp").GetString());
         var stackWindow = cpuTrap.GetProperty("stackWindow");
-        Assert.Equal(registers.GetProperty("rsp").GetString(), stackWindow.GetProperty("startAddress").GetString());
-        Assert.InRange(stackWindow.GetProperty("bytes").GetString()!.Split(' ').Length, 1, 128);
+        var stackStartText = stackWindow.GetProperty("startAddress").GetString()!;
+        var rspText = registers.GetProperty("rsp").GetString()!;
+        var stackStart = Convert.ToUInt64(stackStartText[2..], 16);
+        var rsp = Convert.ToUInt64(rspText[2..], 16);
+        Assert.Equal(rsp, stackStart + (ulong)stackWindow.GetProperty("referenceOffset").GetInt32());
+        Assert.InRange(stackWindow.GetProperty("bytes").GetString()!.Split(' ').Length, 1, 256);
         Assert.Empty(cpuTrap.GetProperty("stackFrames").EnumerateArray());
         Assert.Contains(
             "inst=mov rax,[rax]",

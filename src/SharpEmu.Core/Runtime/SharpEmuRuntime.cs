@@ -1267,18 +1267,30 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         IVirtualMemory virtualMemory,
         CpuRegisterSnapshot? registers)
     {
-        const int maximumWindowBytes = 128;
+        const int maximumBytesBeforeRsp = 128;
+        const int maximumWindowBytes = 256;
         if (registers is not { Rsp: > 0 } snapshot)
         {
             return null;
         }
 
-        var bytes = new byte[maximumWindowBytes];
         Span<byte> oneByte = stackalloc byte[1];
+        var startAddress = snapshot.Rsp;
+        for (var index = 0; index < maximumBytesBeforeRsp && startAddress > 0; index++)
+        {
+            if (!virtualMemory.TryRead(startAddress - 1, oneByte))
+            {
+                break;
+            }
+
+            startAddress--;
+        }
+
+        var bytes = new byte[maximumWindowBytes];
         var count = 0;
         while (count < bytes.Length &&
-               snapshot.Rsp <= ulong.MaxValue - (ulong)count &&
-               virtualMemory.TryRead(snapshot.Rsp + (ulong)count, oneByte))
+               startAddress <= ulong.MaxValue - (ulong)count &&
+               virtualMemory.TryRead(startAddress + (ulong)count, oneByte))
         {
             bytes[count++] = oneByte[0];
         }
@@ -1286,8 +1298,9 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         return count == 0
             ? null
             : new CpuMemoryWindow(
-                snapshot.Rsp,
-                IcedDecoder.FormatBytes(bytes.AsSpan(0, count)));
+                startAddress,
+                IcedDecoder.FormatBytes(bytes.AsSpan(0, count)),
+                checked((int)(snapshot.Rsp - startAddress)));
     }
 
     internal static IReadOnlyList<CpuStackCodeCandidate> CaptureTrapStackCodeCandidates(
@@ -1296,7 +1309,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         Func<ulong, CpuCodeWindow?> captureCodeWindow,
         Func<ulong, IReadOnlyList<CpuDecodedInstruction>>? captureInstructions = null)
     {
-        const int maximumStackBytes = 128;
+        const int maximumStackBytesEachSide = 128;
         if (registers is not { Rsp: > 0 } snapshot)
         {
             return Array.Empty<CpuStackCodeCandidate>();
@@ -1313,12 +1326,14 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         }
 
         var candidates = new List<CpuStackCodeCandidate>();
-        for (var offset = 0; offset <= maximumStackBytes - sizeof(ulong); offset += sizeof(ulong))
+        for (var offset = -maximumStackBytesEachSide;
+             offset <= maximumStackBytesEachSide - sizeof(ulong);
+             offset += sizeof(ulong))
         {
-            if (snapshot.Rsp > ulong.MaxValue - (ulong)offset ||
-                !TryReadUInt64At(virtualMemory, snapshot.Rsp + (ulong)offset, out var address))
+            if (!TryAddSignedOffset(snapshot.Rsp, offset, out var slotAddress) ||
+                !TryReadUInt64At(virtualMemory, slotAddress, out var address))
             {
-                break;
+                continue;
             }
 
             if (!executableRegions.Any(region =>
@@ -1336,6 +1351,32 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         }
 
         return candidates;
+    }
+
+    private static bool TryAddSignedOffset(ulong address, int offset, out ulong result)
+    {
+        if (offset >= 0)
+        {
+            var positiveOffset = (ulong)offset;
+            if (address > ulong.MaxValue - positiveOffset)
+            {
+                result = 0;
+                return false;
+            }
+
+            result = address + positiveOffset;
+            return true;
+        }
+
+        var magnitude = (ulong)(-offset);
+        if (address < magnitude)
+        {
+            result = 0;
+            return false;
+        }
+
+        result = address - magnitude;
+        return true;
     }
 
     private static bool TryReadUInt64At(

@@ -2095,7 +2095,8 @@ internal static partial class Program
             ? null
             : new CliCpuMemoryWindowReport(
                 FormatAddress(value.StartAddress),
-                value.Bytes);
+                value.Bytes,
+                value.ReferenceOffset);
 
     private static IReadOnlyList<CliCpuStackCodeCandidateReport>? BuildCpuStackCodeCandidateReports(
         IReadOnlyList<CpuStackCodeCandidate>? candidates,
@@ -2710,7 +2711,8 @@ internal static partial class Program
 
     private sealed record CliCpuMemoryWindowReport(
         string StartAddress,
-        string Bytes);
+        string Bytes,
+        int ReferenceOffset);
 
     private sealed record CliCpuStackCodeCandidateReport(
         int StackOffset,
