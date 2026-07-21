@@ -100,6 +100,11 @@ internal readonly record struct VulkanGuestQueueIdentity(
     public static VulkanGuestQueueIdentity Default { get; } = new("host.default", 0);
 }
 
+internal readonly record struct VulkanTextureImageShape(
+    bool IsThreeDimensional,
+    uint Depth,
+    uint ArrayLayers);
+
 internal static unsafe class VulkanVideoPresenter
 {
     // Standalone CLI launches use a desktop-sized surface. The embedded GUI
@@ -115,6 +120,18 @@ internal static unsafe class VulkanVideoPresenter
         (
             logicalWidth == 0 ? physicalWidth : logicalWidth,
             logicalHeight == 0 ? physicalHeight : logicalHeight);
+
+    internal static VulkanTextureImageShape ResolveTextureImageShape(
+        GuestDrawTexture texture) =>
+        texture.ThreeDimensionalView
+            ? new(
+                IsThreeDimensional: true,
+                Depth: Math.Max(texture.Depth, 1),
+                ArrayLayers: 1)
+            : new(
+                IsThreeDimensional: false,
+                Depth: 1,
+                ArrayLayers: Math.Max(texture.ArrayLayers, 1));
 
     internal enum StorageImageComponentKind
     {
@@ -3275,6 +3292,8 @@ internal static unsafe class VulkanVideoPresenter
             ulong Address,
             uint Width,
             uint Height,
+            uint Depth,
+            bool IsThreeDimensional,
             uint MipLevels,
             uint GuestFormat,
             Format Format);
@@ -3436,6 +3455,7 @@ internal static unsafe class VulkanVideoPresenter
             public ImageView View;
             public uint Width;
             public uint Height;
+            public uint Depth = 1;
             public uint RowLength;
             public uint DstSelect;
             public uint Layers = 1;
@@ -3541,6 +3561,8 @@ internal static unsafe class VulkanVideoPresenter
             public long FlipVersion;
             public uint Width;
             public uint Height;
+            public uint Depth = 1;
+            public bool IsThreeDimensional;
             // Unscaled guest-requested size; Width/Height are the physical (scaled) backing size.
             public uint LogicalWidth;
             public uint LogicalHeight;
@@ -7500,6 +7522,7 @@ internal static unsafe class VulkanVideoPresenter
                     View = view,
                     Width = guestImage.Width,
                     Height = guestImage.Height,
+                    Depth = guestImage.Depth,
                     RowLength = guestImage.Width,
                     DstSelect = texture.DstSelect,
                     SamplerState = texture.Sampler,
@@ -7813,7 +7836,9 @@ internal static unsafe class VulkanVideoPresenter
                 texture.Pitch,
                 texture.Sampler,
                 texture.ArrayedView,
-                Math.Max(texture.ArrayLayers, 1));
+                Math.Max(texture.ArrayLayers, 1),
+                Math.Max(texture.Depth, 1),
+                texture.ThreeDimensionalView);
             if (_textureCache.TryGetValue(key, out var cached))
             {
                 return cached;
@@ -7938,6 +7963,13 @@ internal static unsafe class VulkanVideoPresenter
             GuestDrawTexture texture,
             GuestImageResource guestImage)
         {
+            if (guestImage.IsThreeDimensional != texture.ThreeDimensionalView ||
+                (texture.ThreeDimensionalView &&
+                 guestImage.Depth != Math.Max(texture.Depth, 1)))
+            {
+                return false;
+            }
+
             if (guestImage.LogicalWidth == texture.Width &&
                 guestImage.LogicalHeight == texture.Height)
             {
@@ -7985,6 +8017,7 @@ internal static unsafe class VulkanVideoPresenter
                 View = view,
                 Width = guestImage.Width,
                 Height = guestImage.Height,
+                Depth = guestImage.Depth,
                 RowLength = guestImage.Width,
                 DstSelect = texture.DstSelect,
                 IsStorage = true,
@@ -8166,7 +8199,11 @@ internal static unsafe class VulkanVideoPresenter
                     texture.NumberType,
                     texture.ResourceMipLevels),
                 format,
-                requiresStorage: true);
+                requiresStorage: true,
+                depth: texture.ThreeDimensionalView
+                    ? Math.Max(texture.Depth, 1)
+                    : 1,
+                threeDimensional: texture.ThreeDimensionalView);
             var selectedMipLevel = GetStorageMipLevel(texture);
             if (selectedMipLevel >= guestImage.MipLevels)
             {
@@ -8204,7 +8241,9 @@ internal static unsafe class VulkanVideoPresenter
                 : width;
             var vkFormat = GetTextureFormat(texture.Format, texture.NumberType);
 
-            var layers = Math.Max(texture.ArrayLayers, 1);
+            var shape = ResolveTextureImageShape(texture);
+            var layers = shape.ArrayLayers;
+            var depth = shape.Depth;
             var expectedSize = GetTextureByteCount(texture.Format, rowLength, height);
             if (ShouldTraceVulkanResources() &&
                 _tracedTextureUploads.Add((texture.Address, width, height, vkFormat)))
@@ -8213,15 +8252,17 @@ internal static unsafe class VulkanVideoPresenter
                     $"[LOADER][TRACE] vk.texture addr=0x{texture.Address:X16} " +
                     $"fmt={texture.Format} num={texture.NumberType} vk={vkFormat} " +
                     $"size={width}x{height} row={rowLength} tile={texture.TileMode} " +
-                    $"layers={layers} dst=0x{texture.DstSelect:X3} " +
+                    $"depth={depth} layers={layers} dst=0x{texture.DstSelect:X3} " +
                     $"bytes={texture.RgbaPixels.Length} expected={expectedSize}");
             }
-            var pixels = texture.RgbaPixels.Length == (int)(expectedSize * layers)
+            var texelCopies = shape.IsThreeDimensional ? depth : layers;
+            var pixels = texture.RgbaPixels.Length == (int)(expectedSize * texelCopies)
                 ? texture.RgbaPixels
                 : CreateFallbackTexturePixels(texture.Format, rowLength, height, expectedSize);
             if (!ReferenceEquals(pixels, texture.RgbaPixels))
             {
                 layers = 1;
+                depth = 1;
             }
             if (AddressListContains("SHARPEMU_FORCE_WHITE_TEXTURE_TARGETS", texture.Address))
             {
@@ -8242,7 +8283,8 @@ internal static unsafe class VulkanVideoPresenter
                 uploadPixels,
                 $"{TextureDebugName(texture, vkFormat)} staging");
 
-            var supportsAttachmentUsage = !IsBlockCompressedFormat(vkFormat);
+            var supportsAttachmentUsage = !shape.IsThreeDimensional &&
+                !IsBlockCompressedFormat(vkFormat);
             var supportsStorageUsage = supportsAttachmentUsage &&
                 SupportsStorageImage(vkFormat);
             var imageInfo = new ImageCreateInfo
@@ -8251,9 +8293,11 @@ internal static unsafe class VulkanVideoPresenter
                 Flags = supportsAttachmentUsage
                     ? ImageCreateFlags.CreateMutableFormatBit | ImageCreateFlags.CreateExtendedUsageBit
                     : 0,
-                ImageType = ImageType.Type2D,
+                ImageType = shape.IsThreeDimensional
+                    ? ImageType.Type3D
+                    : ImageType.Type2D,
                 Format = vkFormat,
-                Extent = new Extent3D(width, height, 1),
+                Extent = new Extent3D(width, height, depth),
                 MipLevels = 1,
                 ArrayLayers = layers,
                 Samples = SampleCountFlags.Count1Bit,
@@ -8285,9 +8329,11 @@ internal static unsafe class VulkanVideoPresenter
             {
                 SType = StructureType.ImageViewCreateInfo,
                 Image = image,
-                ViewType = texture.ArrayedView
-                    ? ImageViewType.Type2DArray
-                    : ImageViewType.Type2D,
+                ViewType = shape.IsThreeDimensional
+                    ? ImageViewType.Type3D
+                    : texture.ArrayedView
+                        ? ImageViewType.Type2DArray
+                        : ImageViewType.Type2D,
                 Format = vkFormat,
                 Components = ToVkComponentMapping(texture.DstSelect),
                 SubresourceRange = ColorSubresourceRange(layerCount: layers),
@@ -8306,6 +8352,7 @@ internal static unsafe class VulkanVideoPresenter
                 View = view,
                 Width = width,
                 Height = height,
+                Depth = depth,
                 RowLength = rowLength,
                 DstSelect = texture.DstSelect,
                 Layers = layers,
@@ -8318,6 +8365,7 @@ internal static unsafe class VulkanVideoPresenter
             };
 
             if (texture.Address != 0 &&
+                !shape.IsThreeDimensional &&
                 !texture.ArrayedView &&
                 layers == 1 &&
                 !_guestImages.ContainsKey(texture.Address))
@@ -11835,8 +11883,17 @@ internal static unsafe class VulkanVideoPresenter
         private GuestImageResource GetOrCreateGuestImage(
             GuestRenderTarget target,
             Format format,
-            bool requiresStorage = false)
+            bool requiresStorage = false,
+            uint depth = 1,
+            bool threeDimensional = false)
         {
+            depth = threeDimensional ? Math.Max(depth, 1) : 1;
+            if (threeDimensional && !requiresStorage)
+            {
+                throw new InvalidOperationException(
+                    "3D guest images cannot be promoted to render targets.");
+            }
+
             var supportsStorageUsage = SupportsStorageImage(format);
             if (requiresStorage && !supportsStorageUsage)
             {
@@ -11858,6 +11915,8 @@ internal static unsafe class VulkanVideoPresenter
                 target.Address,
                 target.Width,
                 target.Height,
+                depth,
+                threeDimensional,
                 mipLevels,
                 guestFormat,
                 format);
@@ -11865,6 +11924,8 @@ internal static unsafe class VulkanVideoPresenter
             {
                 if (existing.LogicalWidth == target.Width &&
                     existing.LogicalHeight == target.Height &&
+                    existing.Depth == depth &&
+                    existing.IsThreeDimensional == threeDimensional &&
                     existing.MipLevels == mipLevels &&
                     existing.GuestFormat == guestFormat &&
                     existing.Format == format)
@@ -11916,6 +11977,8 @@ internal static unsafe class VulkanVideoPresenter
                         existing.Address,
                         existing.LogicalWidth,
                         existing.LogicalHeight,
+                        existing.Depth,
+                        existing.IsThreeDimensional,
                         existing.MipLevels,
                     existing.GuestFormat,
                     existing.Format),
@@ -11979,18 +12042,21 @@ internal static unsafe class VulkanVideoPresenter
             var imageInfo = new ImageCreateInfo
             {
                 SType = StructureType.ImageCreateInfo,
-                Flags =
-                    ImageCreateFlags.CreateMutableFormatBit |
+                Flags = ImageCreateFlags.CreateMutableFormatBit |
                     ImageCreateFlags.CreateExtendedUsageBit,
-                ImageType = ImageType.Type2D,
+                ImageType = threeDimensional
+                    ? ImageType.Type3D
+                    : ImageType.Type2D,
                 Format = format,
-                Extent = new Extent3D(physicalWidth, physicalHeight, 1),
+                Extent = new Extent3D(physicalWidth, physicalHeight, depth),
                 MipLevels = mipLevels,
                 ArrayLayers = 1,
                 Samples = SampleCountFlags.Count1Bit,
                 Tiling = ImageTiling.Optimal,
                 Usage =
-                    ImageUsageFlags.ColorAttachmentBit |
+                    (!threeDimensional
+                        ? ImageUsageFlags.ColorAttachmentBit
+                        : (ImageUsageFlags)0) |
                     ImageUsageFlags.SampledBit |
                     (supportsStorageUsage ? ImageUsageFlags.StorageBit : (ImageUsageFlags)0) |
                     ImageUsageFlags.TransferSrcBit |
@@ -12020,7 +12086,9 @@ internal static unsafe class VulkanVideoPresenter
             {
                 SType = StructureType.ImageViewCreateInfo,
                 Image = image,
-                ViewType = ImageViewType.Type2D,
+                ViewType = threeDimensional
+                    ? ImageViewType.Type3D
+                    : ImageViewType.Type2D,
                 Format = format,
                 Components = new ComponentMapping(
                     ComponentSwizzle.Identity,
@@ -12066,6 +12134,8 @@ internal static unsafe class VulkanVideoPresenter
                 Address = target.Address,
                 Width = physicalWidth,
                 Height = physicalHeight,
+                Depth = depth,
+                IsThreeDimensional = threeDimensional,
                 LogicalWidth = target.Width,
                 LogicalHeight = target.Height,
                 MipLevels = mipLevels,
@@ -12884,7 +12954,11 @@ internal static unsafe class VulkanVideoPresenter
             {
                 SType = StructureType.ImageViewCreateInfo,
                 Image = resource.Image,
-                ViewType = arrayedView ? ImageViewType.Type2DArray : ImageViewType.Type2D,
+                ViewType = resource.IsThreeDimensional
+                    ? ImageViewType.Type3D
+                    : arrayedView
+                        ? ImageViewType.Type2DArray
+                        : ImageViewType.Type2D,
                 Format = format,
                 Components = ToVkComponentMapping(dstSelect),
                 SubresourceRange = ColorSubresourceRange(mipLevel, levelCount),
@@ -14136,7 +14210,10 @@ internal static unsafe class VulkanVideoPresenter
                         AspectMask = ImageAspectFlags.ColorBit,
                         LayerCount = texture.Layers,
                     },
-                    ImageExtent = new Extent3D(texture.Width, texture.Height, 1),
+                    ImageExtent = new Extent3D(
+                        texture.Width,
+                        texture.Height,
+                        texture.Depth),
                 };
                 _vk.CmdCopyBufferToImage(
                     _commandBuffer,

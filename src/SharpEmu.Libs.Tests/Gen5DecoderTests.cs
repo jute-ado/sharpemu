@@ -1295,6 +1295,173 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesThreeDimensionalImageSampleToSpirv()
+    {
+        var ctx = CreateContext(
+        [
+            0xF09C0110u, 0x00000000u, // image_sample_lz v0, v[0:2], s[0:7], s[0:3] dmask:0x1 dim:3d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        var instruction = program.Instructions[0];
+        Assert.Equal("ImageSampleLz", instruction.Opcode);
+        var control = Assert.IsType<Gen5ImageControl>(instruction.Control);
+        Assert.Equal(2u, control.Dimension);
+
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [
+                new Gen5ImageBinding(
+                    instruction.Pc,
+                    instruction.Opcode,
+                    control,
+                    [0u, 0u],
+                    [0u, 0u, 0u, 0u],
+                    MipLevel: null),
+            ],
+            []);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 1,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+
+        var imageType = GetSpirvInstruction(shader.Spirv, SpirvOp.TypeImage);
+        Assert.Equal((uint)SpirvImageDim.Dim3D, imageType[3]);
+        Assert.Equal(
+            (7u, 0x2u),
+            GetSpirvImageInstructionShape(
+                shader.Spirv,
+                SpirvOp.ImageSampleExplicitLod));
+    }
+
+    [Fact]
+    public void CompilesThreeDimensionalImageStoreWithThreeCoordinates()
+    {
+        var ctx = CreateContext(
+        [
+            0xF0200110u, 0x00000800u, // image_store v8, v[0:2], s[0:7] dmask:0x1 dim:3d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var instruction = program.Instructions[0];
+        var control = Assert.IsType<Gen5ImageControl>(instruction.Control);
+        Assert.Equal(2u, control.Dimension);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[1] = 0xC140_0000u;
+        scalarRegisters[2] = 0x0003_C003u;
+        var state = new Gen5ShaderState(program, scalarRegisters, Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 4,
+                localSizeY: 4,
+                localSizeZ: 4,
+                out var shader,
+                out var compileError),
+            compileError);
+
+        var imageType = GetSpirvInstruction(shader.Spirv, SpirvOp.TypeImage);
+        Assert.Equal((uint)SpirvImageDim.Dim3D, imageType[3]);
+        var write = GetSpirvInstruction(shader.Spirv, SpirvOp.ImageWrite);
+        var coordinates = GetSpirvInstructionWithResult(
+            shader.Spirv,
+            SpirvOp.CompositeConstruct,
+            write[2]);
+        Assert.Contains(
+            GetSpirvInstructions(shader.Spirv, SpirvOp.TypeVector),
+            type => type[1] == coordinates[1] && type[3] == 3u);
+    }
+
+    [Fact]
+    public void SkippedForwardBlockResolvesItsOwnImageDescriptorLoad()
+    {
+        const ulong tableAddress = 0x0000_2000_0000UL;
+        var ctx = CreateContext(
+        [
+            0xBF820005u,             // s_branch -> s_endpgm
+            0xF40C0506u, 0xFA000040u, // s_load_dwordx8 s[20:27], s[12:13], 64
+            0xBF8CC07Fu,             // s_waitcnt
+            0xF09C0110u, 0x00050000u, // image_sample_lz v0, v[0:2], s[20:27], s[0:3] dim:3d
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var expectedDescriptor = new uint[]
+        {
+            0x1111_1111u, 0x2222_2222u, 0x3333_3333u, 0xAAAA_AAAAu,
+            0x0000_0003u, 0x5555_5555u, 0x6666_6666u, 0x7777_7777u,
+        };
+        var table = new byte[64 + expectedDescriptor.Length * sizeof(uint)];
+        for (var index = 0; index < expectedDescriptor.Length; index++)
+        {
+            BitConverter.TryWriteBytes(
+                table.AsSpan(64 + index * sizeof(uint)),
+                expectedDescriptor[index]);
+        }
+        Assert.IsType<FakeGuestMemory>(ctx.Memory).AddRegion(tableAddress, table);
+
+        var userData = new uint[16];
+        userData[0] = (uint)tableAddress;
+        userData[1] = (uint)(tableAddress >> 32);
+        Array.Fill(userData, 0xDEAD_BEEFu, 8, 8);
+        var state = new Gen5ShaderState(
+            program,
+            userData,
+            Metadata: null,
+            UserDataScalarRegisterBase: 12);
+
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+
+        Assert.Equal(
+            expectedDescriptor,
+            Assert.Single(evaluation.ImageBindings).ResourceDescriptor);
+    }
+
+    [Fact]
     public void CompilesCombinedImageSampleVariantsToSpirv()
     {
         var ctx = CreateContext(

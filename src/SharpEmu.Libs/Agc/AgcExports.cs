@@ -458,7 +458,8 @@ public static partial class AgcExports
         bool IsStorage,
         uint MipLevel,
         IReadOnlyList<uint> SamplerDescriptor,
-        bool IsArrayed = false);
+        bool IsArrayed = false,
+        uint Dimension = 1);
 
     private readonly record struct RenderTargetWriter(
         ulong Sequence,
@@ -6184,7 +6185,8 @@ public static partial class AgcExports
                     exportEvaluation.ImageBindings),
                 binding.MipLevel ?? 0,
                 binding.SamplerDescriptor,
-                Gen5ShaderTranslator.IsArrayedImageBinding(binding)));
+                Gen5ShaderTranslator.IsArrayedImageBinding(binding),
+                binding.Control.Dimension));
         }
 
         IReadOnlyList<Gen5VertexInputBinding> vertexInputs =
@@ -6642,7 +6644,8 @@ public static partial class AgcExports
                     isStorage,
                     binding.MipLevel ?? 0,
                     binding.SamplerDescriptor,
-                    Gen5ShaderTranslator.IsArrayedImageBinding(binding)));
+                    Gen5ShaderTranslator.IsArrayedImageBinding(binding),
+                    binding.Control.Dimension));
         }
 
         error = string.Empty;
@@ -7821,6 +7824,7 @@ public static partial class AgcExports
                     binding.MipLevel,
                     binding.SamplerDescriptor,
                     binding.IsArrayed,
+                    binding.Dimension,
                     out var texture))
             {
                 textures.Add(texture);
@@ -8312,9 +8316,21 @@ public static partial class AgcExports
         uint mipLevel,
         IReadOnlyList<uint> samplerDescriptor,
         bool isArrayed,
+        uint dimension,
         out GuestDrawTexture texture)
     {
         texture = default!;
+        var isThreeDimensional = dimension == 2;
+        GuestDrawTexture CreateFallback() =>
+            CreateFallbackGuestDrawTexture(
+                isStorage,
+                descriptor.Format,
+                descriptor.NumberType,
+                isArrayed) with
+            {
+                Depth = isThreeDimensional ? Math.Max(descriptor.Depth, 1) : 1,
+                ThreeDimensionalView = isThreeDimensional,
+            };
         if ((descriptor.Type != Gen5TextureType1D &&
              descriptor.Type != Gen5TextureType2D &&
              descriptor.Type != Gen5TextureType3D &&
@@ -8327,7 +8343,7 @@ public static partial class AgcExports
             descriptor.Height > 8192)
         {
             TraceTextureFallback(descriptor, "invalid-descriptor");
-            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType, isArrayed);
+            texture = CreateFallback();
             return true;
         }
 
@@ -8348,7 +8364,7 @@ public static partial class AgcExports
             TraceTextureFallback(
                 descriptor,
                 $"invalid-byte-count:{sourceByteCount}");
-            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType, isArrayed);
+            texture = CreateFallback();
             return true;
         }
 
@@ -8377,7 +8393,7 @@ public static partial class AgcExports
         if (physicalSourceByteCount > MaxPresentedTextureBytes ||
             physicalSourceByteCount > int.MaxValue)
         {
-            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType, isArrayed);
+            texture = CreateFallback();
             return true;
         }
 
@@ -8413,6 +8429,9 @@ public static partial class AgcExports
             descriptor.Depth > 1 &&
             _arrayUploadRetryTracker.ShouldAttempt(descriptor.Address);
         var arrayUploadLayers = wantsArrayUpload ? descriptor.Depth : 1u;
+        var volumeUploadDepth = isThreeDimensional
+            ? Math.Max(descriptor.Depth, 1)
+            : 1u;
 
         // Upload-known (not plain availability): the presenter's answer goes
         // generation-stale when the guest CPU rewrites a CPU-backed image
@@ -8420,6 +8439,7 @@ public static partial class AgcExports
         // through the texel copy below so the refresh path re-uploads.
         if (!isStorage &&
             !wantsArrayUpload &&
+            !isThreeDimensional &&
             descriptor.Address != 0 &&
             GuestGpu.Current.IsGuestImageUploadKnown(
                 descriptor.Address,
@@ -8443,7 +8463,9 @@ public static partial class AgcExports
                 TileMode: descriptor.TileMode,
                 DstSelect: descriptor.DstSelect,
                 Sampler: ToGuestSampler(samplerDescriptor),
-                ArrayedView: isArrayed);
+                ArrayedView: isArrayed,
+                Depth: volumeUploadDepth,
+                ThreeDimensionalView: isThreeDimensional);
             return true;
         }
 
@@ -8519,7 +8541,9 @@ public static partial class AgcExports
                 Pitch: sourceWidth,
                 TileMode: descriptor.TileMode,
                 DstSelect: descriptor.DstSelect,
-                Sampler: ToGuestSampler(samplerDescriptor));
+                Sampler: ToGuestSampler(samplerDescriptor),
+                Depth: volumeUploadDepth,
+                ThreeDimensionalView: isThreeDimensional);
             return true;
         }
 
@@ -8539,13 +8563,14 @@ public static partial class AgcExports
         // against the tracker to force fresh texels for rewritten memory.
         SharpEmu.HLE.GuestImageWriteTracker.Track(
             descriptor.Address,
-            physicalSourceByteCount,
+            checked(physicalSourceByteCount * volumeUploadDepth),
             source: "agc.decoded-texture");
         var hasWriteGeneration =
             SharpEmu.HLE.GuestImageWriteTracker.TryGetWriteGeneration(
                 descriptor.Address,
                 out var writeGeneration);
         if (!_textureCopySkipDisabled &&
+            !isThreeDimensional &&
             descriptor.Address != 0 &&
             !SharpEmu.HLE.GuestImageWriteTracker.PeekDirty(descriptor.Address) &&
             GuestGpu.Current.IsTextureContentCached(
@@ -8560,7 +8585,9 @@ public static partial class AgcExports
                     sourceWidth,
                     sampler,
                     isArrayed,
-                    arrayUploadLayers)))
+                    arrayUploadLayers,
+                    volumeUploadDepth,
+                    isThreeDimensional)))
         {
             texture = new GuestDrawTexture(
                 descriptor.Address,
@@ -8580,20 +8607,24 @@ public static partial class AgcExports
                 DstSelect: descriptor.DstSelect,
                 Sampler: sampler,
                 ArrayedView: isArrayed,
-                ArrayLayers: arrayUploadLayers);
+                ArrayLayers: arrayUploadLayers,
+                Depth: volumeUploadDepth,
+                ThreeDimensionalView: isThreeDimensional);
             return true;
         }
 
-        if (wantsArrayUpload)
+        if (wantsArrayUpload || (isThreeDimensional && volumeUploadDepth > 1))
         {
-            var arrayLayers = arrayUploadLayers;
+            var sliceCount = wantsArrayUpload
+                ? arrayUploadLayers
+                : volumeUploadDepth;
             var layerBytes = checked((int)sourceByteCount);
-            var totalBytes = (long)layerBytes * arrayLayers;
+            var totalBytes = (long)layerBytes * sliceCount;
             if (totalBytes <= int.MaxValue)
             {
                 var layered = new byte[totalBytes];
                 var uploadedLayers = 0u;
-                for (var layer = 0u; layer < arrayLayers; layer++)
+                for (var layer = 0u; layer < sliceCount; layer++)
                 {
                     var sliceSource = new byte[(int)physicalSourceByteCount];
                     if (!ctx.Memory.TryRead(
@@ -8616,7 +8647,7 @@ public static partial class AgcExports
                     uploadedLayers++;
                 }
 
-                if (uploadedLayers == arrayLayers)
+                if (uploadedLayers == sliceCount)
                 {
                     texture = new GuestDrawTexture(
                         descriptor.Address,
@@ -8635,8 +8666,11 @@ public static partial class AgcExports
                         TileMode: descriptor.TileMode,
                         DstSelect: descriptor.DstSelect,
                         Sampler: sampler,
-                        ArrayedView: true,
-                        ArrayLayers: arrayLayers);
+                        WriteGeneration: hasWriteGeneration ? writeGeneration : -1,
+                        ArrayedView: wantsArrayUpload,
+                        ArrayLayers: wantsArrayUpload ? sliceCount : 1,
+                        Depth: wantsArrayUpload ? 1 : sliceCount,
+                        ThreeDimensionalView: isThreeDimensional);
                     return true;
                 }
             }
@@ -8650,7 +8684,7 @@ public static partial class AgcExports
             TraceTextureFallback(
                 descriptor,
                 $"guest-read-failed:{sourceByteCount}");
-            texture = CreateFallbackGuestDrawTexture(isStorage, descriptor.Format, descriptor.NumberType, isArrayed);
+            texture = CreateFallback();
             return true;
         }
 
@@ -8672,7 +8706,8 @@ public static partial class AgcExports
             TraceAgcShader(
                 $"agc.texture_source addr=0x{descriptor.Address:X16} " +
                 $"fmt={descriptor.Format} num={descriptor.NumberType} tile={descriptor.TileMode} " +
-                $"size={descriptor.Width}x{descriptor.Height} pitch={descriptor.Pitch} " +
+                $"type={descriptor.Type} dim={dimension} " +
+                $"size={descriptor.Width}x{descriptor.Height}x{descriptor.Depth} pitch={descriptor.Pitch} " +
                 $"dst=0x{descriptor.DstSelect:X3} " +
                 $"bytes={source.Length} logical_bytes={sourceByteCount} nonzero64={nonZero}");
         }
@@ -8705,7 +8740,9 @@ public static partial class AgcExports
             DstSelect: descriptor.DstSelect,
             Sampler: ToGuestSampler(samplerDescriptor),
             WriteGeneration: hasWriteGeneration ? writeGeneration : -1,
-            ArrayedView: isArrayed);
+            ArrayedView: isArrayed,
+            Depth: volumeUploadDepth,
+            ThreeDimensionalView: isThreeDimensional);
         return true;
     }
 
@@ -9441,7 +9478,8 @@ public static partial class AgcExports
                     isStorage,
                     binding.MipLevel ?? 0,
                     binding.SamplerDescriptor,
-                    Gen5ShaderTranslator.IsArrayedImageBinding(binding)));
+                    Gen5ShaderTranslator.IsArrayedImageBinding(binding),
+                    binding.Control.Dimension));
             hasStorageBinding |= isStorage;
 
             var descriptorState = descriptorValid ? string.Empty : "/invalid-desc";
