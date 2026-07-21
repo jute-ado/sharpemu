@@ -13,6 +13,7 @@ public static class UserServiceExports
     private const int OrbisUserServiceErrorNoEvent = unchecked((int)0x80960007);
     private const int OrbisUserServiceErrorInvalidParameter = unchecked((int)0x80960009);
     private const int OrbisUserServiceErrorBufferTooShort = unchecked((int)0x8096000A);
+    private const int GamePresetsSize = 40;
     private const int InvalidUserId = -1;
     private const string PrimaryUserName = "SharpEmu";
     private static int _loginEventDelivered;
@@ -171,18 +172,41 @@ public static class UserServiceExports
         LibraryName = "libSceUserService")]
     public static int UserServiceGetGamePresets(CpuContext ctx)
     {
-        // Return deterministic defaults for the offline profile.
         var userId = unchecked((int)ctx[CpuRegister.Rdi]);
-        var resultAddress = ctx[CpuRegister.Rcx];
-        Span<byte> defaults = stackalloc byte[0x18];
-        if (resultAddress == 0 || !ctx.Memory.TryWrite(resultAddress, defaults))
+        var presetsAddress = ctx[CpuRegister.Rsi];
+        if (userId != EmulatedUser.PrimaryId)
+        {
+            return ctx.SetReturn(OrbisUserServiceErrorInvalidParameter);
+        }
+
+        if (presetsAddress == 0)
         {
             return ctx.SetReturn(OrbisUserServiceErrorInvalidArgument);
         }
 
+        Span<byte> header = stackalloc byte[sizeof(ulong)];
+        if (!ctx.Memory.TryRead(presetsAddress, header))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var callerSize = BinaryPrimitives.ReadUInt64LittleEndian(header);
+        var initializedSize = callerSize == 0 || callerSize > GamePresetsSize
+            ? GamePresetsSize
+            : (int)callerSize;
+        initializedSize = Math.Max(initializedSize, sizeof(ulong));
+
+        Span<byte> defaults = stackalloc byte[GamePresetsSize];
+        defaults.Clear();
+        BinaryPrimitives.WriteUInt64LittleEndian(defaults, GamePresetsSize);
+        if (!ctx.Memory.TryWrite(presetsAddress, defaults[..initializedSize]))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
         TraceUserService(
-            $"get_game_presets user={userId} title=0x{ctx[CpuRegister.Rsi]:X16} " +
-            $"key=0x{ctx[CpuRegister.R9]:X} out=0x{resultAddress:X16} result=0x00000000");
+            $"get_game_presets user={userId} out=0x{presetsAddress:X16} " +
+            $"caller_size={callerSize} initialized_size={initializedSize} result=0x00000000");
         return ctx.SetReturn(0);
     }
 
