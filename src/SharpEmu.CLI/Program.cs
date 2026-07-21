@@ -2066,6 +2066,7 @@ internal static partial class Program
             FormatAddress(value.GuestThreadHandle),
             BuildCpuCodeWindowReport(value.CodeWindow),
             BuildCpuMemoryWindowReport(value.StackWindow),
+            BuildCpuStackCodeCandidateReports(value.StackCodeCandidates, application, executablePath),
             BuildCodeLocationReport(value.InstructionPointer, application, executablePath),
             BuildCpuStackFrameReports(value.StackFrames, application, executablePath));
     }
@@ -2095,6 +2096,16 @@ internal static partial class Program
             : new CliCpuMemoryWindowReport(
                 FormatAddress(value.StartAddress),
                 value.Bytes);
+
+    private static IReadOnlyList<CliCpuStackCodeCandidateReport>? BuildCpuStackCodeCandidateReports(
+        IReadOnlyList<CpuStackCodeCandidate>? candidates,
+        PreparedApplication? application,
+        string executablePath) =>
+        candidates?.Select(candidate => new CliCpuStackCodeCandidateReport(
+            candidate.StackOffset,
+            FormatAddress(candidate.Address),
+            BuildCodeLocationReport(candidate.Address, application, executablePath),
+            BuildCpuCodeWindowReport(candidate.CodeWindow))).ToArray();
 
     private static CliCodeLocationReport? BuildCodeLocationReport(
         ulong address,
@@ -2668,6 +2679,7 @@ internal static partial class Program
         string GuestThreadHandle,
         CliCpuCodeWindowReport? CodeWindow,
         CliCpuMemoryWindowReport? StackWindow,
+        IReadOnlyList<CliCpuStackCodeCandidateReport>? StackCodeCandidates,
         CliCodeLocationReport? Location,
         IReadOnlyList<CliCpuStackFrameReport>? StackFrames);
 
@@ -2690,6 +2702,12 @@ internal static partial class Program
     private sealed record CliCpuMemoryWindowReport(
         string StartAddress,
         string Bytes);
+
+    private sealed record CliCpuStackCodeCandidateReport(
+        int StackOffset,
+        string Address,
+        CliCodeLocationReport? Location,
+        CliCpuCodeWindowReport? CodeWindow);
 
     private sealed record CliCpuRegisterReport(
         string Rax,
