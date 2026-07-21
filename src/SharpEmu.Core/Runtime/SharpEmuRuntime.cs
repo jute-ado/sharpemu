@@ -1347,7 +1347,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 offset,
                 address,
                 captureCodeWindow(address),
-                captureInstructions?.Invoke(address)));
+                captureInstructions?.Invoke(address),
+                CaptureTrapStackCandidatePrecedingCall(virtualMemory, address)));
         }
 
         return candidates;
@@ -1427,15 +1428,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 break;
             }
 
-            instructions.Add(new CpuDecodedInstruction(
-                instruction.Rip,
-                instruction.Length,
-                IcedDecoder.FormatBytes(instruction.Bytes),
-                instruction.Mnemonic,
-                instruction.Text,
-                instruction.FlowControl.ToString(),
-                instruction.NearBranchTarget,
-                instruction.MemoryAddress));
+            instructions.Add(ToCpuDecodedInstruction(in instruction));
             consumedBytes += instruction.Length;
             if (instruction.FlowControl is
                 FlowControl.Return or
@@ -1450,6 +1443,40 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
         return instructions;
     }
+
+    internal static CpuDecodedInstruction? CaptureTrapStackCandidatePrecedingCall(
+        IVirtualMemory virtualMemory,
+        ulong address)
+    {
+        const int maximumInstructionBytes = 15;
+        for (var length = 2; length <= maximumInstructionBytes && address >= (ulong)length; length++)
+        {
+            var instructionAddress = address - (ulong)length;
+            if (!IcedDecoder.TryReadGuestBytes(virtualMemory, instructionAddress, length, out var bytes) ||
+                bytes.Length != length ||
+                !IcedDecoder.TryDecode(instructionAddress, bytes, out var instruction) ||
+                instruction.Length != length ||
+                instruction.FlowControl is not (FlowControl.Call or FlowControl.IndirectCall))
+            {
+                continue;
+            }
+
+            return ToCpuDecodedInstruction(in instruction);
+        }
+
+        return null;
+    }
+
+    private static CpuDecodedInstruction ToCpuDecodedInstruction(in DecodedInst instruction) =>
+        new(
+            instruction.Rip,
+            instruction.Length,
+            IcedDecoder.FormatBytes(instruction.Bytes),
+            instruction.Mnemonic,
+            instruction.Text,
+            instruction.FlowControl.ToString(),
+            instruction.NearBranchTarget,
+            instruction.MemoryAddress);
 
     private CpuCodeWindow? CaptureTrapCodeWindow(ulong instructionPointer) =>
         CaptureCodeWindow(

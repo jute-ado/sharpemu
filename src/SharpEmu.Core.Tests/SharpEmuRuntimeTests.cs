@@ -209,6 +209,43 @@ public sealed class SharpEmuRuntimeTests
             instruction => Assert.Equal("ret", instruction.Text));
     }
 
+    [Fact]
+    public void StackCandidatePrecedingCallEndsExactlyAtCandidateAddress()
+    {
+        const ulong codeStart = 0x9000;
+        byte[] bytes =
+        [
+            0x90,                         // nop
+            0xE8, 0x05, 0x00, 0x00, 0x00, // call codeStart + 11
+            0x48, 0x85, 0xC0,             // test rax, rax
+            0xFF, 0xD5,                   // call rbp
+            0xC3,
+        ];
+        var memory = new VirtualMemory();
+        memory.Map(
+            codeStart,
+            (ulong)bytes.Length,
+            fileOffset: 0,
+            bytes,
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+
+        var precedingCall = SharpEmuRuntime.CaptureTrapStackCandidatePrecedingCall(
+            memory,
+            codeStart + 6);
+
+        Assert.NotNull(precedingCall);
+        Assert.Equal(codeStart + 1, precedingCall.Value.Address);
+        Assert.Equal("call 000000000000900Bh", precedingCall.Value.Text);
+        Assert.Equal(codeStart + 11, precedingCall.Value.NearBranchTarget);
+        Assert.Null(SharpEmuRuntime.CaptureTrapStackCandidatePrecedingCall(memory, codeStart + 9));
+        var precedingIndirectCall = SharpEmuRuntime.CaptureTrapStackCandidatePrecedingCall(
+            memory,
+            codeStart + 11);
+        Assert.NotNull(precedingIndirectCall);
+        Assert.Equal("call rbp", precedingIndirectCall.Value.Text);
+        Assert.Null(precedingIndirectCall.Value.NearBranchTarget);
+    }
+
     private static void WriteFrame(
         byte[] bytes,
         ulong mappedStart,
@@ -993,6 +1030,11 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(
             "0x0000000800000009",
             candidateInstructions[0].GetProperty("address").GetString());
+        var precedingCall = returnCandidate.GetProperty("precedingCall");
+        Assert.Equal("call 0000000800000014h", precedingCall.GetProperty("text").GetString());
+        var precedingCallTargetLocation = precedingCall.GetProperty("nearBranchTargetLocation");
+        Assert.Equal("eboot.bin", precedingCallTargetLocation.GetProperty("imagePath").GetString());
+        Assert.Equal("0x0000000000000014", precedingCallTargetLocation.GetProperty("imageOffset").GetString());
         var memoryAddressLocation = candidateInstructions[0].GetProperty("memoryAddressLocation");
         Assert.Equal("eboot.bin", memoryAddressLocation.GetProperty("imagePath").GetString());
         Assert.Equal("0x0000000000000010", memoryAddressLocation.GetProperty("imageOffset").GetString());
