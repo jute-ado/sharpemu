@@ -130,6 +130,29 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal("CC", candidate.CodeWindow?.Bytes);
     }
 
+    [Fact]
+    public void StackCandidateCodeWindowReservesMoreForwardContext()
+    {
+        const ulong codeStart = 0x9000;
+        var bytes = Enumerable.Range(0, 160).Select(value => (byte)value).ToArray();
+        var memory = new VirtualMemory();
+        memory.Map(
+            codeStart,
+            (ulong)bytes.Length,
+            fileOffset: 0,
+            bytes,
+            ProgramHeaderFlags.Read | ProgramHeaderFlags.Execute);
+
+        var window = SharpEmuRuntime.CaptureTrapStackCandidateCodeWindow(
+            memory,
+            codeStart + 32);
+
+        Assert.NotNull(window);
+        Assert.Equal(codeStart + 16, window.Value.StartAddress);
+        Assert.Equal(16, window.Value.InstructionOffset);
+        Assert.Equal(128, window.Value.Bytes.Split(' ').Length);
+    }
+
     private static void WriteFrame(
         byte[] bytes,
         ulong mappedStart,
