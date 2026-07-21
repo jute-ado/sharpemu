@@ -64,7 +64,6 @@ public static class KernelRuntimeCompatExports
     private static ulong _processProcParamAddress;
     private static ulong _nextReservedVirtualBase = 0x6000_0000_0UL;
     private static uint _gpoStateBits;
-    private static readonly HashSet<int> _loadedSysmodules = new();
     private static readonly object _prtApertureGate = new();
     private static readonly (ulong Base, ulong Size)[] _prtApertures = new (ulong Base, ulong Size)[3];
     private static int _stackChkFailCount;
@@ -1466,10 +1465,6 @@ public static class KernelRuntimeCompatExports
     {
         var moduleId = unchecked((int)ctx[CpuRegister.Rdi]);
         _ = KernelModuleRegistry.MarkSysmoduleLoaded(moduleId);
-        lock (_stateGate)
-        {
-            _loadedSysmodules.Add(moduleId);
-        }
 
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
@@ -1631,10 +1626,6 @@ public static class KernelRuntimeCompatExports
     {
         var moduleId = unchecked((int)ctx[CpuRegister.Rdi]);
         KernelModuleRegistry.MarkSysmoduleUnloaded(moduleId);
-        lock (_stateGate)
-        {
-            _loadedSysmodules.Remove(moduleId);
-        }
 
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
@@ -1650,10 +1641,6 @@ public static class KernelRuntimeCompatExports
         var moduleId = unchecked((int)ctx[CpuRegister.Rdi]);
         var resultAddress = ctx[CpuRegister.R8];
         _ = KernelModuleRegistry.MarkSysmoduleLoaded(moduleId);
-        lock (_stateGate)
-        {
-            _loadedSysmodules.Add(moduleId);
-        }
 
         if (resultAddress != 0 && !ctx.TryWriteInt32(resultAddress, 0))
         {
@@ -1673,10 +1660,6 @@ public static class KernelRuntimeCompatExports
     {
         var moduleId = unchecked((int)ctx[CpuRegister.Rdi]);
         var loaded = KernelModuleRegistry.IsSysmoduleLoaded(moduleId);
-        lock (_stateGate)
-        {
-            loaded |= _loadedSysmodules.Contains(moduleId);
-        }
 
         ctx[CpuRegister.Rax] = loaded ? 0UL : unchecked((ulong)(int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND);
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;

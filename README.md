@@ -78,7 +78,8 @@ test-driven workflow. Major downstream differences include:
   ABIs, so unused registers cannot become guest thread names, with transactional
   output validation and rollback when guest scheduling fails
 - application plugin discovery and symbol resolution, including deferred module
-  initializers that start once and can be retried after a guest failure
+  initializers that start once and can be retried after a guest failure, with
+  sysmodule loaded state kept in the canonical per-session module registry
 - persistent save-data mutations, including quota-aware mount information,
   retry-safe and mode-aware lifecycle events, bounded atomic icon writes, and
   size-reporting icon loads through mounted guest paths, with canonical
