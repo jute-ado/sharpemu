@@ -223,6 +223,16 @@ public static class KernelExports
     private static int PthreadCreateCore(CpuContext ctx, bool hasNameArgument)
     {
         var threadIdAddress = ctx[CpuRegister.Rdi];
+        if (threadIdAddress == 0)
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        if (!ctx.TryWriteUInt64(threadIdAddress, 0))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
         var attrAddress = ctx[CpuRegister.Rsi];
         var entryAddress = ctx[CpuRegister.Rdx];
         var argument = ctx[CpuRegister.Rcx];
@@ -239,9 +249,10 @@ public static class KernelExports
             name,
             priority,
             affinityMask);
-        if (threadIdAddress != 0 && !ctx.TryWriteUInt64(threadIdAddress, threadHandle))
+        if (!ctx.TryWriteUInt64(threadIdAddress, threadHandle))
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            ReleaseFailedThreadCreation(threadHandle);
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
         if (ShouldTracePthread())
@@ -267,13 +278,20 @@ public static class KernelExports
             {
                 Console.Error.WriteLine(
                     $"[LOADER][ERROR] pthread_create: failed to schedule guest thread '{name}' entry=0x{entryAddress:X16}: {error}");
-                ctx[CpuRegister.Rax] = unchecked((ulong)(int)OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN);
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN;
+                _ = ctx.TryWriteUInt64(threadIdAddress, 0);
+                ReleaseFailedThreadCreation(threadHandle);
+                return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN);
             }
         }
 
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static void ReleaseFailedThreadCreation(ulong threadHandle)
+    {
+        KernelPthreadExtendedCompatExports.ReleaseThreadState(threadHandle);
+        KernelPthreadState.ReleaseThreadHandle(threadHandle);
     }
 
     [SysAbiExport(

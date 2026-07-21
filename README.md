@@ -73,7 +73,8 @@ test-driven workflow. Major downstream differences include:
   lifecycles, plus a consistent virtual `/devlog` container for stat, directory
   enumeration, open, and fstat without exposing host device paths
 - distinct four-argument POSIX and named five-argument Sony pthread creation
-  ABIs, so unused registers cannot become guest thread names
+  ABIs, so unused registers cannot become guest thread names, with transactional
+  output validation and rollback when guest scheduling fails
 - application plugin discovery and symbol resolution, including deferred module
   initializers that start once and can be retried after a guest failure
 - persistent save-data mutations, including quota-aware mount information,
