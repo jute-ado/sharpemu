@@ -1343,12 +1343,26 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 continue;
             }
 
+            var precedingCall = CaptureTrapStackCandidatePrecedingCall(virtualMemory, address);
+            CpuCodePath? precedingCallTarget = null;
+            if (precedingCall?.NearBranchTarget is { } targetAddress &&
+                executableRegions.Any(region =>
+                    targetAddress >= region.VirtualAddress &&
+                    targetAddress - region.VirtualAddress < region.MemorySize))
+            {
+                precedingCallTarget = new CpuCodePath(
+                    targetAddress,
+                    captureCodeWindow(targetAddress),
+                    captureInstructions?.Invoke(targetAddress));
+            }
+
             candidates.Add(new CpuStackCodeCandidate(
                 offset,
                 address,
                 captureCodeWindow(address),
                 captureInstructions?.Invoke(address),
-                CaptureTrapStackCandidatePrecedingCall(virtualMemory, address)));
+                precedingCall,
+                precedingCallTarget));
         }
 
         return candidates;

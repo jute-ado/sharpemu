@@ -2111,7 +2111,21 @@ internal static partial class Program
                 BuildCpuDecodedInstructionReport(instruction, application, executablePath)).ToArray(),
             candidate.PrecedingCall is { } precedingCall
                 ? BuildCpuDecodedInstructionReport(precedingCall, application, executablePath)
+                : null,
+            candidate.PrecedingCallTarget is { } precedingCallTarget
+                ? BuildCpuCodePathReport(precedingCallTarget, application, executablePath)
                 : null)).ToArray();
+
+    private static CliCpuCodePathReport BuildCpuCodePathReport(
+        CpuCodePath path,
+        PreparedApplication? application,
+        string executablePath) =>
+        new(
+            FormatAddress(path.Address),
+            BuildCodeLocationReport(path.Address, application, executablePath),
+            BuildCpuCodeWindowReport(path.CodeWindow),
+            path.Instructions?.Select(instruction =>
+                BuildCpuDecodedInstructionReport(instruction, application, executablePath)).ToArray());
 
     private static CliCpuDecodedInstructionReport BuildCpuDecodedInstructionReport(
         CpuDecodedInstruction instruction,
@@ -2736,7 +2750,14 @@ internal static partial class Program
         CliCodeLocationReport? Location,
         CliCpuCodeWindowReport? CodeWindow,
         IReadOnlyList<CliCpuDecodedInstructionReport>? Instructions,
-        CliCpuDecodedInstructionReport? PrecedingCall);
+        CliCpuDecodedInstructionReport? PrecedingCall,
+        CliCpuCodePathReport? PrecedingCallTarget);
+
+    private sealed record CliCpuCodePathReport(
+        string Address,
+        CliCodeLocationReport? Location,
+        CliCpuCodeWindowReport? CodeWindow,
+        IReadOnlyList<CliCpuDecodedInstructionReport>? Instructions);
 
     private sealed record CliCpuDecodedInstructionReport(
         string Address,

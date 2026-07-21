@@ -8,4 +8,5 @@ public readonly record struct CpuStackCodeCandidate(
     ulong Address,
     CpuCodeWindow? CodeWindow = null,
     IReadOnlyList<CpuDecodedInstruction>? Instructions = null,
-    CpuDecodedInstruction? PrecedingCall = null);
+    CpuDecodedInstruction? PrecedingCall = null,
+    CpuCodePath? PrecedingCallTarget = null);
