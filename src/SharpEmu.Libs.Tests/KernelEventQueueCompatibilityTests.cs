@@ -87,6 +87,7 @@ public sealed class KernelEventQueueCompatibilityTests
     [Fact]
     public async Task DeleteQueueInterruptsHostTimedWait()
     {
+        GuestThreadBlocking.BeginExecution();
         var fixture = CreateQueue(mapEventBuffer: true);
         BinaryPrimitives.WriteUInt32LittleEndian(fixture.Timeout, 30_000_000);
         var waiterContext = new CpuContext(fixture.Memory, Generation.Gen5);
@@ -125,7 +126,7 @@ public sealed class KernelEventQueueCompatibilityTests
     }
 
     [Fact]
-    public async Task TimedGuestWaitWakesBeforeDeadlineAndUpdatesRemainingTimeout()
+    public async Task TimedGuestWaitWakesBeforeDeadlineAndPreservesTimeoutInput()
     {
         GuestThreadBlocking.BeginExecution();
         const uint timeoutMicros = 5_000_000;
@@ -144,10 +145,9 @@ public sealed class KernelEventQueueCompatibilityTests
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 await wait.WaitAsync(TimeSpan.FromSeconds(1)));
-            Assert.InRange(
-                BinaryPrimitives.ReadUInt32LittleEndian(fixture.Timeout),
-                1u,
-                timeoutMicros);
+            Assert.Equal(
+                timeoutMicros,
+                BinaryPrimitives.ReadUInt32LittleEndian(fixture.Timeout));
             Assert.Equal(1u, ReadUInt32(fixture.Count));
             Assert.Equal(ident, BinaryPrimitives.ReadUInt64LittleEndian(fixture.Events));
             Assert.Equal(0x9876UL, BinaryPrimitives.ReadUInt64LittleEndian(fixture.Events.AsSpan(0x10)));
@@ -172,7 +172,7 @@ public sealed class KernelEventQueueCompatibilityTests
                 (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT,
                 await StartGuestWait(fixture, 0x1357, timed: true)
                     .WaitAsync(TimeSpan.FromSeconds(1)));
-            Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(fixture.Timeout));
+            Assert.Equal(20_000u, BinaryPrimitives.ReadUInt32LittleEndian(fixture.Timeout));
             Assert.Equal(0u, ReadUInt32(fixture.Count));
 
             Assert.Equal(
@@ -189,7 +189,7 @@ public sealed class KernelEventQueueCompatibilityTests
     }
 
     [Fact]
-    public async Task TimedGuestWaitTimeoutCopyoutFailurePreservesPendingEvent()
+    public async Task TimedGuestWaitDoesNotCopyOutTimeout()
     {
         GuestThreadBlocking.BeginExecution();
         const uint timeoutMicros = 5_000_000;
@@ -207,14 +207,8 @@ public sealed class KernelEventQueueCompatibilityTests
                 (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 TriggerUserEvent(fixture, ident, 0xBCDE));
             Assert.Equal(
-                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
                 await wait.WaitAsync(TimeSpan.FromSeconds(1)));
-
-            fixture.Memory.AddRegion(TimeoutAddress, fixture.Timeout);
-            BinaryPrimitives.WriteUInt32LittleEndian(fixture.Timeout, 0);
-            BinaryPrimitives.WriteUInt32LittleEndian(fixture.Count, 0);
-
-            Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, Wait(fixture, EventAddress));
             Assert.Equal(1u, ReadUInt32(fixture.Count));
             Assert.Equal(ident, BinaryPrimitives.ReadUInt64LittleEndian(fixture.Events));
             Assert.Equal(0xBCDEUL, BinaryPrimitives.ReadUInt64LittleEndian(fixture.Events.AsSpan(0x10)));
