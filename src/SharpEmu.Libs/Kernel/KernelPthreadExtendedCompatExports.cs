@@ -297,6 +297,8 @@ public static class KernelPthreadExtendedCompatExports
             state.Attributes = state.Attributes with { DetachState = 1 };
         }
 
+        _ = GuestThreadExecution.Scheduler?.RequestThreadReap(thread);
+
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 

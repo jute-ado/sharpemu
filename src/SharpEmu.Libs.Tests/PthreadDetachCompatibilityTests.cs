@@ -60,6 +60,65 @@ public sealed class PthreadDetachCompatibilityTests
             context[CpuRegister.Rax]);
     }
 
+    [Fact]
+    public void DetachedExitRequestsDeferredReapingAndReleasesKernelHandle()
+    {
+        var thread = KernelPthreadState.CreateThreadHandle("detached-reap");
+        var context = CreateContext(thread);
+        var scheduler = new DeferredReapScheduler();
+        var previousScheduler = GuestThreadExecution.Scheduler;
+        GuestThreadExecution.Scheduler = scheduler;
+        try
+        {
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadExtendedCompatExports.PosixPthreadDetach(context));
+
+            GuestThreadExecution.NotifyGuestThreadExited(thread);
+
+            Assert.Equal(thread, scheduler.RequestedThreadHandle);
+            Assert.True(KernelPthreadState.TryGetThreadIdentity(thread, out _));
+
+            GuestThreadExecution.NotifyGuestThreadReaped(thread);
+
+            Assert.False(KernelPthreadState.TryGetThreadIdentity(thread, out _));
+        }
+        finally
+        {
+            GuestThreadExecution.Scheduler = previousScheduler;
+            KernelPthreadExtendedCompatExports.ReleaseThreadState(thread);
+            KernelPthreadState.ReleaseThreadHandle(thread);
+        }
+    }
+
+    [Fact]
+    public void DetachingAlreadyExitedThreadReapsItImmediately()
+    {
+        var thread = KernelPthreadState.CreateThreadHandle("late-detach-reap");
+        var context = CreateContext(thread);
+        var scheduler = new DeferredReapScheduler
+        {
+            CompleteSynchronously = true,
+        };
+        var previousScheduler = GuestThreadExecution.Scheduler;
+        GuestThreadExecution.Scheduler = scheduler;
+        try
+        {
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadExtendedCompatExports.PosixPthreadDetach(context));
+
+            Assert.Equal(thread, scheduler.RequestedThreadHandle);
+            Assert.False(KernelPthreadState.TryGetThreadIdentity(thread, out _));
+        }
+        finally
+        {
+            GuestThreadExecution.Scheduler = previousScheduler;
+            KernelPthreadExtendedCompatExports.ReleaseThreadState(thread);
+            KernelPthreadState.ReleaseThreadHandle(thread);
+        }
+    }
+
     [Theory]
     [InlineData("4qGrR6eoP9Y", "scePthreadDetach", "libKernel")]
     [InlineData("+U1R4WtXvoc", "pthread_detach", "libScePosix")]
@@ -80,5 +139,81 @@ public sealed class PthreadDetachCompatibilityTests
         var context = new CpuContext(new FakeGuestMemory(), Generation.Gen5);
         context[CpuRegister.Rdi] = thread;
         return context;
+    }
+
+    private sealed class DeferredReapScheduler : IGuestThreadScheduler
+    {
+        public bool SupportsGuestContextTransfer => true;
+
+        public ulong RequestedThreadHandle { get; private set; }
+
+        public bool CompleteSynchronously { get; init; }
+
+        public void RegisterGuestThreadContext(ulong threadHandle, CpuContext context)
+        {
+        }
+
+        public bool TryStartThread(
+            CpuContext creatorContext,
+            GuestThreadStartRequest request,
+            out string? error)
+        {
+            error = "not used";
+            return false;
+        }
+
+        public bool TryJoinThread(
+            CpuContext callerContext,
+            ulong threadHandle,
+            out ulong returnValue,
+            out string? error)
+        {
+            returnValue = 0;
+            error = "not used";
+            return false;
+        }
+
+        public bool RequestThreadReap(ulong threadHandle)
+        {
+            RequestedThreadHandle = threadHandle;
+            if (CompleteSynchronously)
+            {
+                GuestThreadExecution.NotifyGuestThreadReaped(threadHandle);
+            }
+            return true;
+        }
+
+        public void Pump(CpuContext callerContext, string reason)
+        {
+        }
+
+        public IReadOnlyList<GuestThreadSnapshot> SnapshotThreads() => [];
+
+        public bool TryCallGuestFunction(
+            CpuContext callerContext,
+            ulong entryPoint,
+            ulong arg0,
+            ulong arg1,
+            ulong arg2,
+            ulong stackAddress,
+            ulong stackSize,
+            string reason,
+            out ulong returnValue,
+            out string? error)
+        {
+            returnValue = 0;
+            error = "not used";
+            return false;
+        }
+
+        public bool TryCallGuestContinuation(
+            CpuContext callerContext,
+            GuestCpuContinuation continuation,
+            string reason,
+            out string? error)
+        {
+            error = "not used";
+            return false;
+        }
     }
 }
