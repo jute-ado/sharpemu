@@ -5,7 +5,7 @@ using SharpEmu.HLE;
 
 namespace SharpEmu.Libs.Kernel;
 
-internal static class KernelPthreadLifecycle
+public static class KernelPthreadLifecycle
 {
     static KernelPthreadLifecycle()
     {
@@ -16,6 +16,12 @@ internal static class KernelPthreadLifecycle
 
     internal static void EnsureInitialized()
     {
+    }
+
+    public static void ResetRuntimeState()
+    {
+        KernelPthreadCompatExports.ResetRuntimeState();
+        KernelPthreadExtendedCompatExports.ResetRuntimeState();
     }
 
     private static void RunThreadSpecificDestructors(

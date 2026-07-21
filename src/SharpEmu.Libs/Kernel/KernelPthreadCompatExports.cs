@@ -43,6 +43,20 @@ public static class KernelPthreadCompatExports
         KernelPthreadLifecycle.EnsureInitialized();
     }
 
+    internal static void ResetRuntimeState()
+    {
+        _mutexStates.Clear();
+        _posixTimedWaitCounts.Clear();
+        _reportedContendedMutexes.Clear();
+        lock (_stateGate)
+        {
+            _mutexAttrStates.Clear();
+            _condStates.Clear();
+            _onceGates.Clear();
+            _condAttrStates.Clear();
+        }
+    }
+
     private sealed class PthreadMutexState
     {
         public ulong OwnerThreadId { get; set; }
