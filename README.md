@@ -90,6 +90,8 @@ test-driven workflow. Major downstream differences include:
   registries, and restarts guest-visible audio handles between titles
 - media-player session teardown that terminates retained FFmpeg decoder processes,
   closes their streams, and invalidates stale AvPlayer handles between titles
+- media-codec session teardown that clears AJM contexts plus audio and video
+  decoder registries and restarts their guest-visible IDs between titles
 - process-scoped event queues, event flags, semaphores, and exception handlers
   reset between sessions with blocked waiters woken through normal deleted-object
   semantics and deterministic handle allocation for the next process

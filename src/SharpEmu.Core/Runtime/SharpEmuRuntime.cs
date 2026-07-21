@@ -13,6 +13,7 @@ using SharpEmu.Libs.Kernel;
 using SharpEmu.Libs.AppContent;
 using SharpEmu.Libs.Audio;
 using SharpEmu.Libs.AvPlayer;
+using SharpEmu.Libs.Codec;
 using SharpEmu.Libs.SaveData;
 using SharpEmu.Libs.Fiber;
 using SharpEmu.Libs.Network;
@@ -519,6 +520,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         NetworkLifecycle.ResetRuntimeState();
         AudioSubsystemLifecycle.ResetRuntimeState();
         AvPlayerLifecycle.ResetRuntimeState();
+        MediaCodecLifecycle.ResetRuntimeState();
         KernelMemoryLifecycle.ResetRuntimeState();
     }
 

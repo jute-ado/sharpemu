@@ -297,7 +297,7 @@ public static class AjmExports
         return 0;
     }
 
-    internal static void ResetForTests()
+    internal static void ResetRuntimeState()
     {
         Contexts.Clear();
         Interlocked.Exchange(ref _nextContextId, 0);

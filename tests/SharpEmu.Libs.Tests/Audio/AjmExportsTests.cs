@@ -31,7 +31,7 @@ public sealed class AjmExportsTests : IDisposable
 
     public AjmExportsTests()
     {
-        AjmExports.ResetForTests();
+        AjmExports.ResetRuntimeState();
         _ctx = new CpuContext(_memory, Generation.Gen5);
     }
 
@@ -147,7 +147,7 @@ public sealed class AjmExportsTests : IDisposable
 
     public void Dispose()
     {
-        AjmExports.ResetForTests();
+        AjmExports.ResetRuntimeState();
     }
 
     private uint Initialize()

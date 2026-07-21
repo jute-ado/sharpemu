@@ -25,6 +25,13 @@ public static class CodecExports
     private static readonly ConcurrentDictionary<ulong, byte> AudioDecoders = new();
     private static long _nextHandle = 1;
 
+    internal static void ResetRuntimeState()
+    {
+        VideoDecoders.Clear();
+        AudioDecoders.Clear();
+        Interlocked.Exchange(ref _nextHandle, 1);
+    }
+
     // ---- Video decoder ----
 
     [SysAbiExport(Nid = "qkgRiwHyheU", ExportName = "sceVideodecCreateDecoder",
