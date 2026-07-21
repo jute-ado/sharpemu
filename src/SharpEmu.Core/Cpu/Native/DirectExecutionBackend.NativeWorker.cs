@@ -52,6 +52,7 @@ public sealed partial class DirectExecutionBackend
 			_activeGuestHardwareExceptionAccessType = 0;
 			_activeGuestHardwareExceptionAccessAddress = 0;
 			_activeGuestHardwareExceptionRegisters = null;
+			_activeGuestHardwareExceptionThreadHandle = 0;
 			_hostThreading.SetTlsValue(_hostRspSlotTlsIndex, (nint)hostRspSlot);
 			return CallNativeEntry(entryStub);
 		}
@@ -81,7 +82,8 @@ public sealed partial class DirectExecutionBackend
 				out var hardwareExceptionCode,
 				out var hardwareExceptionAccessType,
 				out var hardwareExceptionAccessAddress,
-				out var hardwareExceptionRegisters);
+				out var hardwareExceptionRegisters,
+				out var hardwareExceptionThreadHandle);
 			_activeGuestThreadYieldRequested = yieldRequested;
 			_activeGuestThreadYieldReason = yieldReason;
 			_activeForcedGuestExit = forcedExit;
@@ -90,6 +92,7 @@ public sealed partial class DirectExecutionBackend
 			_activeGuestHardwareExceptionAccessType = hardwareExceptionAccessType;
 			_activeGuestHardwareExceptionAccessAddress = hardwareExceptionAccessAddress;
 			_activeGuestHardwareExceptionRegisters = hardwareExceptionRegisters;
+			_activeGuestHardwareExceptionThreadHandle = hardwareExceptionThreadHandle;
 			return nativeReturn;
 		}
 		finally
@@ -218,6 +221,7 @@ public sealed partial class DirectExecutionBackend
 		private ulong _runHardwareExceptionAccessType;
 		private ulong _runHardwareExceptionAccessAddress;
 		private CpuRegisterSnapshot? _runHardwareExceptionRegisters;
+		private ulong _runHardwareExceptionThreadHandle;
 		private bool _runPrologueFailed;
 
 		// Prologue -> epilogue carry, only touched on the worker thread.
@@ -235,8 +239,10 @@ public sealed partial class DirectExecutionBackend
 		private ulong _prevHardwareExceptionAccessType;
 		private ulong _prevHardwareExceptionAccessAddress;
 		private CpuRegisterSnapshot? _prevHardwareExceptionRegisters;
+		private ulong _prevHardwareExceptionThreadHandle;
 		private GuestThreadState? _prevState;
 		private ulong _prevGuestThreadHandle;
+		private ulong _prevExternalGuestThreadHandle;
 		private nint _prevHostRspSlot;
 		private int _prevHostThreadId;
 		private bool _entered;
@@ -406,7 +412,8 @@ public sealed partial class DirectExecutionBackend
 			out uint hardwareExceptionCode,
 			out ulong hardwareExceptionAccessType,
 			out ulong hardwareExceptionAccessAddress,
-			out CpuRegisterSnapshot? hardwareExceptionRegisters)
+			out CpuRegisterSnapshot? hardwareExceptionRegisters,
+			out ulong hardwareExceptionThreadHandle)
 		{
 			_runContext = context;
 			_runState = state;
@@ -425,6 +432,7 @@ public sealed partial class DirectExecutionBackend
 			_runHardwareExceptionAccessType = 0;
 			_runHardwareExceptionAccessAddress = 0;
 			_runHardwareExceptionRegisters = null;
+			_runHardwareExceptionThreadHandle = 0;
 			SignalWorkAvailable();
 			WaitWorkCompleted();
 			_runContext = null;
@@ -437,6 +445,7 @@ public sealed partial class DirectExecutionBackend
 			hardwareExceptionAccessType = _runHardwareExceptionAccessType;
 			hardwareExceptionAccessAddress = _runHardwareExceptionAccessAddress;
 			hardwareExceptionRegisters = _runHardwareExceptionRegisters;
+			hardwareExceptionThreadHandle = _runHardwareExceptionThreadHandle;
 			if (_runPrologueFailed)
 			{
 				throw new InvalidOperationException("Native guest worker failed to bind the run ambient (prologue fault)");
@@ -517,9 +526,12 @@ public sealed partial class DirectExecutionBackend
 			_prevHardwareExceptionAccessType = _activeGuestHardwareExceptionAccessType;
 			_prevHardwareExceptionAccessAddress = _activeGuestHardwareExceptionAccessAddress;
 			_prevHardwareExceptionRegisters = _activeGuestHardwareExceptionRegisters;
+			_prevHardwareExceptionThreadHandle = _activeGuestHardwareExceptionThreadHandle;
 			_prevState = _activeGuestThreadState;
 			_prevHostRspSlot = backend._hostThreading.GetTlsValue(backend._hostRspSlotTlsIndex);
 			_prevGuestThreadHandle = GuestThreadExecution.EnterGuestThread(_runGuestThreadHandle);
+			_prevExternalGuestThreadHandle = _currentExternalGuestThreadHandle;
+			_currentExternalGuestThreadHandle = 0;
 			_entered = true;
 			_activeExecutionBackend = backend;
 			_activeCpuContext = _runContext;
@@ -534,6 +546,7 @@ public sealed partial class DirectExecutionBackend
 			_activeGuestHardwareExceptionAccessType = 0;
 			_activeGuestHardwareExceptionAccessAddress = 0;
 			_activeGuestHardwareExceptionRegisters = null;
+			_activeGuestHardwareExceptionThreadHandle = 0;
 			BindActiveGuestStackRange(_runContext!);
 			backend.BindTlsBase(_runContext!);
 			backend._hostThreading.SetTlsValue(backend._hostRspSlotTlsIndex, _runHostRspSlot);
@@ -566,6 +579,7 @@ public sealed partial class DirectExecutionBackend
 			_runHardwareExceptionAccessType = _activeGuestHardwareExceptionAccessType;
 			_runHardwareExceptionAccessAddress = _activeGuestHardwareExceptionAccessAddress;
 			_runHardwareExceptionRegisters = _activeGuestHardwareExceptionRegisters;
+			_runHardwareExceptionThreadHandle = _activeGuestHardwareExceptionThreadHandle;
 			if (!_entered)
 			{
 				return;
@@ -577,6 +591,7 @@ public sealed partial class DirectExecutionBackend
 			}
 			_backend._hostThreading.SetTlsValue(_backend._hostRspSlotTlsIndex, _prevHostRspSlot);
 			GuestThreadExecution.RestoreGuestThread(_prevGuestThreadHandle);
+			_currentExternalGuestThreadHandle = _prevExternalGuestThreadHandle;
 			_activeExecutionBackend = _prevBackend;
 			_activeCpuContext = _prevContext;
 			_activeEntryReturnSentinelRip = _prevSentinel;
@@ -591,6 +606,7 @@ public sealed partial class DirectExecutionBackend
 			_activeGuestHardwareExceptionAccessType = _prevHardwareExceptionAccessType;
 			_activeGuestHardwareExceptionAccessAddress = _prevHardwareExceptionAccessAddress;
 			_activeGuestHardwareExceptionRegisters = _prevHardwareExceptionRegisters;
+			_activeGuestHardwareExceptionThreadHandle = _prevHardwareExceptionThreadHandle;
 			_activeGuestThreadState = _prevState;
 			_prevBackend = null;
 			_prevContext = null;

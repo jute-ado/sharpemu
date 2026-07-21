@@ -383,6 +383,7 @@ public sealed partial class DirectExecutionBackend
 				? exceptionRecord->ExceptionInformation[1]
 				: 0;
 		_activeGuestHardwareExceptionRegisters = CaptureRegisterSnapshot(contextRecord, rsp);
+		_activeGuestHardwareExceptionThreadHandle = GetCurrentGuestThreadHandle();
 		if (_logGuestContext)
 		{
 			LogRedirectedGuestExceptionContext(

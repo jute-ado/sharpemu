@@ -19,6 +19,7 @@ public sealed class NativeImportBridgeTests
     private const string FloatAddNid = "test-float-add-nid";
     private const string ColdHandlerNid = "test-cold-handler-nid";
     private const string BlockingYieldNid = "test-blocking-yield-nid";
+    private const string RegisterExternalThreadNid = "test-register-external-thread-nid";
     private const string MemalignNid = "Ujf3KzMvRmI";
     private const string PluginInitializeNid = "Mglc7amPW4k";
     private const ulong CodeAddress = 0x0000_0008_1000_0000;
@@ -240,6 +241,60 @@ public sealed class NativeImportBridgeTests
         AssertSuccessful(execution);
         Assert.Contains($"nid={AddNid}", execution.ImportTrace, StringComparison.Ordinal);
         Assert.Contains("thread=0x000000000000CAFE", execution.ImportTrace, StringComparison.Ordinal);
+    }
+
+    [HostX64Fact]
+    public async Task NativeImportTraceRetainsThreadRegisteredDuringImport()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
+        const ulong registeredThreadHandle = 0xE17E;
+        byte[] code =
+        [
+            0xE8, 0xFB, 0x00, 0x00, 0x00, // call ImportAddress
+            0xE8, 0x06, 0x01, 0x00, 0x00, // call SecondImportAddress
+            0x31, 0xC0,                   // xor eax, eax
+            0xC3,                         // ret
+        ];
+        var execution = SyntheticNativeGuest.ExecuteModuleInitializer(
+            code,
+            Generation.Gen5,
+            "synthetic-registered-thread-trap",
+            new Dictionary<ulong, string>
+            {
+                [ImportAddress] = RegisterExternalThreadNid,
+                [SecondImportAddress] = AddNid,
+            },
+            moduleManager => moduleManager.RegisterExports(
+            [
+                new ExportedFunction(
+                    "libSyntheticTest",
+                    RegisterExternalThreadNid,
+                    "syntheticRegisterExternalThread",
+                    Generation.Gen5,
+                    context =>
+                    {
+                        GuestThreadExecution.Scheduler?.RegisterGuestThreadContext(
+                            registeredThreadHandle,
+                            context);
+                        return context.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+                    }),
+                new ExportedFunction(
+                    "libSyntheticTest",
+                    AddNid,
+                    "syntheticAdd",
+                    Generation.Gen5,
+                    SyntheticExports.Add),
+            ]),
+            CodeAddress,
+            new CpuExecutionOptions { ImportTraceLimit = 1 });
+
+        AssertSuccessful(execution);
+        Assert.Contains($"nid={AddNid}", execution.ImportTrace, StringComparison.Ordinal);
+        Assert.Contains($"thread=0x{registeredThreadHandle:X16}", execution.ImportTrace, StringComparison.Ordinal);
     }
 
     [HostX64Fact]
