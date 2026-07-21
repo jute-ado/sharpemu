@@ -1798,7 +1798,7 @@ public static class KernelPthreadCompatExports
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
-    private static int TranslatePthreadResult(int result, bool posixResult)
+    internal static int TranslatePthreadResult(int result, bool posixResult)
     {
         if (!posixResult || result == (int)OrbisGen2Result.ORBIS_GEN2_OK)
         {

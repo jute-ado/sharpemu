@@ -1072,19 +1072,34 @@ public static class KernelPthreadExtendedCompatExports
         }
 
         var syntheticHandle = AllocateSyntheticHandle(SyntheticRwlockHandleBase, ref _nextSyntheticRwlockHandleId);
+        var rwlock = new PthreadRwlockState();
         lock (_stateGate)
         {
             var resolvedAddress = ResolveRwlockHandle(ctx, rwlockAddress);
-            if (_rwlockStates.Remove(resolvedAddress, out var existing))
-            {
-            }
-
-            var rwlock = new PthreadRwlockState();
+            _rwlockStates.Remove(resolvedAddress);
             _rwlockStates[rwlockAddress] = rwlock;
             _rwlockStates[syntheticHandle] = rwlock;
         }
 
-        _ = KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, rwlockAddress, syntheticHandle);
+        if (!KernelMemoryCompatExports.TryWriteUInt64Compat(ctx, rwlockAddress, syntheticHandle))
+        {
+            lock (_stateGate)
+            {
+                if (_rwlockStates.TryGetValue(rwlockAddress, out var addressState) &&
+                    ReferenceEquals(addressState, rwlock))
+                {
+                    _rwlockStates.Remove(rwlockAddress);
+                }
+                if (_rwlockStates.TryGetValue(syntheticHandle, out var handleState) &&
+                    ReferenceEquals(handleState, rwlock))
+                {
+                    _rwlockStates.Remove(syntheticHandle);
+                }
+            }
+
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -1094,7 +1109,10 @@ public static class KernelPthreadExtendedCompatExports
         ExportName = "pthread_rwlock_init",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadRwlockInit(CpuContext ctx) => PthreadRwlockInit(ctx);
+    public static int PosixPthreadRwlockInit(CpuContext ctx) =>
+        KernelPthreadCompatExports.TranslatePthreadResult(
+            PthreadRwlockInit(ctx),
+            posixResult: true);
 
     [SysAbiExport(
         Nid = "BB+kb08Tl9A",
@@ -1148,7 +1166,10 @@ public static class KernelPthreadExtendedCompatExports
         ExportName = "pthread_rwlock_destroy",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadRwlockDestroy(CpuContext ctx) => PthreadRwlockDestroy(ctx);
+    public static int PosixPthreadRwlockDestroy(CpuContext ctx) =>
+        KernelPthreadCompatExports.TranslatePthreadResult(
+            PthreadRwlockDestroy(ctx),
+            posixResult: true);
 
     [SysAbiExport(
         Nid = "Ox9i0c7L5w0",
@@ -1162,7 +1183,10 @@ public static class KernelPthreadExtendedCompatExports
         ExportName = "pthread_rwlock_rdlock",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadRwlockRdlock(CpuContext ctx) => PthreadRwlockRdlock(ctx);
+    public static int PosixPthreadRwlockRdlock(CpuContext ctx) =>
+        KernelPthreadCompatExports.TranslatePthreadResult(
+            PthreadRwlockRdlock(ctx),
+            posixResult: true);
 
     [SysAbiExport(
         Nid = "mqdNorrB+gI",
@@ -1176,7 +1200,10 @@ public static class KernelPthreadExtendedCompatExports
         ExportName = "pthread_rwlock_wrlock",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadRwlockWrlock(CpuContext ctx) => PthreadRwlockWrlock(ctx);
+    public static int PosixPthreadRwlockWrlock(CpuContext ctx) =>
+        KernelPthreadCompatExports.TranslatePthreadResult(
+            PthreadRwlockWrlock(ctx),
+            posixResult: true);
 
     [SysAbiExport(
         Nid = "+L98PIbGttk",
@@ -1237,7 +1264,10 @@ public static class KernelPthreadExtendedCompatExports
         ExportName = "pthread_rwlock_unlock",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadRwlockUnlock(CpuContext ctx) => PthreadRwlockUnlock(ctx);
+    public static int PosixPthreadRwlockUnlock(CpuContext ctx) =>
+        KernelPthreadCompatExports.TranslatePthreadResult(
+            PthreadRwlockUnlock(ctx),
+            posixResult: true);
 
     [SysAbiExport(
         Nid = "yOfGg-I1ZII",

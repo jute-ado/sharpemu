@@ -37,8 +37,9 @@ test-driven workflow. Major downstream differences include:
 - a guest-thread scheduler with callback, synchronization, and lifecycle
   behavior exercised through native guest-code tests, including distinct
   POSIX `-1`/`errno` and SCE kernel semaphore contracts, distinct POSIX errno
-  and encoded SCE error contracts for mutex operations, input-only equeue
-  timeout handling that avoids mutating guest polling intervals, plus session
+  and encoded SCE error contracts for mutex and read/write-lock operations,
+  rollback of failed read/write-lock initialization, input-only equeue timeout
+  handling that avoids mutating guest polling intervals, plus session
   reports
   that retain native import progress across guest workers and distinguish
   normal process exit codes from CPU traps, structured faulting-instruction
