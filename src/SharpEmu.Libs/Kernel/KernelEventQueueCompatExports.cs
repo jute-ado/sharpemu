@@ -23,6 +23,18 @@ public static class KernelEventQueueCompatExports
     private static readonly Dictionary<ulong, Dictionary<(ulong Ident, short Filter), KernelEventRegistration>> _registeredEvents = new();
     private static long _nextEventQueueHandle = 1;
 
+    internal static void ResetRuntimeState()
+    {
+        lock (_eventQueueGate)
+        {
+            _eventQueues.Clear();
+            _pendingEvents.Clear();
+            _registeredEvents.Clear();
+            Interlocked.Exchange(ref _nextEventQueueHandle, 1);
+            Monitor.PulseAll(_eventQueueGate);
+        }
+    }
+
     public readonly record struct KernelQueuedEvent(
         ulong Ident,
         short Filter,

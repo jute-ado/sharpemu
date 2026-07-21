@@ -79,6 +79,9 @@ test-driven workflow. Major downstream differences include:
 - distinct four-argument POSIX and named five-argument Sony pthread creation
   ABIs, so unused registers cannot become guest thread names, with transactional
   output validation and rollback when guest scheduling fails
+- process-scoped event queues, event flags, semaphores, and exception handlers
+  reset between sessions with blocked waiters woken through normal deleted-object
+  semantics and deterministic handle allocation for the next process
 - application plugin discovery and symbol resolution, including deferred module
   initializers that start once and can be retried after a guest failure, with
   sysmodule loaded state kept in the canonical per-session module registry
