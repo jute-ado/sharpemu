@@ -52,6 +52,90 @@ public sealed class SelfLoaderTests
     }
 
     [Fact]
+    public void LoadsGnuEhFrameMetadataForGuestUnwinding()
+    {
+        const int loadSize = 0x200;
+        const int ehFrameOffset = 0x80;
+        const int ehFrameHeaderOffset = 0xC0;
+        var payloadOffset = ElfHeaderSize + (2 * ProgramHeaderSize);
+        var elf = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 2);
+        Array.Resize(ref elf, payloadOffset + loadSize);
+
+        var loadHeader = elf.AsSpan(ElfHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(loadHeader, (uint)ProgramHeaderType.Load);
+        BinaryPrimitives.WriteUInt32LittleEndian(loadHeader[4..], (uint)ProgramHeaderFlags.Read);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[8..], (ulong)payloadOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[32..], loadSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[40..], loadSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[48..], 8);
+
+        var unwindHeader = elf.AsSpan(ElfHeaderSize + ProgramHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(unwindHeader, (uint)ProgramHeaderType.GnuEhFrame);
+        BinaryPrimitives.WriteUInt32LittleEndian(unwindHeader[4..], (uint)ProgramHeaderFlags.Read);
+        BinaryPrimitives.WriteUInt64LittleEndian(unwindHeader[8..], (ulong)(payloadOffset + ehFrameHeaderOffset));
+        BinaryPrimitives.WriteUInt64LittleEndian(unwindHeader[16..], ehFrameHeaderOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(unwindHeader[32..], 12);
+        BinaryPrimitives.WriteUInt64LittleEndian(unwindHeader[40..], 12);
+        BinaryPrimitives.WriteUInt64LittleEndian(unwindHeader[48..], 4);
+
+        var encoded = elf.AsSpan(payloadOffset + ehFrameHeaderOffset, 12);
+        encoded[0] = 1;
+        encoded[1] = 0x1B; // DW_EH_PE_pcrel | DW_EH_PE_sdata4
+        encoded[2] = 0x03; // DW_EH_PE_udata4
+        encoded[3] = 0x3B; // DW_EH_PE_datarel | DW_EH_PE_sdata4
+        BinaryPrimitives.WriteInt32LittleEndian(
+            encoded[4..],
+            ehFrameOffset - (ehFrameHeaderOffset + 4));
+
+        var image = new SelfLoader().Load(elf, new VirtualMemory());
+
+        Assert.Equal(image.ImageBase + ehFrameHeaderOffset, image.EhFrameHeaderAddress);
+        Assert.Equal(image.ImageBase + ehFrameOffset, image.EhFrameAddress);
+        Assert.Equal((ulong)(ehFrameHeaderOffset - ehFrameOffset), image.EhFrameSize);
+    }
+
+    [Fact]
+    public void IgnoresMalformedGnuEhFrameMetadata()
+    {
+        const int loadSize = 0x100;
+        const int ehFrameHeaderOffset = 0x80;
+        var payloadOffset = ElfHeaderSize + (2 * ProgramHeaderSize);
+        var elf = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 2);
+        Array.Resize(ref elf, payloadOffset + loadSize);
+
+        var loadHeader = elf.AsSpan(ElfHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(loadHeader, (uint)ProgramHeaderType.Load);
+        BinaryPrimitives.WriteUInt32LittleEndian(loadHeader[4..], (uint)ProgramHeaderFlags.Read);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[8..], (ulong)payloadOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[32..], loadSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[40..], loadSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(loadHeader[48..], 8);
+
+        var unwindHeader = elf.AsSpan(ElfHeaderSize + ProgramHeaderSize, ProgramHeaderSize);
+        BinaryPrimitives.WriteUInt32LittleEndian(unwindHeader, (uint)ProgramHeaderType.GnuEhFrame);
+        BinaryPrimitives.WriteUInt32LittleEndian(unwindHeader[4..], (uint)ProgramHeaderFlags.Read);
+        BinaryPrimitives.WriteUInt64LittleEndian(unwindHeader[8..], (ulong)(payloadOffset + ehFrameHeaderOffset));
+        BinaryPrimitives.WriteUInt64LittleEndian(unwindHeader[16..], ehFrameHeaderOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(unwindHeader[32..], 8);
+        BinaryPrimitives.WriteUInt64LittleEndian(unwindHeader[40..], 8);
+        BinaryPrimitives.WriteUInt64LittleEndian(unwindHeader[48..], 4);
+
+        var encoded = elf.AsSpan(payloadOffset + ehFrameHeaderOffset, 8);
+        encoded[0] = 2; // Unsupported .eh_frame_hdr version.
+        encoded[1] = 0x1B;
+
+        var image = new SelfLoader().Load(elf, new VirtualMemory());
+
+        Assert.Equal(0UL, image.EhFrameHeaderAddress);
+        Assert.Equal(0UL, image.EhFrameAddress);
+        Assert.Equal(0UL, image.EhFrameSize);
+    }
+
+    [Fact]
     public void ModuleManagerOverloadsRejectNullBeforeChangingGuestMemory()
     {
         var memory = new VirtualMemory();

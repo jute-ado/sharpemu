@@ -1134,9 +1134,9 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             size,
             image.EntryPoint,
             image.InitFunctionEntryPoint,
-            ehFrameHeaderAddress: 0,
-            ehFrameAddress: 0,
-            ehFrameSize: 0,
+            image.EhFrameHeaderAddress,
+            image.EhFrameAddress,
+            image.EhFrameSize,
             isMain,
             isSystemModule);
         KernelModuleRegistry.RegisterModuleInitializers(

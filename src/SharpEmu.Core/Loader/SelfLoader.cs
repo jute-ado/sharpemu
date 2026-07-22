@@ -290,6 +290,13 @@ public sealed class SelfLoader : ISelfLoader
             out var preInitializerFunctions,
             out var initializerFunctions);
         var procParamAddress = ResolveProcParamAddress(programHeaders, imageBase);
+        ResolveUnwindInfo(
+            programHeaders,
+            virtualMemory,
+            imageBase,
+            out var ehFrameHeaderAddress,
+            out var ehFrameAddress,
+            out var ehFrameSize);
 
         Console.WriteLine($"[LOADER] ELF e_entry: 0x{elfHeader.EntryPoint:X16}");
         Console.WriteLine($"[LOADER] Generation: {(isNextGen ? "Gen5 (PS5)" : "Gen4 (PS4)")}");
@@ -338,7 +345,158 @@ public sealed class SelfLoader : ISelfLoader
             applicationInfo.TitleId,
             applicationInfo.Version,
             applicationInfo.ContentId,
-            unsupportedRelocationTypes);
+            unsupportedRelocationTypes,
+            ehFrameHeaderAddress,
+            ehFrameAddress,
+            ehFrameSize);
+    }
+
+    private static void ResolveUnwindInfo(
+        IReadOnlyList<ProgramHeader> programHeaders,
+        IVirtualMemory virtualMemory,
+        ulong imageBase,
+        out ulong ehFrameHeaderAddress,
+        out ulong ehFrameAddress,
+        out ulong ehFrameSize)
+    {
+        ehFrameHeaderAddress = 0;
+        ehFrameAddress = 0;
+        ehFrameSize = 0;
+        if (!TryGetProgramHeader(
+                programHeaders,
+                ProgramHeaderType.GnuEhFrame,
+                out var header,
+                out _) ||
+            header.MemorySize < 8 ||
+            !GuestAddress.TryAdd(imageBase, header.VirtualAddress, out ehFrameHeaderAddress))
+        {
+            return;
+        }
+
+        Span<byte> encodedHeader = stackalloc byte[16];
+        var readableSize = checked((int)Math.Min((ulong)encodedHeader.Length, header.MemorySize));
+        if (!virtualMemory.TryRead(ehFrameHeaderAddress, encodedHeader[..readableSize]) ||
+            encodedHeader[0] != 1 ||
+            !TryDecodeEhPointer(
+                encodedHeader[1],
+                encodedHeader[4..readableSize],
+                ehFrameHeaderAddress + 4,
+                ehFrameHeaderAddress,
+                out ehFrameAddress))
+        {
+            ehFrameHeaderAddress = 0;
+            ehFrameAddress = 0;
+            return;
+        }
+
+        if (ehFrameAddress < ehFrameHeaderAddress)
+        {
+            ehFrameSize = ehFrameHeaderAddress - ehFrameAddress;
+            return;
+        }
+
+        foreach (var segment in programHeaders)
+        {
+            if (segment.HeaderType != ProgramHeaderType.Load ||
+                !GuestAddress.TryAdd(imageBase, segment.VirtualAddress, out var segmentStart) ||
+                !GuestAddress.TryAdd(segmentStart, segment.MemorySize, out var segmentEnd) ||
+                ehFrameAddress < segmentStart ||
+                ehFrameAddress >= segmentEnd)
+            {
+                continue;
+            }
+
+            ehFrameSize = segmentEnd - ehFrameAddress;
+            return;
+        }
+    }
+
+    private static bool TryDecodeEhPointer(
+        byte encoding,
+        ReadOnlySpan<byte> source,
+        ulong fieldAddress,
+        ulong dataAddress,
+        out ulong address)
+    {
+        address = 0;
+        if (encoding == 0xFF)
+        {
+            return false;
+        }
+
+        long signedValue;
+        ulong unsignedValue;
+        var isSigned = false;
+        switch (encoding & 0x0F)
+        {
+            case 0x00 when source.Length >= sizeof(ulong):
+                unsignedValue = BinaryPrimitives.ReadUInt64LittleEndian(source);
+                break;
+            case 0x02 when source.Length >= sizeof(ushort):
+                unsignedValue = BinaryPrimitives.ReadUInt16LittleEndian(source);
+                break;
+            case 0x03 when source.Length >= sizeof(uint):
+                unsignedValue = BinaryPrimitives.ReadUInt32LittleEndian(source);
+                break;
+            case 0x04 when source.Length >= sizeof(ulong):
+                unsignedValue = BinaryPrimitives.ReadUInt64LittleEndian(source);
+                break;
+            case 0x0A when source.Length >= sizeof(short):
+                signedValue = BinaryPrimitives.ReadInt16LittleEndian(source);
+                unsignedValue = unchecked((ulong)signedValue);
+                isSigned = true;
+                break;
+            case 0x0B when source.Length >= sizeof(int):
+                signedValue = BinaryPrimitives.ReadInt32LittleEndian(source);
+                unsignedValue = unchecked((ulong)signedValue);
+                isSigned = true;
+                break;
+            case 0x0C when source.Length >= sizeof(long):
+                signedValue = BinaryPrimitives.ReadInt64LittleEndian(source);
+                unsignedValue = unchecked((ulong)signedValue);
+                isSigned = true;
+                break;
+            default:
+                return false;
+        }
+
+        var relativeBase = (encoding & 0x70) switch
+        {
+            0x00 => 0UL,
+            0x10 => fieldAddress,
+            0x30 => dataAddress,
+            _ => ulong.MaxValue,
+        };
+        if (relativeBase == ulong.MaxValue)
+        {
+            return false;
+        }
+
+        if (relativeBase == 0)
+        {
+            address = unsignedValue;
+            return true;
+        }
+
+        if (!isSigned)
+        {
+            return GuestAddress.TryAdd(relativeBase, unsignedValue, out address);
+        }
+
+        var displacement = unchecked((long)unsignedValue);
+        if (displacement >= 0)
+        {
+            return GuestAddress.TryAdd(relativeBase, (ulong)displacement, out address);
+        }
+
+        var magnitude = unchecked((ulong)(-(displacement + 1))) + 1;
+        if (magnitude > relativeBase)
+        {
+            return false;
+        }
+
+        address = relativeBase - magnitude;
+        return true;
     }
 
     private static Ps5ApplicationMetadata TryLoadParamJson(
