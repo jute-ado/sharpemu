@@ -11,6 +11,7 @@ public static class NpManagerExports
     private const int NpTitleIdSize = 16;
     private const int NpTitleSecretSize = 128;
     private const int NpErrorInvalidArgument = unchecked((int)0x80550003);
+    private const int NpErrorSignedOut = unchecked((int)0x80550006);
     private const int NpErrorRequestMaximum = unchecked((int)0x80550013);
     private const int NpErrorRequestNotFound = unchecked((int)0x80550014);
     private const int RequestLimit = 128;
@@ -59,6 +60,34 @@ public static class NpManagerExports
         }
 
         return ctx.SetReturn(NpErrorRequestMaximum);
+    }
+
+    [SysAbiExport(
+        Nid = "+4DegjBqV1g",
+        ExportName = "sceNpGetAccountAge",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpGetAccountAge(CpuContext ctx)
+    {
+        var requestId = unchecked((int)ctx[CpuRegister.Rdi]);
+        var ageAddress = ctx[CpuRegister.Rdx];
+        if (requestId <= 0 || ageAddress == 0)
+        {
+            return ctx.SetReturn(NpErrorInvalidArgument);
+        }
+
+        lock (_requestGate)
+        {
+            if (requestId > _activeRequests.Length || !_activeRequests[requestId - 1])
+            {
+                return ctx.SetReturn(NpErrorRequestNotFound);
+            }
+        }
+
+        Span<byte> age = stackalloc byte[1];
+        return ctx.Memory.TryWrite(ageAddress, age)
+            ? ctx.SetReturn(NpErrorSignedOut)
+            : ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
 
     [SysAbiExport(
