@@ -247,12 +247,20 @@ public static class GuestTlsTemplate
             }
 
             var dtv = new ThreadDtv();
-            _threadDtvs.Add(threadPointer, dtv);
-            foreach (var module in _modules.Values)
+            try
             {
-                dtv.Entries[module.ModuleId] = CreateStaticOrDynamicEntry(context, threadPointer, module);
+                foreach (var module in _modules.Values)
+                {
+                    dtv.Entries[module.ModuleId] = CreateStaticEntry(context, threadPointer, module);
+                }
+                RebuildGuestDtv(context, threadPointer, dtv);
+                _threadDtvs.Add(threadPointer, dtv);
             }
-            RebuildGuestDtv(context, threadPointer, dtv);
+            catch
+            {
+                FreeDynamicEntries(dtv);
+                throw;
+            }
         }
     }
 
@@ -277,13 +285,7 @@ public static class GuestTlsTemplate
 
             if (!_threadDtvs.TryGetValue(context.FsBase, out var dtv))
             {
-                dtv = new ThreadDtv();
-                _threadDtvs.Add(context.FsBase, dtv);
-                foreach (var startupModule in _modules.Values)
-                {
-                    dtv.Entries[startupModule.ModuleId] = CreateStaticOrDynamicEntry(context, context.FsBase, startupModule);
-                }
-                RebuildGuestDtv(context, context.FsBase, dtv);
+                return 0;
             }
 
             var entryAdded = false;
@@ -306,7 +308,7 @@ public static class GuestTlsTemplate
         }
     }
 
-    private static DtvEntry CreateStaticOrDynamicEntry(
+    private static DtvEntry CreateStaticEntry(
         CpuContext context,
         ulong threadPointer,
         ModuleTemplate module)
@@ -322,7 +324,9 @@ public static class GuestTlsTemplate
             }
         }
 
-        return CreateDynamicEntry(module);
+        throw new InvalidOperationException(
+            $"Failed to initialize static TLS module {module.ModuleId} at " +
+            $"thread pointer 0x{threadPointer:X} (offset 0x{module.StaticOffset:X}).");
     }
 
     private static DtvEntry CreateDynamicEntry(ModuleTemplate module)
