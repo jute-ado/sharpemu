@@ -235,6 +235,52 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public void ExceptionStackMappingSnapshotsGuestRegionsOnce()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var hostMemory =
+            new AllocatingHostMemory(failedAllocation: int.MaxValue);
+        var platform = new StubHostPlatform(
+            threading,
+            hostMemory,
+            new StubHostSymbolResolver(address: 1));
+        using var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        var stackBase = OperatingSystem.IsWindows()
+            ? 0x7FFF_E000_0000UL
+            : 0x6FFF_A000_0000UL;
+        const ulong regionStride = 0x0100_0000UL;
+        var occupiedRegions = Enumerable.Range(0, 3)
+            .Select(index => new VirtualMemoryRegion(
+                stackBase - ((ulong)index * regionStride),
+                memorySize: 0x0020_0000,
+                fileOffset: 0,
+                fileSize: 0,
+                ProgramHeaderFlags.Read | ProgramHeaderFlags.Write))
+            .ToArray();
+        var memory = new CountingRegionVirtualMemory(occupiedRegions);
+        var context = new CpuContext(memory, Generation.Gen5);
+        const ulong threadHandle = 0x1234;
+        backend.RegisterGuestThreadContext(threadHandle, context);
+
+        Assert.True(
+            backend.TryRaiseGuestException(
+                context,
+                threadHandle,
+                handler: 0x1234_0000,
+                exceptionType: 30,
+                out var error));
+
+        Assert.Null(error);
+        Assert.Equal(1, memory.SnapshotCount);
+        Assert.Equal(
+            stackBase - (3 * regionStride),
+            Assert.Single(memory.MapAddresses));
+    }
+
+    [Fact]
     public void ConstructorCreatesReturnStubsWritableThenFinalizesExecutable()
     {
         var threading = new RecordingHostThreading([17u, 23u]);
@@ -1794,6 +1840,35 @@ public sealed class NativeBackendConstructionTests
         {
             ReleaseSnapshot();
         }
+    }
+
+    private sealed class CountingRegionVirtualMemory(
+        IReadOnlyList<VirtualMemoryRegion> regions) : IVirtualMemory
+    {
+        public int SnapshotCount { get; private set; }
+
+        public List<ulong> MapAddresses { get; } = [];
+
+        public void Clear()
+        {
+        }
+
+        public void Map(
+            ulong virtualAddress,
+            ulong memorySize,
+            ulong fileOffset,
+            ReadOnlySpan<byte> fileData,
+            ProgramHeaderFlags protection) => MapAddresses.Add(virtualAddress);
+
+        public IReadOnlyList<VirtualMemoryRegion> SnapshotRegions()
+        {
+            SnapshotCount++;
+            return regions;
+        }
+
+        public bool TryRead(ulong virtualAddress, Span<byte> destination) => false;
+
+        public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source) => false;
     }
 
     private sealed class StubHostSymbolResolver(nint address = 0) : IHostSymbolResolver

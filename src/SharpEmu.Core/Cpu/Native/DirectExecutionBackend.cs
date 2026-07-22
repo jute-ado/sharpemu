@@ -4953,10 +4953,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		out ulong mappedBase,
 		out string? error)
 	{
+		var regions = virtualMemory.SnapshotRegions();
 		for (int i = 0; i < GuestThreadRegionSlotCount; i++)
 		{
 			var candidateBase = baseAddress - ((ulong)i * GuestThreadRegionStride);
-			if (!IsGuestThreadRegionFree(virtualMemory, candidateBase, size))
+			if (!IsGuestThreadRegionFree(regions, candidateBase, size))
 			{
 				continue;
 			}
@@ -4974,6 +4975,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 			catch (InvalidOperationException)
 			{
+				// A concurrent mapper may have occupied the candidate after our
+				// snapshot. Refresh only on that exceptional race; rescanning the
+				// full VM for every already-known occupied slot is needlessly
+				// quadratic for mature game processes.
+				regions = virtualMemory.SnapshotRegions();
 			}
 		}
 
@@ -4987,12 +4993,13 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		out ulong tlsBase,
 		out string? error)
 	{
+		var regions = virtualMemory.SnapshotRegions();
 		for (int i = 0; i < GuestThreadRegionSlotCount; i++)
 		{
 			var candidateBase = GuestThreadTlsBaseAddress - ((ulong)i * GuestThreadRegionStride);
 			var mappedBase = candidateBase - GuestThreadTlsPrefixSize;
 			var mappedSize = GuestThreadTlsSize + GuestThreadTlsPrefixSize;
-			if (!IsGuestThreadRegionFree(virtualMemory, mappedBase, mappedSize))
+			if (!IsGuestThreadRegionFree(regions, mappedBase, mappedSize))
 			{
 				continue;
 			}
@@ -5010,6 +5017,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 			catch (InvalidOperationException)
 			{
+				regions = virtualMemory.SnapshotRegions();
 			}
 		}
 
@@ -5018,10 +5026,13 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		return false;
 	}
 
-	private static bool IsGuestThreadRegionFree(IVirtualMemory virtualMemory, ulong candidateBase, ulong size)
+	private static bool IsGuestThreadRegionFree(
+		IReadOnlyList<VirtualMemoryRegion> regions,
+		ulong candidateBase,
+		ulong size)
 	{
 		var candidateEnd = candidateBase + size;
-		foreach (var region in virtualMemory.SnapshotRegions())
+		foreach (var region in regions)
 		{
 			var regionStart = region.VirtualAddress;
 			var regionEnd = regionStart + region.MemorySize;
