@@ -1,8 +1,10 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using SharpEmu.HLE;
 using System.Buffers.Binary;
+using System.Globalization;
+using System.Text;
+using SharpEmu.HLE;
 
 namespace SharpEmu.Libs.Rtc;
 
@@ -148,6 +150,57 @@ public static class RtcExports
         }
 
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "WJ3rqFwymew",
+        ExportName = "sceRtcFormatRFC3339",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceRtc")]
+    public static int RtcFormatRfc3339(CpuContext ctx)
+    {
+        var outputAddress = ctx[CpuRegister.Rdi];
+        if (outputAddress == 0)
+        {
+            return unchecked((int)0x80B50002);
+        }
+
+        var tickAddress = ctx[CpuRegister.Rsi];
+        ulong tick;
+        if (tickAddress == 0)
+        {
+            tick = unchecked((ulong)(DateTime.UtcNow.Ticks / DateTimeTicksPerMicrosecond));
+        }
+        else if (!ctx.TryReadUInt64(tickAddress, out tick))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        var timezoneMinutes = unchecked((int)ctx[CpuRegister.Rdx]);
+        var offsetMicroseconds = (long)timezoneMinutes * (long)MicrosecondsPerMinute;
+        if (!TryAddSignedOffset(tick, offsetMicroseconds, out var localTick) ||
+            !TryConvertTickToDateTime(localTick, out var localTime))
+        {
+            return unchecked((int)0x80B50003);
+        }
+
+        var zone = "Z";
+        if (timezoneMinutes != 0)
+        {
+            var absoluteMinutes = Math.Abs((long)timezoneMinutes);
+            zone = string.Create(
+                CultureInfo.InvariantCulture,
+                $"{(timezoneMinutes < 0 ? '-' : '+')}{absoluteMinutes / 60:00}:{absoluteMinutes % 60:00}");
+        }
+
+        var hundredths = localTime.Millisecond / 10;
+        var formatted = string.Create(
+            CultureInfo.InvariantCulture,
+            $"{localTime:yyyy-MM-dd'T'HH:mm:ss}.{hundredths:00}{zone}");
+        var encoded = Encoding.UTF8.GetBytes(formatted + '\0');
+        return ctx.Memory.TryWrite(outputAddress, encoded)
+            ? (int)OrbisGen2Result.ORBIS_GEN2_OK
+            : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
     }
 
     [SysAbiExport(
@@ -954,6 +1007,32 @@ public static class RtcExports
             dateTime = default;
             return false;
         }
+    }
+
+    private static bool TryAddSignedOffset(ulong tick, long offset, out ulong result)
+    {
+        if (offset >= 0)
+        {
+            var positiveOffset = unchecked((ulong)offset);
+            if (tick > ulong.MaxValue - positiveOffset)
+            {
+                result = 0;
+                return false;
+            }
+
+            result = tick + positiveOffset;
+            return true;
+        }
+
+        var negativeOffset = unchecked((ulong)-offset);
+        if (tick < negativeOffset)
+        {
+            result = 0;
+            return false;
+        }
+
+        result = tick - negativeOffset;
+        return true;
     }
 
     private static bool TryConvertRtcDateTimeToTick(RtcDateTime time, out ulong tick)
