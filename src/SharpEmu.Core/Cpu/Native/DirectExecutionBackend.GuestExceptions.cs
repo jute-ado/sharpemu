@@ -37,6 +37,7 @@ public sealed unsafe partial class DirectExecutionBackend
         _pendingGuestExceptions = [];
     private int _pendingGuestExceptionCount;
     private readonly HashSet<ulong> _activeGuestExceptionDeliveries = [];
+    private readonly object _guestExceptionStackGate = new();
 
     public void RegisterGuestThreadContext(
         ulong threadHandle,
@@ -88,86 +89,114 @@ public sealed unsafe partial class DirectExecutionBackend
             return false;
         }
 
-        using (LockGate("TryRaiseGuestException"))
+        // Mapping a first-use exception stack may inspect thousands of VM
+        // regions and commit a large guest range. Serialize those mappings,
+        // but never perform them while holding the scheduler-wide thread gate.
+        lock (_guestExceptionStackGate)
         {
             CpuContext targetContext;
             ulong exceptionStackBase;
             string targetMode;
-            if (_guestThreads.TryGetValue(threadHandle, out var target))
+            GuestThreadState? target;
+            ExternalGuestThreadState? external;
+            using (LockGate("ResolveGuestExceptionTarget"))
             {
-                if (target.State is
-                    GuestThreadRunState.Exited or
-                    GuestThreadRunState.Faulted)
+                if (_guestThreads.TryGetValue(threadHandle, out target))
+                {
+                    if (target.State is
+                        GuestThreadRunState.Exited or
+                        GuestThreadRunState.Faulted)
+                    {
+                        error =
+                            $"guest exception target 0x{threadHandle:X16} " +
+                            "is no longer running";
+                        return false;
+                    }
+
+                    targetContext = target.Context;
+                    exceptionStackBase = target.ExceptionStackBase;
+                    external = null;
+                    targetMode = "scheduled";
+                }
+                else if (_externalGuestThreads.TryGetValue(
+                             threadHandle,
+                             out external))
+                {
+                    targetContext = external.Context;
+                    exceptionStackBase = external.ExceptionStackBase;
+                    target = null;
+                    targetMode = "external";
+                }
+                else
                 {
                     error =
-                        $"guest exception target 0x{threadHandle:X16} " +
-                        "is no longer running";
+                        $"unknown guest exception target 0x{threadHandle:X16}";
                     return false;
                 }
-
-                targetContext = target.Context;
-                var targetExceptionStack = target.ExceptionStackBase;
-                if (!TryEnsureExceptionStack(
-                        targetContext,
-                        ref targetExceptionStack,
-                        out error))
-                {
-                    return false;
-                }
-
-                target.ExceptionStackBase = targetExceptionStack;
-                exceptionStackBase = target.ExceptionStackBase;
-                targetMode = "scheduled";
             }
-            else if (_externalGuestThreads.TryGetValue(
-                         threadHandle,
-                         out var external))
-            {
-                targetContext = external.Context;
-                var externalExceptionStack = external.ExceptionStackBase;
-                if (!TryEnsureExceptionStack(
-                        targetContext,
-                        ref externalExceptionStack,
-                        out error))
-                {
-                    return false;
-                }
 
-                external.ExceptionStackBase = externalExceptionStack;
-                exceptionStackBase = external.ExceptionStackBase;
-                targetMode = "external";
-            }
-            else
+            if (!TryEnsureExceptionStack(
+                    targetContext,
+                    ref exceptionStackBase,
+                    out error))
             {
-                error =
-                    $"unknown guest exception target 0x{threadHandle:X16}";
                 return false;
             }
 
-            // Coalesce repeated raises while one request is already queued.
-            // If a handler is active, retain one follow-up request for the
-            // next target-thread safe point.
-            if (!_pendingGuestExceptions.ContainsKey(threadHandle))
+            using (LockGate("QueueGuestException"))
             {
-                SetPendingGuestExceptionLocked(
-                    threadHandle,
-                    new PendingGuestException(
-                        handler,
-                        exceptionType,
-                        exceptionStackBase));
-                GuestThreadBlocking.RequestInterrupt(threadHandle);
-            }
+                if (target is not null)
+                {
+                    if (!_guestThreads.TryGetValue(threadHandle, out var current) ||
+                        !ReferenceEquals(current, target) ||
+                        current.State is GuestThreadRunState.Exited or GuestThreadRunState.Faulted)
+                    {
+                        error =
+                            $"guest exception target 0x{threadHandle:X16} " +
+                            "is no longer running";
+                        return false;
+                    }
 
-            if (ShouldLogGuestExceptions())
-            {
-                Console.Error.WriteLine(
-                    $"[LOADER][TRACE] guest_exception.queued " +
-                    $"target=0x{threadHandle:X16} " +
-                    $"type=0x{exceptionType:X2} mode={targetMode} " +
-                    $"active={_activeGuestExceptionDeliveries.Contains(threadHandle)}");
-            }
+                    current.ExceptionStackBase = exceptionStackBase;
+                }
+                else if (!_externalGuestThreads.TryGetValue(threadHandle, out var current) ||
+                         !ReferenceEquals(current, external) ||
+                         !ReferenceEquals(current.Context, targetContext))
+                {
+                    error =
+                        $"guest exception target 0x{threadHandle:X16} changed during delivery setup";
+                    return false;
+                }
+                else
+                {
+                    current.ExceptionStackBase = exceptionStackBase;
+                }
 
-            return true;
+                // Coalesce repeated raises while one request is already queued.
+                // If a handler is active, retain one follow-up request for the
+                // next target-thread safe point.
+                if (!_pendingGuestExceptions.ContainsKey(threadHandle))
+                {
+                    SetPendingGuestExceptionLocked(
+                        threadHandle,
+                        new PendingGuestException(
+                            handler,
+                            exceptionType,
+                            exceptionStackBase));
+                    GuestThreadBlocking.RequestInterrupt(threadHandle);
+                }
+
+                if (ShouldLogGuestExceptions())
+                {
+                    Console.Error.WriteLine(
+                        $"[LOADER][TRACE] guest_exception.queued " +
+                        $"target=0x{threadHandle:X16} " +
+                        $"type=0x{exceptionType:X2} mode={targetMode} " +
+                        $"active={_activeGuestExceptionDeliveries.Contains(threadHandle)}");
+                }
+
+                return true;
+            }
         }
     }
 
