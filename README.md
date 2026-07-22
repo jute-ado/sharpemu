@@ -123,6 +123,9 @@ test-driven workflow. Major downstream differences include:
   registries, and restarts guest-visible audio handles between titles
 - media-player session teardown that terminates retained FFmpeg decoder processes,
   closes their streams, and invalidates stale AvPlayer handles between titles
+- host-assisted Bink 2 playback through a source-built FFmpeg bridge, with
+  frame-paced decoding, guest-file completion shims, Vulkan presentation, and
+  graceful fallback when the native bridge is unavailable
 - media-codec session teardown that clears AJM contexts plus audio and video
   decoder registries and restarts their guest-visible IDs between titles
 - C++ ABI session teardown that releases abandoned static-initializer guards so

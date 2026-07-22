@@ -81,7 +81,7 @@ public sealed class AgcResourceRegistrationTests
     }
 
     [Fact]
-    public void RejectedAgcInitializationDoesNotBootstrapRegistration()
+    public void RejectedAgcInitializationLeavesOptionalOwnerRegistrationUsable()
     {
         var fixture = CreateFixture(
             includeSizeOutput: false,
@@ -98,9 +98,11 @@ public sealed class AgcResourceRegistrationTests
 
         fixture.Context[CpuRegister.Rdi] = OwnerOutputAddress;
         fixture.Context[CpuRegister.Rsi] = NameAddress;
-        Assert.Equal(
-            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
-            AgcExports.DriverRegisterOwner(fixture.Context));
+        Assert.Equal(0, AgcExports.DriverRegisterOwner(fixture.Context));
+        Assert.True(fixture.Memory.TryRead(
+            OwnerOutputAddress,
+            fixture.Scratch.AsSpan(0, sizeof(uint))));
+        Assert.NotEqual(0U, BinaryPrimitives.ReadUInt32LittleEndian(fixture.Scratch));
     }
 
     [Fact]
