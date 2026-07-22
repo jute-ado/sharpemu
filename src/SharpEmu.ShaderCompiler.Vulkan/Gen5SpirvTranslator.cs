@@ -737,19 +737,26 @@ public static partial class Gen5SpirvTranslator
 
         private void DeclareLds()
         {
-            if (_stage != Gen5SpirvStage.Compute || !UsesLds())
+            if (!UsesLds() ||
+                (_stage != Gen5SpirvStage.Compute && !UsesDsAddTid()))
             {
                 return;
             }
 
             var ldsArrayType = _module.TypeArray(_uintType, LdsDwordCount);
+            var storageClass = _stage == Gen5SpirvStage.Compute
+                ? SpirvStorageClass.Workgroup
+                : SpirvStorageClass.Private;
             var ldsPointer =
-                _module.TypePointer(SpirvStorageClass.Workgroup, ldsArrayType);
+                _module.TypePointer(storageClass, ldsArrayType);
             _workgroupUintPointer =
-                _module.TypePointer(SpirvStorageClass.Workgroup, _uintType);
-            _lds = _module.AddGlobalVariable(
-                ldsPointer,
-                SpirvStorageClass.Workgroup);
+                _module.TypePointer(storageClass, _uintType);
+            _lds = storageClass == SpirvStorageClass.Private
+                ? _module.AddGlobalVariable(
+                    ldsPointer,
+                    storageClass,
+                    _module.ConstantNull(ldsArrayType))
+                : _module.AddGlobalVariable(ldsPointer, storageClass);
             _module.AddName(_lds, "lds");
             _interfaces.Add(_lds);
         }
@@ -1580,8 +1587,10 @@ public static partial class Gen5SpirvTranslator
             out string error)
         {
             error = string.Empty;
-            if (_stage != Gen5SpirvStage.Compute ||
-                instruction.Control is not Gen5DataShareControl control)
+            if (instruction.Control is not Gen5DataShareControl control ||
+                (_stage != Gen5SpirvStage.Compute &&
+                 instruction.Opcode is not
+                     ("DsWriteAddtidB32" or "DsReadAddtidB32")))
             {
                 error = "invalid LDS instruction";
                 return false;
@@ -6609,8 +6618,9 @@ public static partial class Gen5SpirvTranslator
 
         private bool UsesSubgroupOperations() =>
             UsesLaneOperations() ||
+            UsesDsAddTid() ||
             (_stage == Gen5SpirvStage.Compute &&
-             (UsesSubgroupShuffle() || UsesWaveControl() || UsesDsAddTid()));
+             (UsesSubgroupShuffle() || UsesWaveControl()));
 
         private static bool IsWaveMaskOperand(Gen5Operand operand) =>
             operand.Kind == Gen5OperandKind.ScalarRegister &&

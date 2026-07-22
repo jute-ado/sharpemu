@@ -4539,7 +4539,7 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
-    public void CompilesLdsAddTidTransfersWithM0AndLaneAddressing()
+    public void CompilesLdsAddTidTransfersInComputeAndGraphicsStages()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
         // with llvm-objdump. ADD_TID uses DATA0 without an ADDR VGPR and forms
@@ -4608,6 +4608,20 @@ public sealed class Gen5DecoderTests
         Assert.True(ContainsSpirvVariable(
             shader.Spirv,
             SpirvStorageClass.Workgroup));
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileVertexShader(
+                state,
+                evaluation,
+                out var vertexShader,
+                out var vertexCompileError),
+            vertexCompileError);
+        Assert.False(ContainsSpirvVariable(
+            vertexShader.Spirv,
+            SpirvStorageClass.Workgroup));
+        Assert.True(ContainsSpirvBuiltIn(
+            vertexShader.Spirv,
+            SpirvBuiltIn.SubgroupLocalInvocationId));
     }
 
     [Fact]
@@ -8250,6 +8264,35 @@ public sealed class Gen5DecoderTests
                 wordCount >= 4 &&
                 BitConverter.ToUInt32(spirv, offset + (3 * sizeof(uint))) ==
                     (uint)storageClass)
+            {
+                return true;
+            }
+
+            if (wordCount == 0)
+            {
+                return false;
+            }
+
+            offset += checked((int)wordCount * sizeof(uint));
+        }
+
+        return false;
+    }
+
+    private static bool ContainsSpirvBuiltIn(
+        byte[] spirv,
+        SpirvBuiltIn builtIn)
+    {
+        for (var offset = 5 * sizeof(uint); offset < spirv.Length;)
+        {
+            var instruction = BitConverter.ToUInt32(spirv, offset);
+            var wordCount = instruction >> 16;
+            if ((ushort)instruction == (ushort)SpirvOp.Decorate &&
+                wordCount >= 4 &&
+                BitConverter.ToUInt32(spirv, offset + (2 * sizeof(uint))) ==
+                    (uint)SpirvDecoration.BuiltIn &&
+                BitConverter.ToUInt32(spirv, offset + (3 * sizeof(uint))) ==
+                    (uint)builtIn)
             {
                 return true;
             }
