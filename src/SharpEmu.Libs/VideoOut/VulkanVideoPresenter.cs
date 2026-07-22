@@ -88,6 +88,26 @@ internal static class OrderedGuestActionWritebackPolicy
         publishAllCompletedQueues ? null : activeQueue;
 }
 
+internal readonly record struct OrderedGuestFlipReference(
+    long Version,
+    long WorkSequence);
+
+internal static class OrderedGuestFlipWaitPolicy
+{
+    public static long ResolveRequiredSequence(
+        long queueDependency,
+        long referencedFlipSequence) =>
+        Math.Max(queueDependency, referencedFlipSequence);
+
+    public static bool IsRequiredSequenceCompleted(
+        long requiredSequence,
+        long contiguousCompletedSequence,
+        IReadOnlySet<long> completedOutOfOrder) =>
+        requiredSequence <= 0 ||
+        requiredSequence <= contiguousCompletedSequence ||
+        completedOutOfOrder.Contains(requiredSequence);
+}
+
 internal sealed record VulkanOrderedGuestFlip(
     long Version,
     int VideoOutHandle,
@@ -535,7 +555,9 @@ internal static unsafe class VulkanVideoPresenter
     // A newer generation in the tracker means the guest CPU rewrote the
     // memory and the upload-known skip must ship fresh texels.
     private static readonly Dictionary<ulong, long> _cpuBackedUploadGenerations = new();
-    private static readonly Dictionary<(int Handle, int BufferIndex), long>
+    private static readonly Dictionary<
+        (int Handle, int BufferIndex),
+        OrderedGuestFlipReference>
         _lastOrderedGuestFlipVersions = new();
     private static long _orderedGuestFlipVersionSequence;
     // Storage-image initialization is copied only by the first queued writer.
@@ -1628,9 +1650,10 @@ internal static unsafe class VulkanVideoPresenter
         Volatile.Read(ref _executingGuestWorkSequence);
 
     private static bool IsGuestWorkCompletedLocked(long sequence) =>
-        sequence <= 0 ||
-        sequence <= _completedGuestWorkSequence ||
-        _completedGuestWorkOutOfOrder.Contains(sequence);
+        OrderedGuestFlipWaitPolicy.IsRequiredSequenceCompleted(
+            sequence,
+            _completedGuestWorkSequence,
+            _completedGuestWorkOutOfOrder);
 
     public static bool WaitForGuestWork(
         long workSequence,
@@ -1818,8 +1841,7 @@ internal static unsafe class VulkanVideoPresenter
             }
 
             var version = ++_orderedGuestFlipVersionSequence;
-            _lastOrderedGuestFlipVersions[(videoOutHandle, displayBufferIndex)] = version;
-            return EnqueueGuestWorkLocked(
+            var workSequence = EnqueueGuestWorkLocked(
                 new VulkanOrderedGuestFlip(
                     version,
                     videoOutHandle,
@@ -1827,7 +1849,15 @@ internal static unsafe class VulkanVideoPresenter
                     address,
                     width,
                     height,
-                    pitchInPixel)) > 0;
+                    pitchInPixel));
+            if (workSequence <= 0)
+            {
+                return false;
+            }
+
+            _lastOrderedGuestFlipVersions[(videoOutHandle, displayBufferIndex)] =
+                new OrderedGuestFlipReference(version, workSequence);
+            return true;
         }
     }
 
@@ -1844,18 +1874,19 @@ internal static unsafe class VulkanVideoPresenter
     {
         lock (_gate)
         {
-            var version = _lastOrderedGuestFlipVersions.TryGetValue(
+            var reference = _lastOrderedGuestFlipVersions.TryGetValue(
                 (videoOutHandle, displayBufferIndex),
-                out var lastVersion)
-                    ? lastVersion
-                    : 0;
+                out var lastReference)
+                    ? lastReference
+                    : default;
             return _closed || _thread is null
                 ? 0
                 : EnqueueGuestWorkLocked(
                     new VulkanOrderedGuestFlipWait(
-                        version,
+                        reference.Version,
                         videoOutHandle,
-                        displayBufferIndex));
+                        displayBufferIndex),
+                    reference.WorkSequence);
         }
     }
 
@@ -2593,7 +2624,9 @@ internal static unsafe class VulkanVideoPresenter
 		}
 	}
 
-    private static long EnqueueGuestWorkLocked(object work)
+    private static long EnqueueGuestWorkLocked(
+        object work,
+        long additionalRequiredSequence = 0)
     {
         var payloadBytes = GetGuestWorkPayloadBytes(work);
         var backpressureLogged = false;
@@ -2646,7 +2679,10 @@ internal static unsafe class VulkanVideoPresenter
         var queue = _submittingGuestQueue ?? VulkanGuestQueueIdentity.Default;
         var sequence = ++_enqueuedGuestWorkSequence;
         _lastEnqueuedGuestWorkByQueue[queue.Name] = sequence;
-        var requiredSequence = GetGuestWorkDependencyLocked(work);
+        var requiredSequence =
+            OrderedGuestFlipWaitPolicy.ResolveRequiredSequence(
+                GetGuestWorkDependencyLocked(work),
+                additionalRequiredSequence);
         if (!_pendingGuestWorkByQueue.TryGetValue(queue.Name, out var pendingQueue))
         {
             pendingQueue = new LinkedList<PendingGuestWork>();
@@ -5937,19 +5973,7 @@ internal static unsafe class VulkanVideoPresenter
                 $"queue={_activeGuestQueue.Name} submission={_activeGuestQueue.SubmissionId} " +
                 $"handle={work.VideoOutHandle} index={work.DisplayBufferIndex} " +
                 $"capture_complete={(captured ? 1 : 0)}");
-            // Demon's Souls executes wait-safe markers before their flip capture;
-            // an assert here would fail-fast the process, so warn once instead.
-            // Dedup on a flag, not the (per-frame-unique) version, to bound growth.
-            if (work.Version != 0 && !captured && !_loggedFlipWaitOrderViolation)
-            {
-                _loggedFlipWaitOrderViolation = true;
-                Console.Error.WriteLine(
-                    $"[LOADER][WARN] vk.flip_wait_order version={work.Version} " +
-                    "executed before its flip capture; continuing.");
-            }
         }
-
-        private bool _loggedFlipWaitOrderViolation;
 
         private GuestImageResource CreateGuestFlipSnapshot(
             GuestImageResource source,
