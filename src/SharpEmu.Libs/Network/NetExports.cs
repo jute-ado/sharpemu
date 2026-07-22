@@ -15,15 +15,19 @@ public static class NetExports
 {
     private const int NetErrorBadFileDescriptor = unchecked((int)0x80410109);
     private const int NetErrorInvalidArgument = unchecked((int)0x80410116);
+    private const int NetErrorNoSpace = unchecked((int)0x8041011C);
     private const int NetErrorWouldBlock = unchecked((int)0x80410123);
     private const int NetErrorAddressInUse = unchecked((int)0x80410130);
     private const int NetErrorNotInitialized = unchecked((int)0x804101C8);
     private const int NetErrnoBadFileDescriptor = 9;
     private const int NetErrnoInvalidArgument = 22;
+    private const int NetErrnoNoSpace = 28;
     private const int NetErrnoWouldBlock = 35;
     private const int NetErrnoAddressInUse = 48;
     private const int NetErrnoNotInitialized = 200;
     private const int MaxNameLength = 256;
+    private const int EtherAddressLength = 6;
+    private const int EtherAddressStringLength = 18;
 
     private static readonly ConcurrentDictionary<int, NetPool> _pools = new();
     private static readonly ConcurrentDictionary<int, ResolverContext> _resolvers = new();
@@ -108,6 +112,68 @@ public static class NetExports
         }
         _sockets.Clear();
         TraceNet("term", 0, 0, 0, 0);
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "6Oc0bLsIYe0",
+        ExportName = "sceNetGetMacAddress",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNet")]
+    public static int NetGetMacAddress(CpuContext ctx)
+    {
+        var address = ctx[CpuRegister.Rdi];
+        if (address == 0 || !ctx.Memory.TryWrite(address, NetworkIdentity.EtherAddress))
+        {
+            return SetNetError(ctx, NetErrorInvalidArgument, NetErrnoInvalidArgument);
+        }
+
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "v6M4txecCuo",
+        ExportName = "sceNetEtherNtostr",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNet")]
+    public static int NetEtherNtostr(CpuContext ctx)
+    {
+        var address = ctx[CpuRegister.Rdi];
+        var textAddress = ctx[CpuRegister.Rsi];
+        var textLength = unchecked((int)ctx[CpuRegister.Rdx]);
+        if (address == 0 || textAddress == 0)
+        {
+            return SetNetError(ctx, NetErrorInvalidArgument, NetErrnoInvalidArgument);
+        }
+
+        if (textLength < EtherAddressStringLength)
+        {
+            return SetNetError(ctx, NetErrorNoSpace, NetErrnoNoSpace);
+        }
+
+        Span<byte> addressBytes = stackalloc byte[EtherAddressLength];
+        if (!ctx.Memory.TryRead(address, addressBytes))
+        {
+            return SetNetError(ctx, NetErrorInvalidArgument, NetErrnoInvalidArgument);
+        }
+
+        Span<byte> text = stackalloc byte[EtherAddressStringLength];
+        for (var index = 0; index < addressBytes.Length; index++)
+        {
+            var textIndex = index * 3;
+            text[textIndex] = ToLowerHex((byte)(addressBytes[index] >> 4));
+            text[textIndex + 1] = ToLowerHex((byte)(addressBytes[index] & 0x0F));
+            if (index < addressBytes.Length - 1)
+            {
+                text[textIndex + 2] = (byte)':';
+            }
+        }
+
+        if (!ctx.Memory.TryWrite(textAddress, text))
+        {
+            return SetNetError(ctx, NetErrorInvalidArgument, NetErrnoInvalidArgument);
+        }
+
         return ctx.SetReturn(0);
     }
 
@@ -707,6 +773,13 @@ public static class NetExports
         }
         Marshal.WriteInt32(_errnoAddresses.Value, errno);
         return ctx.SetReturn(result);
+    }
+
+    private static byte ToLowerHex(byte value)
+    {
+        return value < 10
+            ? (byte)('0' + value)
+            : (byte)('a' + value - 10);
     }
 
     private static bool TryTranslateSocketParameters(
