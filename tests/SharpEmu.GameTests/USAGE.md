@@ -94,7 +94,10 @@ regression. Its `selector` uses the same canonical address-or-size syntax as the
 presenter (for example, `1280x720@105`). Add a pixel-shader qualifier when
 several passes share that target, such as
 `3840x2160,ps=0x55D4300@1`. The occurrence then counts only writes matching both
-the image and shader. Use `minimumNonBlackPixels` for a coarse content milestone
+the image and shader. When address-space randomization changes shader addresses,
+use a stable shader-signature prefix such as `1920x1080,sig=8988B48B@1`.
+Signatures are the `ps_hash` values emitted by guest-write diagnostics. Use
+`minimumNonBlackPixels` for a coarse content milestone
 and `minimumDistinctColors` to reject blank or flat output without fixing exact
 pixels. Use `forbiddenFingerprints` for known-bad output; reserve `fingerprint`
 for output that is intentionally exact and stable. The harness configures
@@ -152,7 +155,9 @@ SHARPEMU_GUEST_IMAGE_DUMP_DIR=C:\path\to\captures
 The selector before `@` may instead be a structural image size, such as
 `1280x720@100`. Size selectors are useful when guest addresses vary between
 processes. Append `,ps=0x<address>` before `@` to restrict the match to one
-pixel shader. The number after `@` is the matching write to capture. Each
+pixel shader, or `,sig=<ps_hash>` for an ASLR-independent shader match. Signature
+prefixes contain 8–64 hexadecimal digits. The number after `@` is the matching
+write to capture. Each
 capture logs a fingerprint and, for supported RGBA formats, writes both the raw
 bytes and a viewable BMP to the dump directory.
 

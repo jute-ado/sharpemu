@@ -10,6 +10,7 @@ internal readonly record struct GuestImageWriteCaptureRequest(
     uint Width,
     uint Height,
     ulong PixelShaderAddress,
+    string PixelShaderSignature,
     int Write)
 {
     public bool IsEnabled =>
@@ -21,12 +22,24 @@ internal readonly record struct GuestImageWriteCaptureRequest(
         uint width,
         uint height,
         ulong pixelShaderAddress) =>
+        Matches(address, width, height, pixelShaderAddress, null);
+
+    public bool Matches(
+        ulong address,
+        uint width,
+        uint height,
+        ulong pixelShaderAddress,
+        string? pixelShaderSignature) =>
         IsEnabled &&
         (Address != 0
             ? address == Address
             : width == Width && height == Height) &&
         (PixelShaderAddress == 0 ||
-         pixelShaderAddress == PixelShaderAddress);
+         pixelShaderAddress == PixelShaderAddress) &&
+        (string.IsNullOrEmpty(PixelShaderSignature) ||
+         PixelShaderSignaturesMatch(
+             PixelShaderSignature,
+             pixelShaderSignature));
 
     public bool ShouldCapture(
         ulong address,
@@ -34,7 +47,22 @@ internal readonly record struct GuestImageWriteCaptureRequest(
         uint height,
         ulong pixelShaderAddress,
         int matchingWrite) =>
-        Matches(address, width, height, pixelShaderAddress) &&
+        ShouldCapture(
+            address,
+            width,
+            height,
+            pixelShaderAddress,
+            pixelShaderSignature: null,
+            matchingWrite);
+
+    public bool ShouldCapture(
+        ulong address,
+        uint width,
+        uint height,
+        ulong pixelShaderAddress,
+        string? pixelShaderSignature,
+        int matchingWrite) =>
+        Matches(address, width, height, pixelShaderAddress, pixelShaderSignature) &&
         matchingWrite == Write;
 
     public override string ToString()
@@ -42,14 +70,17 @@ internal readonly record struct GuestImageWriteCaptureRequest(
         var target = Address != 0
             ? FormattableString.Invariant($"0x{Address:X}@{Write}")
             : FormattableString.Invariant($"{Width}x{Height}@{Write}");
-        if (PixelShaderAddress == 0)
+        if (PixelShaderAddress == 0 && string.IsNullOrEmpty(PixelShaderSignature))
         {
             return target;
         }
 
         var occurrenceSeparator = target.LastIndexOf('@');
+        var qualifier = PixelShaderAddress != 0
+            ? $"ps=0x{PixelShaderAddress:X}"
+            : $"sig={PixelShaderSignature}";
         return FormattableString.Invariant(
-            $"{target[..occurrenceSeparator]},ps=0x{PixelShaderAddress:X}{target[occurrenceSeparator..]}");
+            $"{target[..occurrenceSeparator]},{qualifier}{target[occurrenceSeparator..]}");
     }
 
     public static bool TryParse(
@@ -72,6 +103,7 @@ internal readonly record struct GuestImageWriteCaptureRequest(
 
         var selectorSpan = span[..separator].Trim();
         ulong pixelShaderAddress = 0;
+        var pixelShaderSignature = string.Empty;
         var qualifierSeparator = selectorSpan.IndexOf(',');
         if (qualifierSeparator >= 0)
         {
@@ -79,30 +111,41 @@ internal readonly record struct GuestImageWriteCaptureRequest(
                 selectorSpan[(qualifierSeparator + 1)..].Trim();
             selectorSpan = selectorSpan[..qualifierSeparator].Trim();
             var assignmentSeparator = qualifierSpan.IndexOf('=');
-            if (assignmentSeparator <= 0 ||
-                !qualifierSpan[..assignmentSeparator].Trim().Equals(
-                    "ps",
-                    StringComparison.OrdinalIgnoreCase))
+            if (assignmentSeparator <= 0)
             {
                 request = default;
                 return false;
             }
 
+            var qualifierName = qualifierSpan[..assignmentSeparator].Trim();
             var shaderSpan =
                 qualifierSpan[(assignmentSeparator + 1)..].Trim();
-            if (shaderSpan.StartsWith(
-                    "0x",
-                    StringComparison.OrdinalIgnoreCase))
+            if (qualifierName.Equals("ps", StringComparison.OrdinalIgnoreCase))
             {
-                shaderSpan = shaderSpan[2..];
-            }
+                if (shaderSpan.StartsWith(
+                        "0x",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    shaderSpan = shaderSpan[2..];
+                }
 
-            if (!ulong.TryParse(
-                    shaderSpan,
-                    NumberStyles.HexNumber,
-                    CultureInfo.InvariantCulture,
-                    out pixelShaderAddress) ||
-                pixelShaderAddress == 0)
+                if (!ulong.TryParse(
+                        shaderSpan,
+                        NumberStyles.HexNumber,
+                        CultureInfo.InvariantCulture,
+                        out pixelShaderAddress) ||
+                    pixelShaderAddress == 0)
+                {
+                    request = default;
+                    return false;
+                }
+            }
+            else if (qualifierName.Equals("sig", StringComparison.OrdinalIgnoreCase) &&
+                     IsHexSignature(shaderSpan))
+            {
+                pixelShaderSignature = shaderSpan.ToString().ToUpperInvariant();
+            }
+            else
             {
                 request = default;
                 return false;
@@ -152,8 +195,40 @@ internal readonly record struct GuestImageWriteCaptureRequest(
             width,
             height,
             pixelShaderAddress,
+            pixelShaderSignature,
             write);
         return true;
+    }
+
+    private static bool IsHexSignature(ReadOnlySpan<char> value)
+    {
+        if (value.Length < 8 || value.Length > 64)
+        {
+            return false;
+        }
+
+        foreach (var character in value)
+        {
+            if (!Uri.IsHexDigit(character))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool PixelShaderSignaturesMatch(
+        string requested,
+        string? actual)
+    {
+        if (string.IsNullOrEmpty(actual))
+        {
+            return false;
+        }
+
+        return actual.StartsWith(requested, StringComparison.OrdinalIgnoreCase) ||
+               requested.StartsWith(actual, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryParseDimensions(

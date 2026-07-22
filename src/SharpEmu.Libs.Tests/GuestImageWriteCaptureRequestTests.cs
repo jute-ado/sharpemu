@@ -136,6 +136,52 @@ public sealed class GuestImageWriteCaptureRequestTests
     }
 
     [Theory]
+    [InlineData("1920x1080,sig=8988b48b@20", "8988B48B")]
+    [InlineData(" C490000 , SIG = C30D590E5FB93951 @ 4 ", "C30D590E5FB93951")]
+    public void PixelShaderSignature_QualifiesTargetWithoutAslrAddress(
+        string value,
+        string expectedSignature)
+    {
+        Assert.True(
+            GuestImageWriteCaptureRequest.TryParse(value, out var request));
+        Assert.Equal(expectedSignature, request.PixelShaderSignature);
+        Assert.True(request.Matches(
+            request.Address == 0 ? 0xABCDEFUL : request.Address,
+            request.Width == 0 ? 1U : request.Width,
+            request.Height == 0 ? 1U : request.Height,
+            pixelShaderAddress: 0xDEADBEEF,
+            pixelShaderSignature: expectedSignature.ToLowerInvariant()));
+        Assert.False(request.Matches(
+            request.Address == 0 ? 0xABCDEFUL : request.Address,
+            request.Width == 0 ? 1U : request.Width,
+            request.Height == 0 ? 1U : request.Height,
+            pixelShaderAddress: 0xDEADBEEF,
+            pixelShaderSignature: "00000000"));
+        Assert.Contains(
+            $",sig={expectedSignature}@",
+            request.ToString(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FullPixelShaderSignature_MatchesPresenterSignaturePrefix()
+    {
+        const string fullSignature =
+            "8988B48BAA3E2A6273D0F0D79B0934E280BAAA5F246158EE8F6679B9BD7959C8";
+        Assert.True(
+            GuestImageWriteCaptureRequest.TryParse(
+                $"1920x1080,sig={fullSignature}@1",
+                out var request));
+
+        Assert.True(request.Matches(
+            address: 0xABCDEF,
+            width: 1920,
+            height: 1080,
+            pixelShaderAddress: 0xDEADBEEF,
+            pixelShaderSignature: fullSignature[..16]));
+    }
+
+    [Theory]
     [InlineData("C490000")]
     [InlineData("@1")]
     [InlineData("C490000@")]
@@ -149,6 +195,9 @@ public sealed class GuestImageWriteCaptureRequestTests
     [InlineData("1280x720,ps=0@1")]
     [InlineData("1280x720,ps=not-hex@1")]
     [InlineData("1280x720,es=55D4300@1")]
+    [InlineData("1280x720,sig=@1")]
+    [InlineData("1280x720,sig=not-hex@1")]
+    [InlineData("1280x720,sig=1234567@1")]
     [InlineData("1280x720,ps=55D4300,ps=5662100@1")]
     [InlineData("not-hex@1")]
     [InlineData("C490000@not-a-number")]
