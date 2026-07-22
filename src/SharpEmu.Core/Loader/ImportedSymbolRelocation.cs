@@ -7,4 +7,7 @@ public readonly record struct ImportedSymbolRelocation(
     ulong TargetAddress,
     long Addend,
     string Nid,
-    bool IsData);
+    bool IsData,
+    string? LibraryName = null,
+    string? ModuleName = null,
+    string? SymbolName = null);

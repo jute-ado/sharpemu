@@ -1826,6 +1826,12 @@ internal static partial class Program
             ImportStubCount: image.ImportStubs.Count,
             RuntimeSymbolCount: image.RuntimeSymbols.Count,
             ImportedRelocationCount: image.ImportedRelocations.Count,
+            ImportedLibraries: CollectImportedNames(
+                image,
+                static relocation => relocation.LibraryName),
+            ImportedModules: CollectImportedNames(
+                image,
+                static relocation => relocation.ModuleName),
             UnsupportedRelocationTypes: image.UnsupportedRelocationTypes,
             PreInitializerCount: image.PreInitializerFunctions.Count,
             InitializerCount: image.InitializerFunctions.Count,
@@ -1833,6 +1839,17 @@ internal static partial class Program
                 ? null
                 : FormatAddress(image.InitFunctionEntryPoint));
     }
+
+    private static IReadOnlyList<string> CollectImportedNames(
+        SelfImage image,
+        Func<ImportedSymbolRelocation, string?> selectName) =>
+        image.ImportedRelocations
+            .Select(selectName)
+            .Where(static name => !string.IsNullOrWhiteSpace(name))
+            .Select(static name => name!)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 
     private static IReadOnlyList<CliModuleReport>? BuildModuleReports(
         PreparedApplication? application,
@@ -2058,6 +2075,7 @@ internal static partial class Program
             entry.DispatchIndex,
             entry.Nid,
             entry.LibraryName,
+            entry.ModuleName,
             entry.ExportName,
             FormatAddress(entry.GuestThreadHandle),
             FormatAddress(entry.ReturnAddress),
@@ -2275,7 +2293,8 @@ internal static partial class Program
             value.Nid,
             value.ExportName,
             value.LibraryName,
-            value.Detail);
+            value.Detail,
+            value.ModuleName);
     }
 
     private static CliExecutionResult BuildExecutionResult(OrbisGen2Result result)
@@ -2721,6 +2740,8 @@ internal static partial class Program
         int ImportStubCount,
         int RuntimeSymbolCount,
         int ImportedRelocationCount,
+        IReadOnlyList<string> ImportedLibraries,
+        IReadOnlyList<string> ImportedModules,
         IReadOnlyList<uint> UnsupportedRelocationTypes,
         int PreInitializerCount,
         int InitializerCount,
@@ -2752,6 +2773,7 @@ internal static partial class Program
         long DispatchIndex,
         string Nid,
         string? LibraryName,
+        string? ModuleName,
         string? ExportName,
         string GuestThreadHandle,
         string ReturnAddress,
@@ -2872,7 +2894,8 @@ internal static partial class Program
         string? Nid,
         string? ExportName,
         string? LibraryName,
-        string? Detail);
+        string? Detail,
+        string? ModuleName);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct STARTUPINFO

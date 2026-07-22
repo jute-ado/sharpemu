@@ -907,6 +907,8 @@ public sealed class SharpEmuRuntimeTests
         Assert.Equal(1, image.GetProperty("programHeaderCount").GetInt32());
         Assert.Equal(1, image.GetProperty("mappedRegionCount").GetInt32());
         Assert.Equal(0, image.GetProperty("importStubCount").GetInt32());
+        Assert.Empty(image.GetProperty("importedLibraries").EnumerateArray());
+        Assert.Empty(image.GetProperty("importedModules").EnumerateArray());
         Assert.Empty(image.GetProperty("unsupportedRelocationTypes").EnumerateArray());
         Assert.Equal("PPSA00001", root.GetProperty("application").GetProperty("titleId").GetString());
         var module = Assert.Single(root.GetProperty("modules").EnumerateArray());
