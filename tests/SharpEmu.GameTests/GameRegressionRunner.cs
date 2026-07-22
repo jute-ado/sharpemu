@@ -284,8 +284,8 @@ internal static class GameRegressionRunner
                     $"Game regression '{testCase.Name}' has an invalid " +
                     $"padReplay: {replayError}.");
             }
-            if (replay.Events[^1].AtMilliseconds >=
-                checked(testCase.TimeoutSeconds * 1000L))
+            if (replay.Events[^1].AtMilliseconds is { } lastMilliseconds &&
+                lastMilliseconds >= checked(testCase.TimeoutSeconds * 1000L))
             {
                 throw new InvalidDataException(
                     $"Game regression '{testCase.Name}' has a padReplay " +

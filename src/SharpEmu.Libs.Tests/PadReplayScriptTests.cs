@@ -81,6 +81,36 @@ public sealed class PadReplayScriptTests
             .Connected);
     }
 
+    [Fact]
+    public void ReplayCanUsePresentedFramesInsteadOfWallClockTime()
+    {
+        const string json =
+            """
+            {
+              "events": [
+                { "atPresentedFrame": 500, "buttons": ["Up"] },
+                { "atPresentedFrame": 501, "buttons": [] },
+                { "atPresentedFrame": 600, "buttons": ["Cross"] }
+              ]
+            }
+            """;
+
+        Assert.True(PadReplayScript.TryParse(
+            json,
+            out var replay,
+            out var error), error);
+        Assert.NotNull(replay);
+
+        AssertNeutral(replay.GetState(999_999, 499));
+        Assert.Equal(
+            OrbisPadButton.Up,
+            replay.GetState(999_999, 500).Buttons);
+        AssertNeutral(replay.GetState(999_999, 501));
+        Assert.Equal(
+            OrbisPadButton.Cross,
+            replay.GetState(999_999, 600).Buttons);
+    }
+
     [Theory]
     [InlineData("""{"events":[]}""", "at least one event")]
     [InlineData("""{"events":[null]}""", "event 0 is null")]
@@ -98,6 +128,12 @@ public sealed class PadReplayScriptTests
     [InlineData(
         """{"events":[{"atMilliseconds":-1,"buttons":[]}]}""",
         "out-of-range")]
+    [InlineData(
+        """{"events":[{"atMilliseconds":1,"atPresentedFrame":1,"buttons":[]}]}""",
+        "exactly one")]
+    [InlineData(
+        """{"events":[{"atPresentedFrame":1,"buttons":[]},{"atMilliseconds":2,"buttons":[]}]}""",
+        "same clock")]
     public void ReplayRejectsInvalidContracts(string json, string expectedError)
     {
         Assert.False(PadReplayScript.TryParse(

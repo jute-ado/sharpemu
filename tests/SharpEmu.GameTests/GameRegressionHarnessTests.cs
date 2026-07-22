@@ -1228,6 +1228,43 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
+    public void PresentedFramePadReplayIsCanonicalAndNotWallClockBounded()
+    {
+        var replayDefinition = new GamePadReplay
+        {
+            Events =
+            [
+                new()
+                {
+                    AtPresentedFrame = 500,
+                    Buttons = ["Up"],
+                },
+                new()
+                {
+                    AtPresentedFrame = 501,
+                },
+            ],
+        };
+        var startInfo = new ProcessStartInfo();
+
+        GameRegressionRunner.ConfigurePadReplayEnvironment(
+            startInfo,
+            replayDefinition);
+        GameRegressionRunner.ValidateCase(
+            CreateExecutionCase(padReplay: replayDefinition));
+
+        Assert.True(PadReplayScript.TryParse(
+            startInfo.Environment["SHARPEMU_PAD_REPLAY"],
+            out var replay,
+            out var error), error);
+        var parsedReplay = Assert.IsType<PadReplayScript>(replay);
+        Assert.Equal(
+            OrbisPadButton.Up,
+            parsedReplay.GetState(999_999, 500).Buttons);
+        Assert.Equal(0u, parsedReplay.GetState(999_999, 501).Buttons);
+    }
+
+    [Fact]
     public void GameCaseRejectsUnknownReplayButton()
     {
         var replay = new GamePadReplay

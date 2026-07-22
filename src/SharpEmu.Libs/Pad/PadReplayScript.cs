@@ -9,6 +9,7 @@ namespace SharpEmu.Libs.Pad;
 internal sealed class PadReplayScript
 {
     private const long MaximumDurationMilliseconds = 24 * 60 * 60 * 1000;
+    private const long MaximumPresentedFrame = 10_000_000;
     private const int MaximumEventCount = 1024;
     private static readonly PadState NeutralState = new(
         Connected: true,
@@ -47,23 +48,33 @@ internal sealed class PadReplayScript
         };
 
     private readonly PadReplayEvent[] _events;
+    private readonly ReplayClock _clock;
 
-    private PadReplayScript(PadReplayEvent[] events)
+    private PadReplayScript(PadReplayEvent[] events, ReplayClock clock)
     {
         _events = events;
+        _clock = clock;
     }
 
     internal int EventCount => _events.Length;
 
-    internal PadState GetState(long elapsedMilliseconds)
+    internal PadState GetState(long elapsedMilliseconds) =>
+        GetState(elapsedMilliseconds, presentedFrame: 0);
+
+    internal PadState GetState(
+        long elapsedMilliseconds,
+        long presentedFrame)
     {
+        var position = _clock == ReplayClock.PresentedFrame
+            ? presentedFrame
+            : elapsedMilliseconds;
         var low = 0;
         var high = _events.Length - 1;
         var matchedIndex = -1;
         while (low <= high)
         {
             var middle = low + ((high - low) / 2);
-            if (_events[middle].AtMilliseconds <= elapsedMilliseconds)
+            if (_events[middle].Position <= position)
             {
                 matchedIndex = middle;
                 low = middle + 1;
@@ -117,7 +128,8 @@ internal sealed class PadReplayScript
         }
 
         var parsedEvents = new PadReplayEvent[events.Length];
-        long previousTimestamp = -1;
+        long previousPosition = -1;
+        ReplayClock? replayClock = null;
         for (var index = 0; index < events.Length; index++)
         {
             var replayEvent = events[index];
@@ -126,16 +138,41 @@ internal sealed class PadReplayScript
                 error = $"event {index} is null";
                 return false;
             }
-            if (replayEvent.AtMilliseconds < 0 ||
-                replayEvent.AtMilliseconds > MaximumDurationMilliseconds)
+            var hasMilliseconds = replayEvent.AtMilliseconds.HasValue;
+            var hasPresentedFrame = replayEvent.AtPresentedFrame.HasValue;
+            if (hasMilliseconds == hasPresentedFrame)
             {
                 error =
-                    $"event {index} has an out-of-range atMilliseconds value";
+                    $"event {index} must specify exactly one replay clock";
                 return false;
             }
-            if (replayEvent.AtMilliseconds <= previousTimestamp)
+
+            var eventClock = hasPresentedFrame
+                ? ReplayClock.PresentedFrame
+                : ReplayClock.ElapsedMilliseconds;
+            if (replayClock is { } establishedClock &&
+                eventClock != establishedClock)
             {
-                error = "event timestamps must be strictly increasing";
+                error = "all replay events must use the same clock";
+                return false;
+            }
+            replayClock ??= eventClock;
+
+            var position = replayEvent.AtPresentedFrame ??
+                replayEvent.AtMilliseconds!.Value;
+            var maximumPosition = eventClock == ReplayClock.PresentedFrame
+                ? MaximumPresentedFrame
+                : MaximumDurationMilliseconds;
+            if (position < 0 || position > maximumPosition)
+            {
+                error = eventClock == ReplayClock.PresentedFrame
+                    ? $"event {index} has an out-of-range atPresentedFrame value"
+                    : $"event {index} has an out-of-range atMilliseconds value";
+                return false;
+            }
+            if (position <= previousPosition)
+            {
+                error = "event positions must be strictly increasing";
                 return false;
             }
             if (!TryDecodeButtons(
@@ -148,7 +185,7 @@ internal sealed class PadReplayScript
             }
 
             parsedEvents[index] = new PadReplayEvent(
-                replayEvent.AtMilliseconds,
+                position,
                 new PadState(
                     replayEvent.Connected,
                     buttons,
@@ -158,10 +195,10 @@ internal sealed class PadReplayScript
                     replayEvent.RightY,
                     replayEvent.L2,
                     replayEvent.R2));
-            previousTimestamp = replayEvent.AtMilliseconds;
+            previousPosition = position;
         }
 
-        script = new PadReplayScript(parsedEvents);
+        script = new PadReplayScript(parsedEvents, replayClock!.Value);
         return true;
     }
 
@@ -241,7 +278,9 @@ internal sealed class PadReplayScript
                 NeutralState);
         }
 
-        script = new PadReplayScript(events);
+        script = new PadReplayScript(
+            events,
+            ReplayClock.ElapsedMilliseconds);
         return true;
     }
 
@@ -278,7 +317,9 @@ internal sealed class PadReplayScript
 
     private sealed class PadReplayEventDocument
     {
-        public long AtMilliseconds { get; init; }
+        public long? AtMilliseconds { get; init; }
+
+        public long? AtPresentedFrame { get; init; }
 
         public string[] Buttons { get; init; } = [];
 
@@ -298,8 +339,14 @@ internal sealed class PadReplayScript
     }
 
     private readonly record struct PadReplayEvent(
-        long AtMilliseconds,
+        long Position,
         PadState State);
+
+    private enum ReplayClock
+    {
+        ElapsedMilliseconds,
+        PresentedFrame,
+    }
 
     private readonly record struct AutoCrossInterval(
         long StartMilliseconds,
