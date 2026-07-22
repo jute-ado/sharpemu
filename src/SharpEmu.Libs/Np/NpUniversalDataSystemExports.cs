@@ -318,6 +318,30 @@ public static class NpUniversalDataSystemExports
     }
 
     [SysAbiExport(
+        Nid = "s6W4Zl4Slgk",
+        ExportName = "sceNpUniversalDataSystemCreateEventPropertyObject",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNpUniversalDataSystem")]
+    public static int NpUniversalDataSystemCreateEventPropertyObject(
+        CpuContext ctx)
+    {
+        var outputAddress = ctx[CpuRegister.Rdi];
+        if (outputAddress == 0)
+        {
+            return ctx.SetReturn(
+                NpUniversalDataSystemErrorInvalidArgument,
+                typeof(long));
+        }
+
+        return TryAllocateOpaqueObject(ctx, out var objectAddress) &&
+               ctx.TryWriteUInt64(outputAddress, objectAddress)
+            ? ctx.SetReturn(0, typeof(long))
+            : ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                typeof(long));
+    }
+
+    [SysAbiExport(
         Nid = "4llLk7YJRTE",
         ExportName = "sceNpUniversalDataSystemEventPropertyArraySetString",
         Target = Generation.Gen4 | Generation.Gen5,
