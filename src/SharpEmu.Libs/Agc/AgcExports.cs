@@ -288,6 +288,7 @@ public static partial class AgcExports
     private static long _dcbWaitRegMemTraceCount;
     private static long _createShaderTraceCount;
     private static long _packetPayloadTraceCount;
+    private static long _commandAllocationFailureTraceCount;
     private static bool _tracedMissingPixelShaderBindings;
     private static long _unsatisfiedWaitTraceCount;
     private static long _labelProducerSequence;
@@ -11742,9 +11743,39 @@ public static partial class AgcExports
             var scheduler = GuestThreadExecution.Scheduler;
             ulong callbackResult = 0;
             string? callbackError = null;
-            if (callback == 0 ||
-                scheduler is null ||
-                !scheduler.TryCallGuestFunction(
+            if (callback == 0)
+            {
+                ReportCommandAllocationFailure(
+                    "no-callback",
+                    commandBufferAddress,
+                    sizeDwords,
+                    remainingDwords,
+                    cursorUp,
+                    cursorDown,
+                    reservedDwords,
+                    callback,
+                    callbackResult,
+                    callbackError);
+                return false;
+            }
+
+            if (scheduler is null)
+            {
+                ReportCommandAllocationFailure(
+                    "no-scheduler",
+                    commandBufferAddress,
+                    sizeDwords,
+                    remainingDwords,
+                    cursorUp,
+                    cursorDown,
+                    reservedDwords,
+                    callback,
+                    callbackResult,
+                    callbackError);
+                return false;
+            }
+
+            if (!scheduler.TryCallGuestFunction(
                     ctx,
                     callback,
                     commandBufferAddress,
@@ -11760,6 +11791,33 @@ public static partial class AgcExports
                     $"agc.cmd_alloc_callback_failed buf=0x{commandBufferAddress:X16} " +
                     $"callback=0x{callback:X16} result=0x{callbackResult:X16} " +
                     $"error={callbackError ?? "none"}");
+                ReportCommandAllocationFailure(
+                    "callback-invocation-failed",
+                    commandBufferAddress,
+                    sizeDwords,
+                    remainingDwords,
+                    cursorUp,
+                    cursorDown,
+                    reservedDwords,
+                    callback,
+                    callbackResult,
+                    callbackError);
+                return false;
+            }
+
+            if (callbackResult == 0)
+            {
+                ReportCommandAllocationFailure(
+                    "callback-returned-false",
+                    commandBufferAddress,
+                    sizeDwords,
+                    remainingDwords,
+                    cursorUp,
+                    cursorDown,
+                    reservedDwords,
+                    callback,
+                    callbackResult,
+                    callbackError);
                 return false;
             }
 
@@ -11769,10 +11827,40 @@ public static partial class AgcExports
 
             if (!TryReadUInt64(ctx, commandBufferAddress + CommandBufferCursorUpOffset, out cursorUp) ||
                 !TryReadUInt64(ctx, commandBufferAddress + CommandBufferCursorDownOffset, out cursorDown) ||
-                !TryReadUInt32(ctx, commandBufferAddress + CommandBufferReservedDwOffset, out reservedDwords) ||
-                sizeDwords > GetRemainingCommandDwords(cursorUp, cursorDown, reservedDwords))
+                !TryReadUInt32(ctx, commandBufferAddress + CommandBufferReservedDwOffset, out reservedDwords))
+            {
+                ReportCommandAllocationFailure(
+                    "callback-state-read-failed",
+                    commandBufferAddress,
+                    sizeDwords,
+                    remainingDwords,
+                    cursorUp,
+                    cursorDown,
+                    reservedDwords,
+                    callback,
+                    callbackResult,
+                    callbackError);
+                return false;
+            }
+
+            remainingDwords = GetRemainingCommandDwords(
+                cursorUp,
+                cursorDown,
+                reservedDwords);
+            if (sizeDwords > remainingDwords)
             {
                 TraceAgc($"agc.cmd_alloc_callback_no_space buf=0x{commandBufferAddress:X16} need={sizeDwords}");
+                ReportCommandAllocationFailure(
+                    "callback-left-no-space",
+                    commandBufferAddress,
+                    sizeDwords,
+                    remainingDwords,
+                    cursorUp,
+                    cursorDown,
+                    reservedDwords,
+                    callback,
+                    callbackResult,
+                    callbackError);
                 return false;
             }
         }
@@ -11785,6 +11873,31 @@ public static partial class AgcExports
 
         commandAddress = cursorUp;
         return true;
+    }
+
+    private static void ReportCommandAllocationFailure(
+        string reason,
+        ulong commandBufferAddress,
+        uint sizeDwords,
+        uint remainingDwords,
+        ulong cursorUp,
+        ulong cursorDown,
+        uint reservedDwords,
+        ulong callback,
+        ulong callbackResult,
+        string? callbackError)
+    {
+        if (!ShouldTraceHotPath(ref _commandAllocationFailureTraceCount))
+        {
+            return;
+        }
+
+        Console.Error.WriteLine(
+            $"[LOADER][WARN] agc.cmd_alloc_failed reason={reason} " +
+            $"buf=0x{commandBufferAddress:X16} need={sizeDwords} remaining={remainingDwords} " +
+            $"cursor_up=0x{cursorUp:X16} cursor_down=0x{cursorDown:X16} " +
+            $"reserved={reservedDwords} callback=0x{callback:X16} " +
+            $"callback_result=0x{callbackResult:X16} error={callbackError ?? "none"}");
     }
 
     private static uint GetRemainingCommandDwords(

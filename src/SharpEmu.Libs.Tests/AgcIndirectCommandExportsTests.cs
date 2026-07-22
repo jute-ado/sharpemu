@@ -8,6 +8,13 @@ using Xunit;
 
 namespace SharpEmu.Libs.Tests;
 
+[CollectionDefinition(AgcCommandAllocationDiagnosticsCollection.Name, DisableParallelization = true)]
+public sealed class AgcCommandAllocationDiagnosticsCollection
+{
+    public const string Name = "AGC command allocation diagnostics";
+}
+
+[Collection(AgcCommandAllocationDiagnosticsCollection.Name)]
 public sealed class AgcIndirectCommandExportsTests
 {
     private const ulong CommandAddress = 0x2000;
@@ -76,6 +83,74 @@ public sealed class AgcIndirectCommandExportsTests
         Assert.Equal(0, result);
         Assert.True(context.TryReadUInt32(CommandAddress + sizeof(uint), out var count));
         Assert.Equal(3u, count);
+    }
+
+    [Fact]
+    public void CommandAllocationFailure_ReportsBoundedActionableState()
+    {
+        var memory = CreateCommandBufferMemory(storageDwords: 4);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = CommandBufferAddress;
+        context[CpuRegister.Rsi] = 5;
+        var originalError = Console.Error;
+        using var capturedError = new StringWriter();
+
+        try
+        {
+            Console.SetError(capturedError);
+
+            Assert.Equal(0, AgcExports.CbNop(context));
+        }
+        finally
+        {
+            Console.SetError(originalError);
+        }
+
+        Assert.Equal(0UL, context[CpuRegister.Rax]);
+        var diagnostic = capturedError.ToString();
+        Assert.Contains("[LOADER][WARN] agc.cmd_alloc_failed", diagnostic);
+        Assert.Contains("reason=no-callback", diagnostic);
+        Assert.Contains("need=5 remaining=4", diagnostic);
+        Assert.Contains("cursor_up=0x0000000000004000", diagnostic);
+        Assert.Contains("cursor_down=0x0000000000004010", diagnostic);
+    }
+
+    [Fact]
+    public void CommandAllocationCallbackReturningFalseDoesNotAllocate()
+    {
+        var memory = CreateCommandBufferMemory(storageDwords: 8);
+        var context = new CpuContext(memory, Generation.Gen5);
+        Assert.True(context.TryWriteUInt64(
+            CommandBufferAddress + 0x10,
+            CommandStorageAddress + (8UL * sizeof(uint))));
+        context[CpuRegister.Rdi] = CommandBufferAddress;
+        context[CpuRegister.Rsi] = 5;
+        const ulong callbackAddress = 0x7000;
+        Assert.True(context.TryWriteUInt64(CommandBufferAddress + 0x20, callbackAddress));
+        var scheduler = new CommandAllocationScheduler(call =>
+        {
+            Assert.Equal(callbackAddress, call.EntryPoint);
+            Assert.Equal(CommandBufferAddress, call.CommandBufferAddress);
+            Assert.Equal(5UL, call.RequiredDwords);
+            Assert.True(call.Context.TryWriteUInt64(
+                CommandBufferAddress + 0x10,
+                CommandStorageAddress));
+        });
+        var previousScheduler = GuestThreadExecution.Scheduler;
+        GuestThreadExecution.Scheduler = scheduler;
+
+        try
+        {
+            Assert.Equal(0, AgcExports.CbNop(context));
+        }
+        finally
+        {
+            GuestThreadExecution.Scheduler = previousScheduler;
+        }
+
+        Assert.Equal(0UL, context[CpuRegister.Rax]);
+        Assert.True(context.TryReadUInt64(CommandBufferAddress + 0x10, out var cursor));
+        Assert.Equal(CommandStorageAddress, cursor);
     }
 
     [Theory]
@@ -204,4 +279,69 @@ public sealed class AgcIndirectCommandExportsTests
 
     private static uint Pm4(uint dwordCount, uint opcode, uint register = 0) =>
         0xC000_0000u | ((dwordCount - 2) << 16) | (opcode << 8) | (register << 2);
+
+    private sealed class CommandAllocationScheduler(
+        Action<(CpuContext Context, ulong EntryPoint, ulong CommandBufferAddress, ulong RequiredDwords)> callback)
+        : IGuestThreadScheduler
+    {
+        public bool SupportsGuestContextTransfer => false;
+
+        public void RegisterGuestThreadContext(ulong threadHandle, CpuContext context)
+        {
+        }
+
+        public bool TryStartThread(
+            CpuContext creatorContext,
+            GuestThreadStartRequest request,
+            out string? error)
+        {
+            error = "not used";
+            return false;
+        }
+
+        public bool TryJoinThread(
+            CpuContext callerContext,
+            ulong threadHandle,
+            out ulong returnValue,
+            out string? error)
+        {
+            returnValue = 0;
+            error = "not used";
+            return false;
+        }
+
+        public void Pump(CpuContext callerContext, string reason)
+        {
+        }
+
+        public IReadOnlyList<GuestThreadSnapshot> SnapshotThreads() => [];
+
+        public bool TryCallGuestFunction(
+            CpuContext callerContext,
+            ulong entryPoint,
+            ulong arg0,
+            ulong arg1,
+            ulong arg2,
+            ulong stackAddress,
+            ulong stackSize,
+            string reason,
+            out ulong returnValue,
+            out string? error)
+        {
+            callback((callerContext, entryPoint, arg0, arg1));
+            returnValue = 0;
+            error = null;
+            return true;
+        }
+
+        public bool TryCallGuestContinuation(
+            CpuContext callerContext,
+            GuestCpuContinuation continuation,
+            string reason,
+            out string? error)
+        {
+            error = "not used";
+            return false;
+        }
+    }
 }
