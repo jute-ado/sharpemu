@@ -366,7 +366,7 @@ public sealed partial class DirectExecutionBackend
 				Console.Error.Flush();
 			}
 		}
-		RecentImportTraceEntry? recentImportTraceEntry = null;
+		RecentImportTraceBuffer.Completion? recentImportTraceEntry = null;
 		if (!flag0)
 		{
 			recentImportTraceEntry = RecordRecentImportTrace(

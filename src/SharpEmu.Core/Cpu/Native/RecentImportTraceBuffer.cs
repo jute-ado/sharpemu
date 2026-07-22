@@ -1,11 +1,12 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Collections.Concurrent;
 using System.Text;
 
 namespace SharpEmu.Core.Cpu.Native;
 
-internal sealed class RecentImportTraceEntry(
+internal readonly record struct RecentImportTraceData(
     long DispatchIndex,
     string Nid,
     string? LibraryName,
@@ -17,52 +18,17 @@ internal sealed class RecentImportTraceEntry(
     ulong Arg2,
     ulong Arg3,
     ulong Arg4,
-    ulong Arg5)
-{
-    private ulong _returnValue;
-    private int _isComplete;
-
-    public long DispatchIndex { get; } = DispatchIndex;
-    public string Nid { get; } = Nid;
-    public string? LibraryName { get; } = LibraryName;
-    public string? ExportName { get; } = ExportName;
-    public ulong ThreadHandle { get; } = ThreadHandle;
-    public ulong ReturnRip { get; } = ReturnRip;
-    public ulong Arg0 { get; } = Arg0;
-    public ulong Arg1 { get; } = Arg1;
-    public ulong Arg2 { get; } = Arg2;
-    public ulong Arg3 { get; } = Arg3;
-    public ulong Arg4 { get; } = Arg4;
-    public ulong Arg5 { get; } = Arg5;
-
-    public void Complete(ulong returnValue)
-    {
-        _returnValue = returnValue;
-        Volatile.Write(ref _isComplete, 1);
-    }
-
-    public bool TryGetReturnValue(out ulong returnValue)
-    {
-        if (Volatile.Read(ref _isComplete) == 0)
-        {
-            returnValue = 0;
-            return false;
-        }
-
-        returnValue = _returnValue;
-        return true;
-    }
-}
+    ulong Arg5);
 
 internal sealed class RecentImportTraceBuffer
 {
     private const int MaximumTrackedThreads = 256;
     private const int MaximumPerThreadCapacity = 64;
 
-    private readonly object _gate = new();
     private readonly Ring _global;
     private readonly int _perThreadCapacity;
-    private readonly Dictionary<ulong, Ring> _byThread = [];
+    private readonly ConcurrentDictionary<ulong, Ring> _byThread = [];
+    private readonly object _threadRegistrationGate = new();
 
     public RecentImportTraceBuffer(int capacity)
     {
@@ -73,24 +39,12 @@ internal sealed class RecentImportTraceBuffer
 
     public int Capacity => _global.Capacity;
 
-    public void Record(RecentImportTraceEntry entry)
+    public Completion Record(RecentImportTraceData entry)
     {
-        lock (_gate)
-        {
-            _global.Record(entry);
-            if (!_byThread.TryGetValue(entry.ThreadHandle, out var threadTrace))
-            {
-                if (_byThread.Count >= MaximumTrackedThreads)
-                {
-                    return;
-                }
-
-                threadTrace = new Ring(_perThreadCapacity);
-                _byThread.Add(entry.ThreadHandle, threadTrace);
-            }
-
-            threadTrace.Record(entry);
-        }
+        var global = _global.Record(entry);
+        var threadTrace = GetOrCreateThreadTrace(entry.ThreadHandle);
+        var thread = threadTrace?.Record(entry) ?? default;
+        return new Completion(global, thread);
     }
 
     public string? Build(int requestedLimit, ulong? prioritizedThreadHandle)
@@ -100,20 +54,41 @@ internal sealed class RecentImportTraceBuffer
         int requestedLimit,
         ulong? prioritizedThreadHandle)
     {
-        lock (_gate)
+        var selected = Select(requestedLimit, prioritizedThreadHandle);
+        if (selected.Count == 0)
         {
-            var selected = Select(requestedLimit, prioritizedThreadHandle);
-            if (selected.Count == 0)
+            return (null, null);
+        }
+
+        var entries = selected.Select(ToSnapshot).ToArray();
+        return (Format(entries), entries);
+    }
+
+    private Ring? GetOrCreateThreadTrace(ulong threadHandle)
+    {
+        if (_byThread.TryGetValue(threadHandle, out var existing))
+        {
+            return existing;
+        }
+
+        lock (_threadRegistrationGate)
+        {
+            if (_byThread.TryGetValue(threadHandle, out existing))
             {
-                return (null, null);
+                return existing;
+            }
+            if (_byThread.Count >= MaximumTrackedThreads)
+            {
+                return null;
             }
 
-            var entries = selected.Select(ToSnapshot).ToArray();
-            return (Format(entries), entries);
+            var created = new Ring(_perThreadCapacity);
+            _byThread[threadHandle] = created;
+            return created;
         }
     }
 
-    private List<RecentImportTraceEntry> Select(int requestedLimit, ulong? prioritizedThreadHandle)
+    private List<Snapshot> Select(int requestedLimit, ulong? prioritizedThreadHandle)
     {
         var limit = Math.Min(Math.Max(requestedLimit, 0), Capacity);
         var global = _global.SnapshotLast(limit);
@@ -124,17 +99,20 @@ internal sealed class RecentImportTraceBuffer
             return global;
         }
 
-        var reservedCount = Math.Min(prioritizedTrace.Count, Math.Max(1, limit / 2));
-        var selected = prioritizedTrace.SnapshotLast(reservedCount);
+        var prioritized = prioritizedTrace.SnapshotLast(_perThreadCapacity);
+        var reservedCount = Math.Min(prioritized.Count, Math.Max(1, limit / 2));
+        var selected = prioritized.Count <= reservedCount
+            ? prioritized
+            : prioritized[^reservedCount..];
         var selectedKeys = selected
-            .Select(entry => (entry.DispatchIndex, entry.ThreadHandle))
+            .Select(entry => (entry.Data.DispatchIndex, entry.Data.ThreadHandle))
             .ToHashSet();
         for (var index = global.Count - 1;
              index >= 0 && selected.Count < limit;
              index--)
         {
             var entry = global[index];
-            if (selectedKeys.Add((entry.DispatchIndex, entry.ThreadHandle)))
+            if (selectedKeys.Add((entry.Data.DispatchIndex, entry.Data.ThreadHandle)))
             {
                 selected.Add(entry);
             }
@@ -142,29 +120,29 @@ internal sealed class RecentImportTraceBuffer
 
         selected.Sort(static (left, right) =>
         {
-            var dispatchOrder = left.DispatchIndex.CompareTo(right.DispatchIndex);
+            var dispatchOrder = left.Data.DispatchIndex.CompareTo(right.Data.DispatchIndex);
             return dispatchOrder != 0
                 ? dispatchOrder
-                : left.ThreadHandle.CompareTo(right.ThreadHandle);
+                : left.Data.ThreadHandle.CompareTo(right.Data.ThreadHandle);
         });
         return selected;
     }
 
-    private static CpuImportTraceEntry ToSnapshot(RecentImportTraceEntry entry) =>
+    private static CpuImportTraceEntry ToSnapshot(Snapshot entry) =>
         new(
-            entry.DispatchIndex,
-            entry.Nid,
-            entry.LibraryName,
-            entry.ExportName,
-            entry.ThreadHandle,
-            entry.ReturnRip,
-            entry.Arg0,
-            entry.Arg1,
-            entry.Arg2,
-            entry.Arg3,
-            entry.Arg4,
-            entry.Arg5,
-            entry.TryGetReturnValue(out var returnValue) ? returnValue : null);
+            entry.Data.DispatchIndex,
+            entry.Data.Nid,
+            entry.Data.LibraryName,
+            entry.Data.ExportName,
+            entry.Data.ThreadHandle,
+            entry.Data.ReturnRip,
+            entry.Data.Arg0,
+            entry.Data.Arg1,
+            entry.Data.Arg2,
+            entry.Data.Arg3,
+            entry.Data.Arg4,
+            entry.Data.Arg5,
+            entry.ReturnValue);
 
     private static string Format(IReadOnlyList<CpuImportTraceEntry> entries)
     {
@@ -195,30 +173,150 @@ internal sealed class RecentImportTraceBuffer
         return builder.ToString();
     }
 
-    private sealed class Ring(int capacity)
+    internal readonly struct Completion
     {
-        private readonly RecentImportTraceEntry[] _entries = new RecentImportTraceEntry[capacity];
-        private int _writeIndex;
+        private readonly WriteToken _global;
+        private readonly WriteToken _thread;
+
+        internal Completion(WriteToken global, WriteToken thread)
+        {
+            _global = global;
+            _thread = thread;
+        }
+
+        public void Complete(ulong returnValue)
+        {
+            _global.Complete(returnValue);
+            _thread.Complete(returnValue);
+        }
+    }
+
+    internal readonly record struct Snapshot(
+        RecentImportTraceData Data,
+        ulong? ReturnValue);
+
+    internal readonly struct WriteToken(Slot? slot, long sequence)
+    {
+        public void Complete(ulong returnValue) =>
+            slot?.Complete(sequence, returnValue);
+    }
+
+    internal sealed class Slot
+    {
+        private long _publishedSequence;
+        private long _completionSequence;
+        private long _returnValue;
+        private RecentImportTraceData _data;
+        private int _writerGate;
+
+        public WriteToken Write(long sequence, RecentImportTraceData data)
+        {
+            var spinner = new SpinWait();
+            while (Interlocked.CompareExchange(ref _writerGate, 1, 0) != 0)
+            {
+                spinner.SpinOnce();
+            }
+
+            try
+            {
+                var published = Volatile.Read(ref _publishedSequence);
+                var publishedMagnitude = published < 0 ? -published : published;
+                if (publishedMagnitude > sequence)
+                {
+                    return default;
+                }
+
+                Volatile.Write(ref _publishedSequence, -sequence);
+                _data = data;
+                Volatile.Write(ref _returnValue, 0);
+                Volatile.Write(ref _completionSequence, -sequence);
+                Volatile.Write(ref _publishedSequence, sequence);
+                return new WriteToken(this, sequence);
+            }
+            finally
+            {
+                Volatile.Write(ref _writerGate, 0);
+            }
+        }
+
+        public void Complete(long sequence, ulong returnValue)
+        {
+            Volatile.Write(ref _returnValue, unchecked((long)returnValue));
+            _ = Interlocked.CompareExchange(
+                ref _completionSequence,
+                sequence,
+                -sequence);
+        }
+
+        public bool TryRead(long expectedSequence, out Snapshot snapshot)
+        {
+            var before = Volatile.Read(ref _publishedSequence);
+            if (before != expectedSequence)
+            {
+                snapshot = default;
+                return false;
+            }
+
+            var data = _data;
+            var completionSequence = Volatile.Read(ref _completionSequence);
+            var returnValue = unchecked((ulong)Volatile.Read(ref _returnValue));
+            var after = Volatile.Read(ref _publishedSequence);
+            if (after != before)
+            {
+                snapshot = default;
+                return false;
+            }
+
+            snapshot = new Snapshot(
+                data,
+                completionSequence == expectedSequence ? returnValue : null);
+            return true;
+        }
+    }
+
+    private sealed class Ring
+    {
+        private readonly Slot[] _entries;
+        private long _nextTicket = -1;
+
+        public Ring(int capacity)
+        {
+            _entries = new Slot[capacity];
+            for (var index = 0; index < _entries.Length; index++)
+            {
+                _entries[index] = new Slot();
+            }
+        }
 
         public int Capacity => _entries.Length;
 
-        public int Count { get; private set; }
-
-        public void Record(RecentImportTraceEntry entry)
+        public WriteToken Record(RecentImportTraceData entry)
         {
-            _entries[_writeIndex] = entry;
-            _writeIndex = (_writeIndex + 1) % Capacity;
-            Count = Math.Min(Count + 1, Capacity);
+            var ticket = Interlocked.Increment(ref _nextTicket);
+            var slot = _entries[(int)((ulong)ticket % (ulong)_entries.Length)];
+            return slot.Write(ticket + 1, entry);
         }
 
-        public List<RecentImportTraceEntry> SnapshotLast(int requestedCount)
+        public List<Snapshot> SnapshotLast(int requestedCount)
         {
-            var count = Math.Min(Count, Math.Max(requestedCount, 0));
-            var snapshot = new List<RecentImportTraceEntry>(count);
-            var readIndex = (_writeIndex - count + Capacity) % Capacity;
-            for (var index = 0; index < count; index++)
+            var latestTicket = Volatile.Read(ref _nextTicket);
+            if (latestTicket < 0 || requestedCount <= 0)
             {
-                snapshot.Add(_entries[(readIndex + index) % Capacity]);
+                return [];
+            }
+
+            var count = (int)Math.Min(
+                Math.Min((long)requestedCount, _entries.Length),
+                latestTicket + 1);
+            var snapshot = new List<Snapshot>(count);
+            var firstTicket = latestTicket - count + 1;
+            for (var ticket = firstTicket; ticket <= latestTicket; ticket++)
+            {
+                var slot = _entries[(int)((ulong)ticket % (ulong)_entries.Length)];
+                if (slot.TryRead(ticket + 1, out var entry))
+                {
+                    snapshot.Add(entry);
+                }
             }
 
             return snapshot;
