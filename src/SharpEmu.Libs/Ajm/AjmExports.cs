@@ -13,6 +13,7 @@ public static class AjmExports
     private const int InvalidParameter = unchecked((int)0x806A0001);
     private const int InvalidContext = unchecked((int)0x80930002);
     private const int InvalidInstance = unchecked((int)0x80930003);
+    private const int InvalidBatch = unchecked((int)0x80930004);
     private const int InvalidInstanceParameter = unchecked((int)0x80930005);
     private const int OutOfResources = unchecked((int)0x80930007);
     private const int CodecAlreadyRegistered = unchecked((int)0x80930009);
@@ -20,12 +21,14 @@ public static class AjmExports
     private const int WrongRevisionFlag = unchecked((int)0x8093000B);
     private const int JobCreationError = unchecked((int)0x80930012);
     private const int BatchInfoSize = 0x28;
+    private const int BatchErrorSize = 0x20;
     private const int StatisticsJobSize = 0x58;
     private const int StatisticsResultSize = 0x30;
     private const uint MaxCodecTypeExclusive = 25;
     private const int MaxInstanceIndex = 0x2FFF;
     private static readonly ConcurrentDictionary<uint, AjmContextState> Contexts = new();
     private static int _nextContextId;
+    private static int _nextBatchId;
 
     private sealed class AjmContextState
     {
@@ -36,6 +39,8 @@ public static class AjmExports
         public Dictionary<uint, uint> InstancesBySlot { get; } = new();
 
         public Dictionary<ulong, ulong> RegisteredMemoryPages { get; } = new();
+
+        public HashSet<uint> Batches { get; } = new();
 
         public int NextInstanceIndex { get; set; }
     }
@@ -313,6 +318,107 @@ public static class AjmExports
     }
 
     [SysAbiExport(
+        Nid = "5tOfnaClcqM",
+        ExportName = "sceAjmBatchStart",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAjm")]
+    public static int AjmBatchStart(CpuContext ctx)
+    {
+        var contextId = unchecked((uint)ctx[CpuRegister.Rdi]);
+        var infoAddress = ctx[CpuRegister.Rsi];
+        var priority = unchecked((int)ctx[CpuRegister.Rdx]);
+        var errorAddress = ctx[CpuRegister.Rcx];
+        var outputBatchAddress = ctx[CpuRegister.R8];
+        if (!Contexts.TryGetValue(contextId, out var state))
+        {
+            return ctx.SetReturn(InvalidContext);
+        }
+
+        if (infoAddress == 0 || outputBatchAddress == 0)
+        {
+            return ctx.SetReturn(InvalidInstanceParameter);
+        }
+
+        Span<byte> info = stackalloc byte[BatchInfoSize];
+        if (!ctx.Memory.TryRead(infoAddress, info))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        Span<byte> emptyError = stackalloc byte[BatchErrorSize];
+        emptyError.Clear();
+        if (errorAddress != 0 && !ctx.Memory.TryWrite(errorAddress, emptyError))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        uint batchId;
+        lock (state.Gate)
+        {
+            do
+            {
+                batchId = unchecked((uint)Interlocked.Increment(ref _nextBatchId));
+            }
+            while (batchId == 0 || !state.Batches.Add(batchId));
+        }
+
+        if (!ctx.TryWriteUInt32(outputBatchAddress, batchId))
+        {
+            lock (state.Gate)
+            {
+                state.Batches.Remove(batchId);
+            }
+
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        Trace(
+            $"batch_start context={contextId} info=0x{infoAddress:X16} " +
+            $"buffer=0x{BinaryPrimitives.ReadUInt64LittleEndian(info[0x00..]):X16} " +
+            $"size={BinaryPrimitives.ReadUInt64LittleEndian(info[0x08..])} " +
+            $"priority={priority} batch={batchId}");
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "-qLsfDAywIY",
+        ExportName = "sceAjmBatchWait",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceAjm")]
+    public static int AjmBatchWait(CpuContext ctx)
+    {
+        var contextId = unchecked((uint)ctx[CpuRegister.Rdi]);
+        var batchId = unchecked((uint)ctx[CpuRegister.Rsi]);
+        var timeout = unchecked((uint)ctx[CpuRegister.Rdx]);
+        var errorAddress = ctx[CpuRegister.Rcx];
+        if (!Contexts.TryGetValue(contextId, out var state))
+        {
+            return ctx.SetReturn(InvalidContext);
+        }
+
+        lock (state.Gate)
+        {
+            if (!state.Batches.Contains(batchId))
+            {
+                return ctx.SetReturn(InvalidBatch);
+            }
+
+            Span<byte> emptyError = stackalloc byte[BatchErrorSize];
+            emptyError.Clear();
+            if (errorAddress != 0 && !ctx.Memory.TryWrite(errorAddress, emptyError))
+            {
+                return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            state.Batches.Remove(batchId);
+        }
+
+        Trace(
+            $"batch_wait context={contextId} batch={batchId} timeout={timeout}");
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
         Nid = "3cAg7xN995U",
         ExportName = "sceAjmBatchJobGetStatistics",
         Target = Generation.Gen4 | Generation.Gen5,
@@ -380,6 +486,7 @@ public static class AjmExports
     {
         Contexts.Clear();
         Interlocked.Exchange(ref _nextContextId, 0);
+        Interlocked.Exchange(ref _nextBatchId, 0);
     }
 
     private static void Trace(string message)
