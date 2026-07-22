@@ -3962,17 +3962,19 @@ public static partial class KernelMemoryCompatExports
 
         lock (_memoryGate)
         {
-            if (!_mappedRegions.TryGetValue(address, out var mappedRegion) || mappedRegion.Length != length)
+            if (!TryRemoveMappedRegionRangeLocked(
+                    address,
+                    length,
+                    out var releasedFlexibleBytes))
             {
                 return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
             }
 
-            _mappedRegions.Remove(address);
-            if (mappedRegion.IsFlexible)
+            if (releasedFlexibleBytes != 0)
             {
-                _allocatedFlexibleBytes = mappedRegion.Length >= _allocatedFlexibleBytes
+                _allocatedFlexibleBytes = releasedFlexibleBytes >= _allocatedFlexibleBytes
                     ? 0
-                    : _allocatedFlexibleBytes - mappedRegion.Length;
+                    : _allocatedFlexibleBytes - releasedFlexibleBytes;
             }
         }
 
@@ -7271,6 +7273,104 @@ public static partial class KernelMemoryCompatExports
         }
 
         return true;
+    }
+
+    private static bool TryRemoveMappedRegionRangeLocked(
+        ulong address,
+        ulong length,
+        out ulong releasedFlexibleBytes)
+    {
+        releasedFlexibleBytes = 0;
+        if (length == 0 || !TryAddU64(address, length, out var endAddress))
+        {
+            return false;
+        }
+
+        var affected = new List<MappedRegion>();
+        var cursor = address;
+        foreach (var region in _mappedRegions.Values)
+        {
+            if (!TryAddU64(region.Address, region.Length, out var regionEnd) ||
+                regionEnd <= cursor)
+            {
+                continue;
+            }
+
+            if (region.Address > cursor)
+            {
+                return false;
+            }
+
+            affected.Add(region);
+            cursor = Math.Min(regionEnd, endAddress);
+            if (cursor == endAddress)
+            {
+                break;
+            }
+        }
+
+        if (cursor != endAddress)
+        {
+            return false;
+        }
+
+        var affectedNames = new Dictionary<ulong, string>();
+        foreach (var region in affected)
+        {
+            if (_mappedRegionNames.TryGetValue(region.Address, out var name))
+            {
+                affectedNames[region.Address] = name;
+            }
+
+            _mappedRegions.Remove(region.Address);
+            _mappedRegionNames.Remove(region.Address);
+        }
+
+        foreach (var region in affected)
+        {
+            var regionEnd = region.Address + region.Length;
+            var removedStart = Math.Max(region.Address, address);
+            var removedEnd = Math.Min(regionEnd, endAddress);
+
+            if (region.Address < removedStart)
+            {
+                AddMappedRegionSliceLocked(
+                    region,
+                    region.Address,
+                    removedStart,
+                    region.Protection);
+                RestoreMappedRegionNameLocked(
+                    region.Address,
+                    affectedNames.GetValueOrDefault(region.Address));
+            }
+
+            if (removedEnd < regionEnd)
+            {
+                AddMappedRegionSliceLocked(
+                    region,
+                    removedEnd,
+                    regionEnd,
+                    region.Protection);
+                RestoreMappedRegionNameLocked(
+                    removedEnd,
+                    affectedNames.GetValueOrDefault(region.Address));
+            }
+
+            if (region.IsFlexible)
+            {
+                releasedFlexibleBytes += removedEnd - removedStart;
+            }
+        }
+
+        return true;
+    }
+
+    private static void RestoreMappedRegionNameLocked(ulong address, string? name)
+    {
+        if (!string.IsNullOrEmpty(name))
+        {
+            _mappedRegionNames[address] = name;
+        }
     }
 
     /// <summary>
