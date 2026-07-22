@@ -4,6 +4,7 @@
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 
 namespace SharpEmu.Libs.Np;
 
@@ -11,7 +12,19 @@ public static class NpUniversalDataSystemExports
 {
     private const int NpUniversalDataSystemErrorInvalidArgument = unchecked((int)0x80553102);
     private const ulong OpaqueObjectSize = 0x10;
+    private static readonly byte[] EmptyOpaqueObject = new byte[OpaqueObjectSize];
+    private static readonly ConditionalWeakTable<ICpuMemory, OpaqueObjectPool>
+        OpaqueObjectPools = new();
     private static int _nextHandle = 1;
+
+    private sealed class OpaqueObjectPool
+    {
+        public object Gate { get; } = new();
+
+        public HashSet<ulong> LiveAddresses { get; } = [];
+
+        public Stack<ulong> RecycledAddresses { get; } = [];
+    }
 
     [SysAbiExport(
         Nid = "sjaobBgqeB4",
@@ -357,14 +370,27 @@ public static class NpUniversalDataSystemExports
                 typeof(long));
         }
 
-        Span<byte> probe = stackalloc byte[1];
-        if (!ctx.Memory.TryRead(objectAddress, probe) ||
-            ctx.Memory is not IGuestMemoryAllocator allocator ||
-            !allocator.TryFreeGuestMemory(objectAddress))
+        var pool = OpaqueObjectPools.GetValue(
+            ctx.Memory,
+            static _ => new OpaqueObjectPool());
+        lock (pool.Gate)
         {
-            return ctx.SetReturn(
-                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
-                typeof(long));
+            if (!pool.LiveAddresses.Remove(objectAddress))
+            {
+                return ctx.SetReturn(
+                    (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                    typeof(long));
+            }
+
+            if (!ctx.Memory.TryWrite(objectAddress, EmptyOpaqueObject))
+            {
+                pool.LiveAddresses.Add(objectAddress);
+                return ctx.SetReturn(
+                    (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                    typeof(long));
+            }
+
+            pool.RecycledAddresses.Push(objectAddress);
         }
 
         return ctx.SetReturn(0, typeof(long));
@@ -433,9 +459,32 @@ public static class NpUniversalDataSystemExports
     private static bool TryAllocateOpaqueObject(
         CpuContext ctx,
         out ulong address)
-        => KernelMemoryCompatExports.TryAllocateHleData(
-            ctx,
-            OpaqueObjectSize,
-            OpaqueObjectSize,
-            out address);
+    {
+        var pool = OpaqueObjectPools.GetValue(
+            ctx.Memory,
+            static _ => new OpaqueObjectPool());
+        lock (pool.Gate)
+        {
+            while (pool.RecycledAddresses.TryPop(out address))
+            {
+                if (ctx.Memory.TryWrite(address, EmptyOpaqueObject))
+                {
+                    pool.LiveAddresses.Add(address);
+                    return true;
+                }
+            }
+
+            if (!KernelMemoryCompatExports.TryAllocateHleData(
+                    ctx,
+                    OpaqueObjectSize,
+                    OpaqueObjectSize,
+                    out address))
+            {
+                return false;
+            }
+
+            pool.LiveAddresses.Add(address);
+            return true;
+        }
+    }
 }

@@ -142,7 +142,8 @@ test-driven workflow. Major downstream differences include:
 - bounded GameUpdate request ownership with validated 48-byte offline check
   records, deterministic no-update results, deletion, and per-session reset
 - NP Universal Data System property objects backed by owned guest allocations,
-  including exact create/destroy exports, argument validation, and reclamation
+  including exact create/destroy exports, argument validation, and per-address-
+  space reuse of destroyed object storage
 - process-scoped event queues, event flags, semaphores, and exception handlers
   reset between sessions with blocked waiters woken through normal deleted-object
   semantics and deterministic handle allocation for the next process
