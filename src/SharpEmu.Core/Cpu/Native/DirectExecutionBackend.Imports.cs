@@ -677,7 +677,7 @@ public sealed partial class DirectExecutionBackend
 		var arg0 = *(ulong*)argPackPtr;
 		var returnRip = *(ulong*)(argPackPtr + 96);
 		cpuContext.Rip = importStubEntry.Address;
-		LoadImportVolatileArguments(cpuContext, argPackPtr);
+		LoadImportScalarArguments(cpuContext, argPackPtr);
 		cpuContext[CpuRegister.Rdi] = arg0;
 		cpuContext[CpuRegister.Rsi] = *(ulong*)(argPackPtr + 8);
 		cpuContext[CpuRegister.Rdx] = *(ulong*)(argPackPtr + 16);
@@ -782,11 +782,7 @@ public sealed partial class DirectExecutionBackend
 
 	private unsafe static void LoadImportVolatileArguments(CpuContext cpuContext, nint argPackPtr)
 	{
-		cpuContext[CpuRegister.Rax] = *(ulong*)(argPackPtr + ImportSavedRaxOffset);
-		cpuContext[CpuRegister.R10] = *(ulong*)(argPackPtr + ImportSavedR10Offset);
-		cpuContext[CpuRegister.R11] = *(ulong*)(argPackPtr + ImportSavedR11Offset);
-		cpuContext.Mxcsr = *(uint*)(argPackPtr + ImportSavedMxcsrOffset);
-		cpuContext.FpuControlWord = *(ushort*)(argPackPtr + ImportSavedFpuControlOffset);
+		LoadImportScalarArguments(cpuContext, argPackPtr);
 		for (var registerIndex = 0; registerIndex < ImportVectorRegisterCount; registerIndex++)
 		{
 			var registerAddress = argPackPtr + ImportSavedXmmOffset + (registerIndex * 16);
@@ -795,6 +791,15 @@ public sealed partial class DirectExecutionBackend
 				*(ulong*)registerAddress,
 				*(ulong*)(registerAddress + 8));
 		}
+	}
+
+	private unsafe static void LoadImportScalarArguments(CpuContext cpuContext, nint argPackPtr)
+	{
+		cpuContext[CpuRegister.Rax] = *(ulong*)(argPackPtr + ImportSavedRaxOffset);
+		cpuContext[CpuRegister.R10] = *(ulong*)(argPackPtr + ImportSavedR10Offset);
+		cpuContext[CpuRegister.R11] = *(ulong*)(argPackPtr + ImportSavedR11Offset);
+		cpuContext.Mxcsr = *(uint*)(argPackPtr + ImportSavedMxcsrOffset);
+		cpuContext.FpuControlWord = *(ushort*)(argPackPtr + ImportSavedFpuControlOffset);
 	}
 
 	private unsafe static void StoreImportVectorReturn(CpuContext cpuContext, nint argPackPtr)
