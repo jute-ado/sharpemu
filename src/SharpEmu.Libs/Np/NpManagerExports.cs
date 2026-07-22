@@ -206,6 +206,30 @@ public static class NpManagerExports
     }
 
     [SysAbiExport(
+        Nid = "Oad3rvY-NJQ",
+        ExportName = "sceNpHasSignedUp",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpHasSignedUp(CpuContext ctx)
+    {
+        var userId = unchecked((int)ctx[CpuRegister.Rdi]);
+        var resultAddress = ctx[CpuRegister.Rsi];
+        if (userId == -1 || resultAddress == 0)
+        {
+            return ctx.SetReturn(NpErrorInvalidArgument);
+        }
+
+        // This process-local offline profile exposes a stable account and a
+        // signed-in NP state. Report the same account as registered so callers
+        // do not enter a contradictory sign-up flow that cannot be completed
+        // without a real network service.
+        Span<byte> hasSignedUp = stackalloc byte[] { 1 };
+        return ctx.Memory.TryWrite(resultAddress, hasSignedUp)
+            ? ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK)
+            : ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    [SysAbiExport(
         Nid = "rbknaUjpqWo",
         ExportName = "sceNpGetAccountIdA",
         Target = Generation.Gen4 | Generation.Gen5,
