@@ -66,6 +66,31 @@ public sealed record Gen5ShaderMetadata(
     IReadOnlyDictionary<uint, uint> DirectResources,
     IReadOnlyList<Gen5ShaderResourceMapping> Resources);
 
+internal static class Gen5ShaderMetadataLayout
+{
+    private const uint ShaderResourceTablePointer = 1;
+    private const uint FetchShaderPointer = 2;
+    private const uint StreamOutBufferTablePointer = 3;
+    private const uint InternalGlobalTablePointer = 4;
+    private const uint ExtendedUserDataPointer = 5;
+    private const uint VertexBufferTablePointer = 8;
+    private const uint VertexAttributeDescriptorTablePointer = 10;
+
+    // The remaining known AGC direct-resource kinds are scalar ranges,
+    // flags, or offsets rather than pointers.
+    public static uint GetDirectResourceDwordCount(uint type) =>
+        type is
+            ShaderResourceTablePointer or
+            FetchShaderPointer or
+            StreamOutBufferTablePointer or
+            InternalGlobalTablePointer or
+            ExtendedUserDataPointer or
+            VertexBufferTablePointer or
+            VertexAttributeDescriptorTablePointer
+            ? 2u
+            : 1u;
+}
+
 public readonly record struct Gen5ComputeSystemRegisters(
     uint? WorkGroupXRegister,
     uint? WorkGroupYRegister,
