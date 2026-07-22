@@ -68,15 +68,16 @@ public sealed class VulkanShaderDiagnosticPolicyTests
     [Theory]
     [InlineData(0, false)]
     [InlineData(1, true)]
-    [InlineData(29, false)]
+    [InlineData(29, true)]
     [InlineData(30, true)]
+    [InlineData(31, false)]
     [InlineData(60, true)]
     [InlineData(90, true)]
     [InlineData(99, false)]
     [InlineData(100, true)]
     [InlineData(101, false)]
     [InlineData(600, true)]
-    public void PresentedFrameProgressUsesSparseUsefulMilestones(
+    public void PresentedFrameProgressCoversStartupThenUsesSparseMilestones(
         long frame,
         bool expected)
     {

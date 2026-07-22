@@ -154,7 +154,7 @@ internal static unsafe class VulkanVideoPresenter
 
     internal static bool ShouldTracePresentedFrameProgress(long frame) =>
         frame > 0 &&
-        (frame == 1 || frame % 30 == 0 || frame % 100 == 0);
+        (frame <= 30 || frame % 30 == 0 || frame % 100 == 0);
 
     // Standalone CLI launches use a desktop-sized surface. The embedded GUI
     // always takes its dimensions from the native child control instead.
