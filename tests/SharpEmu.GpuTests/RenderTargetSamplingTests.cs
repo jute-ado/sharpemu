@@ -214,13 +214,22 @@ public sealed class RenderTargetSamplingTests
         finally
         {
             VulkanVideoPresenter.RequestClose();
+            var presenterClosed =
+                VulkanVideoPresenter.WaitForClose(TimeSpan.FromSeconds(30));
             Environment.SetEnvironmentVariable(
                 "SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE",
                 null);
             Environment.SetEnvironmentVariable(
                 "SHARPEMU_GUEST_IMAGE_DUMP_DIR",
                 null);
-            Directory.Delete(captureDirectory, recursive: true);
+            if (presenterClosed)
+            {
+                Directory.Delete(captureDirectory, recursive: true);
+            }
+
+            Assert.True(
+                presenterClosed,
+                "Vulkan presenter did not finish shutdown before capture cleanup.");
         }
     }
 

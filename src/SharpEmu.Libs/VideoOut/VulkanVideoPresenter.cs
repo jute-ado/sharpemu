@@ -2337,6 +2337,52 @@ internal static unsafe class VulkanVideoPresenter
     public static void RequestClose()
     {
         Volatile.Write(ref _presenterCloseRequested, true);
+        lock (_gate)
+        {
+            System.Threading.Monitor.PulseAll(_gate);
+        }
+    }
+
+    /// <summary>
+    /// Waits until a requested presenter shutdown has disposed its Vulkan and
+    /// capture resources. Returns false on timeout or when called by the
+    /// presenter thread, which must never wait for itself.
+    /// </summary>
+    public static bool WaitForClose(TimeSpan timeout) =>
+        WaitForPresenterClose(_gate, static () => _thread, timeout);
+
+    internal static bool WaitForPresenterClose(
+        object gate,
+        Func<Thread?> getPresenterThread,
+        TimeSpan timeout)
+    {
+        ArgumentNullException.ThrowIfNull(gate);
+        ArgumentNullException.ThrowIfNull(getPresenterThread);
+        if (timeout < TimeSpan.Zero || timeout.TotalMilliseconds > int.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(timeout));
+        }
+
+        var startedAt = Stopwatch.GetTimestamp();
+        lock (gate)
+        {
+            while (getPresenterThread() is { } presenterThread)
+            {
+                if (ReferenceEquals(presenterThread, Thread.CurrentThread))
+                {
+                    return false;
+                }
+
+                var remaining = timeout - Stopwatch.GetElapsedTime(startedAt);
+                if (remaining <= TimeSpan.Zero ||
+                    !System.Threading.Monitor.Wait(gate, remaining))
+                {
+                    return getPresenterThread() is null;
+                }
+            }
+
+            return true;
+        }
     }
 
     /// <summary>
