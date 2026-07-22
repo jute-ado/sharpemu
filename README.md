@@ -37,7 +37,9 @@ test-driven workflow. Major downstream differences include:
   including three-coordinate 3D sampling and storage writes, 3D image/view
   creation, and path-sensitive scalar image and buffer descriptor evaluation
   across skipped forward blocks; shader decoding remains bounded while accepting large modern
-  engine programs beyond the former 4,096-instruction ceiling
+  engine programs beyond the former 4,096-instruction ceiling; bounded Vulkan
+  presenter shutdown waits keep capture and embedded-surface cleanup ordered
+  after GPU resources have actually been released
 - generated HLE export registration instead of runtime reflection discovery
 - a guest-thread scheduler with callback, synchronization, and lifecycle
   behavior exercised through native guest-code tests, including distinct

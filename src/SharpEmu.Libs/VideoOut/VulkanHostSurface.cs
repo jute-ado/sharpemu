@@ -266,5 +266,12 @@ public static class VulkanVideoHost
 
     public static void RequestClose() => VulkanVideoPresenter.RequestClose();
 
+    /// <summary>
+    /// Waits for the presenter to release the host surface and Vulkan
+    /// resources after a close request.
+    /// </summary>
+    public static bool WaitForClose(TimeSpan timeout) =>
+        VulkanVideoPresenter.WaitForClose(timeout);
+
     public static bool IsEmbedded => VulkanVideoPresenter.UsesHostSurface;
 }

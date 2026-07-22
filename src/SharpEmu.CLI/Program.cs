@@ -595,6 +595,11 @@ internal static partial class Program
 
             HostSessionControl.SetEmbeddedHostSurface(0);
             VulkanVideoHost.RequestClose();
+            if (!VulkanVideoHost.WaitForClose(TimeSpan.FromSeconds(30)))
+            {
+                Console.Error.WriteLine(
+                    "[LOADER][WARN] Vulkan VideoOut did not finish closing before host-surface disposal.");
+            }
             VulkanVideoHost.DetachSurface(surface);
             surface.Dispose();
         }
