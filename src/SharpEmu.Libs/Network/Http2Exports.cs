@@ -10,6 +10,8 @@ public static class Http2Exports
 {
     private const int Http2ErrorInvalidId = unchecked((int)0x80436004);
     private const int Http2ErrorInvalidArgument = unchecked((int)0x80436016);
+    private const int Http2ErrorBeforeSend = unchecked((int)0x80431065);
+    private const int OfflineStatusCode = 503;
 
     private static readonly ConcurrentDictionary<int, Http2Context> _contexts = new();
     private static readonly ConcurrentDictionary<int, Http2Template> _templates = new();
@@ -287,6 +289,94 @@ public static class Http2Exports
         _requests.TryRemove(unchecked((int)ctx[CpuRegister.Rdi]), out _)
             ? ctx.SetReturn(0)
             : ctx.SetReturn(Http2ErrorInvalidId);
+
+    [SysAbiExport(
+        Nid = "9XYJwCf3lEA",
+        ExportName = "sceHttp2GetStatusCode",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceHttp2")]
+    public static int Http2GetStatusCode(CpuContext ctx)
+    {
+        if (!TryGetSentRequest(ctx, out _))
+        {
+            return ctx.SetReturn(RequestStateError(ctx));
+        }
+
+        var outputAddress = ctx[CpuRegister.Rsi];
+        return outputAddress != 0 && ctx.TryWriteInt32(outputAddress, OfflineStatusCode)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn(Http2ErrorInvalidArgument);
+    }
+
+    [SysAbiExport(
+        Nid = "o0DBQpFE13o",
+        ExportName = "sceHttp2GetResponseContentLength",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceHttp2")]
+    public static int Http2GetResponseContentLength(CpuContext ctx)
+    {
+        if (!TryGetSentRequest(ctx, out _))
+        {
+            return ctx.SetReturn(RequestStateError(ctx));
+        }
+
+        var resultAddress = ctx[CpuRegister.Rsi];
+        var lengthAddress = ctx[CpuRegister.Rdx];
+        if (resultAddress == 0 || lengthAddress == 0 ||
+            !ctx.TryReadInt32(resultAddress, out _) ||
+            !ctx.TryReadUInt64(lengthAddress, out _))
+        {
+            return ctx.SetReturn(Http2ErrorInvalidArgument);
+        }
+
+        return ctx.TryWriteInt32(resultAddress, 0) && ctx.TryWriteUInt64(lengthAddress, 0)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn(Http2ErrorInvalidArgument);
+    }
+
+    [SysAbiExport(
+        Nid = "-rdXUi2XW90",
+        ExportName = "sceHttp2GetAllResponseHeaders",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceHttp2")]
+    public static int Http2GetAllResponseHeaders(CpuContext ctx)
+    {
+        if (!TryGetSentRequest(ctx, out _))
+        {
+            return ctx.SetReturn(RequestStateError(ctx));
+        }
+
+        var headerAddress = ctx[CpuRegister.Rsi];
+        var sizeAddress = ctx[CpuRegister.Rdx];
+        if (headerAddress == 0 || sizeAddress == 0 ||
+            !ctx.TryReadUInt64(headerAddress, out _) ||
+            !ctx.TryReadUInt64(sizeAddress, out _))
+        {
+            return ctx.SetReturn(Http2ErrorInvalidArgument);
+        }
+
+        return ctx.TryWriteUInt64(headerAddress, 0) && ctx.TryWriteUInt64(sizeAddress, 0)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn(Http2ErrorInvalidArgument);
+    }
+
+    private static bool TryGetSentRequest(CpuContext ctx, out Http2Request? request)
+    {
+        if (!_requests.TryGetValue(unchecked((int)ctx[CpuRegister.Rdi]), out request))
+        {
+            return false;
+        }
+
+        lock (request.Gate)
+        {
+            return request.Sent;
+        }
+    }
+
+    private static int RequestStateError(CpuContext ctx) =>
+        _requests.ContainsKey(unchecked((int)ctx[CpuRegister.Rdi]))
+            ? Http2ErrorBeforeSend
+            : Http2ErrorInvalidId;
 
     [SysAbiExport(
         Nid = "jjFahkBPCYs",

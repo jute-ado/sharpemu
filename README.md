@@ -123,7 +123,8 @@ test-driven workflow. Major downstream differences include:
 - NP Web API push-event handles, filters, user contexts, and callbacks now
   enforce their owning-context lifecycles; HTTP/2 templates likewise retain
   their parent contexts, validate option and callback setters, and own bounded
-  request/header/payload state through send and deletion instead of propagating
+  request/header/payload state through send and deletion; offline response
+  queries return a deterministic empty HTTP 503 response instead of propagating
   unresolved-import return values as guest handles
 - offline user-service defaults with the size-aware two-argument PS5 game-preset
   ABI and guest-memory-validated accessibility preference queries used by
