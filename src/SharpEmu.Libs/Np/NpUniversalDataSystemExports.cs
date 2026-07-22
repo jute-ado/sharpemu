@@ -3,12 +3,14 @@
 
 using SharpEmu.HLE;
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 
 namespace SharpEmu.Libs.Np;
 
 public static class NpUniversalDataSystemExports
 {
     private const int NpUniversalDataSystemErrorInvalidArgument = unchecked((int)0x80553102);
+    private static readonly ConcurrentDictionary<int, byte> _createdHandles = new();
     private static readonly object _eventGate = new();
     private static readonly HashSet<int> _createdEvents = [];
     private static int _nextHandle = 1;
@@ -60,14 +62,25 @@ public static class NpUniversalDataSystemExports
         LibraryName = "libSceNpUniversalDataSystem")]
     public static int NpUniversalDataSystemCreateHandle(CpuContext ctx)
     {
+        var outputAddress = ctx[CpuRegister.Rdi];
+        if (outputAddress == 0)
+        {
+            return ctx.SetReturn(
+                NpUniversalDataSystemErrorInvalidArgument,
+                typeof(long));
+        }
+
         var handle = Interlocked.Increment(ref _nextHandle);
-        if (ctx.TryWriteInt32(ctx[CpuRegister.Rdi], handle, checkNil: true) ||
-            ctx.TryWriteInt32(ctx[CpuRegister.Rsi], handle, checkNil: true))
+        _createdHandles.TryAdd(handle, 0);
+        if (ctx.TryWriteInt32(outputAddress, handle))
         {
             return ctx.SetReturn(0, typeof(long));
         }
 
-        return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, typeof(long));
+        _createdHandles.TryRemove(handle, out _);
+        return ctx.SetReturn(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            typeof(long));
     }
 
     [SysAbiExport(
@@ -195,7 +208,10 @@ public static class NpUniversalDataSystemExports
         LibraryName = "libSceNpUniversalDataSystem")]
     public static int NpUniversalDataSystemDestroyHandle(CpuContext ctx)
     {
-        return ctx.SetReturn(0, typeof(long));
+        var handle = unchecked((int)ctx[CpuRegister.Rdi]);
+        return _createdHandles.TryRemove(handle, out _)
+            ? ctx.SetReturn(0, typeof(long))
+            : ctx.SetReturn(NpUniversalDataSystemErrorInvalidArgument, typeof(long));
     }
 
     // Telemetry property setter (event property array, string value). We do not
