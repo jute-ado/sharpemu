@@ -1218,6 +1218,18 @@ public static class KernelRuntimeCompatExports
         KernelGetModuleInfoForUnwind(ctx);
 
     [SysAbiExport(
+        Nid = "crb5j7mkk1c",
+        ExportName = "_is_signal_return",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int IsSignalReturn(CpuContext ctx)
+    {
+        // SharpEmu does not install a guest sigreturn trampoline. Returning false
+        // prevents ordinary fault addresses from being unwound as signal frames.
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
         Nid = "kUpgrXIrz7Q",
         ExportName = "sceKernelGetModuleInfo",
         Target = Generation.Gen4 | Generation.Gen5,
