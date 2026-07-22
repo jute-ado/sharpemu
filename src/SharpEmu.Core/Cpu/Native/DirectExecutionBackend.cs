@@ -337,6 +337,16 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		static () => (nint)NativeMemory.AllocZeroed(GuestContextTransferFrameQwords, sizeof(ulong)),
 		trackAllValues: true);
 
+	private sealed class GuestCallbackStackState
+	{
+		public required IVirtualMemory Memory { get; init; }
+		public required ulong MemoryResetVersion { get; init; }
+		public required ulong BaseAddress { get; init; }
+		public int Depth { get; set; }
+	}
+
+	private readonly ThreadLocal<GuestCallbackStackState?> _guestCallbackStacks = new();
+
 	private nint _guestContextTransferStub;
 
 	private long _importDispatchCount;
@@ -4498,24 +4508,58 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			return false;
 		}
 
-		ulong callbackStackBase;
-		ulong callbackStackSize;
+		GuestCallbackStackState? implicitStackState = null;
+		ulong callbackStackPointer;
 		if (stackAddress != 0 && stackSize >= 0x100)
 		{
-			callbackStackBase = stackAddress;
-			callbackStackSize = stackSize;
+			callbackStackPointer =
+				AlignDown(stackAddress + stackSize, 16) - sizeof(ulong);
+			if (virtualMemory is IGuestStackMemory explicitStackMemory)
+			{
+				explicitStackMemory.RegisterStackRange(stackAddress, stackSize);
+			}
 		}
 		else
 		{
-			if (!TryMapGuestThreadRegion(virtualMemory, GuestThreadStackBaseAddress, GuestThreadStackSize, ProgramHeaderFlags.Read | ProgramHeaderFlags.Write, out callbackStackBase, out error))
+			implicitStackState = _guestCallbackStacks.Value;
+			if (implicitStackState is null ||
+				!ReferenceEquals(implicitStackState.Memory, virtualMemory) ||
+				implicitStackState.MemoryResetVersion != virtualMemory.ResetVersion)
 			{
-				return false;
+				if (!TryMapGuestThreadRegion(
+						virtualMemory,
+						GuestThreadStackBaseAddress,
+						GuestThreadStackSize,
+						ProgramHeaderFlags.Read | ProgramHeaderFlags.Write,
+						out var callbackStackBase,
+						out error))
+				{
+					return false;
+				}
+
+				implicitStackState = new GuestCallbackStackState
+				{
+					Memory = virtualMemory,
+					MemoryResetVersion = virtualMemory.ResetVersion,
+					BaseAddress = callbackStackBase,
+				};
+				_guestCallbackStacks.Value = implicitStackState;
+				if (virtualMemory is IGuestStackMemory implicitStackMemory)
+				{
+					implicitStackMemory.RegisterStackRange(
+						callbackStackBase,
+						GuestThreadStackSize);
+				}
 			}
-			callbackStackSize = GuestThreadStackSize;
-		}
-		if (virtualMemory is IGuestStackMemory stackMemory)
-		{
-			stackMemory.RegisterStackRange(callbackStackBase, callbackStackSize);
+
+			var callerStackPointer = callerContext[CpuRegister.Rsp];
+			var callbackStackEnd =
+				implicitStackState.BaseAddress + GuestThreadStackSize;
+			callbackStackPointer = implicitStackState.Depth > 0 &&
+				callerStackPointer >= implicitStackState.BaseAddress + 0x100 &&
+				callerStackPointer < callbackStackEnd
+					? AlignDown(callerStackPointer, 16) - sizeof(ulong)
+					: AlignDown(callbackStackEnd, 16) - sizeof(ulong);
 		}
 
 		var trackedMemory = new TrackedCpuMemory(virtualMemory);
@@ -4527,7 +4571,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			FsBase = callerContext.FsBase != 0 ? callerContext.FsBase : fallbackTlsBase,
 			GsBase = callerContext.GsBase != 0 ? callerContext.GsBase : fallbackTlsBase,
 		};
-		context[CpuRegister.Rsp] = AlignDown(callbackStackBase + callbackStackSize, 16) - sizeof(ulong);
+		context[CpuRegister.Rsp] = callbackStackPointer;
 		context[CpuRegister.Rdi] = arg0;
 		context[CpuRegister.Rsi] = arg1;
 		context[CpuRegister.Rdx] = arg2;
@@ -4540,6 +4584,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			return false;
 		}
 
+		if (implicitStackState is not null)
+		{
+			implicitStackState.Depth++;
+		}
 		var previousLastError = LastError;
 		try
 		{
@@ -4557,6 +4605,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		finally
 		{
 			LastError = previousLastError;
+			if (implicitStackState is not null)
+			{
+				implicitStackState.Depth--;
+			}
 		}
 	}
 
@@ -6522,6 +6574,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 		}
 		_guestContextTransferFrames.Dispose();
+		_guestCallbackStacks.Dispose();
 		if (_lowIndexedTableScratch != 0)
 		{
 			_hostMemory.Free((ulong)_lowIndexedTableScratch);
