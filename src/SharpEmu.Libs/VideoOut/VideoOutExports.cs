@@ -220,6 +220,7 @@ public static class VideoOutExports
         public List<FlipEventRegistration> FlipEvents { get; } = new();
         public List<FlipEventRegistration> VblankEvents { get; } = new();
         public List<FlipEventRegistration> OutputModeEvents { get; } = new();
+        public List<FlipEventRegistration> VrrActiveStatusEvents { get; } = new();
         public long OpenTimestamp;
         public long LastVblankTimestamp;
     }
@@ -719,6 +720,59 @@ public static class VideoOutExports
         // steady tick to advance; start the emulated vblank cadence on demand.
         StartVblankThreadOnce();
         TraceVideoOut($"videoout.add_vblank_event eq=0x{equeue:X16} handle={handle} udata=0x{userData:X16}");
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "kP2L8t3j-aM",
+        ExportName = "sceVideoOutAddVrrStatusFlagsPrivilege",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOutVrrStatus")]
+    public static int VideoOutAddVrrStatusFlagsPrivilege(CpuContext ctx)
+    {
+        _ = ctx;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "LibwuIonIBw",
+        ExportName = "sceVideoOutAddVrrActiveStatusEvent",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOutVrrStatus")]
+    public static int VideoOutAddVrrActiveStatusEvent(CpuContext ctx)
+    {
+        var equeue = ctx[CpuRegister.Rdi];
+        var handle = unchecked((int)ctx[CpuRegister.Rsi]);
+        var userData = ctx[CpuRegister.Rdx];
+        if (!TryGetPort(handle, out var port))
+        {
+            return OrbisVideoOutErrorInvalidHandle;
+        }
+
+        if (!KernelEventQueueCompatExports.IsValidEqueue(equeue))
+        {
+            return OrbisVideoOutErrorInvalidEventQueue;
+        }
+
+        lock (_stateGate)
+        {
+            var existingIndex = port.VrrActiveStatusEvents.FindIndex(
+                registration => registration.Equeue == equeue);
+            if (existingIndex >= 0)
+            {
+                port.VrrActiveStatusEvents[existingIndex] =
+                    new FlipEventRegistration(equeue, userData);
+            }
+            else
+            {
+                port.VrrActiveStatusEvents.Add(
+                    new FlipEventRegistration(equeue, userData));
+            }
+        }
+
+        TraceVideoOut(
+            $"videoout.add_vrr_active_status_event eq=0x{equeue:X16} " +
+            $"handle={handle} udata=0x{userData:X16} active=false");
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
