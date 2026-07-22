@@ -6,6 +6,7 @@ using SharpEmu.Core.Cpu;
 using SharpEmu.Core.Cpu.Native;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
+using SharpEmu.Logging;
 using Xunit;
 
 namespace SharpEmu.Core.Tests;
@@ -25,6 +26,7 @@ public sealed class NativeImportBridgeTests
     private const string MemalignNid = "Ujf3KzMvRmI";
     private const string PluginInitializeNid = "Mglc7amPW4k";
     private const string ScalarLeafProbeNid = "aI+OeCz8xrQ";
+    private const string FailureNid = "test-failure-nid";
     private const ulong CodeAddress = 0x0000_0008_1000_0000;
     private const ulong ImportAddress = CodeAddress + 0x100;
     private const ulong SecondImportAddress = ImportAddress + 0x10;
@@ -182,6 +184,85 @@ public sealed class NativeImportBridgeTests
                 Assert.Equal(CodeAddress + 15, entry.ReturnAddress);
                 Assert.Equal(0UL, entry.ReturnValue);
             });
+    }
+
+    [HostX64Fact]
+    public async Task SelectedImportFailureLogsBoundedCompletedRecentContext()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
+        byte[] code =
+        [
+            0xE8, 0xFB, 0x00, 0x00, 0x00, // call ImportAddress
+            0xE8, 0x06, 0x01, 0x00, 0x00, // call SecondImportAddress
+            0x31, 0xC0,                   // xor eax, eax
+            0xC3,                         // ret
+        ];
+        var previousSelector = Environment.GetEnvironmentVariable(
+            "SHARPEMU_TRACE_IMPORT_FAILURE_CONTEXT");
+        var previousSink = SharpEmuLog.Sink;
+        var previousMinimumLevel = SharpEmuLog.MinimumLevel;
+        var sink = new CollectingLogSink();
+        try
+        {
+            Environment.SetEnvironmentVariable(
+                "SHARPEMU_TRACE_IMPORT_FAILURE_CONTEXT",
+                FailureNid);
+            SharpEmuLog.Configure(LogLevel.Info, sink);
+
+            var execution = SyntheticNativeGuest.ExecuteModuleInitializer(
+                code,
+                Generation.Gen5,
+                "synthetic-selected-import-failure-context",
+                new Dictionary<ulong, string>
+                {
+                    [ImportAddress] = AddNid,
+                    [SecondImportAddress] = FailureNid,
+                },
+                moduleManager => moduleManager.RegisterExports(
+                [
+                    new ExportedFunction(
+                        "libSyntheticTest",
+                        AddNid,
+                        "syntheticAdd",
+                        Generation.Gen5,
+                        SyntheticExports.Add),
+                    new ExportedFunction(
+                        "libSyntheticTest",
+                        FailureNid,
+                        "syntheticFailure",
+                        Generation.Gen5,
+                        context => context.SetReturn(
+                            OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT)),
+                ]),
+                CodeAddress);
+
+            AssertSuccessful(execution);
+            Assert.Null(execution.ImportTrace);
+            Assert.Contains(
+                sink.Messages,
+                message => message.Contains(
+                    $"Recent import calls for failed import #2 {FailureNid}",
+                    StringComparison.Ordinal));
+            Assert.Contains(
+                sink.Messages,
+                message => message.Contains($"nid={AddNid}", StringComparison.Ordinal) &&
+                    message.Contains("rax=0x0000000000000000", StringComparison.Ordinal));
+            Assert.Contains(
+                sink.Messages,
+                message => message.Contains($"nid={FailureNid}", StringComparison.Ordinal) &&
+                    !message.Contains("rax=<pending>", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(
+                "SHARPEMU_TRACE_IMPORT_FAILURE_CONTEXT",
+                previousSelector);
+            SharpEmuLog.Configure(previousMinimumLevel, previousSink);
+        }
     }
 
     [HostX64Fact]
@@ -1188,5 +1269,12 @@ public sealed class NativeImportBridgeTests
         }
 
         return code.ToArray();
+    }
+
+    private sealed class CollectingLogSink : ISharpEmuLogSink
+    {
+        public List<string> Messages { get; } = [];
+
+        public void Write(in LogEntry entry) => Messages.Add(entry.Message);
     }
 }

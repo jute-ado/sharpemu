@@ -220,6 +220,10 @@ chmod +x ./SharpEmu
 A Vulkan-capable GPU and current graphics driver are required. The macOS
 release includes the MoltenVK Vulkan implementation.
 
+For targeted HLE diagnostics, the emulator can dump bounded recent import
+context only when a selected NID, library, or export returns an error. See
+[`docs/import-failure-context.md`](./docs/import-failure-context.md).
+
 ## Games Tested
 
 The following table records recent results from this fork's local regression
