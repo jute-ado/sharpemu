@@ -65,7 +65,9 @@ internal sealed class GamePadReplay
 
 internal sealed class GamePadReplayEvent
 {
-    public long AtMilliseconds { get; init; }
+    public long? AtMilliseconds { get; init; }
+
+    public long? AtPresentedFrame { get; init; }
 
     public string[] Buttons { get; init; } = [];
 

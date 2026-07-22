@@ -107,6 +107,11 @@ internal readonly record struct VulkanTextureImageShape(
 
 internal static unsafe class VulkanVideoPresenter
 {
+    private static long _presentedGuestFrameCount;
+
+    internal static long PresentedGuestFrameCount =>
+        Volatile.Read(ref _presentedGuestFrameCount);
+
     internal static bool ShouldForceSolidFragmentOverride(
         bool isTitleDraw,
         bool forceTitleDraw,
@@ -3611,6 +3616,7 @@ internal static unsafe class VulkanVideoPresenter
 
         public Presenter(uint width, uint height, VulkanHostSurface? hostSurface)
         {
+            Volatile.Write(ref _presentedGuestFrameCount, 0);
             _hostSurface = hostSurface;
             _hostBufferPool = new VulkanHostBufferPool(
                 MaximumCachedHostBufferBytes,
@@ -13473,6 +13479,9 @@ internal static unsafe class VulkanVideoPresenter
             if (presentedGuestImage is not null)
             {
                 _directPresentationCount++;
+                Volatile.Write(
+                    ref _presentedGuestFrameCount,
+                    _directPresentationCount);
                 tracePresentedGuestImage =
                     ShouldSamplePresentedGuestImageForDiagnostics(
                         _directPresentationCount);

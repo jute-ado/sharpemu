@@ -110,9 +110,11 @@ pipeline milestone precisely.
 
 Execution cases may include a `padReplay` timeline to reach menus and gameplay
 without relying on a focused window or physical controller. Each event is a
-complete pad snapshot that becomes active at `atMilliseconds` after
-`scePadInit`; an empty `buttons` array releases every button. Events must be in
-strictly increasing order and occur before the case timeout.
+complete pad snapshot. A replay uses either `atMilliseconds` after `scePadInit`
+or `atPresentedFrame`; frame-relative replay is preferable when emulation speed
+varies between hosts. An empty `buttons` array releases every button. Events
+must use one clock consistently and be in strictly increasing order. Timed
+events must occur before the case timeout.
 
 ```json
 "padReplay": {

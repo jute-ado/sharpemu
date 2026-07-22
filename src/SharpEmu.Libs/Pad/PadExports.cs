@@ -4,6 +4,7 @@
 using SharpEmu.HLE;
 using SharpEmu.HLE.Host;
 using SharpEmu.Libs.UserService;
+using SharpEmu.Libs.VideoOut;
 using System.Buffers.Binary;
 using System.Diagnostics;
 
@@ -546,7 +547,9 @@ public static class PadExports
                 ? 0
                 : checked((long)(
                     (now - start) * 1000.0 / Stopwatch.Frequency));
-            _cachedInputState = replay.GetState(elapsedMilliseconds);
+            _cachedInputState = replay.GetState(
+                elapsedMilliseconds,
+                VulkanVideoPresenter.PresentedGuestFrameCount);
             _lastInputSampleTicks = now;
             return _cachedInputState;
         }
