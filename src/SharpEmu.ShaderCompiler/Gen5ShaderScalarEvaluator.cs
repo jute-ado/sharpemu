@@ -203,6 +203,31 @@ public static class Gen5ShaderScalarEvaluator
                         continue;
                     }
 
+                    if (instruction.Control is Gen5BufferMemoryControl skippedBufferMemory)
+                    {
+                        if (!TryResolveBufferDescriptor(
+                                instruction,
+                                skippedBufferMemory,
+                                skippedScalarRegisters,
+                                out var skippedBufferDescriptor,
+                                out error) ||
+                            !TryAddGeneralBufferMemoryBinding(
+                                ctx,
+                                instruction,
+                                skippedBufferMemory,
+                                skippedBufferDescriptor,
+                                skippedScalarRegisters,
+                                globalMemoryBindings,
+                                globalMemoryByAddress,
+                                bufferFormatBindings,
+                                out error))
+                        {
+                            return false;
+                        }
+
+                        continue;
+                    }
+
                     if (instruction.Control is Gen5ImageControl &&
                         !TryAddImageBinding(
                             state.Program,
@@ -385,30 +410,13 @@ public static class Gen5ShaderScalarEvaluator
 
             if (instruction.Control is Gen5BufferMemoryControl bufferMemory)
             {
-                if (bufferMemory.ScalarResource >= ScalarRegisterCount - 3)
-                {
-                    error =
-                        $"buffer-resource-register-range pc=0x{instruction.Pc:X} " +
-                        $"s{bufferMemory.ScalarResource}";
-                    return false;
-                }
-
-                if (!TryDecodeBufferDescriptor(
+                if (!TryResolveBufferDescriptor(
+                        instruction,
+                        bufferMemory,
                         scalarRegisters,
-                        bufferMemory.ScalarResource,
-                        strictType: true,
-                        out var bufferDescriptor))
+                        out var bufferDescriptor,
+                        out error))
                 {
-                    error =
-                        $"buffer-descriptor-invalid pc=0x{instruction.Pc:X} " +
-                        $"s{bufferMemory.ScalarResource} " +
-                        $"raw={FormatBufferDescriptorWords(scalarRegisters, bufferMemory.ScalarResource)}";
-                    return false;
-                }
-
-                if (bufferDescriptor.BaseAddress == 0)
-                {
-                    error = $"buffer-address-null pc=0x{instruction.Pc:X}";
                     return false;
                 }
 
@@ -466,57 +474,18 @@ public static class Gen5ShaderScalarEvaluator
                     continue;
                 }
 
-                if (IsFormatBufferInstruction(instruction.Opcode) &&
-                    bufferDescriptor.DataFormat != 0)
+                if (!TryAddGeneralBufferMemoryBinding(
+                        ctx,
+                        instruction,
+                        bufferMemory,
+                        bufferDescriptor,
+                        scalarRegisters,
+                        globalMemoryBindings,
+                        globalMemoryByAddress,
+                        bufferFormatBindings,
+                        out error))
                 {
-                    bufferFormatBindings.Add(
-                        new Gen5BufferFormatBinding(
-                            instruction.Pc,
-                            bufferDescriptor.DataFormat,
-                            bufferDescriptor.NumberFormat));
-                }
-
-                var key = (bufferMemory.ScalarResource, bufferDescriptor.BaseAddress);
-                var writable = IsBufferMemoryWrite(instruction.Opcode);
-                if (globalMemoryByAddress.TryGetValue(key, out var existingBinding))
-                {
-                    existingBinding.Writable |= writable;
-                    if (existingBinding.InstructionPcs is List<uint> instructionPcs)
-                    {
-                        instructionPcs.Add(instruction.Pc);
-                    }
-                }
-                else
-                {
-                    if (!TryReadGlobalMemory(
-                            ctx,
-                            bufferDescriptor.BaseAddress,
-                            bufferDescriptor.SizeBytes,
-                            out var data))
-                    {
-                        var descriptorWords = string.Join(
-                            ':',
-                            Enumerable.Range(0, 4).Select(index =>
-                                $"{scalarRegisters[bufferMemory.ScalarResource + (uint)index]:X8}"));
-                        error =
-                            $"buffer-memory-read-failed pc=0x{instruction.Pc:X} " +
-                            $"address=0x{bufferDescriptor.BaseAddress:X16} " +
-                            $"bytes={bufferDescriptor.SizeBytes} " +
-                            $"stride={bufferDescriptor.Stride} records={bufferDescriptor.NumRecords} " +
-                            $"s{bufferMemory.ScalarResource}=[{descriptorWords}]";
-                        return false;
-                    }
-
-                    var binding = new Gen5GlobalMemoryBinding(
-                        bufferMemory.ScalarResource,
-                        bufferDescriptor.BaseAddress,
-                        new List<uint> { instruction.Pc },
-                        data)
-                    {
-                        Writable = writable,
-                    };
-                    globalMemoryByAddress.Add(key, binding);
-                    globalMemoryBindings.Add(binding);
+                    return false;
                 }
 
                 continue;
@@ -548,6 +517,113 @@ public static class Gen5ShaderScalarEvaluator
             runtimeScalarRegisters,
             vertexInputBindings,
             bufferFormatBindings);
+        return true;
+    }
+
+    private static bool TryResolveBufferDescriptor(
+        Gen5ShaderInstruction instruction,
+        Gen5BufferMemoryControl control,
+        uint[] scalarRegisters,
+        out BufferDescriptor descriptor,
+        out string error)
+    {
+        descriptor = default;
+        error = string.Empty;
+        if (control.ScalarResource >= ScalarRegisterCount - 3)
+        {
+            error =
+                $"buffer-resource-register-range pc=0x{instruction.Pc:X} " +
+                $"s{control.ScalarResource}";
+            return false;
+        }
+
+        if (!TryDecodeBufferDescriptor(
+                scalarRegisters,
+                control.ScalarResource,
+                strictType: true,
+                out descriptor))
+        {
+            error =
+                $"buffer-descriptor-invalid pc=0x{instruction.Pc:X} " +
+                $"s{control.ScalarResource} " +
+                $"raw={FormatBufferDescriptorWords(scalarRegisters, control.ScalarResource)}";
+            return false;
+        }
+
+        if (descriptor.BaseAddress == 0)
+        {
+            error = $"buffer-address-null pc=0x{instruction.Pc:X}";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryAddGeneralBufferMemoryBinding(
+        CpuContext ctx,
+        Gen5ShaderInstruction instruction,
+        Gen5BufferMemoryControl control,
+        BufferDescriptor descriptor,
+        uint[] scalarRegisters,
+        List<Gen5GlobalMemoryBinding> globalMemoryBindings,
+        Dictionary<(uint ScalarAddress, ulong BaseAddress), Gen5GlobalMemoryBinding>
+            globalMemoryByAddress,
+        List<Gen5BufferFormatBinding> bufferFormatBindings,
+        out string error)
+    {
+        error = string.Empty;
+        if (IsFormatBufferInstruction(instruction.Opcode) &&
+            descriptor.DataFormat != 0)
+        {
+            bufferFormatBindings.Add(
+                new Gen5BufferFormatBinding(
+                    instruction.Pc,
+                    descriptor.DataFormat,
+                    descriptor.NumberFormat));
+        }
+
+        var key = (control.ScalarResource, descriptor.BaseAddress);
+        var writable = IsBufferMemoryWrite(instruction.Opcode);
+        if (globalMemoryByAddress.TryGetValue(key, out var existingBinding))
+        {
+            existingBinding.Writable |= writable;
+            if (existingBinding.InstructionPcs is List<uint> instructionPcs)
+            {
+                instructionPcs.Add(instruction.Pc);
+            }
+
+            return true;
+        }
+
+        if (!TryReadGlobalMemory(
+                ctx,
+                descriptor.BaseAddress,
+                descriptor.SizeBytes,
+                out var data))
+        {
+            var descriptorWords = string.Join(
+                ':',
+                Enumerable.Range(0, 4).Select(index =>
+                    $"{scalarRegisters[control.ScalarResource + (uint)index]:X8}"));
+            error =
+                $"buffer-memory-read-failed pc=0x{instruction.Pc:X} " +
+                $"address=0x{descriptor.BaseAddress:X16} " +
+                $"bytes={descriptor.SizeBytes} " +
+                $"stride={descriptor.Stride} records={descriptor.NumRecords} " +
+                $"s{control.ScalarResource}=[{descriptorWords}]";
+            return false;
+        }
+
+        var binding = new Gen5GlobalMemoryBinding(
+            control.ScalarResource,
+            descriptor.BaseAddress,
+            new List<uint> { instruction.Pc },
+            data)
+        {
+            Writable = writable,
+        };
+        globalMemoryByAddress.Add(key, binding);
+        globalMemoryBindings.Add(binding);
         return true;
     }
 

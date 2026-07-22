@@ -59,6 +59,22 @@ public sealed class Gen5SpirvAtomicTranslationTests
     }
 
     [Fact]
+    public void ForwardSkippedBufferLoadStillDeclaresBinding()
+    {
+        // s_branch skips a two-dword BUFFER_LOAD_DWORDX3. The SPIR-V control
+        // flow still contains the alternate block, so its descriptor must be
+        // evaluated on the forked scalar state and assigned a buffer binding.
+        var opcodes = CompileCompute(
+            [
+                0xBF820002,
+                0xE03C0000, 0x80000100,
+            ],
+            BufferDescriptorRegisters());
+
+        Assert.Contains((ushort)SpirvOp.Load, opcodes);
+    }
+
+    [Fact]
     public void DataShareAtomics_EmitAtomicOpcodes()
     {
         // DS_ADD_RTN_U32 v3, v0, v1; DS_CMPST_RTN_B32 v3, v0, v1, v2; DS_MAX_U32 v0, v1.
