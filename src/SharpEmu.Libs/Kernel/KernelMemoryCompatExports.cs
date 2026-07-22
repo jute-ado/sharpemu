@@ -3577,7 +3577,19 @@ public static partial class KernelMemoryCompatExports
 
         if (!found)
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED;
+            if (!findNext)
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED;
+            }
+
+            if (!ctx.TryWriteUInt64(infoAddress, DirectMemorySizeBytes) ||
+                !ctx.TryWriteUInt64(infoAddress + sizeof(ulong), DirectMemorySizeBytes) ||
+                !TryWriteInt32(ctx, infoAddress + (sizeof(ulong) * 2), 0))
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
 
         if (!ctx.TryWriteUInt64(infoAddress, matchStart) ||
