@@ -11,10 +11,21 @@ namespace SharpEmu.Libs.Tests;
 public sealed class KernelDirectMemoryQueryTests
 {
     private const ulong OutputAddress = 0x1000;
-    private const ulong DirectMemorySize = 16UL * 1024 * 1024 * 1024;
+    private const ulong DirectMemorySize = 13_824UL * 1024 * 1024;
     private const ulong SearchSize = 0x0100_0000;
     private const ulong AllocationLength = 0x4000;
     private const int MemoryType = 7;
+
+    [Fact]
+    public void GetDirectMemorySizeReportsPs5ApplicationCapacity()
+    {
+        var context = new CpuContext(new FakeGuestMemory(), Generation.Gen5);
+
+        var result = KernelMemoryCompatExports.KernelGetDirectMemorySize(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_OK, result);
+        Assert.Equal(DirectMemorySize, context[CpuRegister.Rax]);
+    }
 
     [Fact]
     public void FindNextReturnsFirstAllocationAfterOffset()

@@ -52,7 +52,10 @@ public static partial class KernelMemoryCompatExports
     private const int SeekSet = 0;
     private const int SeekCur = 1;
     private const int SeekEnd = 2;
-    private const ulong DirectMemorySizeBytes = 16384UL * 1024 * 1024;
+    // PS5 applications see a 13.5 GiB direct-memory pool; the remainder of the
+    // console's 16 GiB physical memory is reserved for the system. Reporting
+    // the package capacity lets titles budget memory that they cannot map.
+    private const ulong DirectMemorySizeBytes = 13_824UL * 1024 * 1024;
     private const ulong UnsetMainDirectMemoryPoolBase = ulong.MaxValue;
     private const ulong FlexibleMemorySizeBytes = 448UL * 1024 * 1024;
     private const int OrbisVirtualQueryInfoSize = 72;
