@@ -353,6 +353,91 @@ public sealed class AudioOut2CompatibilityTests
     }
 
     [Fact]
+    public void ContextSetAttributesAcceptsBoundedDescriptorsAndEmptyLists()
+    {
+        var memory = new FakeGuestMemory();
+        var handle = CreateAudioContext(memory);
+        var attribute = new byte[0x18];
+        BinaryPrimitives.WriteUInt32LittleEndian(attribute, 7);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            attribute.AsSpan(0x08),
+            AttributeValueAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(attribute.AsSpan(0x10), 4);
+        memory.AddRegion(AttributeAddress, attribute);
+        var context = CreateContext(memory);
+        var setAttributes = GetContextSetAttributes();
+        context[CpuRegister.Rdi] = handle;
+        context[CpuRegister.Rsi] = AttributeAddress;
+        context[CpuRegister.Rdx] = 1;
+
+        AssertSuccess(setAttributes.Function(context), context);
+
+        context[CpuRegister.Rsi] = 0;
+        context[CpuRegister.Rdx] = 0;
+        AssertSuccess(setAttributes.Function(context), context);
+    }
+
+    [Fact]
+    public void ContextSetAttributesRejectsInvalidHandlesAndListArguments()
+    {
+        var memory = new FakeGuestMemory();
+        var handle = CreateAudioContext(memory);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = handle;
+        AssertSuccess(AudioOut2Exports.AudioOut2ContextDestroy(context), context);
+        var setAttributes = GetContextSetAttributes();
+
+        context[CpuRegister.Rdi] = handle;
+        context[CpuRegister.Rsi] = 0;
+        context[CpuRegister.Rdx] = 0;
+        AssertError(
+            setAttributes.Function(context),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+
+        handle = CreateAudioContext(memory);
+        context[CpuRegister.Rdi] = handle;
+        context[CpuRegister.Rdx] = 1;
+        AssertError(
+            setAttributes.Function(context),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+
+        context[CpuRegister.Rsi] = AttributeAddress;
+        context[CpuRegister.Rdx] = 1025;
+        AssertError(
+            setAttributes.Function(context),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+    }
+
+    [Fact]
+    public void ContextSetAttributesRequiresCompleteReadableDescriptors()
+    {
+        var memory = new FakeGuestMemory();
+        var handle = CreateAudioContext(memory);
+        memory.AddRegion(AttributeAddress, new byte[0x17]);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = handle;
+        context[CpuRegister.Rsi] = AttributeAddress;
+        context[CpuRegister.Rdx] = 1;
+
+        AssertError(
+            GetContextSetAttributes().Function(context),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+
+        const ulong highestCompleteDescriptor = ulong.MaxValue - 0x17;
+        memory.AddRegion(highestCompleteDescriptor, new byte[0x18]);
+        context[CpuRegister.Rsi] = highestCompleteDescriptor;
+        context[CpuRegister.Rdx] = 2;
+        AssertError(
+            GetContextSetAttributes().Function(context),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    [Fact]
     public void ContextAdvanceAcceptsCreatedContext()
     {
         var memory = new FakeGuestMemory();
@@ -582,6 +667,7 @@ public sealed class AudioOut2CompatibilityTests
     [InlineData("t5YrizufpQc", "sceAudioOut2ContextResetParam")]
     [InlineData("pDmme7Bgm6E", "sceAudioOut2ContextQueryMemory")]
     [InlineData("0x6o1VVAYSY", "sceAudioOut2ContextCreate")]
+    [InlineData("4dq2rblWlg0", "sceAudioOut2ContextSetAttributes")]
     [InlineData("PE2zHMqLSHs", "sceAudioOut2ContextAdvance")]
     [InlineData("aII9h5nli9U", "sceAudioOut2ContextPush")]
     [InlineData("R7d0F1g2qsU", "sceAudioOut2ContextGetQueueLevel")]
@@ -603,6 +689,11 @@ public sealed class AudioOut2CompatibilityTests
 
     private static CpuContext CreateContext(FakeGuestMemory memory)
         => new(memory, Generation.Gen5);
+
+    private static ExportedFunction GetContextSetAttributes()
+        => Assert.Single(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(Generation.Gen5),
+            candidate => candidate.Nid == "4dq2rblWlg0");
 
     private static void ConfigureContextCreate(
         CpuContext context,
