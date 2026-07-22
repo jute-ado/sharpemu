@@ -17,7 +17,7 @@ public sealed partial class DirectExecutionBackend
 {
 	private static readonly ConcurrentDictionary<ulong, byte> _knownExecutablePages = new();
 
-	private RecentImportTraceEntry? RecordRecentImportTrace(
+	private RecentImportTraceBuffer.Completion? RecordRecentImportTrace(
 		long dispatchIndex,
 		string nid,
 		string? libraryName,
@@ -35,7 +35,7 @@ public sealed partial class DirectExecutionBackend
 			return null;
 		}
 
-		var entry = new RecentImportTraceEntry(
+		var entry = new RecentImportTraceData(
 				dispatchIndex,
 				nid,
 				libraryName,
@@ -48,8 +48,7 @@ public sealed partial class DirectExecutionBackend
 				arg3,
 				arg4,
 				arg5);
-		_recentImportTrace.Record(entry);
-		return entry;
+		return _recentImportTrace.Record(entry);
 	}
 
 	private string? BuildRecentImportTrace(int requestedLimit, ulong? prioritizedThreadHandle) =>
