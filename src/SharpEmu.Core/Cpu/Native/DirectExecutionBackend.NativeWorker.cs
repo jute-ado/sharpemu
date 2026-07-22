@@ -74,6 +74,7 @@ public sealed partial class DirectExecutionBackend
 				_activeGuestReturnSlotAddress,
 				(nint)hostRspSlot,
 				(nint)entryStub,
+				state?.Priority ?? 700,
 				state?.AffinityMask ?? 0,
 				out var yieldRequested,
 				out var yieldReason,
@@ -211,6 +212,7 @@ public sealed partial class DirectExecutionBackend
 		private ulong _runReturnSlotAddress;
 		private nint _runHostRspSlot;
 		private nint _runEntryStub;
+		private int _runPriority;
 		private ulong _runAffinityMask;
 		private ulong _runNativeResult;
 		private bool _runYieldRequested;
@@ -245,6 +247,7 @@ public sealed partial class DirectExecutionBackend
 		private ulong _prevExternalGuestThreadHandle;
 		private nint _prevHostRspSlot;
 		private int _prevHostThreadId;
+		private ThreadPriority _prevWorkerPriority;
 		private bool _entered;
 
 		private NativeGuestExecutor(DirectExecutionBackend backend)
@@ -404,6 +407,7 @@ public sealed partial class DirectExecutionBackend
 			ulong returnSlotAddress,
 			nint hostRspSlot,
 			nint entryStub,
+			int priority,
 			ulong affinityMask,
 			out bool yieldRequested,
 			out string? yieldReason,
@@ -422,6 +426,7 @@ public sealed partial class DirectExecutionBackend
 			_runReturnSlotAddress = returnSlotAddress;
 			_runHostRspSlot = hostRspSlot;
 			_runEntryStub = entryStub;
+			_runPriority = priority;
 			_runAffinityMask = affinityMask;
 			_runPrologueFailed = true;
 			_runYieldRequested = false;
@@ -550,6 +555,10 @@ public sealed partial class DirectExecutionBackend
 			BindActiveGuestStackRange(_runContext!);
 			backend.BindTlsBase(_runContext!);
 			backend._hostThreading.SetTlsValue(backend._hostRspSlotTlsIndex, _runHostRspSlot);
+			_prevWorkerPriority = Thread.CurrentThread.Priority;
+			NativeGuestWorkerScheduling.ApplyPriority(
+				_runPriority,
+				static priority => Thread.CurrentThread.Priority = priority);
 			if (_runState is { } state)
 			{
 				_prevHostThreadId = Volatile.Read(ref state.HostThreadId);
@@ -590,6 +599,7 @@ public sealed partial class DirectExecutionBackend
 				Volatile.Write(ref state.HostThreadId, _prevHostThreadId);
 			}
 			_backend._hostThreading.SetTlsValue(_backend._hostRspSlotTlsIndex, _prevHostRspSlot);
+			Thread.CurrentThread.Priority = _prevWorkerPriority;
 			GuestThreadExecution.RestoreGuestThread(_prevGuestThreadHandle);
 			_currentExternalGuestThreadHandle = _prevExternalGuestThreadHandle;
 			_activeExecutionBackend = _prevBackend;

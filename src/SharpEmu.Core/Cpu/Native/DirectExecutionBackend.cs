@@ -5009,18 +5009,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	}
 
 	private static ThreadPriority MapGuestThreadPriority(int priority)
-	{
-		if (priority <= 478)
-		{
-			return ThreadPriority.Highest;
-		}
-		if (priority >= 733)
-		{
-			return ThreadPriority.Lowest;
-		}
-
-		return ThreadPriority.Normal;
-	}
+		=> NativeGuestWorkerScheduling.MapPriority(priority);
 
 	private void ApplyGuestThreadAffinity(ulong guestAffinityMask)
 	{
