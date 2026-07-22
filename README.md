@@ -81,8 +81,10 @@ test-driven workflow. Major downstream differences include:
 - guest virtual- and direct-memory query contracts with exact argument
   validation, registered stack classification, the PS5's 13.5 GiB
   application-visible direct-memory capacity, terminal direct-memory ranges,
-  Prospero-compatible gap errors, subrange direct-memory release, and
-  idempotent fixed-range reservations; process reset also releases tracked libc
+  Prospero-compatible gap errors, subrange direct-memory release, range-based
+  virtual unmapping that preserves covered edge slices and flexible-memory
+  accounting, and idempotent fixed-range reservations; process reset also
+  releases tracked libc
   heap allocations, discards stale mappings and names, and restarts direct and
   flexible-memory accounting for the next title
 - sandboxed guest filesystem handling with virtual `/dev/random` and
