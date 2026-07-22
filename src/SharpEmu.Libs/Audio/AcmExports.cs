@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using SharpEmu.HLE;
 
@@ -140,6 +141,45 @@ public static class AcmExports
         }
 
         return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "u70oWo92SYQ",
+        ExportName = "sceAcm_ConvReverb_SharedInput",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAcm")]
+    public static int AcmConvReverbSharedInput(CpuContext ctx)
+    {
+        var batchInfoAddress = ctx[CpuRegister.Rdi];
+        if (batchInfoAddress == 0)
+        {
+            return ctx.SetReturn(0);
+        }
+
+        Span<byte> batchInfo = stackalloc byte[0x18];
+        if (!ctx.Memory.TryRead(batchInfoAddress, batchInfo))
+        {
+            return ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var bufferAddress = BinaryPrimitives.ReadUInt64LittleEndian(
+            batchInfo[0x00..]);
+        var bufferSize = BinaryPrimitives.ReadUInt64LittleEndian(
+            batchInfo[0x10..]);
+        if (bufferAddress == 0 || bufferSize == 0)
+        {
+            return ctx.SetReturn(0);
+        }
+
+        var offset = BinaryPrimitives.ReadUInt64LittleEndian(batchInfo[0x08..]);
+        var advancedOffset = offset >= bufferSize || bufferSize - offset <= 1024
+            ? bufferSize
+            : offset + 1024;
+        return ctx.TryWriteUInt64(batchInfoAddress + 0x08, advancedOffset)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
 
     private static int StartBatch(
