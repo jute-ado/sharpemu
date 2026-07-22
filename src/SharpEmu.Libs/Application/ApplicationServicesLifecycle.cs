@@ -3,6 +3,7 @@
 
 using SharpEmu.Libs.Json;
 using SharpEmu.Libs.PlayGo;
+using SharpEmu.Libs.GameUpdate;
 
 namespace SharpEmu.Libs.Application;
 
@@ -15,5 +16,6 @@ public static class ApplicationServicesLifecycle
     {
         PlayGoExports.ResetRuntimeState();
         JsonExports.ResetRuntimeState();
+        GameUpdateExports.ResetRuntimeState();
     }
 }

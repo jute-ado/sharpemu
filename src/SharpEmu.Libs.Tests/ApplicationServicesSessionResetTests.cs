@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using System.Text.Json;
 using SharpEmu.HLE;
 using SharpEmu.Libs.Application;
+using SharpEmu.Libs.GameUpdate;
 using SharpEmu.Libs.Json;
 using SharpEmu.Libs.PlayGo;
 using Xunit;
@@ -27,13 +28,16 @@ public sealed class ApplicationServicesSessionResetTests
     private const ulong JsonCallbackContext = 0x6000;
 
     [Fact]
-    public void ResetRuntimeStateClearsPlayGoAndJsonGuestState()
+    public void ResetRuntimeStateClearsPlayGoJsonAndGameUpdateGuestState()
     {
         ApplicationServicesLifecycle.ResetRuntimeState();
         try
         {
             var firstContext = CreateContext();
             Assert.Equal(0, PlayGoExports.PlayGoInitialize(firstContext));
+            Assert.Equal(0, GameUpdateExports.GameUpdateInitialize(firstContext));
+            firstContext[CpuRegister.Rdi] = InitParametersAddress;
+            Assert.Equal(1, GameUpdateExports.GameUpdateCreateRequest(firstContext));
 
             firstContext[CpuRegister.Rdi] = JsonValueAddress;
             firstContext[CpuRegister.Rsi] = 1;
@@ -49,6 +53,12 @@ public sealed class ApplicationServicesSessionResetTests
 
             var nextContext = CreateContext();
             Assert.Equal(0, PlayGoExports.PlayGoInitialize(nextContext));
+            nextContext[CpuRegister.Rdi] = InitParametersAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+                GameUpdateExports.GameUpdateCreateRequest(nextContext));
+            Assert.Equal(0, GameUpdateExports.GameUpdateInitialize(nextContext));
+            Assert.Equal(1, GameUpdateExports.GameUpdateCreateRequest(nextContext));
             Assert.Equal(JsonValueKind.Null, JsonExports.GetValueForTests(JsonValueAddress).ValueKind);
             Assert.Equal(0UL, JsonExports.GlobalNullAccessCallbackForTests);
             Assert.Equal(0UL, JsonExports.GlobalNullAccessCallbackContextForTests);
