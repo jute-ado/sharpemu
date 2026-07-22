@@ -10,6 +10,26 @@ namespace SharpEmu.Libs.Tests.Pthread;
 public sealed class PthreadMutexSemanticsTests
 {
     [Fact]
+    public void PosixAliases_ReturnErrnoWhileSceExportsKeepEncodedErrors()
+    {
+        var context = new CpuContext(new AllocatingCpuMemory(0x1_0000_0000, 0x4000), Generation.Gen5);
+        const int invalidArgument = 22;
+        const int encodedInvalidArgument = (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+
+        Assert.Equal(invalidArgument, KernelPthreadCompatExports.PosixPthreadMutexInit(context));
+        Assert.Equal(invalidArgument, KernelPthreadCompatExports.PosixPthreadMutexDestroy(context));
+        Assert.Equal(invalidArgument, KernelPthreadCompatExports.PosixPthreadMutexLock(context));
+        Assert.Equal(invalidArgument, KernelPthreadCompatExports.PosixPthreadMutexTrylock(context));
+        Assert.Equal(invalidArgument, KernelPthreadCompatExports.PosixPthreadMutexUnlock(context));
+
+        Assert.Equal(encodedInvalidArgument, KernelPthreadCompatExports.PthreadMutexInit(context));
+        Assert.Equal(encodedInvalidArgument, KernelPthreadCompatExports.PthreadMutexDestroy(context));
+        Assert.Equal(encodedInvalidArgument, KernelPthreadCompatExports.PthreadMutexLock(context));
+        Assert.Equal(encodedInvalidArgument, KernelPthreadCompatExports.PthreadMutexTrylock(context));
+        Assert.Equal(encodedInvalidArgument, KernelPthreadCompatExports.PthreadMutexUnlock(context));
+    }
+
+    [Fact]
     public void AdaptiveMutex_SelfLockIsIdempotent()
     {
         const ulong memoryBase = 0x1_0000_0000;

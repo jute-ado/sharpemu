@@ -296,35 +296,51 @@ public static class KernelPthreadCompatExports
         ExportName = "pthread_mutex_init",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadMutexInit(CpuContext ctx) => PthreadMutexInitCore(ctx, ctx[CpuRegister.Rdi], ctx[CpuRegister.Rsi]);
+    public static int PosixPthreadMutexInit(CpuContext ctx) =>
+        TranslatePosixPthreadResult(PthreadMutexInitCore(ctx, ctx[CpuRegister.Rdi], ctx[CpuRegister.Rsi]));
 
     [SysAbiExport(
         Nid = "ltCfaGr2JGE",
         ExportName = "pthread_mutex_destroy",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadMutexDestroy(CpuContext ctx) => PthreadMutexDestroyCore(ctx, ctx[CpuRegister.Rdi]);
+    public static int PosixPthreadMutexDestroy(CpuContext ctx) =>
+        TranslatePosixPthreadResult(PthreadMutexDestroyCore(ctx, ctx[CpuRegister.Rdi]));
 
     [SysAbiExport(
         Nid = "7H0iTOciTLo",
         ExportName = "pthread_mutex_lock",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadMutexLock(CpuContext ctx) => PthreadMutexLockCore(ctx, ctx[CpuRegister.Rdi], tryOnly: false);
+    public static int PosixPthreadMutexLock(CpuContext ctx) =>
+        TranslatePosixPthreadResult(PthreadMutexLockCore(ctx, ctx[CpuRegister.Rdi], tryOnly: false));
 
     [SysAbiExport(
         Nid = "K-jXhbt2gn4",
         ExportName = "pthread_mutex_trylock",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadMutexTrylock(CpuContext ctx) => PthreadMutexLockCore(ctx, ctx[CpuRegister.Rdi], tryOnly: true);
+    public static int PosixPthreadMutexTrylock(CpuContext ctx) =>
+        TranslatePosixPthreadResult(PthreadMutexLockCore(ctx, ctx[CpuRegister.Rdi], tryOnly: true));
 
     [SysAbiExport(
         Nid = "2Z+PpY6CaJg",
         ExportName = "pthread_mutex_unlock",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libKernel")]
-    public static int PosixPthreadMutexUnlock(CpuContext ctx) => PthreadMutexUnlockCore(ctx, ctx[CpuRegister.Rdi], requireOwner: true);
+    public static int PosixPthreadMutexUnlock(CpuContext ctx) =>
+        TranslatePosixPthreadResult(PthreadMutexUnlockCore(ctx, ctx[CpuRegister.Rdi], requireOwner: true));
+
+    private static int TranslatePosixPthreadResult(int result) => result switch
+    {
+        (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED => 1,
+        (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND => 2,
+        (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DEADLOCK => 11,
+        (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT => 14,
+        (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY => 16,
+        (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT => 22,
+        _ => result,
+    };
 
     private static int PthreadGetthreadidCore(CpuContext ctx)
     {
