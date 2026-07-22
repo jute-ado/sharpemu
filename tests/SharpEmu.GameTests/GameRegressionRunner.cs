@@ -162,6 +162,8 @@ internal static class GameRegressionRunner
         startInfo.Environment.Remove("SHARPEMU_DUMP_VIDEOOUT");
         startInfo.Environment.Remove("SHARPEMU_LOG_VIDEOOUT");
         startInfo.Environment.Remove("SHARPEMU_TRACE_GUEST_IMAGES");
+        startInfo.Environment.Remove(
+            "SHARPEMU_TRACE_PRESENTED_FRAME_PROGRESS");
         startInfo.Environment.Remove("SHARPEMU_TRACE_GUEST_WRITES");
         startInfo.Environment.Remove(
             "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME");
@@ -177,6 +179,8 @@ internal static class GameRegressionRunner
         }
         if (expectations.RequiredPresentedGuestImage is { } presentedImage)
         {
+            startInfo.Environment[
+                "SHARPEMU_TRACE_PRESENTED_FRAME_PROGRESS"] = "1";
             startInfo.Environment[
                 "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME"] =
                 presentedImage.Frame.ToString(
@@ -777,9 +781,17 @@ internal static class GameRegressionRunner
                     out var nonBlackPixels,
                     out var distinctColors))
             {
+                var maximumPresentedFrame = outputAnalysis is null
+                    ? GetMaximumPresentedGuestFrame(capturedOutput)
+                    : outputAnalysis.MaximumPresentedGuestFrame;
                 failures.AppendLine(
                     $"required presented guest image frame {presentedImage.Frame} " +
-                    "was not observed.");
+                    "was not observed" +
+                    (maximumPresentedFrame > 0
+                        ? $" (highest presented frame: " +
+                          $"{maximumPresentedFrame})"
+                        : string.Empty) +
+                    ".");
             }
             else
             {
@@ -1045,6 +1057,41 @@ internal static class GameRegressionRunner
             }
 
             searchOffset = Math.Max(digitEnd, digitStart + 1);
+        }
+
+        return maximum;
+    }
+
+    internal static long GetMaximumPresentedGuestFrame(string output)
+    {
+        const string marker = "vk.present_progress frame=";
+        var maximum = 0L;
+        var searchOffset = 0;
+        while (searchOffset < output.Length)
+        {
+            var relativeMarker = output.AsSpan(searchOffset)
+                .IndexOf(marker, StringComparison.Ordinal);
+            if (relativeMarker < 0)
+            {
+                break;
+            }
+
+            var digitStart = searchOffset + relativeMarker + marker.Length;
+            var digitLength = 0;
+            while (digitStart + digitLength < output.Length &&
+                   char.IsAsciiDigit(output[digitStart + digitLength]))
+            {
+                digitLength++;
+            }
+            if (digitLength != 0 &&
+                long.TryParse(
+                    output.AsSpan(digitStart, digitLength),
+                    out var frame))
+            {
+                maximum = Math.Max(maximum, frame);
+            }
+
+            searchOffset = digitStart + Math.Max(digitLength, 1);
         }
 
         return maximum;

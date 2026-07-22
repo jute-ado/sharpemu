@@ -79,6 +79,8 @@ internal sealed class GameOutputAnalysis
 
     public long MaximumObservedImportDispatch { get; private set; }
 
+    public long MaximumPresentedGuestFrame { get; private set; }
+
     public int TotalImportWarnings { get; private set; }
 
     public int KnownImportWarnings { get; private set; }
@@ -98,6 +100,12 @@ internal sealed class GameOutputAnalysis
         if (observedDispatch > MaximumObservedImportDispatch)
         {
             MaximumObservedImportDispatch = observedDispatch;
+        }
+        var presentedFrame =
+            GameRegressionRunner.GetMaximumPresentedGuestFrame(line);
+        if (presentedFrame > MaximumPresentedGuestFrame)
+        {
+            MaximumPresentedGuestFrame = presentedFrame;
         }
 
         if (line.Contains(
@@ -156,6 +164,9 @@ internal sealed class GameOutputAnalysis
             MaximumObservedImportDispatch = Math.Max(
                 first.MaximumObservedImportDispatch,
                 second.MaximumObservedImportDispatch),
+            MaximumPresentedGuestFrame = Math.Max(
+                first.MaximumPresentedGuestFrame,
+                second.MaximumPresentedGuestFrame),
             TotalImportWarnings =
                 first.TotalImportWarnings + second.TotalImportWarnings,
             KnownImportWarnings =
