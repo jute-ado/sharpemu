@@ -70,7 +70,9 @@ test-driven workflow. Major downstream differences include:
   history, all six SysV register arguments, guest-visible return values, and a
   reserved fault-thread slice in execution reports; schema-v5 JSON also exposes
   these entries structurally with module-relative return locations and retains
-  exact preceding-call evidence on every walked frame,
+  exact preceding-call evidence on every walked frame; an opt-in selected-import
+  failure trigger can also dump a bounded recent trace only when the chosen NID,
+  library, or export actually fails,
   and immediate teardown signaling for interruptible guest waits
 - current guest pthread attribute queries report the registered low stack
   address and size derived from the executing stack pointer, so conservative
@@ -142,17 +144,17 @@ test-driven workflow. Major downstream differences include:
 - cross-queue flip-safe dependencies that prevent a buffer-reuse marker from
   overtaking the immutable capture of the frame it protects on Vulkan or Metal
 - AGC indirect-draw command builders that decode full 64-bit modifiers into
-  GFX10 patch offsets and initiators, plus bounded Cx/Sh/Uc indirect-register
-  count patching with complete Gen5 export registration
+  GFX10 patch offsets and initiators, bounded Cx/Sh/Uc indirect-register count
+  patching with complete Gen5 export registration, and current-SDK shader-half
+  fusion that builds a type-2 header over 32-byte-aligned, bounded combined
+  context- and shader-register tables
 - Windows, Linux, and macOS x64 build, test, packaging, and release validation
 - small, focused branches whose changes are merged only after relevant tests
   and hosted CI pass
 
-The goal is to learn, improve emulator foundations, and—where a change is
-general, understandable, independently tested, and useful upstream—eventually
-contribute suitable work back to the original project. Not every experiment in
-this fork will be appropriate for upstream, and any proposed contribution must
-follow the original project’s review and contribution requirements.
+The goal is to learn and improve emulator foundations through changes that are
+general, understandable, independently tested, and grounded in observable
+behavior.
 
 The list above describes the fork’s maintained direction rather than every
 individual commit. See the
@@ -233,7 +235,7 @@ window; it does not imply the game is playable.
 | Game | Title ID | Current observed progress |
 | --- | --- | --- |
 | Dreaming Sarah | PPSA02929 | Loads and sustains execution for a 90-second automated input run. Vulkan presents a non-black, multi-color guest frame; gameplay is not yet validated. |
-| Jusant | PPSA10264 | Loads seven modules and sustains a 90-second UE5 execution run without a CPU trap. AGC indirect-draw and Cx indirect-register-count calls now resolve and emit bounded command packets instead of remaining unresolved imports. The presenter reaches its first-frame milestone, but image content and gameplay are not validated. |
+| Jusant | PPSA10264 | Loads seven modules and sustains a 90-second UE5 execution run without a CPU trap. AGC indirect-draw and Cx indirect-register-count calls resolve and emit bounded command packets. Current-SDK fused-shader size and shader-half fusion calls now combine the observed type-4/type-6 pair into a bounded type-2 shader header, eliminating four invalid 64-byte copies seen during pipeline construction. The presenter reaches its first 3840×2160 frame, but image content and gameplay are not validated. |
 | Poppy Playtime: Chapter 1 | PPSA20591 | Loads seven modules and sustains the execution-survival window without a CPU trap. No gameplay is validated yet. |
 | SILENT HILL: The Short Message | PPSA10112 | Loads six modules and sustains the execution-survival window without a CPU trap. No gameplay is validated yet. |
 | SUPER BOMBERMAN R 2 | PPSA07190 | Loads thirteen modules and presents a 1920×1080 guest frame. Correct current-pthread stack attributes retain IL2CPP roots, nested callback stacks are registered, and deferred module starts receive their guest argument blocks. PSNCore consequently accepts Unity's runtime contract instead of faulting. Partial wave64 compute uses Vulkan's safe native-subgroup path instead of a barrier bridge that reset the host GPU, multi-wave workgroups isolate their lane-exchange scratch, and path-sensitive descriptor evaluation retains image loads inside scalar-skipped blocks. The atmosphere LUT is now produced as a real 32×32×32 Vulkan storage image (985/1,024 sampled pixels non-black with 911 observed colors), then reused by the 3D tone-map sample; its formerly black 1920×1080 output is fully populated with 457 observed colors. Dedicated unwind-module metadata and GNU `.eh_frame_hdr` loading remove a later libc abort. AGC direct-resource pointers now retain both user-SGPR dwords, eliminating 46 observed late shader drops caused by truncated vertex-table addresses. NP Web API, URI parsing, HTTP/2 request/response, offline NP authentication, and the kernel signal-return predicate cover the complete import surface observed during a seven-minute run: no unresolved imports remain. Historical ASLR-stable captures reached a clean KONAMI splash at frame 100 and the localized language-selection UI at frames 500 and 1,000. The current reproducible quarter-scale diagnostic baseline presents two frames within 60 seconds but does not reach frame 30, even after correcting cross-queue flip-safe ordering; the earlier high-frame progression is therefore retained as historical evidence rather than claimed as the current result. Gameplay is not yet validated. |
