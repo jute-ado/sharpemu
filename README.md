@@ -40,6 +40,9 @@ test-driven workflow. Major downstream differences include:
   engine programs beyond the former 4,096-instruction ceiling; bounded Vulkan
   presenter shutdown waits keep capture and embedded-surface cleanup ordered
   after GPU resources have actually been released
+- graphics-stage Gen5 ADD_TID LDS transfers lowered to per-invocation storage
+  with guest lane and M0 addressing, while compute shaders retain shared
+  workgroup LDS semantics
 - PS5 VideoOut VRR-status privilege setup and inactive-status event registration,
   with exact library identities and the same handle/equeue validation as other
   display events
