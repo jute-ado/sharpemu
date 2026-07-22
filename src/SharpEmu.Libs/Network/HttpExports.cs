@@ -3,6 +3,7 @@
 
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text;
 using SharpEmu.HLE;
 
@@ -16,6 +17,14 @@ public static class HttpExports
     private const int HttpErrorInvalidUrl = unchecked((int)0x80433060);
     private const int MaximumUriBytes = 0x4000;
     private const int UriElementSize = 80;
+    private const uint UriBuildWithScheme = 0x01;
+    private const uint UriBuildWithHostname = 0x02;
+    private const uint UriBuildWithPort = 0x04;
+    private const uint UriBuildWithPath = 0x08;
+    private const uint UriBuildWithUsername = 0x10;
+    private const uint UriBuildWithPassword = 0x20;
+    private const uint UriBuildWithQuery = 0x40;
+    private const uint UriBuildWithFragment = 0x80;
 
     private static readonly ConcurrentDictionary<int, HttpContext> Contexts = new();
     private static readonly ConcurrentDictionary<int, HttpTemplate> Templates = new();
@@ -213,6 +222,156 @@ public static class HttpExports
         }
 
         return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "5LZA+KPISVA",
+        ExportName = "sceHttpUriBuild",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceHttp")]
+    public static int HttpUriBuild(CpuContext ctx)
+    {
+        var outputAddress = ctx[CpuRegister.Rdi];
+        var requiredAddress = ctx[CpuRegister.Rsi];
+        var preparedSize = ctx[CpuRegister.Rdx];
+        var elementAddress = ctx[CpuRegister.Rcx];
+        var options = unchecked((uint)ctx[CpuRegister.R8]);
+        if (elementAddress == 0)
+        {
+            return ctx.SetReturn(HttpErrorInvalidUrl);
+        }
+
+        if (outputAddress == 0 && requiredAddress == 0)
+        {
+            return ctx.SetReturn(HttpErrorInvalidValue);
+        }
+
+        Span<byte> element = stackalloc byte[UriElementSize];
+        if (!ctx.Memory.TryRead(elementAddress, element) ||
+            !TryReadUriComponent(ctx, ReadUriPointer(element, 8), out var scheme) ||
+            !TryReadUriComponent(ctx, ReadUriPointer(element, 16), out var username) ||
+            !TryReadUriComponent(ctx, ReadUriPointer(element, 24), out var password) ||
+            !TryReadUriComponent(ctx, ReadUriPointer(element, 32), out var hostname) ||
+            !TryReadUriComponent(ctx, ReadUriPointer(element, 40), out var path) ||
+            !TryReadUriComponent(ctx, ReadUriPointer(element, 48), out var query) ||
+            !TryReadUriComponent(ctx, ReadUriPointer(element, 56), out var fragment))
+        {
+            return ctx.SetReturn(HttpErrorInvalidUrl);
+        }
+
+        var opaque = element[0] != 0;
+        var port = BinaryPrimitives.ReadUInt16LittleEndian(element[64..]);
+        var builder = new StringBuilder();
+        if ((options & UriBuildWithScheme) != 0 && scheme.Length != 0)
+        {
+            builder.Append(scheme).Append(':');
+        }
+
+        if (!opaque)
+        {
+            builder.Append("//");
+        }
+
+        var includeUsername = (options & UriBuildWithUsername) != 0 && username.Length != 0;
+        var includePassword = (options & UriBuildWithPassword) != 0 && password.Length != 0;
+        if (includeUsername)
+        {
+            builder.Append(username);
+        }
+        if (includePassword)
+        {
+            builder.Append(':').Append(password);
+        }
+        if (includeUsername || includePassword)
+        {
+            builder.Append('@');
+        }
+
+        if ((options & UriBuildWithHostname) != 0)
+        {
+            builder.Append(hostname);
+        }
+
+        if ((options & UriBuildWithPort) != 0 &&
+            port != 0 &&
+            port != GetDefaultUriPort(scheme))
+        {
+            builder.Append(':').Append(port.ToString(CultureInfo.InvariantCulture));
+        }
+
+        if ((options & UriBuildWithPath) != 0)
+        {
+            builder.Append(path);
+        }
+        if ((options & UriBuildWithQuery) != 0)
+        {
+            builder.Append(query);
+        }
+        if ((options & UriBuildWithFragment) != 0)
+        {
+            builder.Append(fragment);
+        }
+
+        var encoded = Encoding.UTF8.GetBytes(builder.ToString());
+        if (encoded.Length >= MaximumUriBytes)
+        {
+            return ctx.SetReturn(HttpErrorInvalidUrl);
+        }
+
+        var requiredSize = checked((ulong)encoded.Length + 1);
+        var canWriteOutput = outputAddress != 0 && preparedSize >= requiredSize;
+        if (!PreflightWrite(ctx, requiredAddress, sizeof(ulong)) ||
+            (canWriteOutput && !PreflightWrite(ctx, outputAddress, checked((int)requiredSize))))
+        {
+            return ctx.SetReturn(HttpErrorInvalidValue);
+        }
+
+        if (requiredAddress != 0 && !ctx.TryWriteUInt64(requiredAddress, requiredSize))
+        {
+            return ctx.SetReturn(HttpErrorInvalidValue);
+        }
+
+        if (outputAddress == 0)
+        {
+            return ctx.SetReturn(0);
+        }
+        if (!canWriteOutput)
+        {
+            return ctx.SetReturn(HttpErrorOutOfMemory);
+        }
+
+        var output = new byte[checked((int)requiredSize)];
+        encoded.CopyTo(output, 0);
+        return ctx.Memory.TryWrite(outputAddress, output)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn(HttpErrorInvalidValue);
+    }
+
+    private static ulong ReadUriPointer(ReadOnlySpan<byte> element, int offset)
+        => BinaryPrimitives.ReadUInt64LittleEndian(element[offset..]);
+
+    private static bool TryReadUriComponent(CpuContext ctx, ulong address, out string value)
+    {
+        if (address == 0)
+        {
+            value = string.Empty;
+            return true;
+        }
+
+        return ctx.TryReadNullTerminatedUtf8(address, MaximumUriBytes, out value);
+    }
+
+    private static ushort GetDefaultUriPort(string scheme)
+    {
+        if (string.Equals(scheme, "http", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(scheme, "ttp", StringComparison.OrdinalIgnoreCase))
+        {
+            return 80;
+        }
+
+        return string.Equals(scheme, "https", StringComparison.OrdinalIgnoreCase)
+            ? (ushort)443
+            : (ushort)0;
     }
 
     private static bool TryParseUri(string source, out ParsedUri parsed)
