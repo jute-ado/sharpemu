@@ -10,6 +10,7 @@ namespace SharpEmu.Libs.Tests;
 public sealed class PthreadMutexOwnershipTests : IDisposable
 {
     private const ulong MutexAddress = 0x71_0000;
+    private const ulong CopiedMutexAddress = 0x71_1000;
     private const ulong AttrAddress = 0x72_0000;
 
     public PthreadMutexOwnershipTests() =>
@@ -166,6 +167,51 @@ public sealed class PthreadMutexOwnershipTests : IDisposable
         finally
         {
             DestroyMutex(context);
+        }
+    }
+
+    [Fact]
+    public void CopiedHandleOverridesStaleAddressAlias()
+    {
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(MutexAddress, new byte[sizeof(ulong)]);
+        memory.AddRegion(CopiedMutexAddress, new byte[sizeof(ulong)]);
+        var context = new CpuContext(memory, Generation.Gen5);
+
+        context[CpuRegister.Rdi] = MutexAddress;
+        context[CpuRegister.Rsi] = 0;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            KernelPthreadCompatExports.PosixPthreadMutexInit(context));
+        Assert.True(context.TryReadUInt64(MutexAddress, out var lockedHandle));
+
+        context[CpuRegister.Rdi] = CopiedMutexAddress;
+        context[CpuRegister.Rsi] = 0;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            KernelPthreadCompatExports.PosixPthreadMutexInit(context));
+        Assert.True(context.TryReadUInt64(CopiedMutexAddress, out var staleHandle));
+
+        try
+        {
+            context[CpuRegister.Rdi] = MutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadMutexLock(context));
+
+            Assert.True(context.TryWriteUInt64(CopiedMutexAddress, lockedHandle));
+            context[CpuRegister.Rdi] = CopiedMutexAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelPthreadCompatExports.PosixPthreadMutexUnlock(context));
+        }
+        finally
+        {
+            context[CpuRegister.Rdi] = MutexAddress;
+            _ = KernelPthreadCompatExports.PosixPthreadMutexDestroy(context);
+            _ = context.TryWriteUInt64(CopiedMutexAddress, staleHandle);
+            context[CpuRegister.Rdi] = CopiedMutexAddress;
+            _ = KernelPthreadCompatExports.PosixPthreadMutexDestroy(context);
         }
     }
 

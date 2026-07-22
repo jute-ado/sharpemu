@@ -1208,15 +1208,30 @@ public static class KernelPthreadCompatExports
             return false;
         }
 
+        if (!KernelMemoryCompatExports.TryReadUInt64Compat(ctx, mutexAddress, out var pointedHandle))
+        {
+            if (_mutexStates.TryGetValue(mutexAddress, out state))
+            {
+                resolvedAddress = mutexAddress;
+                return true;
+            }
+
+            return false;
+        }
+
+        if (pointedHandle != 0 &&
+            pointedHandle != StaticAdaptiveMutexInitializer &&
+            _mutexStates.TryGetValue(pointedHandle, out state))
+        {
+            _mutexStates[mutexAddress] = state;
+            resolvedAddress = pointedHandle;
+            return true;
+        }
+
         if (_mutexStates.TryGetValue(mutexAddress, out state))
         {
             resolvedAddress = mutexAddress;
             return true;
-        }
-
-        if (!KernelMemoryCompatExports.TryReadUInt64Compat(ctx, mutexAddress, out var pointedHandle))
-        {
-            return false;
         }
 
         if (pointedHandle == StaticAdaptiveMutexInitializer)
@@ -1226,13 +1241,6 @@ public static class KernelPthreadCompatExports
 
         if (pointedHandle != 0)
         {
-            if (_mutexStates.TryGetValue(pointedHandle, out state))
-            {
-                _mutexStates.TryAdd(mutexAddress, state);
-                resolvedAddress = pointedHandle;
-                return true;
-            }
-
             resolvedAddress = pointedHandle;
             return false;
         }
