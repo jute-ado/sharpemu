@@ -190,8 +190,10 @@ public static partial class AgcExports
     private const ulong ResourceRegistrationBytesPerOwner = 0x1E0;
     private const int ResourceRegistrationMaxNameLength = 256;
     private const ulong ShaderNumInputSemanticsOffset = 0x50;
+    private const ulong ShaderScratchUsageOffset = 0x54;
     private const ulong ShaderNumOutputSemanticsOffset = 0x56;
     private const ulong ShaderTypeOffset = 0x5A;
+    private const ulong ShaderNumCxRegistersOffset = 0x5B;
     private const ulong ShaderNumShRegistersOffset = 0x5C;
     private const ulong ShaderHeaderSize = 0x60;
     private const ulong ShaderUserDataPointersSize = 0x28;
@@ -836,6 +838,226 @@ public static partial class AgcExports
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
+
+    // These current-SDK NIDs were identified from a shipped UE5 title. Their
+    // contracts match AGC's older getFusedShaderSize/fuseShaderHalves pair,
+    // while the exact current mangled names are not present in public catalogs.
+    #pragma warning disable SHEM004
+    [SysAbiExport(
+        Nid = "dolOmWH+huQ",
+        ExportName = "sceAgcGetFusedShaderSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int GetFusedShaderSize(CpuContext ctx)
+    {
+        var outputAddress = ctx[CpuRegister.Rdi];
+        var geometryHalfAddress = ctx[CpuRegister.Rsi];
+        var exportHalfAddress = ctx[CpuRegister.Rdx];
+        if (outputAddress == 0 || geometryHalfAddress == 0 || exportHalfAddress == 0)
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        if (!TryReadShaderFusionLayout(
+                ctx,
+                geometryHalfAddress,
+                exportHalfAddress,
+                out _,
+                out _,
+                out var layout,
+                out var failure))
+        {
+            return ctx.SetReturn(failure);
+        }
+
+        Span<byte> sizeAlign = stackalloc byte[2 * sizeof(ulong)];
+        BinaryPrimitives.WriteUInt64LittleEndian(sizeAlign, (ulong)layout.WorkspaceSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(sizeAlign[sizeof(ulong)..], 0x20);
+        if (!ctx.Memory.TryWrite(outputAddress, sizeAlign))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        TraceAgc(
+            $"agc.get_fused_shader_size gs=0x{geometryHalfAddress:X16} es=0x{exportHalfAddress:X16} " +
+            $"cx={layout.CxCount} sh={layout.ShCount} size=0x{layout.WorkspaceSize:X}");
+        return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
+        Nid = "fd5Bp5tGTgo",
+        ExportName = "sceAgcFuseShaderHalves",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int FuseShaderHalves(CpuContext ctx)
+    {
+        var destinationAddress = ctx[CpuRegister.Rdi];
+        var geometryHalfAddress = ctx[CpuRegister.Rsi];
+        var exportHalfAddress = ctx[CpuRegister.Rdx];
+        var workspaceAddress = ctx[CpuRegister.Rcx];
+        if (destinationAddress == 0 || geometryHalfAddress == 0 || exportHalfAddress == 0)
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        if (!TryReadShaderFusionLayout(
+                ctx,
+                geometryHalfAddress,
+                exportHalfAddress,
+                out var geometryHeader,
+                out var exportHeader,
+                out var layout,
+                out var failure))
+        {
+            return ctx.SetReturn(failure);
+        }
+
+        if (layout.WorkspaceSize != 0 && workspaceAddress == 0)
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        if (!TryReadShaderRegisterTable(
+                ctx,
+                BinaryPrimitives.ReadUInt64LittleEndian(geometryHeader.AsSpan((int)ShaderCxRegistersOffset)),
+                geometryHeader[(int)ShaderNumCxRegistersOffset],
+                out var geometryCx) ||
+            !TryReadShaderRegisterTable(
+                ctx,
+                BinaryPrimitives.ReadUInt64LittleEndian(exportHeader.AsSpan((int)ShaderCxRegistersOffset)),
+                exportHeader[(int)ShaderNumCxRegistersOffset],
+                out var exportCx) ||
+            !TryReadShaderRegisterTable(
+                ctx,
+                BinaryPrimitives.ReadUInt64LittleEndian(geometryHeader.AsSpan((int)ShaderShRegistersOffset)),
+                geometryHeader[(int)ShaderNumShRegistersOffset],
+                out var geometrySh) ||
+            !TryReadShaderRegisterTable(
+                ctx,
+                BinaryPrimitives.ReadUInt64LittleEndian(exportHeader.AsSpan((int)ShaderShRegistersOffset)),
+                exportHeader[(int)ShaderNumShRegistersOffset],
+                out var exportSh))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var workspace = new byte[layout.WorkspaceSize];
+        var cxBytes = layout.CxCount * sizeof(ulong);
+        geometryCx.CopyTo(workspace, 0);
+        exportCx.CopyTo(workspace, geometryCx.Length);
+        geometrySh.CopyTo(workspace, cxBytes);
+        exportSh.CopyTo(workspace, cxBytes + geometrySh.Length);
+
+        var outputHeader = geometryHeader.ToArray();
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            outputHeader.AsSpan((int)ShaderCxRegistersOffset),
+            layout.CxCount == 0 ? 0 : workspaceAddress);
+        if (!GuestAddress.TryAdd(workspaceAddress, (ulong)cxBytes, out var shRegistersAddress))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            outputHeader.AsSpan((int)ShaderShRegistersOffset),
+            layout.ShCount == 0 ? 0 : shRegistersAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            outputHeader.AsSpan((int)ShaderOutputSemanticsOffset),
+            BinaryPrimitives.ReadUInt64LittleEndian(exportHeader.AsSpan((int)ShaderOutputSemanticsOffset)));
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            outputHeader.AsSpan((int)ShaderNumOutputSemanticsOffset),
+            BinaryPrimitives.ReadUInt16LittleEndian(exportHeader.AsSpan((int)ShaderNumOutputSemanticsOffset)));
+        BinaryPrimitives.WriteUInt16LittleEndian(
+            outputHeader.AsSpan((int)ShaderScratchUsageOffset),
+            Math.Max(
+                BinaryPrimitives.ReadUInt16LittleEndian(geometryHeader.AsSpan((int)ShaderScratchUsageOffset)),
+                BinaryPrimitives.ReadUInt16LittleEndian(exportHeader.AsSpan((int)ShaderScratchUsageOffset))));
+        outputHeader[(int)ShaderTypeOffset] = 2;
+        outputHeader[(int)ShaderNumCxRegistersOffset] = (byte)layout.CxCount;
+        outputHeader[(int)ShaderNumShRegistersOffset] = (byte)layout.ShCount;
+
+        if ((workspace.Length != 0 && !ctx.Memory.TryWrite(workspaceAddress, workspace)) ||
+            !ctx.Memory.TryWrite(destinationAddress, outputHeader))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        TraceAgc(
+            $"agc.fuse_shader_halves dst=0x{destinationAddress:X16} workspace=0x{workspaceAddress:X16} " +
+            $"cx={layout.CxCount} sh={layout.ShCount}");
+        return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+    #pragma warning restore SHEM004
+
+    private static bool TryReadShaderFusionLayout(
+        CpuContext ctx,
+        ulong geometryHalfAddress,
+        ulong exportHalfAddress,
+        out byte[] geometryHeader,
+        out byte[] exportHeader,
+        out ShaderFusionLayout layout,
+        out int failure)
+    {
+        geometryHeader = new byte[(int)ShaderHeaderSize];
+        exportHeader = new byte[(int)ShaderHeaderSize];
+        layout = default;
+        failure = (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        if (!ctx.Memory.TryRead(geometryHalfAddress, geometryHeader) ||
+            !ctx.Memory.TryRead(exportHalfAddress, exportHeader))
+        {
+            return false;
+        }
+
+        if (BinaryPrimitives.ReadUInt32LittleEndian(geometryHeader) != ShaderFileHeader ||
+            BinaryPrimitives.ReadUInt32LittleEndian(exportHeader) != ShaderFileHeader ||
+            BinaryPrimitives.ReadUInt32LittleEndian(geometryHeader.AsSpan(sizeof(uint))) != ShaderVersion ||
+            BinaryPrimitives.ReadUInt32LittleEndian(exportHeader.AsSpan(sizeof(uint))) != ShaderVersion)
+        {
+            failure = (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            return false;
+        }
+
+        if (geometryHeader[(int)ShaderTypeOffset] != 4 ||
+            exportHeader[(int)ShaderTypeOffset] != 6)
+        {
+            failure = unchecked((int)0x8A6C0008);
+            return false;
+        }
+
+        var cxCount = geometryHeader[(int)ShaderNumCxRegistersOffset] +
+                      exportHeader[(int)ShaderNumCxRegistersOffset];
+        var shCount = geometryHeader[(int)ShaderNumShRegistersOffset] +
+                      exportHeader[(int)ShaderNumShRegistersOffset];
+        if (cxCount > byte.MaxValue || shCount > byte.MaxValue)
+        {
+            failure = unchecked((int)0x8A6C0008);
+            return false;
+        }
+
+        var tableBytes = checked((cxCount + shCount) * sizeof(ulong));
+        layout = new ShaderFusionLayout(cxCount, shCount, AlignUp(tableBytes, 0x20));
+        failure = 0;
+        return true;
+    }
+
+    private static bool TryReadShaderRegisterTable(
+        CpuContext ctx,
+        ulong address,
+        byte count,
+        out byte[] table)
+    {
+        if (count == 0)
+        {
+            table = [];
+            return true;
+        }
+
+        table = new byte[count * sizeof(ulong)];
+        return address != 0 &&
+               GuestAddress.IsRangeValid(address, (ulong)table.Length) &&
+               ctx.Memory.TryRead(address, table);
+    }
+
+    private readonly record struct ShaderFusionLayout(int CxCount, int ShCount, int WorkspaceSize);
 
     [SysAbiExport(
         Nid = "vcmNN+AAXnY",
