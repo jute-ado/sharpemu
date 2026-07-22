@@ -132,6 +132,10 @@ internal static unsafe class VulkanVideoPresenter
         targetMatched ||
         shaderMatched;
 
+    internal static bool ShouldTracePresentedFrameProgress(long frame) =>
+        frame > 0 &&
+        (frame == 1 || frame % 30 == 0 || frame % 100 == 0);
+
     // Standalone CLI launches use a desktop-sized surface. The embedded GUI
     // always takes its dimensions from the native child control instead.
     private const uint DefaultWindowWidth = 1920;
@@ -557,6 +561,12 @@ internal static unsafe class VulkanVideoPresenter
     private static readonly bool _traceGuestWorkCompletion =
         string.Equals(
             Environment.GetEnvironmentVariable("SHARPEMU_TRACE_GUEST_WORK_COMPLETION"),
+            "1",
+            StringComparison.Ordinal);
+    private static readonly bool _tracePresentedFrameProgress =
+        string.Equals(
+            Environment.GetEnvironmentVariable(
+                "SHARPEMU_TRACE_PRESENTED_FRAME_PROGRESS"),
             "1",
             StringComparison.Ordinal);
     private static readonly HashSet<(ulong Address, uint Width, uint Height)>
@@ -13515,6 +13525,15 @@ internal static unsafe class VulkanVideoPresenter
                 Volatile.Write(
                     ref _presentedGuestFrameCount,
                     _directPresentationCount);
+                if (_tracePresentedFrameProgress &&
+                    ShouldTracePresentedFrameProgress(
+                        _directPresentationCount))
+                {
+                    Console.Error.WriteLine(
+                        $"[LOADER][TRACE] vk.present_progress " +
+                        $"frame={_directPresentationCount} " +
+                        $"addr=0x{presentedGuestImage.Address:X16}");
+                }
                 tracePresentedGuestImage =
                     ShouldSamplePresentedGuestImageForDiagnostics(
                         _directPresentationCount);

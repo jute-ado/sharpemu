@@ -65,6 +65,26 @@ public sealed class VulkanShaderDiagnosticPolicyTests
                 shaderMatched));
     }
 
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, true)]
+    [InlineData(29, false)]
+    [InlineData(30, true)]
+    [InlineData(60, true)]
+    [InlineData(90, true)]
+    [InlineData(99, false)]
+    [InlineData(100, true)]
+    [InlineData(101, false)]
+    [InlineData(600, true)]
+    public void PresentedFrameProgressUsesSparseUsefulMilestones(
+        long frame,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            VulkanVideoPresenter.ShouldTracePresentedFrameProgress(frame));
+    }
+
     [Fact]
     public void ArrayCopyFragmentSamplesRequestedBindingWithLayerCoordinate()
     {

@@ -22,6 +22,10 @@ public sealed class GameRegressionOutputCaptureTests
                 Environment.NewLine +
                 "required-after-limit" + Environment.NewLine +
                 "forbidden-after-limit" + Environment.NewLine +
+                "[LOADER][TRACE] vk.present_progress frame=60" +
+                Environment.NewLine +
+                "[LOADER][TRACE] vk.present_progress frame=90" +
+                Environment.NewLine +
                 "vk.presented_guest_image frame=77 " +
                 "fingerprint=0x0123456789ABCDEF " +
                 "nonblack_pixels=12 distinct_colors=9");
@@ -34,6 +38,7 @@ public sealed class GameRegressionOutputCaptureTests
 
             Assert.True(analysis.ArtifactTruncated);
             Assert.Equal(9001, analysis.MaximumObservedImportDispatch);
+            Assert.Equal(90, analysis.MaximumPresentedGuestFrame);
             Assert.Equal(2, analysis.TotalImportWarnings);
             Assert.Equal(1, analysis.KnownImportWarnings);
             Assert.Equal(1, analysis.UnexpectedImportWarnings);
@@ -75,10 +80,14 @@ public sealed class GameRegressionOutputCaptureTests
             using var firstReader = new StringReader(
                 "[LOADER][WARN] Import#10 unresolved: nid=first" +
                 Environment.NewLine +
+                "[LOADER][TRACE] vk.present_progress frame=30" +
+                Environment.NewLine +
                 "required-after-limit");
             using var secondReader = new StringReader(
                 "[LOADER][WARN] Import#20 result: " +
                 "ORBIS_GEN2_ERROR_TIMED_OUT (knownNid)" +
+                Environment.NewLine +
+                "[LOADER][TRACE] vk.present_progress frame=120" +
                 Environment.NewLine +
                 "forbidden-after-limit");
             var first = await GameRegressionOutputCapture.CaptureAsync(
@@ -93,6 +102,7 @@ public sealed class GameRegressionOutputCaptureTests
             var combined = GameOutputAnalysis.Combine(first, second);
 
             Assert.Equal(20, combined.MaximumObservedImportDispatch);
+            Assert.Equal(120, combined.MaximumPresentedGuestFrame);
             Assert.Equal(2, combined.TotalImportWarnings);
             Assert.Equal(1, combined.KnownImportWarnings);
             Assert.Equal(1, combined.UnexpectedImportWarnings);

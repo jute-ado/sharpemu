@@ -620,6 +620,38 @@ public sealed class GameRegressionHarnessTests
     }
 
     [Fact]
+    public void MissingPresentedImageReportsHighestPresentedFrame()
+    {
+        var testCase = CreateExecutionCase(
+            requiredPresentedGuestImage: new()
+            {
+                Frame = 100,
+                MinimumNonBlackPixels = 1,
+            });
+        using var report = JsonDocument.Parse(
+            """
+            {
+              "result": {
+                "name": "EXECUTION_TIMED_OUT"
+              },
+              "moduleInitializers": [],
+              "moduleLoadFailures": []
+            }
+            """);
+        var error = Assert.Throws<InvalidOperationException>(
+            () => GameRegressionRunner.ValidateReport(
+                testCase,
+                report.RootElement,
+                "synthetic-report.json",
+                "[LOADER][TRACE] vk.present_progress frame=90"));
+
+        Assert.Contains(
+            "highest presented frame: 90",
+            error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExecutionCanRequirePresentedImageToMovePastKnownBadFrames()
     {
         var testCase = CreateExecutionCase(
@@ -1071,6 +1103,8 @@ public sealed class GameRegressionHarnessTests
         startInfo.Environment["SHARPEMU_DUMP_VIDEOOUT"] = "stale";
         startInfo.Environment["SHARPEMU_LOG_VIDEOOUT"] = "stale";
         startInfo.Environment["SHARPEMU_TRACE_GUEST_IMAGES"] = "stale";
+        startInfo.Environment[
+            "SHARPEMU_TRACE_PRESENTED_FRAME_PROGRESS"] = "stale";
         startInfo.Environment["SHARPEMU_TRACE_GUEST_WRITES"] = "stale";
         startInfo.Environment[
             "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME"] = "stale";
@@ -1097,6 +1131,9 @@ public sealed class GameRegressionHarnessTests
         Assert.False(startInfo.Environment.ContainsKey("SHARPEMU_LOG_VIDEOOUT"));
         Assert.False(
             startInfo.Environment.ContainsKey("SHARPEMU_TRACE_GUEST_IMAGES"));
+        Assert.False(
+            startInfo.Environment.ContainsKey(
+                "SHARPEMU_TRACE_PRESENTED_FRAME_PROGRESS"));
         Assert.False(
             startInfo.Environment.ContainsKey("SHARPEMU_TRACE_GUEST_WRITES"));
         Assert.False(
@@ -1133,6 +1170,10 @@ public sealed class GameRegressionHarnessTests
 
         Assert.Equal("1", startInfo.Environment["SHARPEMU_DUMP_VIDEOOUT"]);
         Assert.Equal("1", startInfo.Environment["SHARPEMU_LOG_VIDEOOUT"]);
+        Assert.Equal(
+            "1",
+            startInfo.Environment[
+                "SHARPEMU_TRACE_PRESENTED_FRAME_PROGRESS"]);
         Assert.Equal(
             "30",
             startInfo.Environment[
