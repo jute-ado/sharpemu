@@ -104,4 +104,64 @@ public sealed class AgcWaitVisibilityBarrierTests
             GpuWaitRegistry.Clear();
         }
     }
+
+    [Fact]
+    public void IndirectDispatchRetryExpiresAtItsBoundedDeadline()
+    {
+        var memory = new object();
+        var waiter = new GpuWaitRegistry.WaitingDcb
+        {
+            Memory = memory,
+            WaitAddress = 0xA000,
+            RetryDeadlineTicks = 100,
+        };
+
+        GpuWaitRegistry.Clear();
+        try
+        {
+            GpuWaitRegistry.Register(waiter.WaitAddress, waiter);
+
+            Assert.Null(GpuWaitRegistry.CollectExpiredRetries(memory, 99));
+            Assert.Equal(1, GpuWaitRegistry.CountForMemory(memory));
+            var expired = GpuWaitRegistry.CollectExpiredRetries(memory, 100);
+            Assert.NotNull(expired);
+            Assert.Single(expired);
+            Assert.Equal(0, GpuWaitRegistry.CountForMemory(memory));
+        }
+        finally
+        {
+            GpuWaitRegistry.Clear();
+        }
+    }
+
+    [Fact]
+    public void EmptyIndirectDispatchExpiresAtOrderedVisibilityPoint()
+    {
+        var memory = new object();
+        var waiter = new GpuWaitRegistry.WaitingDcb
+        {
+            Memory = memory,
+            WaitAddress = 0xB000,
+            ResumeAddress = 0xC000,
+            RetryDeadlineTicks = 10_000,
+        };
+
+        GpuWaitRegistry.Clear();
+        try
+        {
+            GpuWaitRegistry.Register(waiter.WaitAddress, waiter);
+
+            Assert.True(GpuWaitRegistry.ExpireRetryAtVisibilityPoint(
+                memory,
+                waiter.WaitAddress,
+                waiter.ResumeAddress));
+            var expired = GpuWaitRegistry.CollectExpiredRetries(memory, 1);
+            Assert.NotNull(expired);
+            Assert.Single(expired);
+        }
+        finally
+        {
+            GpuWaitRegistry.Clear();
+        }
+    }
 }
