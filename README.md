@@ -120,6 +120,8 @@ test-driven workflow. Major downstream differences include:
   size-only transaction-resource creation that never probes stale registers
 - NP telemetry compatibility with guest-memory-validated event construction,
   bounded JSON serialization, and exact required-size reporting
+- NP authentication owns bounded async-request handles, validates V3 request
+  layouts, reports offline completion as signed out, and resets between titles
 - NP Web API push-event handles, filters, user contexts, and callbacks now
   enforce their owning-context lifecycles; HTTP/2 templates likewise retain
   their parent contexts, validate option and callback setters, and own bounded

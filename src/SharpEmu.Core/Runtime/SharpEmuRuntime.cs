@@ -19,6 +19,7 @@ using SharpEmu.Libs.CxxAbi;
 using SharpEmu.Libs.SaveData;
 using SharpEmu.Libs.Fiber;
 using SharpEmu.Libs.Network;
+using SharpEmu.Libs.Np;
 using SharpEmu.Libs.SystemService;
 using SharpEmu.Logging;
 using System.Buffers.Binary;
@@ -522,6 +523,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         KernelIoLifecycle.ResetRuntimeState();
         KernelEventObjectLifecycle.ResetRuntimeState();
         NetworkLifecycle.ResetRuntimeState();
+        NpLifecycle.ResetRuntimeState();
         AudioSubsystemLifecycle.ResetRuntimeState();
         AvPlayerLifecycle.ResetRuntimeState();
         MediaCodecLifecycle.ResetRuntimeState();
