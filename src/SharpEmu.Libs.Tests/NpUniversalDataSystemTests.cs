@@ -111,7 +111,7 @@ public sealed class NpUniversalDataSystemTests
     }
 
     [Fact]
-    public void DestroyEventPropertyObjectReleasesCreatedObjectAndValidatesAddress()
+    public void DestroyEventPropertyObjectRecyclesCreatedObjectAndValidatesAddress()
     {
         var memory = new FakeGuestMemory();
         memory.AddRegion(PropertyOutAddress, new byte[sizeof(ulong)]);
@@ -130,9 +130,28 @@ public sealed class NpUniversalDataSystemTests
             0,
             NpUniversalDataSystemExports
                 .NpUniversalDataSystemDestroyEventPropertyObject(context));
-        Assert.Equal(0, memory.GuestAllocationCount);
+        Assert.Equal(1, memory.GuestAllocationCount);
         Span<byte> probe = stackalloc byte[1];
-        Assert.False(memory.TryRead(propertyAddress, probe));
+        Assert.True(memory.TryRead(propertyAddress, probe));
+
+        context[CpuRegister.Rdi] = PropertyOutAddress;
+        Assert.Equal(
+            0,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemCreateEventPropertyObject(context));
+        Assert.True(context.TryReadUInt64(PropertyOutAddress, out var reusedAddress));
+        Assert.Equal(propertyAddress, reusedAddress);
+        Assert.Equal(1, memory.GuestAllocationCount);
+
+        context[CpuRegister.Rdi] = reusedAddress;
+        Assert.Equal(
+            0,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemDestroyEventPropertyObject(context));
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemDestroyEventPropertyObject(context));
 
         context[CpuRegister.Rdi] = 0;
         Assert.Equal(
