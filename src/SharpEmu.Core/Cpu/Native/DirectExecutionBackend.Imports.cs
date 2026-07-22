@@ -858,10 +858,12 @@ public sealed partial class DirectExecutionBackend
 			"vWU-odnS+fU" or // sceAmprMeasureCommandSizeReadFile
 			"sSAUCCU1dv4" or // sceAmprMeasureCommandSizeWriteKernelEventQueue_04_00
 			"C+IEj+BsAFM" or // sceAmprMeasureCommandSizeWriteAddressOnCompletion
+			"4fgtGfXDrFc" or // sceAmprMeasureCommandSizeWriteAddress_04_00
 			"tZDDEo2tE5k" or // sceAmprCommandBufferGetSize
 			"GnxKOHEawhk" or // sceAmprCommandBufferGetCurrentOffset
 			"H896Pt-yB4I" or // sceAmprCommandBufferWriteKernelEventQueue_04_00
 			"sJXyWHjP-F8" or // sceAmprCommandBufferWriteAddressOnCompletion
+			"j0+3uJMxYJY" or // sceAmprCommandBufferWriteAddress_04_00
 			"ASoW5WE-UPo" or // sceKernelAprSubmitCommandBufferAndGetResult
 			"rqwFKI4PAiM" or // sceKernelAprWaitCommandBuffer
 			"eE4Szl8sil8" or // sceKernelAprSubmitCommandBuffer
@@ -1046,10 +1048,12 @@ public sealed partial class DirectExecutionBackend
 			"vWU-odnS+fU" or // sceAmprMeasureCommandSizeReadFile
 			"sSAUCCU1dv4" or // sceAmprMeasureCommandSizeWriteKernelEventQueue_04_00
 			"C+IEj+BsAFM" or // sceAmprMeasureCommandSizeWriteAddressOnCompletion
+			"4fgtGfXDrFc" or // sceAmprMeasureCommandSizeWriteAddress_04_00
 			"tZDDEo2tE5k" or // sceAmprCommandBufferGetSize
 			"GnxKOHEawhk" or // sceAmprCommandBufferGetCurrentOffset
 			"H896Pt-yB4I" or // sceAmprCommandBufferWriteKernelEventQueue_04_00
 			"sJXyWHjP-F8" or // sceAmprCommandBufferWriteAddressOnCompletion
+			"j0+3uJMxYJY" or // sceAmprCommandBufferWriteAddress_04_00
 			"ASoW5WE-UPo" or // sceKernelAprSubmitCommandBufferAndGetResult
 			"rqwFKI4PAiM" or // sceKernelAprWaitCommandBuffer
 			"eE4Szl8sil8" or // sceKernelAprSubmitCommandBuffer
