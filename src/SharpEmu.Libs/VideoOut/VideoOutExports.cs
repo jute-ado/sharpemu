@@ -207,6 +207,9 @@ public static class VideoOutExports
         public ulong VblankCount { get; set; }
         public ulong FlipCount { get; set; }
         public int CurrentBuffer { get; set; } = -1;
+        public ulong CompletedFlipProcessTime { get; set; }
+        public ulong CompletedFlipTsc { get; set; }
+        public long CompletedFlipArgument { get; set; }
         public uint OutputWidth { get; set; } = 1920;
         public uint OutputHeight { get; set; } = 1080;
         public uint RefreshRate { get; set; } = 60;
@@ -827,16 +830,25 @@ public static class VideoOutExports
         }
 
         ulong count;
+        ulong processTime;
+        ulong tsc;
+        long flipArgument;
         uint currentBuffer;
         lock (_stateGate)
         {
             count = port.FlipCount;
+            processTime = port.CompletedFlipProcessTime;
+            tsc = port.CompletedFlipTsc;
+            flipArgument = port.CompletedFlipArgument;
             currentBuffer = unchecked((uint)port.CurrentBuffer);
         }
 
         Span<byte> status = stackalloc byte[VideoOutFlipStatusSize];
         status.Clear();
         BinaryPrimitives.WriteUInt64LittleEndian(status[0x00..], count);
+        BinaryPrimitives.WriteUInt64LittleEndian(status[0x08..], processTime);
+        BinaryPrimitives.WriteUInt64LittleEndian(status[0x10..], tsc);
+        BinaryPrimitives.WriteInt64LittleEndian(status[0x18..], flipArgument);
         BinaryPrimitives.WriteUInt32LittleEndian(status[0x20..], currentBuffer);
         return ctx.Memory.TryWrite(statusAddress, status)
             ? (int)OrbisGen2Result.ORBIS_GEN2_OK
@@ -1326,8 +1338,6 @@ public static class VideoOutExports
                 return OrbisVideoOutErrorInvalidIndex;
             }
 
-            port.CurrentBuffer = bufferIndex;
-            port.FlipCount++;
             eventHint = SceVideoOutInternalEventFlip |
                 ((unchecked((ulong)flipArg) & 0x0000_FFFF_FFFF_FFFFUL) << 16);
             flipEventCount = port.FlipEvents.Count;
@@ -1362,6 +1372,18 @@ public static class VideoOutExports
 
         void TriggerFlipEvents()
         {
+            var completedAt = Stopwatch.GetTimestamp();
+            lock (_stateGate)
+            {
+                port.CurrentBuffer = bufferIndex;
+                port.FlipCount++;
+                port.CompletedFlipProcessTime = unchecked((ulong)(
+                    Math.Max(completedAt - port.OpenTimestamp, 0) *
+                    1_000_000L / Stopwatch.Frequency));
+                port.CompletedFlipTsc = unchecked((ulong)completedAt);
+                port.CompletedFlipArgument = flipArg;
+            }
+
             if (flipEvents is null)
             {
                 return;

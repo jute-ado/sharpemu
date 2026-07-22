@@ -38,6 +38,39 @@ public sealed class VideoOutFlipStatusSafetyTests
     }
 
     [Fact]
+    public void GetFlipStatusReportsCompletedFlipTimingAndArgument()
+    {
+        var status = new byte[FlipStatusSize];
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(StatusAddress, status);
+        const long flipArgument = long.MinValue + 42;
+
+        WithOpenPort(memory, (context, handle) =>
+        {
+            context[CpuRegister.Rdi] = unchecked((ulong)handle);
+            context[CpuRegister.Rsi] = ulong.MaxValue;
+            context[CpuRegister.Rdx] = 1;
+            context[CpuRegister.Rcx] = unchecked((ulong)flipArgument);
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                VideoOutExports.VideoOutSubmitFlip(context));
+
+            context[CpuRegister.Rdi] = unchecked((ulong)handle);
+            context[CpuRegister.Rsi] = StatusAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                VideoOutExports.VideoOutGetFlipStatus(context));
+
+            Assert.Equal(1ul, BinaryPrimitives.ReadUInt64LittleEndian(status));
+            Assert.NotEqual(0ul, BinaryPrimitives.ReadUInt64LittleEndian(status.AsSpan(0x10)));
+            Assert.Equal(
+                flipArgument,
+                BinaryPrimitives.ReadInt64LittleEndian(status.AsSpan(0x18)));
+            Assert.Equal(uint.MaxValue, BinaryPrimitives.ReadUInt32LittleEndian(status.AsSpan(0x20)));
+        });
+    }
+
+    [Fact]
     public void GetFlipStatusRejectsWrappedStructureBeforeMutation()
     {
         var highStatus = Enumerable.Repeat((byte)0xA5, sizeof(ulong)).ToArray();
