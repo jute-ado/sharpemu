@@ -2129,6 +2129,56 @@ public static partial class KernelMemoryCompatExports
     }
 
     [SysAbiExport(
+        Nid = "uWyW3v98sU4",
+        ExportName = "sceKernelCheckReachability",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libKernel")]
+    public static int KernelCheckReachability(CpuContext ctx)
+    {
+        var pathAddress = ctx[CpuRegister.Rdi];
+        if (pathAddress == 0)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (!TryReadCString(ctx, pathAddress, MaxGuestStringLength, out var pathBytes))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        if (pathBytes.Length > byte.MaxValue)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NAME_TOO_LONG;
+        }
+
+        var guestPath = Encoding.UTF8.GetString(pathBytes);
+        if (IsRandomDevicePath(guestPath) ||
+            IsGuestMountRootPath(guestPath) ||
+            IsDevlogContainerPath(guestPath))
+        {
+            LogIoTrace("reachability", guestPath, "virtual=1 found=1");
+            ctx[CpuRegister.Rax] = 0;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
+        if (!TryResolveGuestPath(guestPath, out var hostPath))
+        {
+            LogIoTrace("reachability", guestPath, "result=invalid_path");
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (!File.Exists(hostPath) && !Directory.Exists(hostPath))
+        {
+            LogIoTrace("reachability", guestPath, $"host='{hostPath}' found=0");
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+        }
+
+        LogIoTrace("reachability", guestPath, $"host='{hostPath}' found=1");
+        ctx[CpuRegister.Rax] = 0;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
         Nid = "fgIsQ10xYVA",
         ExportName = "sceKernelChmod",
         Target = Generation.Gen4 | Generation.Gen5,
