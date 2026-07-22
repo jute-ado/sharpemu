@@ -4021,10 +4021,26 @@ public static partial class AgcExports
                         currentAddress,
                         length,
                         op,
-                        out var dispatch))
+                        out var dispatch,
+                        out var indirectDimsRetryAddress))
                 {
                     state.FrameDispatchCount++;
                     ObserveComputeDispatch(ctx, gpuState, state, dispatch);
+                }
+                else if (indirectDimsRetryAddress != 0 &&
+                         HandleSubmittedIndirectDimsWait(
+                             ctx,
+                             state,
+                             commandAddress,
+                             currentAddress,
+                             offset,
+                             dwordCount,
+                             indirectDimsRetryAddress,
+                             tracePackets,
+                             depth,
+                             continuation))
+                {
+                    return true;
                 }
             }
 
@@ -5371,6 +5387,114 @@ public static partial class AgcExports
             ? deadlockMs
             : 500L) * System.Diagnostics.Stopwatch.Frequency / 1000L;
 
+    private const long IndirectDimsRetryBudgetMs = 150;
+    private static readonly object _indirectDimsGate = new();
+    private static readonly HashSet<(object Memory, ulong PacketAddress)> _indirectDimsExpired = new();
+
+    private static bool HandleSubmittedIndirectDimsWait(
+        CpuContext ctx,
+        SubmittedDcbState state,
+        ulong commandAddress,
+        ulong packetAddress,
+        uint offset,
+        uint dwordCount,
+        ulong dimensionsAddress,
+        bool tracePacket,
+        int depth,
+        SubmittedDcbContinuation? continuation)
+    {
+        if (!_gpuWaitSuspendEnabled ||
+            dimensionsAddress == 0 ||
+            dimensionsAddress % sizeof(uint) != 0)
+        {
+            return false;
+        }
+
+        var key = (ctx.Memory, packetAddress);
+        lock (_indirectDimsGate)
+        {
+            if (_indirectDimsExpired.Remove(key))
+            {
+                return false;
+            }
+        }
+
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        var waiter = new GpuWaitRegistry.WaitingDcb
+        {
+            CommandBufferAddress = commandAddress,
+            ResumeAddress = packetAddress,
+            ResumeOffset = offset,
+            TotalDwords = dwordCount,
+            WaitAddress = dimensionsAddress,
+            ReferenceValue = 0,
+            Mask = uint.MaxValue,
+            CompareFunction = 4,
+            Is64Bit = false,
+            IsStandard = false,
+            Memory = ctx.Memory,
+            QueueName = state.QueueName,
+            SubmissionId = state.ActiveSubmissionId,
+            RegisteredTicks = now,
+            RetryDeadlineTicks = now +
+                (IndirectDimsRetryBudgetMs * System.Diagnostics.Stopwatch.Frequency / 1000L),
+            State = state,
+            Depth = depth,
+            Continuation = continuation,
+        };
+
+        GpuWaitRegistry.Register(dimensionsAddress, waiter);
+        var gpuState = _submittedGpuStates.GetValue(
+            ctx.Memory,
+            static _ => new SubmittedGpuState());
+        var visibilityWaiter = waiter;
+        var visibilitySequence = SubmitWaitVisibilityBarrier(
+            GuestGpu.Current.SubmitGuestMemoryVisibilityAction,
+            () =>
+            {
+                if (!ObserveWaitVisibility(
+                        ctx.Memory,
+                        visibilityWaiter,
+                        (address, read64Bit) =>
+                            read64Bit
+                                ? TryReadUInt64(ctx, address, out var value64)
+                                    ? value64
+                                    : null
+                                : TryReadUInt32(ctx, address, out var value32)
+                                    ? value32
+                                    : null))
+                {
+                    GpuWaitRegistry.ExpireRetryAtVisibilityPoint(
+                        ctx.Memory,
+                        dimensionsAddress,
+                        packetAddress);
+                }
+
+                SignalGpuWaitMonitor(gpuState);
+            },
+            dimensionsAddress,
+            state.QueueName,
+            state.ActiveSubmissionId);
+        if (visibilitySequence == 0)
+        {
+            GpuWaitRegistry.RemoveRetry(
+                ctx.Memory,
+                dimensionsAddress,
+                packetAddress);
+            return false;
+        }
+
+        EnsureGpuWaitMonitor(ctx, gpuState);
+        if (tracePacket)
+        {
+            TraceAgc(
+                $"agc.dispatch_indirect_wait dims=0x{dimensionsAddress:X16} " +
+                $"packet=0x{packetAddress:X16} queue={state.QueueName}");
+        }
+
+        return true;
+    }
+
     // Reads the WAIT_REG_MEM watched address, reference, mask, and 3-bit compare
     // function for both the AGC NOP-encapsulated (RWaitMem32/64) and the standard
     // ItWaitRegMem packet layouts.
@@ -5787,6 +5911,26 @@ public static partial class AgcExports
                     ? TryReadUInt64(ctx, address, out var value64) ? value64 : (ulong?)null
                     : TryReadUInt32(ctx, address, out var value32) ? value32 : (ulong?)null);
 
+            var expiredRetries = GpuWaitRegistry.CollectExpiredRetries(
+                ctx.Memory,
+                System.Diagnostics.Stopwatch.GetTimestamp());
+            if (expiredRetries is not null)
+            {
+                lock (_indirectDimsGate)
+                {
+                    foreach (var retry in expiredRetries)
+                    {
+                        _indirectDimsExpired.Add((ctx.Memory, retry.ResumeAddress));
+                    }
+                }
+
+                foreach (var retry in expiredRetries)
+                {
+                    ResumeSuspendedDcb(ctx, gpuState, retry, tracePackets);
+                    resumedCount++;
+                }
+            }
+
             // Break cross-queue deadlocks: a waiter stuck past the deadline whose
             // label a real producer already signalled (but guest memory has since
             // been reset for reuse) is released using that produced value. Only
@@ -5809,7 +5953,7 @@ public static partial class AgcExports
                 }
             }
 
-            if (woken is null && deadlockBroken is null)
+            if (woken is null && expiredRetries is null && deadlockBroken is null)
             {
                 if (_gpuWaitStaleTicks > 0 &&
                     GpuWaitRegistry.CollectUnreportedStale(
@@ -9711,9 +9855,11 @@ public static partial class AgcExports
         ulong packetAddress,
         uint packetLength,
         uint opcode,
-        out ComputeDispatchTopology dispatch)
+        out ComputeDispatchTopology dispatch,
+        out ulong indirectDimsRetryAddress)
     {
         dispatch = default;
+        indirectDimsRetryAddress = 0;
         ulong dimensionsAddress;
         uint initiator;
         string dispatchSource;
@@ -9762,6 +9908,11 @@ public static partial class AgcExports
 
         if (dispatchEndX == 0 || dispatchEndY == 0 || dispatchEndZ == 0)
         {
+            if (opcode == ItDispatchIndirect)
+            {
+                indirectDimsRetryAddress = dimensionsAddress;
+            }
+
             return RejectComputeDispatch(
                 dimensionsAddress,
                 initiator,

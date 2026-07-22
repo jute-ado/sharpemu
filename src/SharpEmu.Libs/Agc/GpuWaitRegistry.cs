@@ -45,6 +45,8 @@ internal static class GpuWaitRegistry
         // guest memory at wake time can miss the transient satisfied window.
         // Latching records satisfaction at the moment of the write instead.
         public bool Latched;
+        // Non-zero for a bounded indirect-dispatch argument retry.
+        public long RetryDeadlineTicks;
     }
 
     private static readonly object _gate = new();
@@ -291,6 +293,114 @@ internal static class GpuWaitRegistry
         }
 
         return latchedAny;
+    }
+
+    public static List<WaitingDcb>? CollectExpiredRetries(object memory, long nowTicks)
+    {
+        List<WaitingDcb>? expired = null;
+        lock (_gate)
+        {
+            List<ulong>? emptied = null;
+            foreach (var (address, list) in _waiters)
+            {
+                for (var index = list.Count - 1; index >= 0; index--)
+                {
+                    var waiter = list[index];
+                    if (waiter.RetryDeadlineTicks == 0 ||
+                        !ReferenceEquals(waiter.Memory, memory) ||
+                        nowTicks < waiter.RetryDeadlineTicks)
+                    {
+                        continue;
+                    }
+
+                    expired ??= new List<WaitingDcb>();
+                    expired.Add(waiter);
+                    list.RemoveAt(index);
+                }
+
+                if (list.Count == 0)
+                {
+                    emptied ??= new List<ulong>();
+                    emptied.Add(address);
+                }
+            }
+
+            if (emptied is not null)
+            {
+                foreach (var address in emptied)
+                {
+                    _waiters.Remove(address);
+                }
+            }
+        }
+
+        return expired;
+    }
+
+    public static bool ExpireRetryAtVisibilityPoint(
+        object memory,
+        ulong address,
+        ulong resumeAddress)
+    {
+        lock (_gate)
+        {
+            if (!_waiters.TryGetValue(address, out var list))
+            {
+                return false;
+            }
+
+            for (var index = 0; index < list.Count; index++)
+            {
+                var waiter = list[index];
+                if (!ReferenceEquals(waiter.Memory, memory) ||
+                    waiter.ResumeAddress != resumeAddress ||
+                    waiter.RetryDeadlineTicks == 0)
+                {
+                    continue;
+                }
+
+                waiter.RetryDeadlineTicks = 1;
+                list[index] = waiter;
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    public static bool RemoveRetry(
+        object memory,
+        ulong address,
+        ulong resumeAddress)
+    {
+        lock (_gate)
+        {
+            if (!_waiters.TryGetValue(address, out var list))
+            {
+                return false;
+            }
+
+            for (var index = list.Count - 1; index >= 0; index--)
+            {
+                var waiter = list[index];
+                if (!ReferenceEquals(waiter.Memory, memory) ||
+                    waiter.ResumeAddress != resumeAddress ||
+                    waiter.RetryDeadlineTicks == 0)
+                {
+                    continue;
+                }
+
+                list.RemoveAt(index);
+                if (list.Count == 0)
+                {
+                    _waiters.Remove(address);
+                }
+
+                return true;
+            }
+
+            return false;
+        }
     }
 
     public static List<WaitingDcb>? CollectAllForMemory(object memory)
