@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using SharpEmu.HLE;
 
@@ -41,6 +42,8 @@ public static class Http2Exports
         public string Url { get; } = url;
         public ulong ContentLength { get; set; } = contentLength;
         public bool Sent { get; set; }
+        public int AsyncEvent { get; set; }
+        public int AsyncResult { get; set; }
         public Dictionary<string, string> Headers { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
@@ -254,16 +257,16 @@ public static class Http2Exports
         ExportName = "sceHttp2SendRequest",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libSceHttp2")]
-    public static int Http2SendRequest(CpuContext ctx) => SendRequest(ctx);
+    public static int Http2SendRequest(CpuContext ctx) => SendRequest(ctx, asynchronous: false);
 
     [SysAbiExport(
         Nid = "A+NVAFu4eCg",
         ExportName = "sceHttp2SendRequestAsync",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libSceHttp2")]
-    public static int Http2SendRequestAsync(CpuContext ctx) => SendRequest(ctx);
+    public static int Http2SendRequestAsync(CpuContext ctx) => SendRequest(ctx, asynchronous: true);
 
-    private static int SendRequest(CpuContext ctx)
+    private static int SendRequest(CpuContext ctx, bool asynchronous)
     {
         if (!_requests.TryGetValue(unchecked((int)ctx[CpuRegister.Rdi]), out var request))
         {
@@ -283,6 +286,47 @@ public static class Http2Exports
 
         lock (request.Gate)
         {
+            request.Sent = true;
+            if (asynchronous)
+            {
+                request.AsyncEvent = 0;
+                request.AsyncResult = 0;
+            }
+        }
+
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "MOp-AUhdfi8",
+        ExportName = "sceHttp2WaitAsync",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceHttp2")]
+    public static int Http2WaitAsync(CpuContext ctx)
+    {
+        var requestId = unchecked((int)ctx[CpuRegister.Rdi]);
+        if (!_requests.TryGetValue(requestId, out var request))
+        {
+            return ctx.SetReturn(Http2ErrorInvalidId);
+        }
+
+        var resultAddress = ctx[CpuRegister.Rsi];
+        if (resultAddress == 0)
+        {
+            return ctx.SetReturn(Http2ErrorInvalidArgument);
+        }
+
+        Span<byte> result = stackalloc byte[24];
+        lock (request.Gate)
+        {
+            BinaryPrimitives.WriteInt32LittleEndian(result, request.AsyncEvent);
+            BinaryPrimitives.WriteInt32LittleEndian(result[4..], requestId);
+            BinaryPrimitives.WriteInt32LittleEndian(result[8..], request.AsyncResult);
+            if (!ctx.Memory.TryWrite(resultAddress, result))
+            {
+                return ctx.SetReturn(Http2ErrorInvalidArgument);
+            }
+
             request.Sent = true;
         }
 
