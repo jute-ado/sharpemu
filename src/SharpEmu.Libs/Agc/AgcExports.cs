@@ -591,7 +591,9 @@ public static partial class AgcExports
         public bool IsSuspended { get; set; }
         public bool ResetBeforeNextSubmission { get; set; }
         public ulong CompletionEventNotifiedSubmissionId { get; set; }
+        public bool HasExplicitCompletionInterrupt { get; set; }
         public Dictionary<(uint Op, uint Register), uint> FramePacketCounts { get; } = new();
+        public Dictionary<uint, uint> FrameReleaseInterruptCounts { get; } = new();
         public uint FramePacketCount { get; set; }
         public uint FrameDrawCount { get; set; }
         public uint FrameDispatchCount { get; set; }
@@ -3193,6 +3195,7 @@ public static partial class AgcExports
 
             state.HasActiveSubmission = true;
             state.ActiveSubmissionId = submission.SubmissionId;
+            state.HasExplicitCompletionInterrupt = false;
             state.IsSuspended = ParseSubmittedDcb(
                 ctx,
                 gpuState,
@@ -3222,6 +3225,11 @@ public static partial class AgcExports
         }
 
         state.CompletionEventNotifiedSubmissionId = submissionId;
+        if (state.HasExplicitCompletionInterrupt)
+        {
+            return;
+        }
+
         void TriggerCompletionEvents()
         {
             var triggered = KernelEventQueueCompatExports.TriggerRegisteredEvents(
@@ -3376,6 +3384,17 @@ public static partial class AgcExports
                         ? packetCount + 1
                         : 1;
                 state.FramePacketCount++;
+                if (op == ItNop &&
+                    register == RReleaseMem &&
+                    length >= 3 &&
+                    TryReadUInt32(ctx, currentAddress + 8, out var releaseControl))
+                {
+                    var interrupt = DecodeAgcReleaseMemControl(releaseControl).Interrupt;
+                    state.FrameReleaseInterruptCounts[interrupt] =
+                        state.FrameReleaseInterruptCounts.TryGetValue(interrupt, out var count)
+                            ? count + 1
+                            : 1;
+                }
             }
             if (tracePackets)
             {
@@ -3883,13 +3902,20 @@ public static partial class AgcExports
                     .Select(entry => entry.Key.Register == uint.MaxValue
                         ? $"0x{entry.Key.Op:X2}:{entry.Value}"
                         : $"0x{entry.Key.Op:X2}/r{entry.Key.Register}:{entry.Value}"));
+            var releaseInterrupts = string.Join(
+                ',',
+                state.FrameReleaseInterruptCounts
+                    .OrderBy(entry => entry.Key)
+                    .Select(entry => $"{entry.Key}:{entry.Value}"));
             Console.Error.WriteLine(
                 $"[FRAMEPKT] flip={flip} submission={state.ActiveSubmissionId} " +
                 $"packets={state.FramePacketCount} draws={state.FrameDrawCount} " +
-                $"dispatches={state.FrameDispatchCount} opcodes=[{opcodes}]");
+                $"dispatches={state.FrameDispatchCount} opcodes=[{opcodes}] " +
+                $"release_interrupts=[{releaseInterrupts}]");
         }
 
         state.FramePacketCounts.Clear();
+        state.FrameReleaseInterruptCounts.Clear();
         state.FramePacketCount = 0;
         state.FrameDrawCount = 0;
         state.FrameDispatchCount = 0;
@@ -5435,6 +5461,8 @@ public static partial class AgcExports
         }
 
         var (destination, dataSelection) = DecodeStandardReleaseMemControl(control);
+        var interrupt = (control >> 24) & 0x7u;
+        state.HasExplicitCompletionInterrupt |= interrupt != 0;
         var destinationAddress = ((ulong)destinationHi << 32) | destinationLo;
         var data = ((ulong)dataHi << 32) | dataLo;
         var writeLength = dataSelection switch
@@ -5479,6 +5507,8 @@ public static partial class AgcExports
                         ctx.Memory, destinationAddress, dataSelection == 1 ? dataLo : data);
                 }
 
+                TriggerReleaseInterrupt(state, interrupt, packetAddress);
+
                 if (tracePacket)
                 {
                     TraceAgc(
@@ -5515,7 +5545,8 @@ public static partial class AgcExports
             return;
         }
 
-        var dataSelection = (control >> 16) & 0xFFu;
+        var (dataSelection, interrupt) = DecodeAgcReleaseMemControl(control);
+        state.HasExplicitCompletionInterrupt |= interrupt != 0;
         var destinationAddress = ((ulong)destinationHi << 32) | destinationLo;
         var data = ((ulong)dataHi << 32) | dataLo;
         var writeLength = dataSelection switch
@@ -5554,6 +5585,8 @@ public static partial class AgcExports
                         ctx.Memory, destinationAddress, dataSelection == 1 ? dataLo : data);
                 }
 
+                TriggerReleaseInterrupt(state, interrupt, packetAddress);
+
                 if (tracePacket)
                 {
                     TraceAgc(
@@ -5565,6 +5598,35 @@ public static partial class AgcExports
             packetAddress,
             dataSelection is 1 or 2 or 3 ? destinationAddress : 0,
             writeLength);
+    }
+
+    internal static (uint DataSelection, uint Interrupt)
+        DecodeAgcReleaseMemControl(uint control) =>
+        (
+            DataSelection: (control >> 16) & 0xFFu,
+            Interrupt: (control >> 24) & 0xFFu);
+
+    private static void TriggerReleaseInterrupt(
+        SubmittedDcbState state,
+        uint interrupt,
+        ulong packetAddress)
+    {
+        if (interrupt == 0)
+        {
+            return;
+        }
+
+        var timestamp = unchecked((ulong)System.Diagnostics.Stopwatch.GetTimestamp());
+        var triggered = KernelEventQueueCompatExports.TriggerRegisteredEventsByFilter(
+            KernelEventQueueCompatExports.KernelEventFilterGraphics,
+            timestamp);
+        if (_traceAgc)
+        {
+            TraceAgc(
+                $"agc.release_mem_interrupt queue={state.QueueName} " +
+                $"submission={state.ActiveSubmissionId} packet=0x{packetAddress:X16} " +
+                $"interrupt={interrupt} timestamp=0x{timestamp:X16} queues={triggered}");
+        }
     }
 
     private static void ApplySubmittedRegisters(
