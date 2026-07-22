@@ -121,18 +121,46 @@ public sealed partial class DirectExecutionBackend
 
 	private void DumpRecentImportTrace()
 	{
-		var trace = _recentImportTrace?.Build(_recentImportTrace.Capacity, prioritizedThreadHandle: null);
+		DumpRecentImportTrace(prioritizedThreadHandle: null, reason: null);
+	}
+
+	private void DumpRecentImportTrace(ulong? prioritizedThreadHandle, string? reason)
+	{
+		var trace = _recentImportTrace?.Build(
+			_recentImportTrace.Capacity,
+			prioritizedThreadHandle);
 		if (string.IsNullOrWhiteSpace(trace))
 		{
 			return;
 		}
 
 		var lines = trace.Split(Environment.NewLine);
-		Log.Info($"   Recent import calls ({lines.Length}):");
+		var reasonSuffix = string.IsNullOrWhiteSpace(reason) ? string.Empty : $" for {reason}";
+		Log.Info($"   Recent import calls{reasonSuffix} ({lines.Length}):");
 		foreach (var line in lines)
 		{
 			Log.Info($"     {line}");
 		}
+	}
+
+	private void DumpImportFailureContext(
+		long dispatchIndex,
+		string nid,
+		ExportedFunction? export,
+		int result)
+	{
+		if (_importFailureContextTrace?.ShouldDump(
+				nid,
+				export?.LibraryName,
+				export?.Name,
+				result) != true)
+		{
+			return;
+		}
+
+		DumpRecentImportTrace(
+			GetCurrentGuestThreadHandle(),
+			$"failed import #{dispatchIndex} {nid} result={result}");
 	}
 
 	private unsafe static List<ulong> ScanSuspiciousResolverPointers(ulong scanStart, ulong scanEnd)
