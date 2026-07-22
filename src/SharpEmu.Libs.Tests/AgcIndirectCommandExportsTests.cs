@@ -50,6 +50,64 @@ public sealed class AgcIndirectCommandExportsTests
         Assert.Equal(5u, count);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void AddIndirectPatchRegisters_WrapsCountWithinFourteenBits(int registerSpace)
+    {
+        var bytes = new byte[4 * sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            bytes.AsSpan(sizeof(uint)),
+            0x3FFE);
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(CommandAddress, bytes);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = CommandAddress;
+        context[CpuRegister.Rsi] = 5;
+
+        var result = registerSpace switch
+        {
+            0 => AgcExports.SetCxRegIndirectPatchAddRegisters(context),
+            1 => AgcExports.SetShRegIndirectPatchAddRegisters(context),
+            _ => AgcExports.SetUcRegIndirectPatchAddRegisters(context),
+        };
+
+        Assert.Equal(0, result);
+        Assert.True(context.TryReadUInt32(CommandAddress + sizeof(uint), out var count));
+        Assert.Equal(3u, count);
+    }
+
+    [Theory]
+    [InlineData(0, 0x12u)]
+    [InlineData(1, 0x11u)]
+    [InlineData(2, 0x13u)]
+    public void DcbSetRegistersIndirect_MasksCountToHardwareWidth(
+        int registerSpace,
+        uint packetRegister)
+    {
+        const ulong registersAddress = 0x5000;
+        var memory = CreateCommandBufferMemory();
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = CommandBufferAddress;
+        context[CpuRegister.Rsi] = registersAddress;
+        context[CpuRegister.Rdx] = 0x4005;
+
+        var result = registerSpace switch
+        {
+            0 => AgcExports.DcbSetCxRegistersIndirect(context),
+            1 => AgcExports.DcbSetShRegistersIndirect(context),
+            _ => AgcExports.DcbSetUcRegistersIndirect(context),
+        };
+
+        Assert.Equal(0, result);
+        Assert.Equal(CommandStorageAddress, context[CpuRegister.Rax]);
+        AssertPacketWord(context, 0, Pm4(4, 0x10, packetRegister));
+        AssertPacketWord(context, 1, 5);
+        AssertPacketWord(context, 2, (uint)registersAddress);
+        AssertPacketWord(context, 3, (uint)(registersAddress >> 32));
+    }
+
     [Fact]
     public void DcbDrawIndirect_EmitsDecodedFiveDwordPacket()
     {
@@ -144,6 +202,6 @@ public sealed class AgcIndirectCommandExportsTests
         Assert.Equal(expected, actual);
     }
 
-    private static uint Pm4(uint dwordCount, uint opcode) =>
-        0xC000_0000u | ((dwordCount - 2) << 16) | (opcode << 8);
+    private static uint Pm4(uint dwordCount, uint opcode, uint register = 0) =>
+        0xC000_0000u | ((dwordCount - 2) << 16) | (opcode << 8) | (register << 2);
 }

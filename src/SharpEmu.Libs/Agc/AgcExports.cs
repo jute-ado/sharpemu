@@ -11412,13 +11412,18 @@ public static partial class AgcExports
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        if (!TryReadUInt32(ctx, commandAddress + 4, out var currentCount) ||
-            !TryWriteUInt32(ctx, commandAddress + 4, currentCount + registerCount))
+        if (!TryReadUInt32(ctx, commandAddress + 4, out var currentCount))
         {
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
-        TraceAgc($"agc.patch_{registerSpace}_add cmd=0x{commandAddress:X16} add={registerCount} total={currentCount + registerCount}");
+        var newCount = (currentCount + registerCount) & 0x3FFFu;
+        if (!TryWriteUInt32(ctx, commandAddress + 4, newCount))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        TraceAgc($"agc.patch_{registerSpace}_add cmd=0x{commandAddress:X16} add={registerCount} total={newCount}");
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
@@ -11465,7 +11470,7 @@ public static partial class AgcExports
     {
         var commandBufferAddress = ctx[CpuRegister.Rdi];
         var registersAddress = ctx[CpuRegister.Rsi];
-        var registerCount = (uint)ctx[CpuRegister.Rdx];
+        var registerCount = (uint)ctx[CpuRegister.Rdx] & 0x3FFFu;
         if (commandBufferAddress == 0)
         {
             return ReturnPointer(ctx, 0);
