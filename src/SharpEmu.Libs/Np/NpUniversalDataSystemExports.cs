@@ -342,6 +342,35 @@ public static class NpUniversalDataSystemExports
     }
 
     [SysAbiExport(
+        Nid = "kKUH0Viib3c",
+        ExportName = "sceNpUniversalDataSystemDestroyEventPropertyObject",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNpUniversalDataSystem")]
+    public static int NpUniversalDataSystemDestroyEventPropertyObject(
+        CpuContext ctx)
+    {
+        var objectAddress = ctx[CpuRegister.Rdi];
+        if (objectAddress == 0)
+        {
+            return ctx.SetReturn(
+                NpUniversalDataSystemErrorInvalidArgument,
+                typeof(long));
+        }
+
+        Span<byte> probe = stackalloc byte[1];
+        if (!ctx.Memory.TryRead(objectAddress, probe) ||
+            ctx.Memory is not IGuestMemoryAllocator allocator ||
+            !allocator.TryFreeGuestMemory(objectAddress))
+        {
+            return ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+                typeof(long));
+        }
+
+        return ctx.SetReturn(0, typeof(long));
+    }
+
+    [SysAbiExport(
         Nid = "4llLk7YJRTE",
         ExportName = "sceNpUniversalDataSystemEventPropertyArraySetString",
         Target = Generation.Gen4 | Generation.Gen5,
