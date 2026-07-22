@@ -79,12 +79,14 @@ public sealed class ComputeDispatchDiagnosticsTests
     }
 
     [Theory]
-    [InlineData(false, null, null, false)]
-    [InlineData(true, null, null, true)]
-    [InlineData(false, "9F64A747E1B97F13", "9f64a747e1b97f13", true)]
-    [InlineData(false, "DEADBEEF", "9F64A747E1B97F13", false)]
+    [InlineData(false, false, null, null, false)]
+    [InlineData(true, false, null, null, true)]
+    [InlineData(false, true, null, null, true)]
+    [InlineData(false, false, "9F64A747E1B97F13", "9f64a747e1b97f13", true)]
+    [InlineData(false, false, "DEADBEEF", "9F64A747E1B97F13", false)]
     public void GuestImageTraceTreatsMatchingShaderSignatureAsExplicitSelector(
         bool addressMatched,
+        bool shaderAddressMatched,
         string? configuredSignatures,
         string? shaderSignature,
         bool expected)
@@ -93,18 +95,21 @@ public sealed class ComputeDispatchDiagnosticsTests
             expected,
             VulkanVideoPresenter.GuestImageTraceSelectorMatches(
                 addressMatched,
+                shaderAddressMatched,
                 configuredSignatures,
                 shaderSignature));
     }
 
     [Theory]
-    [InlineData(true, false, false, true)]
-    [InlineData(false, true, false, true)]
-    [InlineData(false, false, true, true)]
-    [InlineData(false, false, false, false)]
+    [InlineData(true, false, false, false, true)]
+    [InlineData(false, true, false, false, true)]
+    [InlineData(false, false, true, false, true)]
+    [InlineData(false, false, false, true, true)]
+    [InlineData(false, false, false, false, false)]
     public void GuestImageTraceIncludesSampledImagesForSignatureDiagnostics(
         bool isStorage,
         bool addressFilterEnabled,
+        bool shaderAddressFilterEnabled,
         bool signatureFilterEnabled,
         bool expected)
     {
@@ -113,6 +118,32 @@ public sealed class ComputeDispatchDiagnosticsTests
             VulkanVideoPresenter.ShouldCollectGuestImageTraceCandidate(
                 isStorage,
                 addressFilterEnabled,
+                shaderAddressFilterEnabled,
                 signatureFilterEnabled));
+    }
+
+    [Theory]
+    [InlineData(true, false, false, false, false, true)]
+    [InlineData(false, true, false, false, false, true)]
+    [InlineData(false, false, true, false, false, true)]
+    [InlineData(false, false, false, true, false, true)]
+    [InlineData(false, false, false, false, true, true)]
+    [InlineData(false, false, false, false, false, false)]
+    public void GuestImageTraceSelectionRunsForEverySupportedSelector(
+        bool broadTraceEnabled,
+        bool addressFilterEnabled,
+        bool shaderAddressFilterEnabled,
+        bool signatureFilterEnabled,
+        bool intervalEnabled,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            VulkanVideoPresenter.ShouldRunGuestImageTraceSelection(
+                broadTraceEnabled,
+                addressFilterEnabled,
+                shaderAddressFilterEnabled,
+                signatureFilterEnabled,
+                intervalEnabled));
     }
 }
