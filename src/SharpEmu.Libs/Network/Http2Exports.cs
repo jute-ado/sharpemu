@@ -254,7 +254,16 @@ public static class Http2Exports
         ExportName = "sceHttp2SendRequest",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libSceHttp2")]
-    public static int Http2SendRequest(CpuContext ctx)
+    public static int Http2SendRequest(CpuContext ctx) => SendRequest(ctx);
+
+    [SysAbiExport(
+        Nid = "A+NVAFu4eCg",
+        ExportName = "sceHttp2SendRequestAsync",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceHttp2")]
+    public static int Http2SendRequestAsync(CpuContext ctx) => SendRequest(ctx);
+
+    private static int SendRequest(CpuContext ctx)
     {
         if (!_requests.TryGetValue(unchecked((int)ctx[CpuRegister.Rdi]), out var request))
         {
