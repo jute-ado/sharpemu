@@ -12,9 +12,13 @@ public static class NpWebApi2Exports
     private static int _initialized;
     private static int _nextLibraryContextHandle;
     private static int _nextPushEventHandle;
+    private static int _nextPushFilterId;
     private static int _nextUserContextHandle = 1000;
     private static readonly object _contextGate = new();
     private static readonly HashSet<int> _libraryContexts = [];
+    private static readonly Dictionary<int, int> _pushEventHandleOwners = [];
+    private static readonly Dictionary<int, (int LibraryContextId, int HandleId)> _pushFilterOwners = [];
+    private static readonly Dictionary<int, int> _userContextOwners = [];
 
     [SysAbiExport(
         Nid = "+o9816YQhqQ",
@@ -50,10 +54,88 @@ public static class NpWebApi2Exports
             return ctx.SetReturn(NpWebApi2ErrorInvalidArgument);
         }
 
-        var handle = CreatePushEventHandle();
+        var handle = CreatePushEventHandle(libraryContextId);
         Interlocked.Exchange(ref _initialized, 1);
         TraceNpWebApi2("init-alt", libraryContextId, 0);
         return ctx.SetReturn(handle);
+    }
+
+    [SysAbiExport(
+        Nid = "MsaFhR+lPE4",
+        ExportName = "sceNpWebApi2PushEventCreateFilter",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNpWebApi2")]
+    public static int NpWebApi2PushEventCreateFilter(CpuContext ctx)
+    {
+        var libraryContextId = unchecked((int)ctx[CpuRegister.Rdi]);
+        var handleId = unchecked((int)ctx[CpuRegister.Rsi]);
+        if (!OwnsPushEventHandle(libraryContextId, handleId))
+        {
+            return ctx.SetReturn(NpWebApi2ErrorInvalidArgument);
+        }
+
+        var filterId = Interlocked.Increment(ref _nextPushFilterId);
+        lock (_contextGate)
+        {
+            _pushFilterOwners.Add(filterId, (libraryContextId, handleId));
+        }
+
+        TraceNpWebApi2("push-filter-create", filterId, unchecked((uint)handleId));
+        return ctx.SetReturn(filterId);
+    }
+
+    [SysAbiExport(
+        Nid = "fY3QqeNkF8k",
+        ExportName = "sceNpWebApi2PushEventRegisterCallback",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNpWebApi2")]
+    public static int NpWebApi2PushEventRegisterCallback(CpuContext ctx)
+    {
+        var userContextId = unchecked((int)ctx[CpuRegister.Rdi]);
+        var filterId = unchecked((int)ctx[CpuRegister.Rsi]);
+        lock (_contextGate)
+        {
+            if (!_userContextOwners.TryGetValue(userContextId, out var userOwner) ||
+                !_pushFilterOwners.TryGetValue(filterId, out var filterOwner) ||
+                userOwner != filterOwner.LibraryContextId)
+            {
+                return ctx.SetReturn(NpWebApi2ErrorInvalidArgument);
+            }
+        }
+
+        TraceNpWebApi2("push-callback-register", filterId, unchecked((uint)userContextId));
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "fIATVMo4Y1w",
+        ExportName = "sceNpWebApi2PushEventDeleteHandle",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNpWebApi2")]
+    public static int NpWebApi2PushEventDeleteHandle(CpuContext ctx)
+    {
+        var libraryContextId = unchecked((int)ctx[CpuRegister.Rdi]);
+        var handleId = unchecked((int)ctx[CpuRegister.Rsi]);
+        lock (_contextGate)
+        {
+            if (!_pushEventHandleOwners.TryGetValue(handleId, out var owner) ||
+                owner != libraryContextId)
+            {
+                return ctx.SetReturn(NpWebApi2ErrorInvalidArgument);
+            }
+
+            _pushEventHandleOwners.Remove(handleId);
+            foreach (var filter in _pushFilterOwners
+                         .Where(pair => pair.Value.HandleId == handleId)
+                         .Select(pair => pair.Key)
+                         .ToArray())
+            {
+                _pushFilterOwners.Remove(filter);
+            }
+        }
+
+        TraceNpWebApi2("push-handle-delete", handleId, unchecked((uint)libraryContextId));
+        return ctx.SetReturn(0);
     }
 
     [SysAbiExport(
@@ -79,6 +161,11 @@ public static class NpWebApi2Exports
         }
 
         var userContextId = Interlocked.Increment(ref _nextUserContextHandle);
+        lock (_contextGate)
+        {
+            _userContextOwners.Add(userContextId, libraryContextId);
+        }
+
         return ctx.SetReturn(userContextId);
     }
 
@@ -111,9 +198,25 @@ public static class NpWebApi2Exports
         return handle;
     }
 
-    private static int CreatePushEventHandle()
+    private static int CreatePushEventHandle(int libraryContextId)
     {
-        return Interlocked.Increment(ref _nextPushEventHandle);
+        var handle = Interlocked.Increment(ref _nextPushEventHandle);
+        lock (_contextGate)
+        {
+            _pushEventHandleOwners.Add(handle, libraryContextId);
+        }
+
+        return handle;
+    }
+
+    private static bool OwnsPushEventHandle(int libraryContextId, int handleId)
+    {
+        lock (_contextGate)
+        {
+            return _libraryContexts.Contains(libraryContextId) &&
+                   _pushEventHandleOwners.TryGetValue(handleId, out var owner) &&
+                   owner == libraryContextId;
+        }
     }
 
     private static bool IsValidLibraryContextId(int libraryContextId)
@@ -134,6 +237,30 @@ public static class NpWebApi2Exports
         lock (_contextGate)
         {
             _libraryContexts.Remove(libraryContextId);
+            foreach (var handle in _pushEventHandleOwners
+                         .Where(pair => pair.Value == libraryContextId)
+                         .Select(pair => pair.Key)
+                         .ToArray())
+            {
+                _pushEventHandleOwners.Remove(handle);
+            }
+
+            foreach (var filter in _pushFilterOwners
+                         .Where(pair => pair.Value.LibraryContextId == libraryContextId)
+                         .Select(pair => pair.Key)
+                         .ToArray())
+            {
+                _pushFilterOwners.Remove(filter);
+            }
+
+            foreach (var userContext in _userContextOwners
+                         .Where(pair => pair.Value == libraryContextId)
+                         .Select(pair => pair.Key)
+                         .ToArray())
+            {
+                _userContextOwners.Remove(userContext);
+            }
+
             if (_libraryContexts.Count == 0)
             {
                 Interlocked.Exchange(ref _initialized, 0);
