@@ -280,6 +280,28 @@ public sealed class AudioOut2CompatibilityTests
     }
 
     [Theory]
+    [InlineData(0x2000_0001UL)]
+    [InlineData(ulong.MaxValue)]
+    public void PortGetStateWritesDefaultStereoStateForUnknownHandle(ulong handle)
+    {
+        var memory = new FakeGuestMemory();
+        var allocation = FilledBuffer(0x50);
+        memory.AddRegion(BufferAddress, allocation);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = handle;
+        context[CpuRegister.Rsi] = BufferAddress;
+
+        AssertSuccess(AudioOut2Exports.AudioOut2PortGetState(context), context);
+
+        Assert.Equal(1, BinaryPrimitives.ReadUInt16LittleEndian(allocation));
+        Assert.Equal(2, allocation[0x02]);
+        Assert.Equal(0, allocation[0x03]);
+        Assert.Equal(127, BinaryPrimitives.ReadInt16LittleEndian(allocation.AsSpan(0x04)));
+        Assert.All(allocation.AsSpan(0x06, 0x3A).ToArray(), value => Assert.Equal(0, value));
+        Assert.All(allocation.AsSpan(0x40).ToArray(), value => Assert.Equal(Canary, value));
+    }
+
+    [Theory]
     [InlineData(0, BufferAddress)]
     [InlineData(0x2000_0001UL, 0)]
     public void PortGetStateRejectsNullRequiredArguments(ulong handle, ulong output)
