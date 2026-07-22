@@ -319,15 +319,15 @@ public static class AudioOut2Exports
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
-        if (!Ports.TryGetValue(handle, out var port))
-        {
-            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
-        }
-
         Span<byte> state = stackalloc byte[0x40];
         state.Clear();
-        var output = port.PortType == 2 ? 0x40 : 0x01;
-        var channels = GetChannelCount(port.DataFormat);
+        var output = 0x01;
+        var channels = 2;
+        if (Ports.TryGetValue(handle, out var port))
+        {
+            output = port.PortType == 2 ? 0x40 : 0x01;
+            channels = GetChannelCount(port.DataFormat);
+        }
         BinaryPrimitives.WriteUInt16LittleEndian(state[0x00..], unchecked((ushort)output));
         state[0x02] = unchecked((byte)channels);
         BinaryPrimitives.WriteInt16LittleEndian(state[0x04..], 127);
