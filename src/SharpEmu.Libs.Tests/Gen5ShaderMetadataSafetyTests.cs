@@ -16,6 +16,7 @@ public sealed class Gen5ShaderMetadataSafetyTests
     private const ulong TextureResourcesAddress = 0x4000;
     private const ulong ReadWriteResourcesAddress = 0x5000;
     private const ulong SamplerResourcesAddress = 0x6000;
+    private const ulong ShaderCodeAddress = 0x7000;
     private const int ShaderHeaderSize = 0x10;
     private const int UserDataSize = 0x36;
 
@@ -64,6 +65,59 @@ public sealed class Gen5ShaderMetadataSafetyTests
             resource => Assert.Equal(
                 new Gen5ShaderResourceMapping(Gen5ShaderResourceKind.Sampler, 0, 6, true),
                 resource));
+    }
+
+    [Fact]
+    public void TryCreateStateIncludesBothDwordsOfDirectPointerResources()
+    {
+        const uint userDataRegister = 0x40;
+        const int directResourceCount = 11;
+        const int vertexBufferPointerType = 8;
+        const int vertexAttributePointerType = 10;
+        var (memory, context) = CreateMetadataMemory();
+        memory.AddRegion(ShaderCodeAddress, BitConverter.GetBytes(0xBF81_0000u));
+        memory.AddRegion(
+            DirectResourcesAddress,
+            new byte[directResourceCount * sizeof(ushort)]);
+        WriteUInt64(context, UserDataAddress, DirectResourcesAddress);
+        WriteUInt16(context, UserDataAddress + 0x2C, directResourceCount);
+        for (var type = 0; type < directResourceCount; type++)
+        {
+            WriteUInt16(
+                context,
+                DirectResourcesAddress + (ulong)(type * sizeof(ushort)),
+                ushort.MaxValue);
+        }
+
+        WriteUInt16(
+            context,
+            DirectResourcesAddress + vertexBufferPointerType * sizeof(ushort),
+            16);
+        WriteUInt16(
+            context,
+            DirectResourcesAddress + vertexAttributePointerType * sizeof(ushort),
+            18);
+        var registers = new Dictionary<uint, uint>
+        {
+            [userDataRegister + 16] = 0x1234_5000u,
+            [userDataRegister + 17] = 0x0000_0006u,
+            [userDataRegister + 18] = 0x5678_9000u,
+            [userDataRegister + 19] = 0x0000_0006u,
+        };
+
+        Assert.True(
+            Gen5ShaderTranslator.TryCreateState(
+                context,
+                ShaderCodeAddress,
+                ShaderHeaderAddress,
+                registers,
+                userDataRegister,
+                out var state,
+                out var error),
+            error);
+        Assert.Equal(20, state.UserData.Count);
+        Assert.Equal(0x0000_0006u, state.UserData[17]);
+        Assert.Equal(0x0000_0006u, state.UserData[19]);
     }
 
     [Fact]

@@ -2905,6 +2905,10 @@ public sealed class Gen5DecoderTests
             "buffer-descriptor-invalid",
             evaluationError,
             StringComparison.Ordinal);
+        Assert.Contains(
+            "raw=20000000,00040000,00000010,0001E000",
+            evaluationError,
+            StringComparison.Ordinal);
     }
 
     [Fact]

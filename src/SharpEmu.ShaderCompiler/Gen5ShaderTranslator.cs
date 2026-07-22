@@ -292,9 +292,15 @@ public static class Gen5ShaderTranslator
         count = Math.Max(count, checked((int)Math.Min(metadata.ExtendedUserDataSizeDwords, MaximumUserDataDwords)));
         count = Math.Max(count, checked((int)Math.Min(metadata.ShaderResourceTableSizeDwords, MaximumUserDataDwords)));
 
-        foreach (var offset in metadata.DirectResources.Values)
+        foreach (var resource in metadata.DirectResources)
         {
-            count = Math.Max(count, checked((int)Math.Min(offset + 1u, MaximumUserDataDwords)));
+            var end = Math.Min(
+                (ulong)resource.Value +
+                    Gen5ShaderMetadataLayout.GetDirectResourceDwordCount(resource.Key),
+                (ulong)MaximumUserDataDwords);
+            count = Math.Max(
+                count,
+                checked((int)end));
         }
 
         foreach (var resource in metadata.Resources)

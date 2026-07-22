@@ -401,7 +401,8 @@ public static class Gen5ShaderScalarEvaluator
                 {
                     error =
                         $"buffer-descriptor-invalid pc=0x{instruction.Pc:X} " +
-                        $"s{bufferMemory.ScalarResource}";
+                        $"s{bufferMemory.ScalarResource} " +
+                        $"raw={FormatBufferDescriptorWords(scalarRegisters, bufferMemory.ScalarResource)}";
                     return false;
                 }
 
@@ -2117,6 +2118,14 @@ public static class Gen5ShaderScalarEvaluator
         return true;
     }
 
+    private static string FormatBufferDescriptorWords(
+        IReadOnlyList<uint> scalarRegisters,
+        uint scalarBase) =>
+        string.Join(
+            ',',
+            Enumerable.Range(0, 4).Select(
+                index => scalarRegisters[checked((int)scalarBase + index)].ToString("X8")));
+
     private static bool TryReadUserDataScalarLoad(
         Gen5ShaderState state,
         Gen5ShaderInstruction instruction,
@@ -2177,7 +2186,18 @@ public static class Gen5ShaderScalarEvaluator
             }
         }
 
-        return metadata.DirectResources.Values.Any(offset => offset == dwordOffset);
+        foreach (var resource in metadata.DirectResources)
+        {
+            var dwordCount =
+                Gen5ShaderMetadataLayout.GetDirectResourceDwordCount(resource.Key);
+            if (dwordOffset >= resource.Value &&
+                (ulong)dwordOffset < (ulong)resource.Value + dwordCount)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string FormatScalarLoadError(
