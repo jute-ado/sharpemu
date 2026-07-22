@@ -1362,6 +1362,16 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
+        // Physical guest memory can validate both ranges and perform the copy
+        // under one lock without renting a managed buffer. Providers that do
+        // not implement this optional fast path return false and retain the
+        // bounded streaming fallback below.
+        if (ctx.Memory.TryCopy(destination, source, count))
+        {
+            ctx[CpuRegister.Rax] = destination;
+            return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        }
+
         var requestedChunkSize = (int)Math.Min((ulong)MemcpyChunkSize, count);
         var buffer = ArrayPool<byte>.Shared.Rent(requestedChunkSize);
         try
