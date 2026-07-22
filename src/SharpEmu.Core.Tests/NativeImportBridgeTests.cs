@@ -24,6 +24,7 @@ public sealed class NativeImportBridgeTests
     private const string RegisteredStackProbeNid = "test-registered-stack-probe-nid";
     private const string MemalignNid = "Ujf3KzMvRmI";
     private const string PluginInitializeNid = "Mglc7amPW4k";
+    private const string ScalarLeafProbeNid = "aI+OeCz8xrQ";
     private const ulong CodeAddress = 0x0000_0008_1000_0000;
     private const ulong ImportAddress = CodeAddress + 0x100;
     private const ulong SecondImportAddress = ImportAddress + 0x10;
@@ -665,6 +666,44 @@ public sealed class NativeImportBridgeTests
     }
 
     [HostX64Fact]
+    public async Task ScalarLeafDoesNotMaterializeGuestXmmArguments()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
+        const ulong guestXmm0 = 0x1234_5678;
+        SyntheticExports.ObservedScalarLeafXmm0 = ulong.MaxValue;
+        byte[] code =
+        [
+            0xB8, 0x78, 0x56, 0x34, 0x12, // mov eax, 0x12345678
+            0x66, 0x0F, 0x6E, 0xC0,       // movd xmm0, eax
+            0xE8, 0xF2, 0x00, 0x00, 0x00, // call ImportAddress
+            0x31, 0xC0,                   // xor eax, eax
+            0xC3,                         // ret
+        ];
+        var execution = SyntheticNativeGuest.ExecuteModuleInitializer(
+            code,
+            Generation.Gen5,
+            "synthetic-scalar-leaf-xmm-elision",
+            new Dictionary<ulong, string> { [ImportAddress] = ScalarLeafProbeNid },
+            moduleManager => moduleManager.RegisterExports(
+            [
+                new ExportedFunction(
+                    "libKernel",
+                    ScalarLeafProbeNid,
+                    "syntheticScalarLeafProbe",
+                    Generation.Gen5,
+                    SyntheticExports.ScalarLeafProbe),
+            ]),
+            CodeAddress);
+
+        AssertSuccessful(execution);
+        Assert.NotEqual(guestXmm0, SyntheticExports.ObservedScalarLeafXmm0);
+    }
+
+    [HostX64Fact]
     public async Task ReusedNativeWorkerSurvivesRepeatedInPlaceWaits()
     {
         if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
@@ -897,6 +936,14 @@ public sealed class NativeImportBridgeTests
 
     internal static class SyntheticExports
     {
+        public static ulong ObservedScalarLeafXmm0;
+
+        public static int ScalarLeafProbe(CpuContext context)
+        {
+            context.GetXmmRegister(0, out ObservedScalarLeafXmm0, out _);
+            return context.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+        }
+
         public static ulong ApplicationHeapAlignment { get; set; }
 
         public static ulong ApplicationHeapSize { get; set; }
