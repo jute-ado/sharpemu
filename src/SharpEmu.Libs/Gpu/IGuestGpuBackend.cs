@@ -209,6 +209,11 @@ internal interface IGuestGpuBackend
     /// returns its work sequence, or 0 when nothing could be enqueued.</summary>
     long SubmitOrderedGuestAction(Action action, string debugName);
 
+    /// <summary>Enqueues a WAIT_REG_MEM visibility point. In addition to the
+    /// active queue, completed writes from other logical GPU queues are
+    /// published before the action runs.</summary>
+    long SubmitGuestMemoryVisibilityAction(Action action, string debugName);
+
     /// <summary>Preserves sceAgcDcbWaitUntilSafeForRendering in queue order.</summary>
     long SubmitOrderedGuestFlipWait(int videoOutHandle, int displayBufferIndex);
 

@@ -77,7 +77,16 @@ internal sealed record VulkanComputeGuestDispatch(
 internal sealed record VulkanOrderedGuestAction(
     Action Action,
     string DebugName,
-    bool BlockForCpuVisibility = false);
+    bool BlockForCpuVisibility = false,
+    bool PublishAllCompletedQueues = false);
+
+internal static class OrderedGuestActionWritebackPolicy
+{
+    public static string? SelectQueue(
+        string activeQueue,
+        bool publishAllCompletedQueues) =>
+        publishAllCompletedQueues ? null : activeQueue;
+}
 
 internal sealed record VulkanOrderedGuestFlip(
     long Version,
@@ -1576,6 +1585,27 @@ internal static unsafe class VulkanVideoPresenter
             return _closed || _thread is null
                 ? 0
                 : EnqueueGuestWorkLocked(new VulkanOrderedGuestAction(action, debugName));
+        }
+    }
+
+    /// <summary>
+    /// Enqueues a GPU-memory wait visibility point. WAIT_REG_MEM can consume a
+    /// shader-written label from another logical queue, so publish every dirty
+    /// range whose host submission has genuinely completed before signalling
+    /// the wait monitor.
+    /// </summary>
+    public static long SubmitGuestMemoryVisibilityAction(Action action, string debugName)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        lock (_gate)
+        {
+            return _closed || _thread is null
+                ? 0
+                : EnqueueGuestWorkLocked(
+                    new VulkanOrderedGuestAction(
+                        action,
+                        debugName,
+                        PublishAllCompletedQueues: true));
         }
     }
 
@@ -5695,7 +5725,10 @@ internal static unsafe class VulkanVideoPresenter
                 return false;
             }
 
-            WriteBackAllDirtyGuestBuffers(_activeGuestQueue.Name);
+            WriteBackAllDirtyGuestBuffers(
+                OrderedGuestActionWritebackPolicy.SelectQueue(
+                    _activeGuestQueue.Name,
+                    work.PublishAllCompletedQueues));
             work.Action();
             if (_traceVulkanShaderEnabled)
             {

@@ -5118,6 +5118,27 @@ public static partial class AgcExports
             ctx.Memory,
             static _ => new SubmittedGpuState());
         EnsureGpuWaitMonitor(ctx, gpuState);
+        var visibilityWaiter = waiter;
+        _ = SubmitWaitVisibilityBarrier(
+            GuestGpu.Current.SubmitGuestMemoryVisibilityAction,
+            () =>
+            {
+                _ = ObserveWaitVisibility(
+                    ctx.Memory,
+                    visibilityWaiter,
+                    (address, read64Bit) =>
+                        read64Bit
+                            ? TryReadUInt64(ctx, address, out var value64)
+                                ? value64
+                                : null
+                            : TryReadUInt32(ctx, address, out var value32)
+                                ? value32
+                                : null);
+                SignalGpuWaitMonitor(gpuState);
+            },
+            waitAddress,
+            state.QueueName,
+            state.ActiveSubmissionId);
         TraceWaitProducerState(
             ctx.Memory,
             waiter,
@@ -5133,6 +5154,59 @@ public static partial class AgcExports
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Inserts a CPU-visibility point at the wait's exact position in its
+    /// logical GPU queue. The backend publishes writable shader buffers before
+    /// invoking <paramref name="signalMonitor"/>, allowing WAIT_REG_MEM to see
+    /// values produced by earlier shaders as well as explicit PM4 label writes.
+    /// The callback does not fabricate or mutate the watched value.
+    /// </summary>
+    internal static long SubmitWaitVisibilityBarrier(
+        Func<Action, string, long> submitOrderedAction,
+        Action signalMonitor,
+        ulong waitAddress,
+        string queueName,
+        ulong submissionId)
+    {
+        var sequence = submitOrderedAction(
+            signalMonitor,
+            $"wait_reg_mem visibility label 0x{waitAddress:X16} " +
+            $"queue {queueName} submission {submissionId}");
+        if (sequence == 0)
+        {
+            signalMonitor();
+        }
+
+        return sequence;
+    }
+
+    /// <summary>
+    /// Samples a WAIT_REG_MEM label synchronously at its ordered GPU visibility
+    /// point and latches satisfaction before another guest queue can recycle
+    /// the label. This records no producer history and never changes memory.
+    /// </summary>
+    internal static bool ObserveWaitVisibility(
+        object memory,
+        in GpuWaitRegistry.WaitingDcb waiter,
+        Func<ulong, bool, ulong?> readValue)
+    {
+        var value = readValue(waiter.WaitAddress, waiter.Is64Bit);
+        return value is { } observed &&
+               GpuWaitRegistry.LatchSatisfiedByValue(
+                   memory,
+                   waiter.WaitAddress,
+                   observed);
+    }
+
+    private static void SignalGpuWaitMonitor(SubmittedGpuState gpuState)
+    {
+        lock (gpuState.WaitMonitorSignalGate)
+        {
+            gpuState.WaitMonitorSignalVersion++;
+            Monitor.Pulse(gpuState.WaitMonitorSignalGate);
+        }
     }
 
     /// <summary>
