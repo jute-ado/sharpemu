@@ -94,7 +94,9 @@ test-driven workflow. Major downstream differences include:
   output validation and rollback when guest scheduling fails
 - process-scoped network teardown that disposes `libSceNet` sockets, releases
   per-thread errno storage, clears pool, resolver, SSL, HTTP/2, template, and
-  NetCtl callback registries, and restarts guest-visible IDs between titles
+  NetCtl callback registries, and restarts guest-visible IDs between titles;
+  bounded HTTP URI parsing supports size queries, guest-owned component pools,
+  default and explicit ports, and transactional output validation
 - audio session teardown that disposes host AudioOut streams, clears the
   presentation-shutdown state, resets AudioOut2, ACM, NGS2, and FMOD compatibility
   registries, and restarts guest-visible audio handles between titles
