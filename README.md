@@ -35,8 +35,8 @@ test-driven workflow. Major downstream differences include:
   require no copyrighted games, firmware, or proprietary assets
 - dimension-correct RDNA image translation and Vulkan resource aliasing,
   including three-coordinate 3D sampling and storage writes, 3D image/view
-  creation, and path-sensitive scalar descriptor evaluation across skipped
-  forward blocks; shader decoding remains bounded while accepting large modern
+  creation, and path-sensitive scalar image and buffer descriptor evaluation
+  across skipped forward blocks; shader decoding remains bounded while accepting large modern
   engine programs beyond the former 4,096-instruction ceiling
 - generated HLE export registration instead of runtime reflection discovery
 - a guest-thread scheduler with callback, synchronization, and lifecycle
