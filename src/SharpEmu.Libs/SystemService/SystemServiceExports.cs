@@ -46,6 +46,20 @@ public static class SystemServiceExports
     }
 
     [SysAbiExport(
+        Nid = "8Lo6Zv94aho",
+        ExportName = "sceSystemServiceDisableNoticeScreenSkipFlagAutoSet",
+        Target = Generation.Gen5,
+        LibraryName = "libSceSystemService")]
+    public static int SystemServiceDisableNoticeScreenSkipFlagAutoSet(CpuContext ctx)
+    {
+        // SharpEmu does not synthesize the platform notice screen, so there is
+        // no automatic skip-flag mutation to disable. The real API is a
+        // parameterless process setting and succeeds when the request is
+        // accepted.
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
         Nid = "4veE0XiIugA",
         ExportName = "sceSystemServiceGetMainAppTitleId",
         Target = Generation.Gen5,
