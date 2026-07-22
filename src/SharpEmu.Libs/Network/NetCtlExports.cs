@@ -178,7 +178,7 @@ public static class NetCtlExports
         return code switch
         {
             NetCtlInfoDevice => WriteUInt32(ctx, infoAddress, NetCtlDeviceWired),
-            NetCtlInfoEtherAddress => WriteZeroBytes(ctx, infoAddress, 6),
+            NetCtlInfoEtherAddress => WriteBytes(ctx, infoAddress, NetworkIdentity.EtherAddress),
             NetCtlInfoMtu => WriteUInt32(ctx, infoAddress, 1500),
             NetCtlInfoLink => WriteUInt32(ctx, infoAddress, NetCtlLinkDisconnected),
             NetCtlInfoIpConfig => WriteUInt32(ctx, infoAddress, NetCtlIpConfigStatic),
@@ -196,9 +196,8 @@ public static class NetCtlExports
         };
     }
 
-    private static int WriteZeroBytes(CpuContext ctx, ulong address, int count)
+    private static int WriteBytes(CpuContext ctx, ulong address, ReadOnlySpan<byte> bytes)
     {
-        Span<byte> bytes = stackalloc byte[count];
         return ctx.Memory.TryWrite(address, bytes)
             ? ctx.SetReturn(0, typeof(long))
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, typeof(long));
