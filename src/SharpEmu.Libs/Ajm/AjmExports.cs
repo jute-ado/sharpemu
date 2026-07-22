@@ -18,6 +18,10 @@ public static class AjmExports
     private const int CodecAlreadyRegistered = unchecked((int)0x80930009);
     private const int CodecNotRegistered = unchecked((int)0x8093000A);
     private const int WrongRevisionFlag = unchecked((int)0x8093000B);
+    private const int JobCreationError = unchecked((int)0x80930012);
+    private const int BatchInfoSize = 0x28;
+    private const int StatisticsJobSize = 0x58;
+    private const int StatisticsResultSize = 0x30;
     private const uint MaxCodecTypeExclusive = 25;
     private const int MaxInstanceIndex = 0x2FFF;
     private static readonly ConcurrentDictionary<uint, AjmContextState> Contexts = new();
@@ -290,11 +294,86 @@ public static class AjmExports
         LibraryName = "libSceAjm")]
     public static int AjmBatchInitialize(CpuContext ctx)
     {
-        // The caller owns and initializes the batch storage. This API resets
-        // its submission cursor on hardware; FMOD does not consume a return
-        // value or an additional output object here.
-        ctx[CpuRegister.Rax] = 0;
-        return 0;
+        var bufferAddress = ctx[CpuRegister.Rdi];
+        var bufferSize = ctx[CpuRegister.Rsi];
+        var infoAddress = ctx[CpuRegister.Rdx];
+        if (bufferAddress == 0 || bufferSize == 0 || infoAddress == 0 ||
+            !GuestAddress.IsRangeValid(bufferAddress, bufferSize))
+        {
+            return ctx.SetReturn(InvalidInstanceParameter);
+        }
+
+        Span<byte> info = stackalloc byte[BatchInfoSize];
+        info.Clear();
+        BinaryPrimitives.WriteUInt64LittleEndian(info[0x00..], bufferAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(info[0x10..], bufferSize);
+        return ctx.Memory.TryWrite(infoAddress, info)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    [SysAbiExport(
+        Nid = "3cAg7xN995U",
+        ExportName = "sceAjmBatchJobGetStatistics",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceAjm")]
+    public static int AjmBatchJobGetStatistics(CpuContext ctx)
+    {
+        var infoAddress = ctx[CpuRegister.Rdi];
+        var resultAddress = ctx[CpuRegister.Rsi];
+        if (infoAddress == 0)
+        {
+            return ctx.SetReturn(InvalidInstanceParameter);
+        }
+
+        Span<byte> info = stackalloc byte[BatchInfoSize];
+        if (!ctx.Memory.TryRead(infoAddress, info))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var bufferAddress = BinaryPrimitives.ReadUInt64LittleEndian(info[0x00..]);
+        var offset = BinaryPrimitives.ReadUInt64LittleEndian(info[0x08..]);
+        var bufferSize = BinaryPrimitives.ReadUInt64LittleEndian(info[0x10..]);
+
+        Span<byte> result = stackalloc byte[StatisticsResultSize];
+        result.Clear();
+        if (resultAddress != 0 && !ctx.Memory.TryWrite(resultAddress, result))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (bufferAddress == 0 || offset > bufferSize ||
+            (ulong)StatisticsJobSize > bufferSize - offset ||
+            !GuestAddress.TryAdd(bufferAddress, offset, out var jobAddress) ||
+            !GuestAddress.IsRangeValid(jobAddress, StatisticsJobSize))
+        {
+            return ctx.SetReturn(JobCreationError);
+        }
+
+        Span<byte> job = stackalloc byte[StatisticsJobSize];
+        job.Clear();
+        if (!ctx.Memory.TryWrite(jobAddress, job))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            info[0x08..],
+            offset + StatisticsJobSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(info[0x18..], jobAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(info[0x20..], 0);
+        if (!ctx.Memory.TryWrite(infoAddress, info))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        ctx.GetXmmRegister(0, out var intervalBits, out _);
+        Trace(
+            $"batch_job_get_statistics info=0x{infoAddress:X16} " +
+            $"interval={BitConverter.UInt32BitsToSingle(unchecked((uint)intervalBits)):R} " +
+            $"result=0x{resultAddress:X16} job=0x{jobAddress:X16}");
+        return ctx.SetReturn(0);
     }
 
     internal static void ResetRuntimeState()
