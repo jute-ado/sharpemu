@@ -373,6 +373,8 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 
 	private RecentImportTraceBuffer? _recentImportTrace;
 
+	private ImportFailureContextTrace? _importFailureContextTrace;
+
 	private readonly DeferredBootstrapTraceEntry[] _deferredBootstrapTrace = new DeferredBootstrapTraceEntry[32];
 
 	private int _deferredBootstrapTraceCount;
@@ -1193,13 +1195,17 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_SETUP"));
 		_logImportFrames = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_FRAMES"), "1", StringComparison.Ordinal);
 		_logImportRecent = string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_LOG_IMPORT_RECENT"), "1", StringComparison.Ordinal);
+		_importFailureContextTrace = new ImportFailureContextTrace(
+			Environment.GetEnvironmentVariable("SHARPEMU_TRACE_IMPORT_FAILURE_CONTEXT"));
 		_profileImports = string.Equals(
 			Environment.GetEnvironmentVariable("SHARPEMU_PROFILE_IMPORTS"),
 			"1",
 			StringComparison.Ordinal);
 		var importTraceCapacity = executionOptions.ImportTraceLimit > 0
 			? Math.Min(executionOptions.ImportTraceLimit, 4096)
-			: _logImportRecent ? 64 : 0;
+			: _logImportRecent || _importFailureContextTrace.Enabled
+				? ImportFailureContextTrace.DefaultTraceCapacity
+				: 0;
 		_recentImportTrace = importTraceCapacity == 0
 			? null
 			: new RecentImportTraceBuffer(importTraceCapacity);
