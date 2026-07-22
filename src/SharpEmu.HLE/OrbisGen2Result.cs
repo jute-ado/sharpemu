@@ -33,7 +33,7 @@ public enum OrbisGen2Result : int
     /// <summary>
     /// Indicates that an item already exists.
     /// </summary>
-    ORBIS_GEN2_ERROR_ALREADY_EXISTS = unchecked((int)0x80020004),
+    ORBIS_GEN2_ERROR_ALREADY_EXISTS = unchecked((int)0x80020011),
 
     /// <summary>
     /// Indicates that completing the operation would deadlock.
