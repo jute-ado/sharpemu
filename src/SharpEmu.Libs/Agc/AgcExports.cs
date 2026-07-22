@@ -3146,6 +3146,17 @@ public static partial class AgcExports
     }
 
     [SysAbiExport(
+        Nid = "Ddwk4gLT5j0",
+        ExportName = "sceAgcDriverIsCaptureInProgress",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgcDriver")]
+    public static int DriverIsCaptureInProgress(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = 0;
+        return 0;
+    }
+
+    [SysAbiExport(
         Nid = "UglJIZjGssM",
         ExportName = "sceAgcDriverSubmitDcb",
         Target = Generation.Gen5,
