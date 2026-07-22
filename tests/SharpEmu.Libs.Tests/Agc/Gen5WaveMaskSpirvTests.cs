@@ -26,6 +26,23 @@ public sealed class Gen5WaveMaskSpirvTests
     private const ulong ShaderAddress = 0x1_0000_0000;
 
     [Fact]
+    public void LaneShuffleDeclaresBallotCapabilityUsedByWaveInitialization()
+    {
+        var spirv = Compile(
+            [0xD7600005u, 0x02000501u],
+            waveLaneCount: 64);
+
+        Assert.True(
+            ContainsInstruction(spirv, SpirvOp.GroupNonUniformBallot),
+            "wave64 lane shuffle should emit a subgroup ballot");
+        Assert.True(
+            ContainsCapability(
+                spirv,
+                SpirvCapability.GroupNonUniformBallot),
+            "the emitted subgroup ballot requires its SPIR-V capability");
+    }
+
+    [Fact]
     public void WaveMaskPredicate_IsTestedAtCurrentLaneBit()
     {
         // V_CMP_EQ_F32 vcc, v0, v1 writes VCC at run time, which re-materialises
@@ -87,6 +104,36 @@ public sealed class Gen5WaveMaskSpirvTests
         return false;
     }
 
+    private static bool ContainsInstruction(byte[] spirv, SpirvOp expected)
+    {
+        foreach (var (op, _, _) in EnumerateInstructions(spirv))
+        {
+            if (op == (ushort)expected)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ContainsCapability(
+        byte[] spirv,
+        SpirvCapability expected)
+    {
+        foreach (var (op, wordCount, offset) in EnumerateInstructions(spirv))
+        {
+            if (op == (ushort)SpirvOp.Capability &&
+                wordCount >= 2 &&
+                ReadWord(spirv, offset + sizeof(uint)) == (uint)expected)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static IEnumerable<(ushort Op, int WordCount, int Offset)> EnumerateInstructions(
         byte[] spirv)
     {
@@ -108,7 +155,7 @@ public sealed class Gen5WaveMaskSpirvTests
     private static uint ReadWord(byte[] spirv, int offset) =>
         BinaryPrimitives.ReadUInt32LittleEndian(spirv.AsSpan(offset, sizeof(uint)));
 
-    private static byte[] Compile(uint[] programWords)
+    private static byte[] Compile(uint[] programWords, uint waveLaneCount = 32)
     {
         var memory = new FakeCpuMemory(ShaderAddress, 0x2000);
         var ctx = new CpuContext(memory, Generation.Gen5);
@@ -133,7 +180,14 @@ public sealed class Gen5WaveMaskSpirvTests
             error);
         Assert.True(
             Gen5SpirvTranslator.TryCompileComputeShader(
-                state, evaluation, 1, 1, 1, out var shader, out error),
+                state,
+                evaluation,
+                waveLaneCount == 64 ? 64u : 1u,
+                1,
+                1,
+                out var shader,
+                out error,
+                waveLaneCount: waveLaneCount),
             error);
         return shader.Spirv;
     }

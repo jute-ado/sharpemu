@@ -708,7 +708,9 @@ public static partial class Gen5SpirvTranslator
                     _module.AddCapability(SpirvCapability.GroupNonUniformVote);
                 }
 
-                if (UsesSubgroupBroadcast() || UsesWaveControl())
+                if (_emulateWave64 ||
+                    UsesSubgroupBroadcast() ||
+                    UsesWaveControl())
                 {
                     _module.AddCapability(SpirvCapability.GroupNonUniformBallot);
                 }
