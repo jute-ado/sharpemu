@@ -62,6 +62,25 @@ public sealed class LibcMemoryCopyTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void CopyUsesAllocationFreeMemoryFastPath(bool move)
+    {
+        var memory = new DirectCopyMemory();
+        var context = CreateContext(memory, BufferAddress + 2, BufferAddress, 4);
+
+        var result = move
+            ? KernelMemoryCompatExports.Memmove(context)
+            : KernelMemoryCompatExports.Memcpy(context);
+
+        Assert.Equal(0, result);
+        Assert.Equal(1, memory.CopyCount);
+        Assert.Equal(new byte[] { 1, 2, 1, 2, 3, 4 }, memory.Bytes);
+        Assert.Equal(0, memory.ReadCount);
+        Assert.Equal(0, memory.WriteCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void Huge64BitCountReturnsGuestFaultWithoutHostAllocation(bool move)
     {
         var context = CreateContext(
@@ -145,6 +164,44 @@ public sealed class LibcMemoryCopyTests
         {
             LargestWrite = Math.Max(LargestWrite, source.Length);
             return source.Length <= maxTransferSize && inner.TryWrite(virtualAddress, source);
+        }
+    }
+
+    private sealed class DirectCopyMemory : ICpuMemory
+    {
+        public byte[] Bytes { get; } = [1, 2, 3, 4, 5, 6];
+
+        public int CopyCount { get; private set; }
+
+        public int ReadCount { get; private set; }
+
+        public int WriteCount { get; private set; }
+
+        public bool TryCopy(ulong destinationAddress, ulong sourceAddress, ulong length)
+        {
+            CopyCount++;
+            if (destinationAddress < BufferAddress || sourceAddress < BufferAddress ||
+                length > int.MaxValue)
+            {
+                return false;
+            }
+
+            var destination = checked((int)(destinationAddress - BufferAddress));
+            var source = checked((int)(sourceAddress - BufferAddress));
+            Bytes.AsSpan(source, checked((int)length)).CopyTo(Bytes.AsSpan(destination));
+            return true;
+        }
+
+        public bool TryRead(ulong virtualAddress, Span<byte> destination)
+        {
+            ReadCount++;
+            return false;
+        }
+
+        public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source)
+        {
+            WriteCount++;
+            return false;
         }
     }
 }
