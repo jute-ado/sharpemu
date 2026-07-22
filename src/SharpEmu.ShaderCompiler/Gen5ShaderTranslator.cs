@@ -81,7 +81,11 @@ public static class Gen5ShaderTranslator
         (mask[register >> 6] &
          (1UL << (int)(register & 63))) != 0;
 
-    private const int MaxInstructions = 4096;
+    // Shader binaries emitted by modern engines can exceed the original
+    // 4,096-instruction guard (Bomberman's UE renderer has one such compute
+    // program). Keep decoding bounded, but allow a 64 KiB stream of common
+    // one-dword instructions before treating the program as unterminated.
+    private const int MaxInstructions = 16384;
     private const int MinimumUserDataDwords = 16;
     private const int MaximumUserDataDwords = 256;
     private static readonly ConditionalWeakTable<object, ShaderDecodeCache> _decodeCaches = new();
