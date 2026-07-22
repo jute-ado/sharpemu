@@ -16,4 +16,5 @@ public sealed record CpuImportTraceEntry(
     ulong Arg3,
     ulong Arg4,
     ulong Arg5,
-    ulong? ReturnValue);
+    ulong? ReturnValue,
+    string? ModuleName = null);

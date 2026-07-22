@@ -60,6 +60,12 @@ public sealed class SelfLoader : ISelfLoader
     private const long DtSceStrSize = 0x61000037;
     private const long DtSceSymTab = 0x61000039;
     private const long DtSceSymTabSize = 0x6100003F;
+    private const long DtSceNeededModule = 0x6100000F;
+    private const long DtSceImportLibrary = 0x61000015;
+    private const long DtScePs5NeededModule = 0x61000045;
+    private const long DtScePs5ImportLibrary = 0x61000049;
+    private const string EncodedImportIdAlphabet =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-";
 
     private const uint RelocationTypeAbsolute64 = 1;
     private const uint RelocationTypeGlobalData = 6;
@@ -1128,6 +1134,13 @@ public sealed class SelfLoader : ISelfLoader
             }
         }
 
+        var importLibraries = ResolveDynamicImportNames(
+            dynamicInfo.ImportLibraries,
+            stringTable);
+        var importModules = ResolveDynamicImportNames(
+            dynamicInfo.ImportModules,
+            stringTable);
+
         var descriptors = new List<RelocationDescriptor>(256);
         var orderedImportNids = new List<string>(128);
         var seenImportNids = new HashSet<string>(StringComparer.Ordinal);
@@ -1142,7 +1155,9 @@ public sealed class SelfLoader : ISelfLoader
             descriptors,
             orderedImportNids,
             seenImportNids,
-            unsupportedTypes);
+            unsupportedTypes,
+            importLibraries,
+            importModules);
 
         if (descriptors.Count == 0)
         {
@@ -1156,7 +1171,9 @@ public sealed class SelfLoader : ISelfLoader
                 descriptors,
                 orderedImportNids,
                 seenImportNids,
-                unsupportedTypes);
+                unsupportedTypes,
+                importLibraries,
+                importModules);
             if (sectionFallbackRelocCount != 0)
             {
                 Console.WriteLine(
@@ -1269,7 +1286,9 @@ public sealed class SelfLoader : ISelfLoader
         ICollection<RelocationDescriptor> descriptors,
         IList<string> orderedImportNids,
         ISet<string> seenImportNids,
-        ISet<uint> unsupportedRelocationTypes)
+        ISet<uint> unsupportedRelocationTypes,
+        IReadOnlyDictionary<string, string> importLibraries,
+        IReadOnlyDictionary<string, string> importModules)
     {
         if (elfHeader.SectionHeaderOffset == 0 ||
             elfHeader.SectionHeaderCount == 0 ||
@@ -1325,7 +1344,9 @@ public sealed class SelfLoader : ISelfLoader
                 descriptors,
                 orderedImportNids,
                 seenImportNids,
-                unsupportedRelocationTypes);
+                unsupportedRelocationTypes,
+                importLibraries,
+                importModules);
             appendedRelocations += relocations.Count;
         }
 
@@ -1342,7 +1363,9 @@ public sealed class SelfLoader : ISelfLoader
         ICollection<RelocationDescriptor> descriptors,
         IList<string> orderedImportNids,
         ISet<string> seenImportNids,
-        ISet<uint> unsupportedRelocationTypes)
+        ISet<uint> unsupportedRelocationTypes,
+        IReadOnlyDictionary<string, string> importLibraries,
+        IReadOnlyDictionary<string, string> importModules)
     {
         foreach (var relocation in relocations)
         {
@@ -1501,7 +1524,11 @@ public sealed class SelfLoader : ISelfLoader
                 continue;
             }
 
-            var nid = ExtractNid(symbolName);
+            var importIdentity = ResolveImportIdentity(
+                symbolName,
+                importLibraries,
+                importModules);
+            var nid = importIdentity.Nid;
             if (string.IsNullOrWhiteSpace(nid))
             {
                 continue;
@@ -1518,7 +1545,10 @@ public sealed class SelfLoader : ISelfLoader
                 nid,
                 0,
                 RelocationValueKind.Pointer,
-                IsDataImport: GetSymbolType(symbol.Info) == SymbolTypeObject));
+                GetSymbolType(symbol.Info) == SymbolTypeObject,
+                importIdentity.LibraryName,
+                importIdentity.ModuleName,
+                symbolName));
         }
     }
 
@@ -1709,7 +1739,10 @@ public sealed class SelfLoader : ISelfLoader
                 descriptor.TargetAddress,
                 descriptor.Addend,
                 descriptor.ImportNid,
-                descriptor.IsDataImport));
+                descriptor.IsDataImport,
+                descriptor.ImportLibraryName,
+                descriptor.ImportModuleName,
+                descriptor.ImportSymbolName));
         }
 
         return importedRelocations.Count == 0
@@ -2181,6 +2214,8 @@ public sealed class SelfLoader : ISelfLoader
         ulong initArraySize = 0;
         ulong preInitArrayOffset = 0;
         ulong preInitArraySize = 0;
+        List<DynamicImportReference>? importLibraries = null;
+        List<DynamicImportReference>? importModules = null;
 
         for (var offset = 0; offset + DynamicEntrySize <= dynamicTable.Length; offset += DynamicEntrySize)
         {
@@ -2308,6 +2343,14 @@ public sealed class SelfLoader : ISelfLoader
                 case DtScePltRelSize:
                     jmpRelSize = value;
                     break;
+                case DtSceImportLibrary:
+                case DtScePs5ImportLibrary:
+                    (importLibraries ??= []).Add(ReadDynamicImportReference(value));
+                    break;
+                case DtSceNeededModule:
+                case DtScePs5NeededModule:
+                    (importModules ??= []).Add(ReadDynamicImportReference(value));
+                    break;
             }
         }
 
@@ -2325,7 +2368,58 @@ public sealed class SelfLoader : ISelfLoader
             initArrayOffset,
             initArraySize,
             preInitArrayOffset,
-            preInitArraySize);
+            preInitArraySize,
+            importLibraries?.ToArray() ?? Array.Empty<DynamicImportReference>(),
+            importModules?.ToArray() ?? Array.Empty<DynamicImportReference>());
+    }
+
+    private static DynamicImportReference ReadDynamicImportReference(ulong value) =>
+        new((ushort)(value >> 48), (uint)value);
+
+    private static IReadOnlyDictionary<string, string> ResolveDynamicImportNames(
+        IReadOnlyList<DynamicImportReference> references,
+        ReadOnlySpan<byte> stringTable)
+    {
+        if (references.Count == 0 || stringTable.IsEmpty)
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        var names = new Dictionary<string, string>(references.Count, StringComparer.Ordinal);
+        foreach (var reference in references)
+        {
+            if (!TryReadNullTerminatedAscii(stringTable, reference.NameOffset, out var name) ||
+                string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            names[EncodeImportId(reference.Id)] = name;
+        }
+
+        return names;
+    }
+
+    private static string EncodeImportId(ushort value)
+    {
+        Span<char> encoded = stackalloc char[3];
+        if (value < 0x40)
+        {
+            encoded[0] = EncodedImportIdAlphabet[value];
+            return new string(encoded[..1]);
+        }
+
+        if (value < 0x1000)
+        {
+            encoded[0] = EncodedImportIdAlphabet[(value >> 6) & 0x3F];
+            encoded[1] = EncodedImportIdAlphabet[value & 0x3F];
+            return new string(encoded[..2]);
+        }
+
+        encoded[0] = EncodedImportIdAlphabet[(value >> 12) & 0x3F];
+        encoded[1] = EncodedImportIdAlphabet[(value >> 6) & 0x3F];
+        encoded[2] = EncodedImportIdAlphabet[value & 0x3F];
+        return new string(encoded);
     }
 
     private static bool IsSupportedRelocationType(uint relocationType)
@@ -2772,6 +2866,54 @@ public sealed class SelfLoader : ISelfLoader
         return separator <= 0 ? symbolName : symbolName[..separator];
     }
 
+    private static (
+        string Nid,
+        string? LibraryName,
+        string? ModuleName) ResolveImportIdentity(
+            string symbolName,
+            IReadOnlyDictionary<string, string> importLibraries,
+            IReadOnlyDictionary<string, string> importModules)
+    {
+        var nid = ExtractNid(symbolName);
+        var firstSeparator = symbolName.IndexOf('#');
+        if (firstSeparator < 0 || firstSeparator == symbolName.Length - 1)
+        {
+            return (nid, null, null);
+        }
+
+        var secondSeparator = symbolName.IndexOf('#', firstSeparator + 1);
+        var libraryQualifier = secondSeparator < 0
+            ? symbolName[(firstSeparator + 1)..]
+            : symbolName[(firstSeparator + 1)..secondSeparator];
+        var moduleQualifier = secondSeparator < 0 || secondSeparator == symbolName.Length - 1
+            ? null
+            : symbolName[(secondSeparator + 1)..];
+
+        return (
+            nid,
+            ResolveImportQualifier(libraryQualifier, importLibraries),
+            ResolveImportQualifier(moduleQualifier, importModules));
+    }
+
+    private static string? ResolveImportQualifier(
+        string? qualifier,
+        IReadOnlyDictionary<string, string> names)
+    {
+        if (string.IsNullOrWhiteSpace(qualifier))
+        {
+            return null;
+        }
+
+        if (names.TryGetValue(qualifier, out var resolvedName))
+        {
+            return resolvedName;
+        }
+
+        return qualifier.StartsWith("lib", StringComparison.Ordinal)
+            ? qualifier
+            : null;
+    }
+
     private static bool TryWriteUInt64(IVirtualMemory virtualMemory, ulong address, ulong value)
     {
         Span<byte> buffer = stackalloc byte[sizeof(ulong)];
@@ -3059,7 +3201,9 @@ public sealed class SelfLoader : ISelfLoader
         ulong InitArrayOffset,
         ulong InitArraySize,
         ulong PreInitArrayOffset,
-        ulong PreInitArraySize)
+        ulong PreInitArraySize,
+        IReadOnlyList<DynamicImportReference> ImportLibraries,
+        IReadOnlyList<DynamicImportReference> ImportModules)
     {
         public bool HasImportMetadata =>
             StrTabOffset != 0 &&
@@ -3067,6 +3211,10 @@ public sealed class SelfLoader : ISelfLoader
             SymTabOffset != 0 &&
             (RelaSize != 0 || JmpRelSize != 0);
     }
+
+    private readonly record struct DynamicImportReference(
+        ushort Id,
+        uint NameOffset);
 
     private readonly record struct ElfSectionHeader(
         uint NameOffset,
@@ -3108,7 +3256,10 @@ public sealed class SelfLoader : ISelfLoader
         string? ImportNid,
         ulong SymbolValue,
         RelocationValueKind ValueKind,
-        bool IsDataImport);
+        bool IsDataImport,
+        string? ImportLibraryName = null,
+        string? ImportModuleName = null,
+        string? ImportSymbolName = null);
 
     private enum SelfSegmentResolveStatus
     {

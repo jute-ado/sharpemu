@@ -11,7 +11,8 @@ public readonly struct CpuNotImplementedInfo
         string? nid,
         string? exportName,
         string? libraryName,
-        string? detail)
+        string? detail,
+        string? moduleName = null)
     {
         Source = source;
         InstructionPointer = instructionPointer;
@@ -19,6 +20,7 @@ public readonly struct CpuNotImplementedInfo
         ExportName = exportName;
         LibraryName = libraryName;
         Detail = detail;
+        ModuleName = moduleName;
     }
 
     public CpuNotImplementedSource Source { get; }
@@ -32,4 +34,6 @@ public readonly struct CpuNotImplementedInfo
     public string? LibraryName { get; }
 
     public string? Detail { get; }
+
+    public string? ModuleName { get; }
 }

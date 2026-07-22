@@ -120,7 +120,9 @@ test-driven workflow. Major downstream differences include:
   semantics and deterministic handle allocation for the next process
 - application plugin discovery and symbol resolution, including deferred module
   initializers that start once and can be retried after a guest failure, with
-  sysmodule loaded state kept in the canonical per-session module registry
+  sysmodule loaded state kept in the canonical per-session module registry;
+  PS5 dynamic import-library and needed-module IDs are decoded and retained in
+  load-only reports, structured import traces, and unresolved-import diagnostics
 - persistent save-data mutations, including quota-aware mount information,
   retry-safe and mode-aware lifecycle events, bounded atomic icon writes, and
   size-reporting icon loads through mounted guest paths, with canonical

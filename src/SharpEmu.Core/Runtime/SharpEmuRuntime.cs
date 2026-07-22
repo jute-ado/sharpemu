@@ -233,8 +233,16 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         {
             Log.Error($"Initializer dispatch failed: {failedInitializerResult}");
             CaptureCpuOutcome();
+            if (LastCpuNotImplementedInfo is { } capturedInitializerNotImplemented)
+            {
+                LastCpuNotImplementedInfo = EnrichNotImplementedInfo(
+                    capturedInitializerNotImplemented,
+                    preparedApplication);
+            }
             LastExecutionTrace = _cpuDispatcher.LastImportResolutionTrace;
-            LastExecutionTraceEntries = _cpuDispatcher.LastImportTraceEntries;
+            LastExecutionTraceEntries = EnrichImportTraceEntries(
+                _cpuDispatcher.LastImportTraceEntries,
+                preparedApplication);
             LastMilestoneLog = _cpuDispatcher.LastMilestoneLog;
             LastSessionSummary = BuildSessionSummary(_cpuDispatcher.LastSessionSummary);
             LastBasicBlockTrace = _cpuDispatcher.LastBasicBlockTrace;
@@ -256,8 +264,16 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         Log.Info($"DispatchEntry returned: {result}");
         Log.Info($"Dispatch result: {result}");
         CaptureCpuOutcome();
+        if (LastCpuNotImplementedInfo is { } capturedNotImplemented)
+        {
+            LastCpuNotImplementedInfo = EnrichNotImplementedInfo(
+                capturedNotImplemented,
+                preparedApplication);
+        }
         LastExecutionTrace = _cpuDispatcher.LastImportResolutionTrace;
-        LastExecutionTraceEntries = _cpuDispatcher.LastImportTraceEntries;
+        LastExecutionTraceEntries = EnrichImportTraceEntries(
+            _cpuDispatcher.LastImportTraceEntries,
+            preparedApplication);
         LastMilestoneLog = _cpuDispatcher.LastMilestoneLog;
         LastSessionSummary = BuildSessionSummary(_cpuDispatcher.LastSessionSummary);
         LastBasicBlockTrace = _cpuDispatcher.LastBasicBlockTrace;
@@ -407,7 +423,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             LastExecutionDiagnostics =
                 $"Memory fault at RIP=0x{faultInfo.InstructionPointer:X16}, opcode={opcodeText}{decodedFaultText}, {accessType}@0x{faultInfo.Access.Address:X16} size={faultInfo.Access.Size}, import_stubs={activeImportStubs.Count}{ripStubText}{transferText}";
         }
-        else if (result == OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_IMPLEMENTED && _cpuDispatcher.LastNotImplementedInfo is { } notImplementedInfo)
+        else if (result == OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_IMPLEMENTED && LastCpuNotImplementedInfo is { } notImplementedInfo)
         {
             var inferredNid = notImplementedInfo.Nid;
             var decodedNotImplementedText = TryDecodeInstructionAt(notImplementedInfo.InstructionPointer, out var notImplementedInstruction)
@@ -435,6 +451,9 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             var nidText = string.IsNullOrWhiteSpace(inferredNid) ? "?" : inferredNid;
             var exportText = string.IsNullOrWhiteSpace(inferredExportName) ? "?" : inferredExportName;
             var libraryText = string.IsNullOrWhiteSpace(inferredLibraryName) ? "?" : inferredLibraryName;
+            var moduleText = string.IsNullOrWhiteSpace(notImplementedInfo.ModuleName)
+                ? "?"
+                : notImplementedInfo.ModuleName;
             var detailText = string.IsNullOrWhiteSpace(notImplementedInfo.Detail) ? string.Empty : $", detail={notImplementedInfo.Detail}";
             var transferText = string.Empty;
             if (_cpuDispatcher.LastControlTransferInfo is { } transferInfo)
@@ -463,11 +482,120 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 aerolibText = $", aerolib_export={symbolByNid.ExportName}";
             }
 
+            LastCpuNotImplementedInfo = new CpuNotImplementedInfo(
+                notImplementedInfo.Source,
+                notImplementedInfo.InstructionPointer,
+                inferredNid,
+                inferredExportName,
+                inferredLibraryName,
+                notImplementedInfo.Detail,
+                notImplementedInfo.ModuleName);
             LastExecutionDiagnostics =
-                $"Not implemented: source={notImplementedInfo.Source}, rip=0x{notImplementedInfo.InstructionPointer:X16}{decodedNotImplementedText}, nid={nidText}, export={exportText}, library={libraryText}, import_stubs={activeImportStubs.Count}{ripStubText}{aerolibText}{detailText}{transferText}";
+                $"Not implemented: source={notImplementedInfo.Source}, rip=0x{notImplementedInfo.InstructionPointer:X16}{decodedNotImplementedText}, nid={nidText}, export={exportText}, library={libraryText}, module={moduleText}, import_stubs={activeImportStubs.Count}{ripStubText}{aerolibText}{detailText}{transferText}";
         }
 
         return result;
+    }
+
+    internal static CpuNotImplementedInfo EnrichNotImplementedInfo(
+        CpuNotImplementedInfo notImplementedInfo,
+        PreparedApplication application)
+    {
+        ArgumentNullException.ThrowIfNull(application);
+        if (string.IsNullOrWhiteSpace(notImplementedInfo.Nid))
+        {
+            return notImplementedInfo;
+        }
+
+        if (TryFindImportedSymbol(
+                application,
+                notImplementedInfo.Nid,
+                out var relocation))
+        {
+            return new CpuNotImplementedInfo(
+                notImplementedInfo.Source,
+                notImplementedInfo.InstructionPointer,
+                notImplementedInfo.Nid,
+                notImplementedInfo.ExportName,
+                string.IsNullOrWhiteSpace(notImplementedInfo.LibraryName)
+                    ? relocation.LibraryName
+                    : notImplementedInfo.LibraryName,
+                notImplementedInfo.Detail,
+                string.IsNullOrWhiteSpace(notImplementedInfo.ModuleName)
+                    ? relocation.ModuleName
+                    : notImplementedInfo.ModuleName);
+        }
+
+        return notImplementedInfo;
+    }
+
+    internal static IReadOnlyList<CpuImportTraceEntry>? EnrichImportTraceEntries(
+        IReadOnlyList<CpuImportTraceEntry>? entries,
+        PreparedApplication application)
+    {
+        ArgumentNullException.ThrowIfNull(application);
+        if (entries is null)
+        {
+            return null;
+        }
+
+        if (entries.Count == 0)
+        {
+            return entries;
+        }
+
+        var enriched = new CpuImportTraceEntry[entries.Count];
+        for (var index = 0; index < entries.Count; index++)
+        {
+            var entry = entries[index];
+            if (TryFindImportedSymbol(application, entry.Nid, out var relocation))
+            {
+                entry = entry with
+                {
+                    LibraryName = string.IsNullOrWhiteSpace(entry.LibraryName)
+                        ? relocation.LibraryName
+                        : entry.LibraryName,
+                    ModuleName = string.IsNullOrWhiteSpace(entry.ModuleName)
+                        ? relocation.ModuleName
+                        : entry.ModuleName,
+                };
+            }
+
+            enriched[index] = entry;
+        }
+
+        return enriched;
+    }
+
+    private static bool TryFindImportedSymbol(
+        PreparedApplication application,
+        string nid,
+        out ImportedSymbolRelocation importedSymbol)
+    {
+        foreach (var image in EnumeratePreparedImages(application))
+        {
+            foreach (var relocation in image.ImportedRelocations)
+            {
+                if (string.Equals(relocation.Nid, nid, StringComparison.Ordinal))
+                {
+                    importedSymbol = relocation;
+                    return true;
+                }
+            }
+        }
+
+        importedSymbol = default;
+        return false;
+    }
+
+    private static IEnumerable<SelfImage> EnumeratePreparedImages(
+        PreparedApplication application)
+    {
+        yield return application.MainImage;
+        foreach (var module in application.Modules)
+        {
+            yield return module.Image;
+        }
     }
 
     private void CaptureCpuOutcome()

@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using SharpEmu.Core.Cpu;
 using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
+using SharpEmu.Core.Runtime;
 using SharpEmu.HLE;
 using Xunit;
 
@@ -27,6 +28,8 @@ public sealed class SelfLoaderTests
     private const long DynamicTagRela = 0x07;
     private const long DynamicTagRelaSize = 0x08;
     private const long DynamicTagStringTableSize = 0x0A;
+    private const long DynamicTagPs5NeededModule = 0x61000045;
+    private const long DynamicTagPs5ImportLibrary = 0x61000049;
     private const int ElfRelocationSize = 24;
     private const uint Absolute64RelocationType = 1;
     private const uint RelativeRelocationType = 8;
@@ -993,7 +996,7 @@ public sealed class SelfLoaderTests
             originalTargetValue,
             symbolBinding,
             symbolType: 0,
-            symbolValue: 0x200,
+            symbolValue: 0x400,
             symbolName: string.Empty,
             addend: 0);
         var memory = new VirtualMemory();
@@ -1035,6 +1038,94 @@ public sealed class SelfLoaderTests
         Assert.Equal(addend, importedRelocation.Addend);
         Assert.Equal(nid, importedRelocation.Nid);
         Assert.Equal(expectedDataImport, importedRelocation.IsData);
+        Assert.Equal("libSceSynthetic", importedRelocation.LibraryName);
+        Assert.Null(importedRelocation.ModuleName);
+        Assert.Equal($"{nid}#libSceSynthetic", importedRelocation.SymbolName);
+    }
+
+    [Fact]
+    public void ResolvesPs5EncodedImportLibraryAndModuleNames()
+    {
+        const string nid = "kP2L8t3j-aM";
+        var elf = CreateElfWithSymbolRelocation(
+            originalTargetValue: 0,
+            symbolBinding: 1,
+            symbolType: 2,
+            symbolValue: 0,
+            symbolName: $"{nid}#4#y",
+            addend: 0,
+            importLibraryId: 56,
+            importLibraryName: "libSceVideoOutVrrStatus",
+            importModuleId: 50,
+            importModuleName: "libSceVideoOut");
+
+        var image = new SelfLoader().Load(elf, new VirtualMemory());
+
+        var relocation = Assert.Single(image.ImportedRelocations);
+        Assert.Equal(nid, relocation.Nid);
+        Assert.Equal("libSceVideoOutVrrStatus", relocation.LibraryName);
+        Assert.Equal("libSceVideoOut", relocation.ModuleName);
+        Assert.Equal($"{nid}#4#y", relocation.SymbolName);
+    }
+
+    [Fact]
+    public void EnrichesUnresolvedImportDiagnosticsFromLoaderMetadata()
+    {
+        const string nid = "kP2L8t3j-aM";
+        var elf = CreateElfWithSymbolRelocation(
+            originalTargetValue: 0,
+            symbolBinding: 1,
+            symbolType: 2,
+            symbolValue: 0,
+            symbolName: $"{nid}#4#y",
+            addend: 0,
+            importLibraryId: 56,
+            importLibraryName: "libSceVideoOutVrrStatus",
+            importModuleId: 50,
+            importModuleName: "libSceVideoOut");
+        var image = new SelfLoader().Load(elf, new VirtualMemory());
+        var application = new PreparedApplication(
+            image,
+            [],
+            [],
+            [],
+            Generation.Gen5,
+            image.ImportStubs,
+            image.RuntimeSymbols,
+            "eboot.bin");
+        var unresolved = new CpuNotImplementedInfo(
+            CpuNotImplementedSource.NativeBackend,
+            Assert.Single(image.ImportStubs).Key,
+            nid,
+            exportName: null,
+            libraryName: null,
+            detail: "unresolved import");
+
+        var enriched = SharpEmuRuntime.EnrichNotImplementedInfo(
+            unresolved,
+            application);
+
+        Assert.Equal("libSceVideoOutVrrStatus", enriched.LibraryName);
+        Assert.Equal("libSceVideoOut", enriched.ModuleName);
+
+        var trace = Assert.Single(SharpEmuRuntime.EnrichImportTraceEntries(
+            [new CpuImportTraceEntry(
+                DispatchIndex: 1,
+                Nid: nid,
+                LibraryName: null,
+                ExportName: null,
+                GuestThreadHandle: 2,
+                ReturnAddress: 3,
+                Arg0: 4,
+                Arg1: 5,
+                Arg2: 6,
+                Arg3: 7,
+                Arg4: 8,
+                Arg5: 9,
+                ReturnValue: 10)],
+            application)!);
+        Assert.Equal("libSceVideoOutVrrStatus", trace.LibraryName);
+        Assert.Equal("libSceVideoOut", trace.ModuleName);
     }
 
     [Fact]
@@ -1548,16 +1639,25 @@ public sealed class SelfLoaderTests
         string symbolName,
         long addend,
         uint relocationType = Absolute64RelocationType,
-        bool includeTlsSegment = false)
+        bool includeTlsSegment = false,
+        ushort? importLibraryId = null,
+        string? importLibraryName = null,
+        ushort? importModuleId = null,
+        string? importModuleName = null)
     {
-        const int payloadSize = 0x180;
-        const int dynamicVirtualAddress = 0x20;
-        const int relocationVirtualAddress = 0x90;
-        const int symbolTableVirtualAddress = 0xB0;
-        const int stringTableVirtualAddress = 0xE0;
-        const int tlsVirtualAddress = 0x160;
-        const int dynamicEntryCount = 6;
+        const int payloadSize = 0x260;
+        const int dynamicVirtualAddress = 0x180;
+        const int relocationVirtualAddress = 0xB0;
+        const int symbolTableVirtualAddress = 0xD0;
+        const int stringTableVirtualAddress = 0x110;
+        const int tlsVirtualAddress = 0x240;
+        const int dynamicEntryCount = 8;
         var symbolNameBytes = System.Text.Encoding.ASCII.GetBytes(symbolName);
+        var libraryNameBytes = System.Text.Encoding.ASCII.GetBytes(importLibraryName ?? string.Empty);
+        var moduleNameBytes = System.Text.Encoding.ASCII.GetBytes(importModuleName ?? string.Empty);
+        var libraryNameOffset = checked(2 + symbolNameBytes.Length);
+        var moduleNameOffset = checked(libraryNameOffset + libraryNameBytes.Length + 1);
+        var stringTableSize = checked(moduleNameOffset + moduleNameBytes.Length + 1);
         var programHeaderCount = includeTlsSegment ? 3 : 2;
         var payloadOffset = ElfHeaderSize + (programHeaderCount * ProgramHeaderSize);
         var elf = CreateElf(
@@ -1607,8 +1707,25 @@ public sealed class SelfLoaderTests
             dynamicTable,
             3,
             DynamicTagStringTableSize,
-            checked((ulong)symbolNameBytes.Length + 2));
+            checked((ulong)stringTableSize));
         WriteDynamicEntry(dynamicTable, 4, DynamicTagSymbolTable, symbolTableVirtualAddress);
+        if (importLibraryId is { } libraryId && libraryNameBytes.Length != 0)
+        {
+            WriteDynamicEntry(
+                dynamicTable,
+                5,
+                DynamicTagPs5ImportLibrary,
+                ((ulong)libraryId << 48) | checked((uint)libraryNameOffset));
+        }
+
+        if (importModuleId is { } moduleId && moduleNameBytes.Length != 0)
+        {
+            WriteDynamicEntry(
+                dynamicTable,
+                6,
+                DynamicTagPs5NeededModule,
+                ((ulong)moduleId << 48) | checked((uint)moduleNameOffset));
+        }
 
         var relocation = elf.AsSpan(
             payloadOffset + relocationVirtualAddress,
@@ -1637,6 +1754,10 @@ public sealed class SelfLoaderTests
         elf[payloadOffset + stringTableVirtualAddress] = 0;
         symbolNameBytes.CopyTo(
             elf.AsSpan(payloadOffset + stringTableVirtualAddress + 1));
+        libraryNameBytes.CopyTo(
+            elf.AsSpan(payloadOffset + stringTableVirtualAddress + libraryNameOffset));
+        moduleNameBytes.CopyTo(
+            elf.AsSpan(payloadOffset + stringTableVirtualAddress + moduleNameOffset));
         BinaryPrimitives.WriteUInt64LittleEndian(
             elf.AsSpan(
                 payloadOffset + SyntheticRelocationTargetVirtualAddress,
