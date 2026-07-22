@@ -84,6 +84,33 @@ public sealed class NpUniversalDataSystemTests
     }
 
     [Fact]
+    public void CreateEventPropertyObjectWritesAUsableOpaqueObject()
+    {
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(PropertyOutAddress, new byte[sizeof(ulong)]);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = PropertyOutAddress;
+
+        Assert.Equal(
+            0,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemCreateEventPropertyObject(context));
+        Assert.True(
+            context.TryReadUInt64(
+                PropertyOutAddress,
+                out var propertyAddress));
+        Assert.NotEqual(0UL, propertyAddress);
+        Span<byte> probe = stackalloc byte[1];
+        Assert.True(memory.TryRead(propertyAddress, probe));
+
+        context[CpuRegister.Rdi] = 0;
+        Assert.Equal(
+            InvalidArgument,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemCreateEventPropertyObject(context));
+    }
+
+    [Fact]
     public void CreateHandleUsesOnlyItsDocumentedOutputPointer()
     {
         var memory = new FakeGuestMemory();
@@ -177,6 +204,16 @@ public sealed class NpUniversalDataSystemTests
         ExportMetadataAssert.Exact(
             "Hm7qubT3b70",
             "sceNpUniversalDataSystemCreateEventPropertyArray",
+            "libSceNpUniversalDataSystem",
+            Generation.Gen4 | Generation.Gen5);
+    }
+
+    [Fact]
+    public void CreateEventPropertyObjectExportMetadataIsExact()
+    {
+        ExportMetadataAssert.Exact(
+            "s6W4Zl4Slgk",
+            "sceNpUniversalDataSystemCreateEventPropertyObject",
             "libSceNpUniversalDataSystem",
             Generation.Gen4 | Generation.Gen5);
     }
