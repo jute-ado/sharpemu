@@ -3181,9 +3181,11 @@ internal static unsafe class VulkanVideoPresenter
 
     internal static bool GuestImageTraceSelectorMatches(
         bool addressMatched,
+        bool shaderAddressMatched,
         string? configuredSignatures,
         string? shaderSignature) =>
         addressMatched ||
+        shaderAddressMatched ||
         (!string.IsNullOrWhiteSpace(configuredSignatures) &&
          GuestImageShaderSignatureFilterMatches(
              configuredSignatures,
@@ -3192,8 +3194,24 @@ internal static unsafe class VulkanVideoPresenter
     internal static bool ShouldCollectGuestImageTraceCandidate(
         bool isStorage,
         bool addressFilterEnabled,
+        bool shaderAddressFilterEnabled,
         bool signatureFilterEnabled) =>
-        isStorage || addressFilterEnabled || signatureFilterEnabled;
+        isStorage ||
+        addressFilterEnabled ||
+        shaderAddressFilterEnabled ||
+        signatureFilterEnabled;
+
+    internal static bool ShouldRunGuestImageTraceSelection(
+        bool broadTraceEnabled,
+        bool addressFilterEnabled,
+        bool shaderAddressFilterEnabled,
+        bool signatureFilterEnabled,
+        bool intervalEnabled) =>
+        broadTraceEnabled ||
+        addressFilterEnabled ||
+        shaderAddressFilterEnabled ||
+        signatureFilterEnabled ||
+        intervalEnabled;
 
     // Returns the source row length in texels for a recognised linearly
     // padded upload. Oversized buffers with other layouts remain rejected
@@ -6255,10 +6273,12 @@ internal static unsafe class VulkanVideoPresenter
             ulong shaderAddress = 0,
             string? shaderSignature = null)
         {
-            if (!_traceGuestImagesEnabled &&
-                !_traceGuestImageAddressFilterEnabled &&
-                !_traceGuestImageShaderSignatureFilterEnabled &&
-                GuestImageTraceInterval() is null)
+            if (!ShouldRunGuestImageTraceSelection(
+                    _traceGuestImagesEnabled,
+                    _traceGuestImageAddressFilterEnabled,
+                    _traceGuestImageShaderFilterEnabled,
+                    _traceGuestImageShaderSignatureFilterEnabled,
+                    GuestImageTraceInterval() is not null))
             {
                 return Array.Empty<GuestImageResource>();
             }
@@ -6274,6 +6294,7 @@ internal static unsafe class VulkanVideoPresenter
                 if (ShouldCollectGuestImageTraceCandidate(
                         texture.IsStorage,
                         _traceGuestImageAddressFilterEnabled,
+                        _traceGuestImageShaderFilterEnabled,
                         _traceGuestImageShaderSignatureFilterEnabled) &&
                     texture.GuestImage is { } image)
                 {
@@ -6287,7 +6308,9 @@ internal static unsafe class VulkanVideoPresenter
                     shaderAddress,
                     shaderSignature))
                 .ToArray();
-            if (_traceGuestImageShaderSignatureFilterEnabled && selected.Length != 0)
+            if ((_traceGuestImageShaderFilterEnabled ||
+                 _traceGuestImageShaderSignatureFilterEnabled) &&
+                selected.Length != 0)
             {
                 Console.Error.WriteLine(
                     $"[LOADER][TRACE] vk.guest_image_selected " +
@@ -15142,10 +15165,12 @@ internal static unsafe class VulkanVideoPresenter
                 return false;
             }
 
-            if (_traceGuestImageShaderFilterEnabled &&
-                !AddressListContains(
+            var shaderAddressMatched =
+                _traceGuestImageShaderFilterEnabled &&
+                AddressListContains(
                     "SHARPEMU_TRACE_GUEST_IMAGE_SHADER_ADDRS",
-                    shaderAddress))
+                    shaderAddress);
+            if (_traceGuestImageShaderFilterEnabled && !shaderAddressMatched)
             {
                 return false;
             }
@@ -15217,6 +15242,7 @@ internal static unsafe class VulkanVideoPresenter
 
             return (GuestImageTraceSelectorMatches(
                         addressMatched,
+                        shaderAddressMatched,
                         _traceGuestImageShaderSignatures,
                         shaderSignature) ||
                     broadTrace) &&
