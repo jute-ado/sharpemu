@@ -13,8 +13,10 @@ public static class Http2Exports
 
     private static readonly ConcurrentDictionary<int, Http2Context> _contexts = new();
     private static readonly ConcurrentDictionary<int, Http2Template> _templates = new();
+    private static readonly ConcurrentDictionary<int, Http2Request> _requests = new();
     private static int _nextContextId;
     private static int _nextTemplateId = 0x1000;
+    private static int _nextRequestId = 0x2000;
 
     private sealed record Http2Context(int NetId, int SslId, ulong PoolSize, int MaxRequests);
     private sealed record Http2Template(
@@ -23,12 +25,31 @@ public static class Http2Exports
         int HttpVersion,
         bool AutoProxyConfig);
 
+    private sealed class Http2Request(
+        int contextId,
+        int templateId,
+        string method,
+        string url,
+        ulong contentLength)
+    {
+        public object Gate { get; } = new();
+        public int ContextId { get; } = contextId;
+        public int TemplateId { get; } = templateId;
+        public string Method { get; } = method;
+        public string Url { get; } = url;
+        public ulong ContentLength { get; set; } = contentLength;
+        public bool Sent { get; set; }
+        public Dictionary<string, string> Headers { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
     internal static void ResetRuntimeState()
     {
         _contexts.Clear();
         _templates.Clear();
+        _requests.Clear();
         Interlocked.Exchange(ref _nextContextId, 0);
         Interlocked.Exchange(ref _nextTemplateId, 0x1000);
+        Interlocked.Exchange(ref _nextRequestId, 0x2000);
     }
 
     [SysAbiExport(
@@ -77,6 +98,14 @@ public static class Http2Exports
             }
         }
 
+        foreach (var request in _requests)
+        {
+            if (request.Value.ContextId == id)
+            {
+                _requests.TryRemove(request.Key, out _);
+            }
+        }
+
         TraceHttp2("term", id, 0, 0, 0, 0);
         return ctx.SetReturn(0);
     }
@@ -115,8 +144,147 @@ public static class Http2Exports
         ExportName = "sceHttp2DeleteTemplate",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libSceHttp2")]
-    public static int Http2DeleteTemplate(CpuContext ctx) =>
-        _templates.TryRemove(unchecked((int)ctx[CpuRegister.Rdi]), out _)
+    public static int Http2DeleteTemplate(CpuContext ctx)
+    {
+        var templateId = unchecked((int)ctx[CpuRegister.Rdi]);
+        if (!_templates.TryRemove(templateId, out _))
+        {
+            return ctx.SetReturn(Http2ErrorInvalidId);
+        }
+
+        foreach (var request in _requests)
+        {
+            if (request.Value.TemplateId == templateId)
+            {
+                _requests.TryRemove(request.Key, out _);
+            }
+        }
+
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "mmyOCxQMVYQ",
+        ExportName = "sceHttp2CreateRequestWithURL",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceHttp2")]
+    public static int Http2CreateRequestWithUrl(CpuContext ctx)
+    {
+        var templateId = unchecked((int)ctx[CpuRegister.Rdi]);
+        if (!_templates.TryGetValue(templateId, out var template) ||
+            !ctx.TryReadNullTerminatedUtf8(ctx[CpuRegister.Rsi], 64, out var method) ||
+            !ctx.TryReadNullTerminatedUtf8(ctx[CpuRegister.Rdx], 0x4000, out var url) ||
+            string.IsNullOrWhiteSpace(method) ||
+            string.IsNullOrWhiteSpace(url))
+        {
+            return ctx.SetReturn(Http2ErrorInvalidArgument);
+        }
+
+        var requestId = Interlocked.Increment(ref _nextRequestId);
+        _requests[requestId] = new Http2Request(
+            template.ContextId,
+            templateId,
+            method,
+            url,
+            ctx[CpuRegister.Rcx]);
+        TraceHttp2(
+            "create_request",
+            requestId,
+            unchecked((ulong)templateId),
+            ctx[CpuRegister.Rsi],
+            ctx[CpuRegister.Rdx],
+            ctx[CpuRegister.Rcx]);
+        return ctx.SetReturn(requestId);
+    }
+
+    [SysAbiExport(
+        Nid = "nrPfOE8TQu0",
+        ExportName = "sceHttp2AddRequestHeader",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceHttp2")]
+    public static int Http2AddRequestHeader(CpuContext ctx)
+    {
+        var id = unchecked((int)ctx[CpuRegister.Rdi]);
+        if (!ctx.TryReadNullTerminatedUtf8(ctx[CpuRegister.Rsi], 0x1000, out var name) ||
+            !ctx.TryReadNullTerminatedUtf8(ctx[CpuRegister.Rdx], 0x4000, out var value) ||
+            string.IsNullOrEmpty(name))
+        {
+            return ctx.SetReturn(Http2ErrorInvalidArgument);
+        }
+
+        if (_requests.TryGetValue(id, out var request))
+        {
+            lock (request.Gate)
+            {
+                request.Headers[name] = value;
+            }
+
+            return ctx.SetReturn(0);
+        }
+
+        return _templates.ContainsKey(id)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn(Http2ErrorInvalidId);
+    }
+
+    [SysAbiExport(
+        Nid = "FSAFOzi0FpM",
+        ExportName = "sceHttp2SetRequestContentLength",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceHttp2")]
+    public static int Http2SetRequestContentLength(CpuContext ctx)
+    {
+        if (!_requests.TryGetValue(unchecked((int)ctx[CpuRegister.Rdi]), out var request))
+        {
+            return ctx.SetReturn(Http2ErrorInvalidId);
+        }
+
+        lock (request.Gate)
+        {
+            request.ContentLength = ctx[CpuRegister.Rsi];
+        }
+
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "rbqZig38AT8",
+        ExportName = "sceHttp2SendRequest",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceHttp2")]
+    public static int Http2SendRequest(CpuContext ctx)
+    {
+        if (!_requests.TryGetValue(unchecked((int)ctx[CpuRegister.Rdi]), out var request))
+        {
+            return ctx.SetReturn(Http2ErrorInvalidId);
+        }
+
+        var dataAddress = ctx[CpuRegister.Rsi];
+        var size = ctx[CpuRegister.Rdx];
+        if (size != 0 &&
+            (dataAddress == 0 ||
+             size - 1 > ulong.MaxValue - dataAddress ||
+             !ctx.TryReadByte(dataAddress, out _) ||
+             !ctx.TryReadByte(dataAddress + size - 1, out _)))
+        {
+            return ctx.SetReturn(Http2ErrorInvalidArgument);
+        }
+
+        lock (request.Gate)
+        {
+            request.Sent = true;
+        }
+
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "c8D9qIjo8EY",
+        ExportName = "sceHttp2DeleteRequest",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceHttp2")]
+    public static int Http2DeleteRequest(CpuContext ctx) =>
+        _requests.TryRemove(unchecked((int)ctx[CpuRegister.Rdi]), out _)
             ? ctx.SetReturn(0)
             : ctx.SetReturn(Http2ErrorInvalidId);
 
