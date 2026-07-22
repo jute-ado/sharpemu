@@ -1,15 +1,21 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using SharpEmu.HLE;
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.Text;
+using SharpEmu.HLE;
 
 namespace SharpEmu.Libs.Network;
 
 public static class HttpExports
 {
     private const int HttpErrorInvalidId = unchecked((int)0x80431100);
+    private const int HttpErrorOutOfMemory = unchecked((int)0x80431022);
     private const int HttpErrorInvalidValue = unchecked((int)0x804311FE);
+    private const int HttpErrorInvalidUrl = unchecked((int)0x80433060);
+    private const int MaximumUriBytes = 0x4000;
+    private const int UriElementSize = 80;
 
     private static readonly ConcurrentDictionary<int, HttpContext> Contexts = new();
     private static readonly ConcurrentDictionary<int, HttpTemplate> Templates = new();
@@ -19,6 +25,17 @@ public static class HttpExports
     private sealed record HttpContext(int NetMemoryId, int SslContextId, ulong PoolSize);
 
     private sealed record HttpTemplate(int ContextId, ulong UserAgentAddress, int HttpVersion, bool AutoProxyConfig);
+
+    private sealed record ParsedUri(
+        bool Opaque,
+        string Scheme,
+        string Username,
+        string Password,
+        string Hostname,
+        string Path,
+        string Query,
+        string Fragment,
+        ushort Port);
 
     internal static void ResetRuntimeState()
     {
@@ -108,6 +125,264 @@ public static class HttpExports
         }
 
         return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "IWalAn-guFs",
+        ExportName = "sceHttpUriParse",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceHttp")]
+    public static int HttpUriParse(CpuContext ctx)
+    {
+        var outputAddress = ctx[CpuRegister.Rdi];
+        var sourceAddress = ctx[CpuRegister.Rsi];
+        var poolAddress = ctx[CpuRegister.Rdx];
+        var requiredAddress = ctx[CpuRegister.Rcx];
+        var preparedSize = ctx[CpuRegister.R8];
+        if (!ctx.TryReadNullTerminatedUtf8(sourceAddress, MaximumUriBytes, out var source) ||
+            !TryParseUri(source, out var parsed))
+        {
+            return ctx.SetReturn(HttpErrorInvalidUrl);
+        }
+
+        var components = new[]
+        {
+            parsed.Scheme,
+            parsed.Username,
+            parsed.Password,
+            parsed.Hostname,
+            parsed.Path,
+            parsed.Query,
+            parsed.Fragment,
+        };
+        var encoded = components.Select(Encoding.UTF8.GetBytes).ToArray();
+        var requiredSize = encoded.Aggregate(0UL, (size, value) => size + (ulong)value.Length + 1);
+        var writeOutput = outputAddress != 0 && poolAddress != 0;
+        if (!writeOutput && requiredAddress == 0)
+        {
+            return ctx.SetReturn(HttpErrorInvalidValue);
+        }
+
+        if (writeOutput && preparedSize < requiredSize)
+        {
+            return ctx.SetReturn(HttpErrorOutOfMemory);
+        }
+
+        if (!PreflightWrite(ctx, requiredAddress, sizeof(ulong)) ||
+            (writeOutput &&
+             (!PreflightWrite(ctx, outputAddress, UriElementSize) ||
+              !PreflightWrite(ctx, poolAddress, checked((int)requiredSize)))))
+        {
+            return ctx.SetReturn(HttpErrorInvalidValue);
+        }
+
+        if (requiredAddress != 0 && !ctx.TryWriteUInt64(requiredAddress, requiredSize))
+        {
+            return ctx.SetReturn(HttpErrorInvalidValue);
+        }
+
+        if (!writeOutput)
+        {
+            return ctx.SetReturn(0);
+        }
+
+        var pool = new byte[checked((int)requiredSize)];
+        var offsets = new int[components.Length];
+        var cursor = 0;
+        for (var index = 0; index < encoded.Length; index++)
+        {
+            offsets[index] = cursor;
+            encoded[index].CopyTo(pool.AsSpan(cursor));
+            cursor += encoded[index].Length + 1;
+        }
+
+        var output = new byte[UriElementSize];
+        output[0] = parsed.Opaque ? (byte)1 : (byte)0;
+        for (var index = 0; index < offsets.Length; index++)
+        {
+            BinaryPrimitives.WriteUInt64LittleEndian(
+                output.AsSpan(8 + (index * sizeof(ulong))),
+                checked(poolAddress + (ulong)offsets[index]));
+        }
+
+        BinaryPrimitives.WriteUInt16LittleEndian(output.AsSpan(64), parsed.Port);
+        if (!ctx.Memory.TryWrite(poolAddress, pool) ||
+            !ctx.Memory.TryWrite(outputAddress, output))
+        {
+            return ctx.SetReturn(HttpErrorInvalidValue);
+        }
+
+        return ctx.SetReturn(0);
+    }
+
+    private static bool TryParseUri(string source, out ParsedUri parsed)
+    {
+        parsed = null!;
+        if (string.IsNullOrEmpty(source))
+        {
+            return false;
+        }
+
+        var scheme = string.Empty;
+        var position = 0;
+        var colon = source.IndexOf(':');
+        if (colon is > 0 and <= 0x20 &&
+            char.IsAsciiLetter(source[0]) &&
+            source.AsSpan(1, colon - 1).ToString().All(
+                character => char.IsAsciiLetterOrDigit(character) || character is '+' or '-' or '.'))
+        {
+            scheme = source[..colon];
+            position = colon + 1;
+        }
+
+        var opaque = true;
+        if (source.AsSpan(position).StartsWith("//", StringComparison.Ordinal))
+        {
+            opaque = false;
+            position += 2;
+        }
+
+        var authorityEnd = source.AsSpan(position).IndexOfAny('/', '?', '#');
+        authorityEnd = authorityEnd < 0 ? source.Length : position + authorityEnd;
+        var authority = source[position..authorityEnd];
+        position = authorityEnd;
+        var username = string.Empty;
+        var password = string.Empty;
+        var at = authority.IndexOf('@');
+        if (at >= 0)
+        {
+            var userInfo = authority[..at];
+            authority = authority[(at + 1)..];
+            var separator = userInfo.IndexOf(':');
+            username = separator < 0 ? userInfo : userInfo[..separator];
+            password = separator < 0 ? string.Empty : userInfo[(separator + 1)..];
+        }
+
+        if (!TryParseAuthority(authority, out var hostname, out var explicitPort))
+        {
+            return false;
+        }
+
+        var fragmentStart = source.IndexOf('#', position);
+        var queryStart = source.IndexOf('?', position);
+        if (queryStart >= 0 && fragmentStart >= 0 && queryStart > fragmentStart)
+        {
+            queryStart = -1;
+        }
+
+        var pathEnd = queryStart >= 0 ? queryStart : fragmentStart >= 0 ? fragmentStart : source.Length;
+        var path = SweepPath(source[position..pathEnd]);
+        var query = queryStart < 0
+            ? string.Empty
+            : source[queryStart..(fragmentStart >= 0 ? fragmentStart : source.Length)];
+        var fragment = fragmentStart < 0 ? string.Empty : source[fragmentStart..];
+        var port = explicitPort ?? (scheme.Equals("https", StringComparison.OrdinalIgnoreCase)
+            ? (ushort)443
+            : scheme.Equals("http", StringComparison.OrdinalIgnoreCase) ? (ushort)80 : (ushort)0);
+        parsed = new ParsedUri(
+            opaque,
+            scheme,
+            username,
+            password,
+            hostname,
+            path,
+            query,
+            fragment,
+            port);
+        return true;
+    }
+
+    private static bool TryParseAuthority(string authority, out string hostname, out ushort? port)
+    {
+        hostname = authority;
+        port = null;
+        string? portText = null;
+        if (authority.StartsWith("[", StringComparison.Ordinal))
+        {
+            var close = authority.IndexOf(']');
+            if (close < 0)
+            {
+                return false;
+            }
+
+            hostname = authority[1..close];
+            if (close + 1 < authority.Length)
+            {
+                if (authority[close + 1] != ':')
+                {
+                    return false;
+                }
+
+                portText = authority[(close + 2)..];
+            }
+        }
+        else
+        {
+            var colon = authority.LastIndexOf(':');
+            if (colon >= 0)
+            {
+                hostname = authority[..colon];
+                portText = authority[(colon + 1)..];
+            }
+        }
+
+        if (portText is not null)
+        {
+            if (portText.Length == 0 || !ushort.TryParse(portText, out var value))
+            {
+                return false;
+            }
+
+            port = value;
+        }
+
+        return hostname.Length <= 0xFF;
+    }
+
+    private static string SweepPath(string path)
+    {
+        if (!path.Contains("/./", StringComparison.Ordinal) &&
+            !path.Contains("/../", StringComparison.Ordinal) &&
+            !path.EndsWith("/.", StringComparison.Ordinal) &&
+            !path.EndsWith("/..", StringComparison.Ordinal))
+        {
+            return path;
+        }
+
+        var leadingSlash = path.StartsWith("/", StringComparison.Ordinal);
+        var segments = new List<string>();
+        foreach (var segment in path.Split('/'))
+        {
+            if (segment.Length == 0 || segment == ".")
+            {
+                continue;
+            }
+
+            if (segment == "..")
+            {
+                if (segments.Count > 0)
+                {
+                    segments.RemoveAt(segments.Count - 1);
+                }
+
+                continue;
+            }
+
+            segments.Add(segment);
+        }
+
+        return (leadingSlash ? "/" : string.Empty) + string.Join('/', segments);
+    }
+
+    private static bool PreflightWrite(CpuContext ctx, ulong address, int size)
+    {
+        if (address == 0)
+        {
+            return true;
+        }
+
+        var buffer = new byte[size];
+        return ctx.Memory.TryRead(address, buffer);
     }
 
     private static void TraceHttp(string operation, int id, ulong arg0, ulong arg1, ulong arg2, ulong arg3)
