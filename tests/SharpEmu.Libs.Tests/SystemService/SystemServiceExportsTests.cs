@@ -26,4 +26,15 @@ public sealed class SystemServiceExportsTests
         Assert.True(memory.TryRead(MemoryBase, flag));
         Assert.Equal(0, flag[0]);
     }
+
+    [Fact]
+    public void DisableNoticeScreenSkipFlagAutoSetReturnsSuccessWithoutGuestMemory()
+    {
+        var context = new CpuContext(new FakeCpuMemory(MemoryBase, 0), Generation.Gen5);
+
+        Assert.Equal(
+            0,
+            SystemServiceExports.SystemServiceDisableNoticeScreenSkipFlagAutoSet(context));
+        Assert.Equal(0UL, context[CpuRegister.Rax]);
+    }
 }
