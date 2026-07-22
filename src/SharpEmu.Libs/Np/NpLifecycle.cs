@@ -8,5 +8,6 @@ public static class NpLifecycle
     public static void ResetRuntimeState()
     {
         NpAuthExports.ResetRuntimeState();
+        NpManagerExports.ResetRuntimeState();
     }
 }

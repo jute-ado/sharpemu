@@ -11,6 +11,20 @@ public static class NpManagerExports
     private const int NpTitleIdSize = 16;
     private const int NpTitleSecretSize = 128;
     private const int NpErrorInvalidArgument = unchecked((int)0x80550003);
+    private const int NpErrorRequestMaximum = unchecked((int)0x80550013);
+    private const int NpErrorRequestNotFound = unchecked((int)0x80550014);
+    private const int RequestLimit = 128;
+
+    private static readonly object _requestGate = new();
+    private static readonly bool[] _activeRequests = new bool[RequestLimit];
+
+    internal static void ResetRuntimeState()
+    {
+        lock (_requestGate)
+        {
+            Array.Clear(_activeRequests);
+        }
+    }
 
     [SysAbiExport(
         Nid = "3Zl8BePTh9Y",
@@ -24,14 +38,48 @@ public static class NpManagerExports
     }
 
     [SysAbiExport(
+        Nid = "GpLQDNKICac",
+        ExportName = "sceNpCreateRequest",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpCreateRequest(CpuContext ctx)
+    {
+        lock (_requestGate)
+        {
+            for (var slot = 0; slot < _activeRequests.Length; slot++)
+            {
+                if (_activeRequests[slot])
+                {
+                    continue;
+                }
+
+                _activeRequests[slot] = true;
+                return ctx.SetReturn(slot + 1);
+            }
+        }
+
+        return ctx.SetReturn(NpErrorRequestMaximum);
+    }
+
+    [SysAbiExport(
         Nid = "S7QTn72PrDw",
         ExportName = "sceNpDeleteRequest",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libSceNpManager")]
     public static int NpDeleteRequest(CpuContext ctx)
     {
-        ctx[CpuRegister.Rax] = 0;
-        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+        var requestId = unchecked((int)ctx[CpuRegister.Rdi]);
+        lock (_requestGate)
+        {
+            if (requestId <= 0 || requestId > _activeRequests.Length || !_activeRequests[requestId - 1])
+            {
+                return ctx.SetReturn(NpErrorRequestNotFound);
+            }
+
+            _activeRequests[requestId - 1] = false;
+        }
+
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
     [SysAbiExport(
