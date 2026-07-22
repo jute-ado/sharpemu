@@ -14,6 +14,7 @@ public sealed class KernelFilesystemContractTests : IDisposable
     private const ulong MemoryBase = 0x1_0000_0000;
     private const ulong PathAddress = MemoryBase + 0x100;
     private const ulong StatAddress = MemoryBase + 0x1000;
+    private const string CheckReachabilityNid = "uWyW3v98sU4";
     private const int KernelStatSize = 120;
     private const int OpenReadWriteCreate = 0x0202;
     private const int OpenDirectory = 0x0002_0000;
@@ -88,6 +89,42 @@ public sealed class KernelFilesystemContractTests : IDisposable
         Assert.Equal(
             unchecked((int)0x80020011),
             KernelMemoryCompatExports.KernelMkdir(_context));
+    }
+
+    [Fact]
+    public void ReachabilityExportReportsExistingGuestPaths()
+    {
+        var gen4Manager = CreateManager(Generation.Gen4);
+        Assert.True(gen4Manager.TryGetExport(CheckReachabilityNid, out var export));
+        Assert.Equal("sceKernelCheckReachability", export.Name);
+        Assert.Equal("libKernel", export.LibraryName);
+        Assert.Equal(Generation.Gen4 | Generation.Gen5, export.Target);
+
+        var manager = CreateManager(Generation.Gen5);
+        Directory.CreateDirectory(Path.Combine(_root, "cache"));
+        File.WriteAllText(Path.Combine(_root, "cache", "data.bin"), "fixture");
+
+        Assert.Equal(0, DispatchReachability(manager, _mount + "/cache"));
+        Assert.Equal(0, DispatchReachability(manager, _mount + "/cache/data.bin"));
+        Assert.Equal(0, DispatchReachability(manager, "/dev/urandom"));
+        Assert.Equal(0, DispatchReachability(manager, "/devlog"));
+    }
+
+    [Fact]
+    public void ReachabilityExportReportsMissingLongAndUnreadablePaths()
+    {
+        var manager = CreateManager(Generation.Gen5);
+
+        Assert.Equal(
+            unchecked((int)0x80020002),
+            DispatchReachability(manager, _mount + "/missing"));
+        Assert.Equal(
+            unchecked((int)0x8002003F),
+            DispatchReachability(manager, "/" + new string('a', 256)));
+
+        _context[CpuRegister.Rdi] = MemoryBase + 0x5000;
+        Assert.True(manager.TryDispatch(CheckReachabilityNid, _context, out var result));
+        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
     }
 
     [Fact]
@@ -255,5 +292,20 @@ public sealed class KernelFilesystemContractTests : IDisposable
         _context[CpuRegister.Rdi] = PathAddress;
         _context[CpuRegister.Rsi] = 0;
         _context[CpuRegister.Rdx] = 0;
+    }
+
+    private int DispatchReachability(ModuleManager manager, string path)
+    {
+        WritePath(path);
+        Assert.True(manager.TryDispatch(CheckReachabilityNid, _context, out var result));
+        return (int)result;
+    }
+
+    private static ModuleManager CreateManager(Generation generation)
+    {
+        var manager = new ModuleManager();
+        manager.RegisterExports(
+            SharpEmu.Generated.SysAbiExportRegistry.CreateExports(generation));
+        return manager;
     }
 }

@@ -75,6 +75,11 @@ public enum OrbisGen2Result : int
     ORBIS_GEN2_ERROR_TIMED_OUT = unchecked((int)0x8002003C),
 
     /// <summary>
+    /// Indicates that a supplied filesystem name exceeds the ABI limit.
+    /// </summary>
+    ORBIS_GEN2_ERROR_NAME_TOO_LONG = unchecked((int)0x8002003F),
+
+    /// <summary>
     /// Indicates that memory access failed.
     /// </summary>
     ORBIS_GEN2_ERROR_MEMORY_FAULT = unchecked((int)0x80020101),
