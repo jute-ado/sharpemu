@@ -26,7 +26,10 @@ public sealed class SelfImage
         string? titleId = null,
         string? version = null,
         string? contentId = null,
-        IReadOnlyList<uint>? unsupportedRelocationTypes = null)
+        IReadOnlyList<uint>? unsupportedRelocationTypes = null,
+        ulong ehFrameHeaderAddress = 0,
+        ulong ehFrameAddress = 0,
+        ulong ehFrameSize = 0)
     {
         ArgumentNullException.ThrowIfNull(programHeaders);
         ArgumentNullException.ThrowIfNull(mappedRegions);
@@ -47,6 +50,9 @@ public sealed class SelfImage
         TitleId = titleId;
         Version = version;
         ContentId = contentId;
+        EhFrameHeaderAddress = ehFrameHeaderAddress;
+        EhFrameAddress = ehFrameAddress;
+        EhFrameSize = ehFrameSize;
         if (unsupportedRelocationTypes is null || unsupportedRelocationTypes.Count == 0)
         {
             UnsupportedRelocationTypes = Array.Empty<uint>();
@@ -95,6 +101,12 @@ public sealed class SelfImage
     public string? Version { get; }
 
     public string? ContentId { get; }
+
+    public ulong EhFrameHeaderAddress { get; }
+
+    public ulong EhFrameAddress { get; }
+
+    public ulong EhFrameSize { get; }
 
     public IReadOnlyList<uint> UnsupportedRelocationTypes { get; }
 }

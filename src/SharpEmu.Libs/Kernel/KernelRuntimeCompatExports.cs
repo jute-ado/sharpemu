@@ -43,6 +43,14 @@ public static class KernelRuntimeCompatExports
     private const ulong ModuleInfoHandleOffset = 0x108;
     private const ulong ModuleInfoNameOffset = 0x10;
     private const int ModuleInfoNameMaxBytes = 64;
+    private const int ModuleInfoForUnwindSize = 0x130;
+    private const int ModuleInfoForUnwindNameOffset = 0x08;
+    private const int ModuleInfoForUnwindNameMaxBytes = 256;
+    private const int ModuleInfoForUnwindEhFrameHeaderOffset = 0x108;
+    private const int ModuleInfoForUnwindEhFrameOffset = 0x110;
+    private const int ModuleInfoForUnwindEhFrameSizeOffset = 0x118;
+    private const int ModuleInfoForUnwindSegmentAddressOffset = 0x120;
+    private const int ModuleInfoForUnwindSegmentSizeOffset = 0x128;
     private const ulong DefaultKernelTscFrequency = 10_000_000UL;
     private const ulong PrtAreaStartAddress = 0x0000001000000000UL;
     private const ulong PrtAreaSize = 0x000000EC00000000UL;
@@ -1145,23 +1153,56 @@ public static class KernelRuntimeCompatExports
     public static int KernelGetModuleInfoForUnwind(CpuContext ctx)
     {
         var queriedAddress = ctx[CpuRegister.Rdi];
-        _ = ctx[CpuRegister.Rsi]; // flags
+        var flags = ctx[CpuRegister.Rsi];
         var outInfoAddress = ctx[CpuRegister.Rdx];
         if (outInfoAddress == 0)
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
         }
 
-        var moduleHandle = ResolveModuleHandleByAddress(queriedAddress);
-        if (!GuestAddress.TryAdd(outInfoAddress, ModuleInfoHandleOffset, out var handleAddress) ||
-            !ctx.TryWriteInt32(handleAddress, moduleHandle))
+        if (flags >= 3)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (!ctx.TryReadUInt64(outInfoAddress, out var requestedSize))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        if (KernelModuleRegistry.TryGetModuleByHandle(moduleHandle, out var module))
+        if (requestedSize < ModuleInfoForUnwindSize)
         {
-            _ = TryWriteModuleName(ctx, outInfoAddress, module.Name);
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        if (!KernelModuleRegistry.TryGetModuleByAddress(queriedAddress, out var module))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+        }
+
+        var output = new byte[ModuleInfoForUnwindSize];
+        BinaryPrimitives.WriteUInt64LittleEndian(output, ModuleInfoForUnwindSize);
+        var encodedName = Encoding.UTF8.GetBytes(module.Name);
+        encodedName.AsSpan(0, Math.Min(encodedName.Length, ModuleInfoForUnwindNameMaxBytes - 1))
+            .CopyTo(output.AsSpan(ModuleInfoForUnwindNameOffset));
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            output.AsSpan(ModuleInfoForUnwindEhFrameHeaderOffset),
+            module.EhFrameHeaderAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            output.AsSpan(ModuleInfoForUnwindEhFrameOffset),
+            module.EhFrameAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            output.AsSpan(ModuleInfoForUnwindEhFrameSizeOffset),
+            module.EhFrameSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            output.AsSpan(ModuleInfoForUnwindSegmentAddressOffset),
+            module.BaseAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            output.AsSpan(ModuleInfoForUnwindSegmentSizeOffset),
+            module.EndAddress - module.BaseAddress);
+        if (!ctx.Memory.TryWrite(outInfoAddress, output))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
         ctx[CpuRegister.Rax] = 0;
