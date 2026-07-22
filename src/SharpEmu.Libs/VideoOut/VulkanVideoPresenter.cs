@@ -11383,6 +11383,8 @@ internal static unsafe class VulkanVideoPresenter
                     _traceTitleDrawEnabled &&
                     IsTitleDraw(work.Draw.VertexBuffers);
                 _tracedTitleDraw |= traceTitleDraw;
+                var pixelShaderSignature =
+                    ComputeShaderSignature(work.Draw.PixelSpirv);
 
                 foreach (var target in targets)
                 {
@@ -11399,7 +11401,8 @@ internal static unsafe class VulkanVideoPresenter
                             target.Address,
                             target.Width,
                             target.Height,
-                            work.ShaderAddress);
+                            work.ShaderAddress,
+                            pixelShaderSignature);
                     var captureMatchCount = captureConfiguredWrite
                         ? ++_guestImageCaptureMatchCount
                         : 0;
@@ -11409,6 +11412,7 @@ internal static unsafe class VulkanVideoPresenter
                             target.Width,
                             target.Height,
                             work.ShaderAddress,
+                            pixelShaderSignature,
                             captureMatchCount);
                     if (traceAddressWrite || traceSmallWrites ||
                         traceLargeWrites || tracePixelSpirv || traceTitleDraw ||
@@ -11437,14 +11441,13 @@ internal static unsafe class VulkanVideoPresenter
                                     $"0x{texture.Address:X}:{texture.Width}x{texture.Height}:" +
                                     $"f{texture.Format}:n{texture.NumberType}:" +
                                     $"storage={(texture.IsStorage ? 1 : 0)}"));
-                            var pixelDigest = Convert.ToHexString(
-                                SHA256.HashData(work.Draw.PixelSpirv).AsSpan(0, 4));
                             Console.Error.WriteLine(
                                 $"[LOADER][TRACE] vk.guest_write_sample " +
                                 $"addr=0x{target.Address:X16} " +
                                 $"write={(captureThisWrite ? captureMatchCount : writeCount)} " +
                                 $"vs_bytes={work.Draw.VertexSpirv.Length} " +
-                                $"ps_bytes={work.Draw.PixelSpirv.Length} ps_hash={pixelDigest} " +
+                                $"ps_bytes={work.Draw.PixelSpirv.Length} " +
+                                $"ps_hash={pixelShaderSignature[..8]} " +
                                 $"vertices={work.Draw.VertexCount} instances={work.Draw.InstanceCount} " +
                                 $"primitive=0x{work.Draw.PrimitiveType:X} " +
                                 $"readback={(shouldTraceWrite ? 1 : 0)} textures=[{sampledTextures}]");
