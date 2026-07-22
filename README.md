@@ -39,7 +39,8 @@ test-driven workflow. Major downstream differences include:
   across skipped forward blocks; shader decoding remains bounded while accepting large modern
   engine programs beyond the former 4,096-instruction ceiling; bounded Vulkan
   presenter shutdown waits keep capture and embedded-surface cleanup ordered
-  after GPU resources have actually been released
+  after GPU resources have actually been released, while persistent Vulkan
+  pipeline caches are isolated per game and capped at 64 MiB on load and save
 - graphics-stage Gen5 ADD_TID LDS transfers lowered to per-invocation storage
   with guest lane and M0 addressing, while compute shaders retain shared
   workgroup LDS semantics
