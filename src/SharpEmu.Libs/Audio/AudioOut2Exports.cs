@@ -15,6 +15,8 @@ public static class AudioOut2Exports
     private const int AudioOut2ContextParamSize = 0x40;
     private const ulong AudioOut2ContextMemoryBaseSize = 0x10000;
     private const ulong AudioOut2QueueMemorySize = 0x590;
+    private const ulong AudioOut2AttributeSize = 0x18;
+    private const uint MaxAttributeCount = 1024;
     private const uint DefaultQueueDepth = 4;
     private const uint DefaultNumGrains = 512;
     private const int AudioOut2ErrorNotReady = unchecked((int)0x80268008);
@@ -157,6 +159,40 @@ public static class AudioOut2Exports
             if (pair.Value.ContextHandle == contextHandle)
             {
                 Ports.TryRemove(pair.Key, out _);
+            }
+        }
+
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "4dq2rblWlg0",
+        ExportName = "sceAudioOut2ContextSetAttributes",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2ContextSetAttributes(CpuContext ctx)
+    {
+        var handle = ctx[CpuRegister.Rdi];
+        var attributesAddress = ctx[CpuRegister.Rsi];
+        var attributeCount = unchecked((uint)ctx[CpuRegister.Rdx]);
+        if (handle == 0 || !Contexts.ContainsKey(handle) ||
+            (attributeCount != 0 && attributesAddress == 0) ||
+            attributeCount > MaxAttributeCount)
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        for (var index = 0U; index < attributeCount; index++)
+        {
+            if (!TryReadAttribute(
+                    ctx,
+                    attributesAddress,
+                    index,
+                    out _,
+                    out _,
+                    out _))
+            {
+                return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
         }
 
@@ -350,28 +386,20 @@ public static class AudioOut2Exports
         var attributeCount = unchecked((uint)ctx[CpuRegister.Rdx]);
         if (handle == 0 || !Ports.TryGetValue(handle, out var port) ||
             (attributeCount != 0 && attributesAddress == 0) ||
-            attributeCount > 1024)
+            attributeCount > MaxAttributeCount)
         {
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
         for (var index = 0U; index < attributeCount; index++)
         {
-            if (!GuestAddress.TryAdd(
+            if (!TryReadAttribute(
+                    ctx,
                     attributesAddress,
-                    index * 0x18UL,
-                    out var attributeAddress) ||
-                !GuestAddress.TryAdd(
-                    attributeAddress,
-                    0x08,
-                    out var valueAddressAddress) ||
-                !GuestAddress.TryAdd(
-                    attributeAddress,
-                    0x10,
-                    out var valueSizeAddress) ||
-                !ctx.TryReadUInt32(attributeAddress, out var attributeId) ||
-                !ctx.TryReadUInt64(valueAddressAddress, out var valueAddress) ||
-                !ctx.TryReadUInt64(valueSizeAddress, out var valueSize))
+                    index,
+                    out var attributeId,
+                    out var valueAddress,
+                    out var valueSize))
             {
                 return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
@@ -389,6 +417,37 @@ public static class AudioOut2Exports
         }
 
         return ctx.SetReturn(0);
+    }
+
+    private static bool TryReadAttribute(
+        CpuContext ctx,
+        ulong attributesAddress,
+        uint index,
+        out uint attributeId,
+        out ulong valueAddress,
+        out ulong valueSize)
+    {
+        attributeId = 0;
+        valueAddress = 0;
+        valueSize = 0;
+        if (!GuestAddress.TryAdd(
+                attributesAddress,
+                index * AudioOut2AttributeSize,
+                out var attributeAddress))
+        {
+            return false;
+        }
+
+        Span<byte> attribute = stackalloc byte[(int)AudioOut2AttributeSize];
+        if (!ctx.Memory.TryRead(attributeAddress, attribute))
+        {
+            return false;
+        }
+
+        attributeId = BinaryPrimitives.ReadUInt32LittleEndian(attribute);
+        valueAddress = BinaryPrimitives.ReadUInt64LittleEndian(attribute[0x08..]);
+        valueSize = BinaryPrimitives.ReadUInt64LittleEndian(attribute[0x10..]);
+        return true;
     }
 
     [SysAbiExport(
