@@ -862,6 +862,30 @@ public static partial class AgcExports
         SetIndirectPatchAddress(ctx, "uc");
 
     [SysAbiExport(
+        Nid = "whb1RL7K4Ss",
+        ExportName = "sceAgcSetCxRegIndirectPatchSetNumRegisters",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int SetCxRegIndirectPatchSetNumRegisters(CpuContext ctx) =>
+        SetIndirectPatchRegisterCount(ctx, "cx");
+
+    [SysAbiExport(
+        Nid = "nCUgItdN2ms",
+        ExportName = "sceAgcSetShRegIndirectPatchSetNumRegisters",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int SetShRegIndirectPatchSetNumRegisters(CpuContext ctx) =>
+        SetIndirectPatchRegisterCount(ctx, "sh");
+
+    [SysAbiExport(
+        Nid = "fRG-JOH5+sI",
+        ExportName = "sceAgcSetUcRegIndirectPatchSetNumRegisters",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int SetUcRegIndirectPatchSetNumRegisters(CpuContext ctx) =>
+        SetIndirectPatchRegisterCount(ctx, "uc");
+
+    [SysAbiExport(
         Nid = "d-6uF9sZDIU",
         ExportName = "sceAgcSetCxRegIndirectPatchAddRegisters",
         Target = Generation.Gen5,
@@ -1710,14 +1734,15 @@ public static partial class AgcExports
     {
         var commandBufferAddress = ctx[CpuRegister.Rdi];
         var dataOffset = (uint)ctx[CpuRegister.Rsi];
-        var modifier = (uint)ctx[CpuRegister.Rdx];
+        var modifier = ctx[CpuRegister.Rdx];
+        var patchOffsets = DecodeIndirectModifierPatchOffsets(modifier, indexed: true);
         if (commandBufferAddress == 0 ||
             !TryAllocateCommandDwords(ctx, commandBufferAddress, 5, out var commandAddress) ||
             !TryWriteUInt32(ctx, commandAddress, Pm4(5, ItDrawIndexIndirect, 0)) ||
             !TryWriteUInt32(ctx, commandAddress + 4, dataOffset) ||
-            !TryWriteUInt32(ctx, commandAddress + 8, 0) ||
-            !TryWriteUInt32(ctx, commandAddress + 12, 0) ||
-            !TryWriteUInt32(ctx, commandAddress + 16, modifier))
+            !TryWriteUInt32(ctx, commandAddress + 8, (uint)patchOffsets) ||
+            !TryWriteUInt32(ctx, commandAddress + 12, (uint)(patchOffsets >> 32)) ||
+            !TryWriteUInt32(ctx, commandAddress + 16, DecodeIndirectDrawInitiator(modifier)))
         {
             return ReturnPointer(ctx, 0);
         }
@@ -1726,6 +1751,45 @@ public static partial class AgcExports
             $"agc.dcb_draw_index_indirect buf=0x{commandBufferAddress:X16} " +
             $"cmd=0x{commandAddress:X16} offset=0x{dataOffset:X8} modifier=0x{modifier:X8}");
         return ReturnPointer(ctx, commandAddress);
+    }
+
+    [SysAbiExport(
+        Nid = "1q1titRBL6o",
+        ExportName = "sceAgcDcbDrawIndirect",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DcbDrawIndirect(CpuContext ctx)
+    {
+        var commandBufferAddress = ctx[CpuRegister.Rdi];
+        var dataOffset = (uint)ctx[CpuRegister.Rsi];
+        var modifier = ctx[CpuRegister.Rdx];
+        var patchOffsets = DecodeIndirectModifierPatchOffsets(modifier, indexed: false);
+        if (commandBufferAddress == 0 ||
+            !TryAllocateCommandDwords(ctx, commandBufferAddress, 5, out var commandAddress) ||
+            !TryWriteUInt32(ctx, commandAddress, Pm4(5, ItDrawIndirect, 0)) ||
+            !TryWriteUInt32(ctx, commandAddress + 4, dataOffset) ||
+            !TryWriteUInt32(ctx, commandAddress + 8, (uint)patchOffsets) ||
+            !TryWriteUInt32(ctx, commandAddress + 12, (uint)(patchOffsets >> 32)) ||
+            !TryWriteUInt32(ctx, commandAddress + 16, DecodeIndirectDrawInitiator(modifier)))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        TraceAgc(
+            $"agc.dcb_draw_indirect buf=0x{commandBufferAddress:X16} " +
+            $"cmd=0x{commandAddress:X16} offset=0x{dataOffset:X8} modifier=0x{modifier:X16}");
+        return ReturnPointer(ctx, commandAddress);
+    }
+
+    [SysAbiExport(
+        Nid = "cxPZ4Wgvdj8",
+        ExportName = "sceAgcDcbDrawIndirectGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DcbDrawIndirectGetSize(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = 5u * sizeof(uint);
+        return (int)ctx[CpuRegister.Rax];
     }
 
     [SysAbiExport(
@@ -11265,6 +11329,24 @@ public static partial class AgcExports
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
+    private static int SetIndirectPatchRegisterCount(CpuContext ctx, string registerSpace)
+    {
+        var commandAddress = ctx[CpuRegister.Rdi];
+        var registerCount = (uint)ctx[CpuRegister.Rsi] & 0x3FFFu;
+        if (commandAddress == 0)
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        if (!TryWriteUInt32(ctx, commandAddress + sizeof(uint), registerCount))
+        {
+            return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        TraceAgc($"agc.patch_{registerSpace}_count cmd=0x{commandAddress:X16} count={registerCount}");
+        return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
     private static int PatchWriteDataControlByte(CpuContext ctx, int byteIndex)
     {
         if (!TryResolveWriteDataPatchArguments(
@@ -11339,6 +11421,44 @@ public static partial class AgcExports
         TraceAgc($"agc.patch_{registerSpace}_add cmd=0x{commandAddress:X16} add={registerCount} total={currentCount + registerCount}");
         ctx[CpuRegister.Rax] = 0;
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static ulong DecodeIndirectModifierPatchOffsets(ulong modifier, bool indexed)
+    {
+        var low = (uint)modifier;
+        var stage = low >> 29;
+        var scalarRegisterBase = (stage is 3 or 5 ? 0x80u : 0u) + 0x8Cu;
+
+        ulong baseVertexLocation = 0x280;
+        if ((low & 0x1u) != 0)
+        {
+            baseVertexLocation = scalarRegisterBase + ((low >> 9) & 0x1Fu);
+        }
+
+        ulong startInstanceLocation = 0x280;
+        if ((low & 0x4u) != 0)
+        {
+            startInstanceLocation = scalarRegisterBase + ((low >> 19) & 0x1Fu);
+        }
+
+        if (indexed && (low & 0x2u) != 0)
+        {
+            baseVertexLocation |=
+                (ulong)(scalarRegisterBase + ((low >> 14) & 0x1Fu)) << 16;
+            baseVertexLocation |= 1UL << 59;
+        }
+
+        return baseVertexLocation | (startInstanceLocation << 32);
+    }
+
+    private static uint DecodeIndirectDrawInitiator(ulong modifier)
+    {
+        if ((modifier & (1UL << 32)) != 0)
+        {
+            return 2;
+        }
+
+        return (((uint)modifier >> 3) & 0x20u) | 2u;
     }
 
     private static int DcbSetRegistersIndirect(CpuContext ctx, uint packetRegister, string registerSpace)
