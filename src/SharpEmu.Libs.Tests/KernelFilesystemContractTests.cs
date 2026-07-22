@@ -80,6 +80,17 @@ public sealed class KernelFilesystemContractTests : IDisposable
     }
 
     [Fact]
+    public void MkdirExistingDirectoryReturnsOrbisEexistValue()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "cache"));
+        WritePath(_mount + "/cache");
+
+        Assert.Equal(
+            unchecked((int)0x80020011),
+            KernelMemoryCompatExports.KernelMkdir(_context));
+    }
+
+    [Fact]
     public void App0MutationsRemainDenied()
     {
         File.WriteAllText(Path.Combine(_app0Root, "existing.bin"), "fixture");
