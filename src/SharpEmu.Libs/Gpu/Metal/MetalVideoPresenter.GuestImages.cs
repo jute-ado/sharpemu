@@ -32,6 +32,7 @@ internal static partial class MetalVideoPresenter
         object Work,
         ulong PayloadBytes,
         long Sequence,
+        long RequiredSequence,
         GuestQueueIdentity Queue);
 
     private sealed record OrderedGuestAction(Action Action, string DebugName);
@@ -129,7 +130,9 @@ internal static partial class MetalVideoPresenter
     private static readonly Dictionary<ulong, long> _guestImageWorkSequences = new();
     private static readonly Queue<Presentation> _pendingGuestImagePresentations = new();
     private static readonly Dictionary<long, GuestImage> _guestImageVersions = new();
-    private static readonly Dictionary<(int Handle, int BufferIndex), long>
+    private static readonly Dictionary<
+        (int Handle, int BufferIndex),
+        OrderedGuestFlipReference>
         _lastOrderedGuestFlipVersions = new();
     private static long _orderedGuestFlipVersionSequence;
     private static volatile ICpuMemory? _guestMemory;
@@ -180,15 +183,19 @@ internal static partial class MetalVideoPresenter
     {
         lock (_gate)
         {
-            var version = _lastOrderedGuestFlipVersions.TryGetValue(
+            var reference = _lastOrderedGuestFlipVersions.TryGetValue(
                 (videoOutHandle, displayBufferIndex),
-                out var lastVersion)
-                    ? lastVersion
-                    : 0;
+                out var lastReference)
+                    ? lastReference
+                    : default;
             return _closed || _thread is null
                 ? 0
                 : EnqueueGuestWorkLocked(
-                    new OrderedGuestFlipWait(version, videoOutHandle, displayBufferIndex));
+                    new OrderedGuestFlipWait(
+                        reference.Version,
+                        videoOutHandle,
+                        displayBufferIndex),
+                    reference.WorkSequence);
         }
     }
 
@@ -435,8 +442,7 @@ internal static partial class MetalVideoPresenter
             }
 
             var version = ++_orderedGuestFlipVersionSequence;
-            _lastOrderedGuestFlipVersions[(videoOutHandle, displayBufferIndex)] = version;
-            return EnqueueGuestWorkLocked(
+            var workSequence = EnqueueGuestWorkLocked(
                 new OrderedGuestFlip(
                     version,
                     videoOutHandle,
@@ -444,7 +450,15 @@ internal static partial class MetalVideoPresenter
                     address,
                     width,
                     height,
-                    pitchInPixel)) > 0;
+                    pitchInPixel));
+            if (workSequence <= 0)
+            {
+                return false;
+            }
+
+            _lastOrderedGuestFlipVersions[(videoOutHandle, displayBufferIndex)] =
+                new OrderedGuestFlipReference(version, workSequence);
+            return true;
         }
     }
 
@@ -527,11 +541,14 @@ internal static partial class MetalVideoPresenter
     }
 
     private static bool IsGuestWorkCompletedLocked(long sequence) =>
-        sequence <= 0 ||
-        sequence <= _completedGuestWorkSequence ||
-        _completedGuestWorkOutOfOrder.Contains(sequence);
+        OrderedGuestFlipWaitPolicy.IsRequiredSequenceCompleted(
+            sequence,
+            _completedGuestWorkSequence,
+            _completedGuestWorkOutOfOrder);
 
-    private static long EnqueueGuestWorkLocked(object work)
+    private static long EnqueueGuestWorkLocked(
+        object work,
+        long additionalRequiredSequence = 0)
     {
         var payloadBytes = GetGuestWorkPayloadBytes(work);
         // Work executed by the render-loop consumer can enqueue an ordered
@@ -570,7 +587,14 @@ internal static partial class MetalVideoPresenter
             _pendingGuestQueueSchedule.Add(queue.Name);
         }
 
-        var pending = new PendingGuestWork(work, payloadBytes, sequence, queue);
+        var pending = new PendingGuestWork(
+            work,
+            payloadBytes,
+            sequence,
+            OrderedGuestFlipWaitPolicy.ResolveRequiredSequence(
+                queueDependency: 0,
+                additionalRequiredSequence),
+            queue);
         if (_enqueueAsImmediateQueueFollowup &&
             _immediateFollowupTail is { List: not null } tail &&
             ReferenceEquals(tail.List, pendingQueue))
@@ -608,7 +632,8 @@ internal static partial class MetalVideoPresenter
     {
         lock (_gate)
         {
-            while (_pendingGuestQueueSchedule.Count > 0)
+            var queuesToProbe = _pendingGuestQueueSchedule.Count;
+            while (_pendingGuestQueueSchedule.Count > 0 && queuesToProbe > 0)
             {
                 if (_pendingGuestQueueCursor >= _pendingGuestQueueSchedule.Count)
                 {
@@ -621,10 +646,22 @@ internal static partial class MetalVideoPresenter
                 {
                     _pendingGuestWorkByQueue.Remove(queueName);
                     _pendingGuestQueueSchedule.RemoveAt(_pendingGuestQueueCursor);
+                    queuesToProbe = Math.Min(
+                        queuesToProbe,
+                        _pendingGuestQueueSchedule.Count);
                     continue;
                 }
 
                 work = first.Value;
+                if (!IsGuestWorkCompletedLocked(work.RequiredSequence))
+                {
+                    _pendingGuestQueueCursor =
+                        (_pendingGuestQueueCursor + 1) %
+                        _pendingGuestQueueSchedule.Count;
+                    queuesToProbe--;
+                    continue;
+                }
+
                 queue.RemoveFirst();
                 _pendingGuestWorkCount--;
                 if (queue.Count == 0)
