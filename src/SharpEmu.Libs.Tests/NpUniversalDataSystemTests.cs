@@ -111,6 +111,43 @@ public sealed class NpUniversalDataSystemTests
     }
 
     [Fact]
+    public void DestroyEventPropertyObjectReleasesCreatedObjectAndValidatesAddress()
+    {
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(PropertyOutAddress, new byte[sizeof(ulong)]);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = PropertyOutAddress;
+
+        Assert.Equal(
+            0,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemCreateEventPropertyObject(context));
+        Assert.True(context.TryReadUInt64(PropertyOutAddress, out var propertyAddress));
+        Assert.Equal(1, memory.GuestAllocationCount);
+
+        context[CpuRegister.Rdi] = propertyAddress;
+        Assert.Equal(
+            0,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemDestroyEventPropertyObject(context));
+        Assert.Equal(0, memory.GuestAllocationCount);
+        Span<byte> probe = stackalloc byte[1];
+        Assert.False(memory.TryRead(propertyAddress, probe));
+
+        context[CpuRegister.Rdi] = 0;
+        Assert.Equal(
+            InvalidArgument,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemDestroyEventPropertyObject(context));
+
+        context[CpuRegister.Rdi] = 0xDEAD_0000;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            NpUniversalDataSystemExports
+                .NpUniversalDataSystemDestroyEventPropertyObject(context));
+    }
+
+    [Fact]
     public void CreateHandleUsesOnlyItsDocumentedOutputPointer()
     {
         var memory = new FakeGuestMemory();
@@ -214,6 +251,16 @@ public sealed class NpUniversalDataSystemTests
         ExportMetadataAssert.Exact(
             "s6W4Zl4Slgk",
             "sceNpUniversalDataSystemCreateEventPropertyObject",
+            "libSceNpUniversalDataSystem",
+            Generation.Gen4 | Generation.Gen5);
+    }
+
+    [Fact]
+    public void DestroyEventPropertyObjectExportMetadataIsExact()
+    {
+        ExportMetadataAssert.Exact(
+            "kKUH0Viib3c",
+            "sceNpUniversalDataSystemDestroyEventPropertyObject",
             "libSceNpUniversalDataSystem",
             Generation.Gen4 | Generation.Gen5);
     }
