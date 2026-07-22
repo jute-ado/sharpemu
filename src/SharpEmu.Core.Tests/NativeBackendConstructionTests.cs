@@ -5,6 +5,7 @@ using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using SharpEmu.Core.Cpu;
 using SharpEmu.Core.Cpu.Native;
+using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
 using SharpEmu.HLE;
 using SharpEmu.HLE.Host;
@@ -179,6 +180,58 @@ public sealed class NativeBackendConstructionTests
                 exceptionType: 30,
                 out error));
         Assert.Contains("unknown", error);
+    }
+
+    [Fact]
+    public async Task ExceptionStackMappingDoesNotHoldTheGuestThreadSchedulerGate()
+    {
+        var threading = new RecordingHostThreading([17u, 23u]);
+        var hostMemory =
+            new AllocatingHostMemory(failedAllocation: int.MaxValue);
+        var platform = new StubHostPlatform(
+            threading,
+            hostMemory,
+            new StubHostSymbolResolver(address: 1));
+        using var backend = new DirectExecutionBackend(
+            new ModuleManager(),
+            platform,
+            new StubFaultHandling(succeed: true));
+        using var memory = new BlockingSnapshotVirtualMemory();
+        var context = new CpuContext(memory, Generation.Gen5);
+        const ulong threadHandle = 0x1234;
+        backend.RegisterGuestThreadContext(threadHandle, context);
+
+        var raiseTask = Task.Run(
+            () => backend.TryRaiseGuestException(
+                context,
+                threadHandle,
+                handler: 0x1234_0000,
+                exceptionType: 30,
+                out _));
+
+        await memory.SnapshotEntered.WaitAsync(TimeSpan.FromSeconds(2));
+        var registrationTask = Task.Run(
+            () => backend.RegisterGuestThreadContext(
+                threadHandle + 1,
+                new CpuContext(new VirtualMemory(), Generation.Gen5)));
+
+        try
+        {
+            Assert.Same(
+                registrationTask,
+                await Task.WhenAny(
+                    registrationTask,
+                    Task.Delay(TimeSpan.FromSeconds(5))));
+            Assert.True(
+                registrationTask.IsCompletedSuccessfully,
+                "exception-stack mapping blocked the guest-thread scheduler gate");
+        }
+        finally
+        {
+            memory.ReleaseSnapshot();
+        }
+
+        Assert.True(await raiseTask.WaitAsync(TimeSpan.FromSeconds(2)));
     }
 
     [Fact]
@@ -1699,6 +1752,47 @@ public sealed class NativeBackendConstructionTests
 
         public void FlushInstructionCache(ulong address, ulong size)
         {
+        }
+    }
+
+    private sealed class BlockingSnapshotVirtualMemory : IVirtualMemory, IDisposable
+    {
+        private readonly TaskCompletionSource _snapshotEntered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _releaseSnapshot =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task SnapshotEntered => _snapshotEntered.Task;
+
+        public void ReleaseSnapshot() => _releaseSnapshot.TrySetResult();
+
+        public void Clear()
+        {
+        }
+
+        public void Map(
+            ulong virtualAddress,
+            ulong memorySize,
+            ulong fileOffset,
+            ReadOnlySpan<byte> fileData,
+            ProgramHeaderFlags protection)
+        {
+        }
+
+        public IReadOnlyList<VirtualMemoryRegion> SnapshotRegions()
+        {
+            _snapshotEntered.TrySetResult();
+            _releaseSnapshot.Task.GetAwaiter().GetResult();
+            return [];
+        }
+
+        public bool TryRead(ulong virtualAddress, Span<byte> destination) => false;
+
+        public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source) => false;
+
+        public void Dispose()
+        {
+            ReleaseSnapshot();
         }
     }
 
