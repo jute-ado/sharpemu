@@ -1210,6 +1210,14 @@ public static class KernelRuntimeCompatExports
     }
 
     [SysAbiExport(
+        Nid = "4fU5yvOkVG4",
+        ExportName = "sceSysmoduleGetModuleInfoForUnwind",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceSysmodule")]
+    public static int SysmoduleGetModuleInfoForUnwind(CpuContext ctx) =>
+        KernelGetModuleInfoForUnwind(ctx);
+
+    [SysAbiExport(
         Nid = "kUpgrXIrz7Q",
         ExportName = "sceKernelGetModuleInfo",
         Target = Generation.Gen4 | Generation.Gen5,
