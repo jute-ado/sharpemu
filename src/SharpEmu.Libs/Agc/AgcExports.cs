@@ -3208,6 +3208,54 @@ public static partial class AgcExports
     }
 
     [SysAbiExport(
+        Nid = "5CdQTZIQPxM",
+        ExportName = "sceAgcDriverGetEqEventType",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgcDriver")]
+    public static int DriverGetEqEventType(CpuContext ctx)
+    {
+        var result = 0;
+        if (TryReadDriverEvent(
+                ctx,
+                ctx[CpuRegister.Rdi],
+                out var ident,
+                out var filter,
+                out var data))
+        {
+            result = unchecked((int)(filter == KernelEventQueueCompatExports.KernelEventFilterGraphics
+                ? ident
+                : data));
+        }
+
+        ctx[CpuRegister.Rax] = unchecked((ulong)result);
+        return result;
+    }
+
+    [SysAbiExport(
+        Nid = "Zw7uUVPulbw",
+        ExportName = "sceAgcDriverGetEqContextId",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgcDriver")]
+    public static int DriverGetEqContextId(CpuContext ctx)
+    {
+        uint result = 0;
+        if (TryReadDriverEvent(
+                ctx,
+                ctx[CpuRegister.Rdi],
+                out var ident,
+                out var filter,
+                out var data))
+        {
+            result = unchecked((uint)(filter == KernelEventQueueCompatExports.KernelEventFilterGraphics
+                ? data
+                : ident));
+        }
+
+        ctx[CpuRegister.Rax] = result;
+        return unchecked((int)result);
+    }
+
+    [SysAbiExport(
         Nid = "Ddwk4gLT5j0",
         ExportName = "sceAgcDriverIsCaptureInProgress",
         Target = Generation.Gen5,
@@ -12440,6 +12488,33 @@ public static partial class AgcExports
 
     private static void WriteBlobUInt64(Span<byte> blob, int offset, ulong value) =>
         BinaryPrimitives.WriteUInt64LittleEndian(blob[offset..], value);
+
+    private static bool TryReadDriverEvent(
+        CpuContext ctx,
+        ulong eventAddress,
+        out ulong ident,
+        out short filter,
+        out ulong data)
+    {
+        ident = 0;
+        filter = 0;
+        data = 0;
+        if (eventAddress == 0)
+        {
+            return false;
+        }
+
+        Span<byte> eventBytes = stackalloc byte[0x18];
+        if (!ctx.Memory.TryRead(eventAddress, eventBytes))
+        {
+            return false;
+        }
+
+        ident = BinaryPrimitives.ReadUInt64LittleEndian(eventBytes[0x00..]);
+        filter = BinaryPrimitives.ReadInt16LittleEndian(eventBytes[0x08..]);
+        data = BinaryPrimitives.ReadUInt64LittleEndian(eventBytes[0x10..]);
+        return true;
+    }
 
     private static int ReturnPointer(CpuContext ctx, ulong pointer)
     {
