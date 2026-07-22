@@ -135,6 +135,9 @@ test-driven workflow. Major downstream differences include:
   for source control, ASLR-stable shader-signature write captures, and
   presented-frame-relative controller replay for deterministic menu automation
   when host execution speed varies
+- queue-ordered `WAIT_REG_MEM` visibility points that publish completed shader
+  buffer writes across logical GPU queues and latch transient completion values
+  without fabricating or mutating guest labels
 - Windows, Linux, and macOS x64 build, test, packaging, and release validation
 - small, focused branches whose changes are merged only after relevant tests
   and hosted CI pass
