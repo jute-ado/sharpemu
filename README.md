@@ -46,7 +46,9 @@ test-driven workflow. Major downstream differences include:
   pipeline caches are isolated per game and capped at 64 MiB on load and save;
   mutable guest-image views advertise only format-supported sampled, attachment,
   and storage usages, avoiding invalid sRGB storage inheritance on Vulkan, and
-  arrayed shader aliases retain array view types instead of reusing scalar 2D views
+  arrayed shader aliases retain array view types instead of reusing scalar 2D
+  views; cube descriptors carry six-face uploads into cube-compatible images
+  and cube views rather than binding dimension-incompatible 2D resources
 - graphics-stage Gen5 ADD_TID LDS transfers lowered to per-invocation storage
   with guest lane and M0 addressing, while compute shaders retain shared
   workgroup LDS semantics
