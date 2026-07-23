@@ -539,7 +539,8 @@ public sealed partial class DirectExecutionBackend
 					Console.Error.WriteLine(
 						$"[LOADER][WARN] Import#{num} result: {orbisGen2Result} ({importStubEntry.Nid}) " +
 						$"rdi=0x{value:X16} rsi=0x{value2:X16} rdx=0x{num3:X16} rcx=0x{num4:X16} " +
-						$"r8=0x{num5:X16} r9=0x{num6:X16} ret=0x{num7:X16}");
+						$"r8=0x{num5:X16} r9=0x{num6:X16} " +
+						$"arg7={FormatFirstImportStackArgument(cpuContext, (ulong)argPackPtr + 96uL)} ret=0x{num7:X16}");
 				}
 
 				recentImportTraceEntry?.Complete(cpuContext[CpuRegister.Rax]);
@@ -779,7 +780,7 @@ public sealed partial class DirectExecutionBackend
 					$"rdi=0x{arg0:X16} rsi=0x{cpuContext[CpuRegister.Rsi]:X16} " +
 					$"rdx=0x{cpuContext[CpuRegister.Rdx]:X16} rcx=0x{cpuContext[CpuRegister.Rcx]:X16} " +
 					$"r8=0x{cpuContext[CpuRegister.R8]:X16} r9=0x{cpuContext[CpuRegister.R9]:X16} " +
-					$"ret=0x{returnRip:X16}");
+					$"arg7={FormatFirstImportStackArgument(cpuContext, (ulong)argPackPtr + 96uL)} ret=0x{returnRip:X16}");
 			}
 
 			recentImportTraceEntry?.Complete(cpuContext[CpuRegister.Rax]);
@@ -793,6 +794,17 @@ public sealed partial class DirectExecutionBackend
 		result = cpuContext[CpuRegister.Rax];
 		recentImportTraceEntry?.Complete(result);
 		return true;
+	}
+
+	private static string FormatFirstImportStackArgument(CpuContext cpuContext, ulong stackPointer)
+	{
+		if (stackPointer <= ulong.MaxValue - sizeof(ulong) &&
+			cpuContext.TryReadUInt64(stackPointer + sizeof(ulong), out var value))
+		{
+			return $"0x{value:X16}";
+		}
+
+		return "unreadable";
 	}
 
 	private unsafe static void LoadImportVolatileArguments(CpuContext cpuContext, nint argPackPtr)
