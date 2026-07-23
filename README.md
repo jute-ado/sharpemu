@@ -123,7 +123,8 @@ test-driven workflow. Major downstream differences include:
   application-visible direct-memory capacity, terminal direct-memory ranges,
   Prospero-compatible gap errors, subrange direct-memory release, range-based
   virtual unmapping that preserves covered edge slices and flexible-memory
-  accounting, and idempotent fixed-range reservations; process reset also
+  accounting, title-declared `kernel.flexibleMemorySize` capacity, and
+  idempotent fixed-range reservations; process reset also
   releases tracked libc
   heap allocations, discards stale mappings and names, and restarts direct and
   flexible-memory accounting for the next title

@@ -163,6 +163,35 @@ public sealed class ParamLoaderTests
     }
 
     [Fact]
+    public void ApplicationMetadataReadsKernelFlexibleMemorySize()
+    {
+        var metadata = Ps5ParamJsonReader.TryReadApplicationMetadata(
+            Encoding.UTF8.GetBytes("""
+                {
+                  "titleId": "PPSA00004",
+                  "kernel": { "flexibleMemorySize": 459276288 }
+                }
+                """));
+
+        Assert.Equal(438UL * 1024 * 1024, metadata.FlexibleMemorySize);
+    }
+
+    [Theory]
+    [InlineData("\"459276288\"")]
+    [InlineData("-1")]
+    [InlineData("0")]
+    [InlineData("1.5")]
+    public void InvalidKernelFlexibleMemorySizeIsIgnored(string value)
+    {
+        var metadata = Ps5ParamJsonReader.TryReadApplicationMetadata(
+            Encoding.UTF8.GetBytes($$"""
+                { "kernel": { "flexibleMemorySize": {{value}} } }
+                """));
+
+        Assert.Null(metadata.FlexibleMemorySize);
+    }
+
+    [Fact]
     public void FirstAvailableLocalizationIsUsedWhenPreferredLanguagesAreMissing()
     {
         const string json = """

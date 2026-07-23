@@ -186,7 +186,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             image.Title,
             image.TitleId,
             image.ContentId,
-            image.Version);
+            image.Version,
+            image.FlexibleMemorySize);
         return image;
     }
 
@@ -668,6 +669,10 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         Log.Info($"Loading: {normalizedEbootPath}");
         KernelModuleRegistry.Reset();
         var image = LoadImage(normalizedEbootPath);
+        if (image.FlexibleMemorySize is { } flexibleMemorySize)
+        {
+            KernelMemoryLifecycle.ConfigureFlexibleMemorySize(flexibleMemorySize);
+        }
         VideoOutExports.ConfigureApplicationInfo(image.Title, image.TitleId, image.Version, BuildInfo.CommitSha);
         SaveDataExports.ConfigureApplicationInfo(image.TitleId);
         SystemServiceExports.ConfigureApplicationInfo(image.TitleId);

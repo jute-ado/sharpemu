@@ -30,7 +30,8 @@ public sealed class SelfImage
         ulong ehFrameHeaderAddress = 0,
         ulong ehFrameAddress = 0,
         ulong ehFrameSize = 0,
-        IReadOnlyDictionary<string, ulong>? runtimeDataSymbols = null)
+        IReadOnlyDictionary<string, ulong>? runtimeDataSymbols = null,
+        ulong? flexibleMemorySize = null)
     {
         ArgumentNullException.ThrowIfNull(programHeaders);
         ArgumentNullException.ThrowIfNull(mappedRegions);
@@ -52,6 +53,7 @@ public sealed class SelfImage
         TitleId = titleId;
         Version = version;
         ContentId = contentId;
+        FlexibleMemorySize = flexibleMemorySize;
         EhFrameHeaderAddress = ehFrameHeaderAddress;
         EhFrameAddress = ehFrameAddress;
         EhFrameSize = ehFrameSize;
@@ -106,6 +108,8 @@ public sealed class SelfImage
     public string? Version { get; }
 
     public string? ContentId { get; }
+
+    public ulong? FlexibleMemorySize { get; }
 
     public ulong EhFrameHeaderAddress { get; }
 
