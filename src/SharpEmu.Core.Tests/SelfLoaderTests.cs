@@ -1007,17 +1007,20 @@ public sealed class SelfLoaderTests
     }
 
     [Theory]
-    [InlineData(1, true)]
-    [InlineData(2, false)]
+    [InlineData(1, true, 1, false)]
+    [InlineData(1, true, 2, true)]
+    [InlineData(2, false, 1, false)]
     public void ResolvesUndefinedGlobalImportRelocation(
         byte symbolType,
-        bool expectedDataImport)
+        bool expectedDataImport,
+        byte symbolBinding,
+        bool expectedWeak)
     {
         const string nid = "TESTNID";
         const long addend = 0x20;
         var elf = CreateElfWithSymbolRelocation(
             originalTargetValue: 0,
-            symbolBinding: 1,
+            symbolBinding,
             symbolType,
             symbolValue: 0,
             symbolName: $"{nid}#libSceSynthetic",
@@ -1026,11 +1029,19 @@ public sealed class SelfLoaderTests
 
         var image = new SelfLoader().Load(elf, memory);
 
-        var importStub = Assert.Single(image.ImportStubs);
-        Assert.Equal(nid, importStub.Value);
-        Assert.Equal(
-            AddSignedForTest(importStub.Key, addend),
-            ReadSyntheticRelocationTarget(memory, image));
+        if (expectedDataImport)
+        {
+            Assert.Empty(image.ImportStubs);
+            Assert.Equal((ulong)addend, ReadSyntheticRelocationTarget(memory, image));
+        }
+        else
+        {
+            var importStub = Assert.Single(image.ImportStubs);
+            Assert.Equal(nid, importStub.Value);
+            Assert.Equal(
+                AddSignedForTest(importStub.Key, addend),
+                ReadSyntheticRelocationTarget(memory, image));
+        }
         var importedRelocation = Assert.Single(image.ImportedRelocations);
         Assert.Equal(
             image.EntryPoint + SyntheticRelocationTargetVirtualAddress,
@@ -1038,6 +1049,7 @@ public sealed class SelfLoaderTests
         Assert.Equal(addend, importedRelocation.Addend);
         Assert.Equal(nid, importedRelocation.Nid);
         Assert.Equal(expectedDataImport, importedRelocation.IsData);
+        Assert.Equal(expectedWeak, importedRelocation.IsWeak);
         Assert.Equal("libSceSynthetic", importedRelocation.LibraryName);
         Assert.Null(importedRelocation.ModuleName);
         Assert.Equal($"{nid}#libSceSynthetic", importedRelocation.SymbolName);

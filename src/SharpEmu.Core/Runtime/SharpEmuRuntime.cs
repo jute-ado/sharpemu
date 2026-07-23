@@ -221,6 +221,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         var generation = preparedApplication.Generation;
         var activeImportStubs = preparedApplication.ImportStubs;
         var activeRuntimeSymbols = preparedApplication.RuntimeSymbols;
+        var activeRuntimeDataSymbols = preparedApplication.RuntimeDataSymbols;
         var processImageName = preparedApplication.ProcessImageName;
         var initializerResult = RunAllInitializers(
             image,
@@ -228,6 +229,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             generation,
             activeImportStubs,
             activeRuntimeSymbols,
+            activeRuntimeDataSymbols,
             processImageName);
         if (initializerResult is { } failedInitializerResult)
         {
@@ -258,6 +260,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             generation,
             activeImportStubs,
             activeRuntimeSymbols,
+            activeRuntimeDataSymbols,
             processImageName,
             _cpuExecutionOptions);
 
@@ -676,6 +679,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         var generation = image.ElfHeader.AbiVersion == 2 ? Generation.Gen5 : Generation.Gen4;
         var activeImportStubs = new Dictionary<ulong, string>(image.ImportStubs);
         var activeRuntimeSymbols = new Dictionary<string, ulong>(image.RuntimeSymbols, StringComparer.Ordinal);
+        var activeRuntimeDataSymbols = new Dictionary<string, ulong>(image.RuntimeDataSymbols, StringComparer.Ordinal);
         var processImageName = Path.GetFileName(normalizedEbootPath);
         if (string.IsNullOrWhiteSpace(processImageName))
         {
@@ -683,16 +687,21 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         }
 
         HleDataSymbols.ConfigureProcessImageName(processImageName);
-        MergeKnownHleDataSymbols(activeRuntimeSymbols);
+        MergeKnownHleDataSymbols(activeRuntimeDataSymbols);
         var moduleLoadFailures = new List<ModuleLoadFailure>();
         var skippedModules = new List<SkippedModule>();
         var loadedModuleImages = LoadAdjacentSceModules(
             normalizedEbootPath,
             activeImportStubs,
             activeRuntimeSymbols,
+            activeRuntimeDataSymbols,
             skippedModules,
             moduleLoadFailures);
-        RebindImportedDataSymbols(image, loadedModuleImages, activeRuntimeSymbols);
+        RebindImportedDataSymbols(
+            normalizedEbootPath,
+            image,
+            loadedModuleImages,
+            activeRuntimeDataSymbols);
 
         var preparedApplication = new PreparedApplication(
             image,
@@ -702,6 +711,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             generation,
             activeImportStubs,
             activeRuntimeSymbols,
+            activeRuntimeDataSymbols,
             processImageName);
         LastPreparedApplication = preparedApplication;
         return preparedApplication;
@@ -748,13 +758,15 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         Generation generation,
         IReadOnlyDictionary<ulong, string> activeImportStubs,
         IReadOnlyDictionary<string, ulong> activeRuntimeSymbols,
+        IReadOnlyDictionary<string, ulong> activeRuntimeDataSymbols,
         string processImageName)
     {
         var moduleStartResult = RunPreloadedModuleInitializers(
             loadedModuleImages,
             generation,
             activeImportStubs,
-            activeRuntimeSymbols);
+            activeRuntimeSymbols,
+            activeRuntimeDataSymbols);
         if (moduleStartResult is not null)
         {
             return moduleStartResult;
@@ -770,7 +782,8 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         IReadOnlyList<PreparedModule> loadedModuleImages,
         Generation generation,
         IReadOnlyDictionary<ulong, string> activeImportStubs,
-        IReadOnlyDictionary<string, ulong> activeRuntimeSymbols)
+        IReadOnlyDictionary<string, ulong> activeRuntimeSymbols,
+        IReadOnlyDictionary<string, ulong> activeRuntimeDataSymbols)
     {
         for (var i = 0; i < loadedModuleImages.Count; i++)
         {
@@ -806,6 +819,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                     generation,
                     activeImportStubs,
                     activeRuntimeSymbols,
+                    activeRuntimeDataSymbols,
                     moduleName,
                     _cpuExecutionOptions);
                 _moduleInitializerExecutions.Add(new ModuleInitializerExecution(
@@ -831,6 +845,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         Generation generation,
         IReadOnlyDictionary<ulong, string> activeImportStubs,
         IReadOnlyDictionary<string, ulong> activeRuntimeSymbols,
+        IReadOnlyDictionary<string, ulong> activeRuntimeDataSymbols,
         string processImageName)
     {
         if (image.PreInitializerFunctions.Count == 0 && image.InitializerFunctions.Count == 0)
@@ -847,6 +862,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             generation,
             activeImportStubs,
             activeRuntimeSymbols,
+            activeRuntimeDataSymbols,
             processImageName);
         if (result is not null)
         {
@@ -859,6 +875,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
             generation,
             activeImportStubs,
             activeRuntimeSymbols,
+            activeRuntimeDataSymbols,
             processImageName);
     }
 
@@ -868,6 +885,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         Generation generation,
         IReadOnlyDictionary<ulong, string> activeImportStubs,
         IReadOnlyDictionary<string, ulong> activeRuntimeSymbols,
+        IReadOnlyDictionary<string, ulong> activeRuntimeDataSymbols,
         string processImageName)
     {
         for (var i = 0; i < initializerFunctions.Count; i++)
@@ -886,6 +904,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
                 generation,
                 activeImportStubs,
                 activeRuntimeSymbols,
+                activeRuntimeDataSymbols,
                 processImageName,
                 _cpuExecutionOptions);
             if (result != OrbisGen2Result.ORBIS_GEN2_OK)
@@ -901,6 +920,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         string ebootPath,
         IDictionary<ulong, string> importStubs,
         IDictionary<string, ulong> runtimeSymbols,
+        IDictionary<string, ulong> runtimeDataSymbols,
         ICollection<SkippedModule>? skipped = null,
         ICollection<ModuleLoadFailure>? failures = null)
     {
@@ -1022,6 +1042,7 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
 
                 mergedImportCount += MergeImportStubs(importStubs, moduleImage.ImportStubs, modulePath);
                 mergedSymbolCount += MergeRuntimeSymbols(runtimeSymbols, moduleImage.RuntimeSymbols);
+                _ = MergeRuntimeSymbols(runtimeDataSymbols, moduleImage.RuntimeDataSymbols);
                 RegisterLoadedModule(modulePath, moduleImage, isMain: false, isSystemModule: false);
                 var startOnBoot = !string.Equals(
                     Path.GetDirectoryName(modulePath),
@@ -1047,85 +1068,29 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
     }
 
     private void RebindImportedDataSymbols(
+        string mainImagePath,
         SelfImage mainImage,
         IReadOnlyList<PreparedModule> loadedModuleImages,
-        IReadOnlyDictionary<string, ulong> runtimeSymbols)
+        IReadOnlyDictionary<string, ulong> runtimeDataSymbols)
     {
-        var rebound = 0;
-        var unresolved = 0;
-
-        rebound += RebindImportedDataSymbols(mainImage, runtimeSymbols, ref unresolved);
+        var rebound = ImportedDataRebinder.Rebind(
+            _virtualMemory,
+            mainImage,
+            mainImagePath,
+            runtimeDataSymbols);
         for (var i = 0; i < loadedModuleImages.Count; i++)
         {
-            rebound += RebindImportedDataSymbols(loadedModuleImages[i].Image, runtimeSymbols, ref unresolved);
+            rebound += ImportedDataRebinder.Rebind(
+                _virtualMemory,
+                loadedModuleImages[i].Image,
+                loadedModuleImages[i].Path,
+                runtimeDataSymbols);
         }
 
-        if (rebound != 0 || unresolved != 0)
+        if (rebound != 0)
         {
-            Log.Info(
-                $"Imported data rebind: rebound={rebound}, unresolved={unresolved}");
+            Log.Info($"Imported data rebind: rebound={rebound}, unresolved=0");
         }
-    }
-
-    private int RebindImportedDataSymbols(
-        SelfImage image,
-        IReadOnlyDictionary<string, ulong> runtimeSymbols,
-        ref int unresolved)
-    {
-        if (image.ImportedRelocations.Count == 0)
-        {
-            return 0;
-        }
-
-        var rebound = 0;
-        var logRebind = string.Equals(
-            Environment.GetEnvironmentVariable("SHARPEMU_LOG_DATA_REBIND"),
-            "1",
-            StringComparison.Ordinal);
-        for (var i = 0; i < image.ImportedRelocations.Count; i++)
-        {
-            var relocation = image.ImportedRelocations[i];
-            if (!relocation.IsData)
-            {
-                continue;
-            }
-
-            if (!runtimeSymbols.TryGetValue(relocation.Nid, out var symbolAddress) ||
-                !IsUsableRuntimeSymbolAddress(symbolAddress))
-            {
-                if (logRebind)
-                {
-                    Log.Warning(
-                        $"Imported data unresolved: nid={relocation.Nid} target=0x{relocation.TargetAddress:X16} addend=0x{unchecked((ulong)relocation.Addend):X16}");
-                }
-
-                unresolved++;
-                continue;
-            }
-
-            var reboundValue = AddSigned(symbolAddress, relocation.Addend);
-            if (!TryWriteUInt64(_virtualMemory, relocation.TargetAddress, reboundValue))
-            {
-                if (logRebind)
-                {
-                    Log.Error(
-                        $"Imported data write-failed: nid={relocation.Nid} target=0x{relocation.TargetAddress:X16} value=0x{reboundValue:X16}");
-                }
-
-                unresolved++;
-                continue;
-            }
-
-            if (logRebind)
-            {
-                Log.Debug(
-                    $"Imported data rebound: nid={relocation.Nid} target=0x{relocation.TargetAddress:X16} value=0x{reboundValue:X16}");
-            }
-
-            rebound++;
-        }
-
-        return rebound;
     }
 
     private static void MergeKnownHleDataSymbols(IDictionary<string, ulong> runtimeSymbols)
@@ -1272,9 +1237,26 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         KernelModuleRegistry.RegisterModuleInitializers(
             handle,
             image.InitializerFunctions);
-        KernelModuleRegistry.RegisterModuleSymbols(handle, image.RuntimeSymbols);
+        KernelModuleRegistry.RegisterModuleSymbols(handle, CreateModuleDlsymSymbols(image));
         Log.Info(
             $"Registered module handle={handle} name={Path.GetFileName(modulePath)} base=0x{baseAddress:X16} size=0x{size:X16}");
+    }
+
+    internal static IReadOnlyDictionary<string, ulong> CreateModuleDlsymSymbols(SelfImage image)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        if (image.RuntimeDataSymbols.Count == 0)
+        {
+            return image.RuntimeSymbols;
+        }
+
+        var symbols = new Dictionary<string, ulong>(image.RuntimeSymbols, StringComparer.Ordinal);
+        foreach (var (name, address) in image.RuntimeDataSymbols)
+        {
+            symbols.TryAdd(name, address);
+        }
+
+        return symbols;
     }
 
     private static bool TryComputeImageRange(SelfImage image, out ulong baseAddress, out ulong size)

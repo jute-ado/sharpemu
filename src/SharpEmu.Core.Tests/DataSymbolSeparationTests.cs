@@ -6,6 +6,7 @@ using SharpEmu.Core.Cpu.Native;
 using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
 using SharpEmu.Core.Runtime;
+using SharpEmu.Nids;
 using Xunit;
 
 namespace SharpEmu.Core.Tests;
@@ -66,6 +67,34 @@ public sealed class DataSymbolSeparationTests
     }
 
     [Fact]
+    public void DynamicLookup_ResolvesDataByPlayStationNidAlias()
+    {
+        const string name = "__progname";
+        var dataSymbols = new Dictionary<string, ulong>(StringComparer.Ordinal)
+        {
+            [Ps5Nid.Compute(name)] = 0x3000_0000,
+        };
+
+        Assert.True(DirectExecutionBackend.TryResolveGlobalDlsymSymbolAddress(
+            new Dictionary<string, ulong>(),
+            dataSymbols,
+            name,
+            out var address));
+        Assert.Equal(0x3000_0000UL, address);
+    }
+
+    [Fact]
+    public void ImportStubPolicy_ExcludesDataAndRejectsMixedSymbolKinds()
+    {
+        Assert.False(SelfLoader.EvaluateImportStubPolicy(
+            "object", hasDataImport: true, hasFunctionImport: false));
+        Assert.True(SelfLoader.EvaluateImportStubPolicy(
+            "function", hasDataImport: false, hasFunctionImport: true));
+        Assert.Throws<InvalidDataException>(() => SelfLoader.EvaluateImportStubPolicy(
+            "ambiguous", hasDataImport: true, hasFunctionImport: true));
+    }
+
+    [Fact]
     public void ModuleDynamicLookup_UsesCallableAndDataDefinitions()
     {
         var image = new SelfImage(
@@ -107,6 +136,24 @@ public sealed class DataSymbolSeparationTests
     }
 
     [Fact]
+    public void ResolvedDataRelocations_ApplyPositiveAndNegativeAddends()
+    {
+        var memory = CreateWritableMemory();
+        var image = CreateImage(
+            new ImportedSymbolRelocation(0x10010, 0x28, "positive", IsData: true),
+            new ImportedSymbolRelocation(0x10018, -0x18, "negative", IsData: true));
+        var symbols = new Dictionary<string, ulong>(StringComparer.Ordinal)
+        {
+            ["positive"] = 0x3000_0000,
+            ["negative"] = 0x4000_0000,
+        };
+
+        Assert.Equal(2, ImportedDataRebinder.Rebind(memory, image, "module.prx", symbols));
+        Assert.Equal(0x3000_0028UL, ReadUInt64(memory, 0x10010));
+        Assert.Equal(0x3FFF_FFE8UL, ReadUInt64(memory, 0x10018));
+    }
+
+    [Fact]
     public void StrongUndefinedDataRelocation_FailsClosed()
     {
         var memory = CreateWritableMemory();
@@ -121,6 +168,21 @@ public sealed class DataSymbolSeparationTests
 
         Assert.Contains("required-object", exception.Message, StringComparison.Ordinal);
         Assert.Contains("module.prx", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DataRelocationWriteFailure_FailsClosed()
+    {
+        var image = CreateImage(
+            new ImportedSymbolRelocation(0x5000_0000, 0, "object", IsData: true));
+
+        var exception = Assert.Throws<InvalidDataException>(() => ImportedDataRebinder.Rebind(
+            CreateWritableMemory(),
+            image,
+            "module.prx",
+            new Dictionary<string, ulong> { ["object"] = 0x3000_0000 }));
+
+        Assert.Contains("Failed to write", exception.Message, StringComparison.Ordinal);
     }
 
     private static VirtualMemory CreateWritableMemory()

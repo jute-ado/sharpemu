@@ -36,6 +36,10 @@ test-driven workflow. Major downstream differences include:
 - SELF loading translates nested program-header ranges through their blocked
   container payloads and fails closed when an enclosing payload is unavailable,
   encrypted, or compressed instead of bypassing it through raw file offsets
+- ELF object definitions and imports remain separate from callable symbols:
+  object relocations never receive executable trap stubs, module and global
+  `dlsym` still see data definitions, and unresolved weak objects apply the ELF
+  `S=0` signed-addend rule while required unresolved objects fail closed
 - dimension-correct RDNA image translation and Vulkan resource aliasing,
   including three-coordinate 3D sampling and storage writes, 3D image/view
   creation, and path-sensitive scalar image and buffer descriptor evaluation
@@ -336,6 +340,10 @@ Helped with understanding the basic architecture of the PlayStation 4.
 
 * **[Kyty](https://github.com/InoriRus/Kyty)**
 One of the few PS5 emulator projects available and very useful for studying native code execution.
+
+* **[Acelogic's SharpEmu fork](https://github.com/Acelogic/sharpemu)**
+Provided valuable Gen5 loader research, including the object-symbol separation
+work adapted and independently regression-tested in this fork.
 
 * **Ryujinx**
 Provided valuable references for filesystem handling and low-level C# implementation patterns.
