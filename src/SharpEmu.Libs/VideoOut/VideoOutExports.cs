@@ -221,6 +221,7 @@ public static class VideoOutExports
         public List<FlipEventRegistration> VblankEvents { get; } = new();
         public List<FlipEventRegistration> OutputModeEvents { get; } = new();
         public List<FlipEventRegistration> VrrActiveStatusEvents { get; } = new();
+        public bool IsVrrPeggedToFixedRate { get; set; }
         public long OpenTimestamp;
         public long LastVblankTimestamp;
     }
@@ -731,6 +732,38 @@ public static class VideoOutExports
     public static int VideoOutAddVrrStatusFlagsPrivilege(CpuContext ctx)
     {
         _ = ctx;
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "5tRaBjtdTzY",
+        ExportName = "sceVideoOutVrrPegToFixedRate",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutVrrPegToFixedRate(CpuContext ctx) =>
+        SetVrrFixedRatePeg(ctx, isPegged: true);
+
+    [SysAbiExport(
+        Nid = "T4ucGB8CsnM",
+        ExportName = "sceVideoOutVrrUnpegFromFixedRate",
+        Target = Generation.Gen5,
+        LibraryName = "libSceVideoOut")]
+    public static int VideoOutVrrUnpegFromFixedRate(CpuContext ctx) =>
+        SetVrrFixedRatePeg(ctx, isPegged: false);
+
+    private static int SetVrrFixedRatePeg(CpuContext ctx, bool isPegged)
+    {
+        var handle = unchecked((int)ctx[CpuRegister.Rdi]);
+        lock (_stateGate)
+        {
+            if (!_ports.TryGetValue(handle, out var port))
+            {
+                return OrbisVideoOutErrorInvalidHandle;
+            }
+
+            port.IsVrrPeggedToFixedRate = isPegged;
+        }
+
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
@@ -2336,6 +2369,15 @@ public static class VideoOutExports
         lock (_stateGate)
         {
             return _ports.TryGetValue(handle, out port);
+        }
+    }
+
+    internal static bool IsVrrPeggedToFixedRate(int handle)
+    {
+        lock (_stateGate)
+        {
+            return _ports.TryGetValue(handle, out var port) &&
+                   port.IsVrrPeggedToFixedRate;
         }
     }
 
