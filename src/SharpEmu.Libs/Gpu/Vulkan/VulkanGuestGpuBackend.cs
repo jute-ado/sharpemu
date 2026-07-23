@@ -133,16 +133,16 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
         uint localSizeY,
         uint localSizeZ)
     {
-        var localInvocationCount =
-            (ulong)localSizeX * localSizeY * localSizeZ;
-        // The wave64 bridge uses workgroup barriers. Partial guest waves have
-        // fewer than 64 host invocations, and complex scalar control flow can
-        // strand the bridge and reset the Vulkan device. Native 32-lane
-        // subgroup translation is an approximation for cross-half operations,
-        // but it preserves active work and cannot deadlock on absent lanes.
-        return guestWaveLaneCount == 64 && localInvocationCount < 64
-            ? 32u
-            : guestWaveLaneCount;
+        _ = localSizeX;
+        _ = localSizeY;
+        _ = localSizeZ;
+        // The wave64 bridge uses workgroup barriers. Guest scalar control flow
+        // can make lanes reach those barriers conditionally even in a complete
+        // 64-lane workgroup, stranding the bridge and resetting the Vulkan
+        // device. Native 32-lane subgroup translation is an approximation for
+        // cross-half operations, but it preserves active work and cannot
+        // deadlock at an emulated wave barrier.
+        return guestWaveLaneCount == 64 ? 32u : guestWaveLaneCount;
     }
 
     public IGuestCompiledShader GetDepthOnlyFragmentShader() =>

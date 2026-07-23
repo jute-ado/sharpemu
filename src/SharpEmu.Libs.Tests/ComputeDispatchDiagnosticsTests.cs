@@ -61,9 +61,9 @@ public sealed class ComputeDispatchDiagnosticsTests
     [Theory]
     [InlineData(32u, 8u, 6u, 1u, 32u)]
     [InlineData(64u, 8u, 6u, 1u, 32u)]
-    [InlineData(64u, 8u, 8u, 1u, 64u)]
-    [InlineData(64u, 16u, 8u, 1u, 64u)]
-    public void VulkanTranslationUsesNativeSubgroupsForPartialWave64(
+    [InlineData(64u, 8u, 8u, 1u, 32u)]
+    [InlineData(64u, 16u, 8u, 1u, 32u)]
+    public void VulkanTranslationUsesNativeSubgroupsForWave64(
         uint guestWaveLaneCount,
         uint localSizeX,
         uint localSizeY,
