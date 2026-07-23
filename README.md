@@ -43,6 +43,8 @@ test-driven workflow. Major downstream differences include:
 - graphics-stage Gen5 ADD_TID LDS transfers lowered to per-invocation storage
   with guest lane and M0 addressing, while compute shaders retain shared
   workgroup LDS semantics
+- formatted buffer loads in vertex stages retain resolved global-buffer
+  bindings when they are structured-resource reads rather than vertex inputs
 - PS5 VideoOut VRR-status privilege setup and inactive-status event registration,
   with exact library identities and the same handle/equeue validation as other
   display events

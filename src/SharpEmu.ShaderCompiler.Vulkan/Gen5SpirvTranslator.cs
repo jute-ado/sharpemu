@@ -3103,7 +3103,8 @@ public static partial class Gen5SpirvTranslator
             }
 
             if (_stage == Gen5SpirvStage.Vertex &&
-                IsFormatBufferLoad(instruction.Opcode))
+                IsFormatBufferLoad(instruction.Opcode) &&
+                !_bufferBindingByPc.ContainsKey(instruction.Pc))
             {
                 error = $"missing vertex input for {instruction.Opcode} pc=0x{instruction.Pc:X}";
                 return false;
