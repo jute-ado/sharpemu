@@ -1476,6 +1476,31 @@ public static partial class AgcExports
     }
 
     [SysAbiExport(
+        Nid = "e1DFTg+Sd8U",
+        ExportName = "sceAgcAcbJump",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int AcbJump(CpuContext ctx) =>
+        WriteJumpPacket(
+            ctx,
+            ctx[CpuRegister.Rdi],
+            (uint)ctx[CpuRegister.Rsi],
+            cachePolicy: 0,
+            ctx[CpuRegister.Rdx],
+            (uint)ctx[CpuRegister.Rcx]);
+
+    [SysAbiExport(
+        Nid = "b-oySn+G2tE",
+        ExportName = "sceAgcAcbJumpGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int AcbJumpGetSize(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = 4u * sizeof(uint);
+        return (int)ctx[CpuRegister.Rax];
+    }
+
+    [SysAbiExport(
         Nid = "cFazmnXpJOE",
         ExportName = "sceAgcAcbEventWrite",
         Target = Generation.Gen5,
@@ -13005,19 +13030,38 @@ public static partial class AgcExports
         LibraryName = "libSceAgc")]
     public static int DcbJump(CpuContext ctx)
     {
-        var dcb = ctx[CpuRegister.Rdi];
-        var target = ctx[CpuRegister.Rsi];
-        var sizeDwords = (uint)ctx[CpuRegister.Rdx];
-        if (dcb == 0)
+        return WriteJumpPacket(
+            ctx,
+            ctx[CpuRegister.Rdi],
+            (uint)ctx[CpuRegister.Rsi],
+            (uint)ctx[CpuRegister.Rdx],
+            ctx[CpuRegister.Rcx],
+            (uint)ctx[CpuRegister.R8]);
+    }
+
+    private static int WriteJumpPacket(
+        CpuContext ctx,
+        ulong commandBufferAddress,
+        uint mode,
+        uint cachePolicy,
+        ulong target,
+        uint sizeDwords)
+    {
+        if (commandBufferAddress == 0)
         {
             return ReturnPointer(ctx, 0);
         }
 
-        if (!TryAllocateCommandDwords(ctx, dcb, 4, out var cmd) ||
+        if (!TryAllocateCommandDwords(ctx, commandBufferAddress, 4, out var cmd) ||
             !ctx.TryWriteUInt32(cmd, Pm4(4, ItIndirectBuffer, RZero)) ||
-            !ctx.TryWriteUInt32(cmd + 4, (uint)(target & 0xFFFF_FFFFUL)) ||
-            !ctx.TryWriteUInt32(cmd + 8, (uint)((target >> 32) & 0xFFFFUL)) ||
-            !ctx.TryWriteUInt32(cmd + 12, sizeDwords & 0xFFFFF))
+            !ctx.TryWriteUInt32(cmd + 4, (uint)target & ~3u) ||
+            !ctx.TryWriteUInt32(cmd + 8, (uint)(target >> 32)) ||
+            !ctx.TryWriteUInt32(
+                cmd + 12,
+                0x0F20_0000u |
+                ((cachePolicy & 0x3u) << 28) |
+                ((mode & 0x1u) << 20) |
+                (sizeDwords & 0xF_FFFFu)))
         {
             return ReturnPointer(ctx, 0);
         }
