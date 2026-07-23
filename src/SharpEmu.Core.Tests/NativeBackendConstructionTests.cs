@@ -27,6 +27,12 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public void NativeWorkerControlCallbacksUseTransitionSafeThunks()
+    {
+        Assert.True(DirectExecutionBackend.NativeWorkerControlCallbacksUseDelegateThunks);
+    }
+
+    [Fact]
     public void ConstructorReleasesFirstTlsSlotWhenSecondAllocationFails()
     {
         var threading = new RecordingHostThreading([17u, uint.MaxValue]);

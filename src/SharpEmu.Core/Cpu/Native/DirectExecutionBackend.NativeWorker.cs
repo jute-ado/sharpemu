@@ -36,6 +36,15 @@ public sealed partial class DirectExecutionBackend
 	private bool _nativeWorkersDisposed;
 	private int _nativeWorkerCreationFailedLogged;
 
+	private delegate nint NativeWorkerPrologueDelegate(nint executorHandle);
+	private delegate void NativeWorkerEpilogueDelegate(nint executorHandle, ulong nativeResult);
+	private static readonly NativeWorkerPrologueDelegate NativeWorkerPrologue = NativeGuestExecutor.RunPrologue;
+	private static readonly NativeWorkerEpilogueDelegate NativeWorkerEpilogue = NativeGuestExecutor.RunEpilogue;
+
+	internal static bool NativeWorkerControlCallbacksUseDelegateThunks =>
+		Marshal.GetFunctionPointerForDelegate(NativeWorkerPrologue) != 0 &&
+		Marshal.GetFunctionPointerForDelegate(NativeWorkerEpilogue) != 0;
+
 	// Runs an emitted guest entry stub on a pooled native worker. The historical
 	// inline calli remains available only through the explicit diagnostic override;
 	// silently using it after worker creation fails can fail-fast the CLR process.
@@ -296,8 +305,12 @@ public sealed partial class DirectExecutionBackend
 				return false;
 			}
 
-			var prologuePtr = (nint)(delegate* unmanaged<nint, nint>)&RunPrologue;
-			var epiloguePtr = (nint)(delegate* unmanaged<nint, ulong, void>)&RunEpilogue;
+			// Delegate reverse-P/Invoke thunks tolerate a callback reached while the
+			// CLR still considers the native worker managed during a rare nested
+			// transition. UnmanagedCallersOnly deliberately fail-fasts in that case,
+			// which made long-running guests terminate nondeterministically.
+			var prologuePtr = Marshal.GetFunctionPointerForDelegate(NativeWorkerPrologue);
+			var epiloguePtr = Marshal.GetFunctionPointerForDelegate(NativeWorkerEpilogue);
 			var executorHandle = GCHandle.ToIntPtr(_selfHandle);
 			prologuePtr = _backend._hostNativeInterop.AdaptGuestAbiCallback(prologuePtr);
 			epiloguePtr = _backend._hostNativeInterop.AdaptGuestAbiCallback(epiloguePtr);
@@ -471,8 +484,7 @@ public sealed partial class DirectExecutionBackend
 			_ = _backend._hostNativeInterop.WaitWorkerEvent(_doneEvent, -1);
 		}
 
-		[UnmanagedCallersOnly]
-		private static nint RunPrologue(nint executorHandle)
+		public static nint RunPrologue(nint executorHandle)
 		{
 			try
 			{
@@ -493,8 +505,7 @@ public sealed partial class DirectExecutionBackend
 			}
 		}
 
-		[UnmanagedCallersOnly]
-		private static void RunEpilogue(nint executorHandle, ulong nativeResult)
+		public static void RunEpilogue(nint executorHandle, ulong nativeResult)
 		{
 			try
 			{
