@@ -171,6 +171,9 @@ internal static unsafe class VulkanVideoPresenter
             .Take(Math.Max(0, maximumNames))
             .ToArray();
 
+    internal static bool CanRecycleGuestSubmissionObjects(bool deviceLost) =>
+        !deviceLost;
+
     internal static string FormatGuestSubmissionContext(
         VulkanGuestQueueIdentity queue,
         long workSequence,
@@ -5469,6 +5472,12 @@ internal static unsafe class VulkanVideoPresenter
 
         private void ReleaseGuestCommandBuffer(CommandBuffer commandBuffer)
         {
+            if (!CanRecycleGuestSubmissionObjects(_deviceLost))
+            {
+                _vk.FreeCommandBuffers(_device, _commandPool, 1, &commandBuffer);
+                return;
+            }
+
             if (_recycledGuestCommandBuffers.Count < MaxRecycledGuestCommandBuffers)
             {
                 _recycledGuestCommandBuffers.Push(commandBuffer);
@@ -5480,6 +5489,12 @@ internal static unsafe class VulkanVideoPresenter
 
         private void ReleaseGuestFence(Fence fence, bool needsReset)
         {
+            if (!CanRecycleGuestSubmissionObjects(_deviceLost))
+            {
+                _vk.DestroyFence(_device, fence, null);
+                return;
+            }
+
             if (_recycledGuestFences.Count < MaxRecycledGuestFences)
             {
                 if (needsReset)
@@ -5683,7 +5698,8 @@ internal static unsafe class VulkanVideoPresenter
                     traceImages,
                     retireBuffers ?? [],
                     _submitTimeline,
-                    resources.Count > 0 ? resources[0].DebugName : "batch",
+                    (debugNames ?? resources.Select(static resource => resource.DebugName))
+                        .FirstOrDefault() ?? "batch",
                     _activeGuestQueue,
                     _activeGuestWorkSequence));
             _lastSubmittedTimelineByGuestQueue[_activeGuestQueue.Name] =

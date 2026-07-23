@@ -33,6 +33,16 @@ public sealed class VulkanPipelineCacheTests
                 maximumNames: 3));
     }
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void SubmissionObjectsAreOnlyRecycledWhileDeviceIsUsable(
+        bool deviceLost,
+        bool expected) =>
+        Assert.Equal(
+            expected,
+            VulkanVideoPresenter.CanRecycleGuestSubmissionObjects(deviceLost));
+
     [Fact]
     public void GuestSubmissionFailureContextIdentifiesQueueSequenceAndWork()
     {
