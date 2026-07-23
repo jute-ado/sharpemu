@@ -32,6 +32,17 @@ public sealed unsafe class GuestImageWriteTrackerTests
     }
 
     [Fact]
+    public void WindowsBackendIsEnabledByDefault()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        Assert.True(GuestImageWriteTracker.Enabled);
+    }
+
+    [Fact]
     public void GenerationSurvivesDirtyConsume()
     {
         if (!GuestImageWriteTracker.Enabled)
@@ -58,7 +69,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
         finally
         {
             GuestImageWriteTracker.Untrack(address);
-            NativeMemory.Free(allocation);
+            NativeMemory.AlignedFree(allocation);
         }
     }
 
@@ -89,7 +100,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
         finally
         {
             GuestImageWriteTracker.Untrack(address);
-            NativeMemory.Free(allocation);
+            NativeMemory.AlignedFree(allocation);
         }
     }
 
@@ -118,7 +129,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
         finally
         {
             GuestImageWriteTracker.Untrack(address);
-            NativeMemory.Free(allocation);
+            NativeMemory.AlignedFree(allocation);
         }
     }
 

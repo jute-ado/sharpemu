@@ -1,6 +1,8 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using SharpEmu.HLE;
+
 namespace SharpEmu.Libs.Agc;
 
 /// <summary>
@@ -77,6 +79,7 @@ internal static class GpuWaitRegistry
 
     public static int CountForMemory(object memory)
     {
+        memory = ResolveMemoryIdentity(memory);
         lock (_gate)
         {
             var total = 0;
@@ -95,6 +98,10 @@ internal static class GpuWaitRegistry
     public static void Register(ulong address, WaitingDcb waiter)
     {
         waiter.WaitAddress = address;
+        if (waiter.Memory is not null)
+        {
+            waiter.Memory = ResolveMemoryIdentity(waiter.Memory);
+        }
         lock (_gate)
         {
             if (!_waiters.TryGetValue(address, out var list))
@@ -117,6 +124,7 @@ internal static class GpuWaitRegistry
         object memory,
         Func<ulong, bool, ulong?> readValue)
     {
+        memory = ResolveMemoryIdentity(memory);
         List<WaitingDcb>? woken = null;
         lock (_gate)
         {
@@ -177,6 +185,7 @@ internal static class GpuWaitRegistry
         long nowTicks,
         long maxAgeTicks)
     {
+        memory = ResolveMemoryIdentity(memory);
         List<WaitingDcb>? stale = null;
         lock (_gate)
         {
@@ -213,6 +222,7 @@ internal static class GpuWaitRegistry
         ulong start,
         ulong length)
     {
+        memory = ResolveMemoryIdentity(memory);
         var matches = new List<(ulong Address, int Count)>();
         if (length == 0)
         {
@@ -268,6 +278,7 @@ internal static class GpuWaitRegistry
     /// </summary>
     public static bool LatchSatisfiedByValue(object memory, ulong address, ulong value)
     {
+        memory = ResolveMemoryIdentity(memory);
         var latchedAny = false;
         lock (_gate)
         {
@@ -295,8 +306,14 @@ internal static class GpuWaitRegistry
         return latchedAny;
     }
 
+    private static object ResolveMemoryIdentity(object memory) =>
+        memory is ICpuMemory cpuMemory
+            ? CpuMemoryIdentity.Resolve(cpuMemory)
+            : memory;
+
     public static List<WaitingDcb>? CollectExpiredRetries(object memory, long nowTicks)
     {
+        memory = ResolveMemoryIdentity(memory);
         List<WaitingDcb>? expired = null;
         lock (_gate)
         {
@@ -342,6 +359,7 @@ internal static class GpuWaitRegistry
         ulong address,
         ulong resumeAddress)
     {
+        memory = ResolveMemoryIdentity(memory);
         lock (_gate)
         {
             if (!_waiters.TryGetValue(address, out var list))
@@ -373,6 +391,7 @@ internal static class GpuWaitRegistry
         ulong address,
         ulong resumeAddress)
     {
+        memory = ResolveMemoryIdentity(memory);
         lock (_gate)
         {
             if (!_waiters.TryGetValue(address, out var list))
@@ -405,6 +424,7 @@ internal static class GpuWaitRegistry
 
     public static List<WaitingDcb>? CollectAllForMemory(object memory)
     {
+        memory = ResolveMemoryIdentity(memory);
         List<WaitingDcb>? collected = null;
         lock (_gate)
         {
@@ -446,6 +466,7 @@ internal static class GpuWaitRegistry
     /// breaker. Also latches any already-waiting waiter it satisfies.</summary>
     public static bool RecordProduced(object memory, ulong address, ulong value)
     {
+        memory = ResolveMemoryIdentity(memory);
         lock (_gate)
         {
             if (_lastProduced.Count >= 8192)
@@ -472,6 +493,7 @@ internal static class GpuWaitRegistry
         long nowTicks,
         long minAgeTicks)
     {
+        memory = ResolveMemoryIdentity(memory);
         List<WaitingDcb>? broken = null;
         lock (_gate)
         {

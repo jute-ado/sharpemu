@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using SharpEmu.HLE;
 using SharpEmu.Libs.Agc;
 using SharpEmu.Libs.VideoOut;
 using Xunit;
@@ -106,6 +107,39 @@ public sealed class AgcWaitVisibilityBarrierTests
     }
 
     [Fact]
+    public void WaitersRemainVisibleAcrossMemoryWrappers()
+    {
+        var memory = new FakeGuestMemory();
+        var registrationMemory = new MemoryWrapper(memory);
+        var collectionMemory = new MemoryWrapper(memory);
+        var waiter = new GpuWaitRegistry.WaitingDcb
+        {
+            Memory = registrationMemory,
+            WaitAddress = 0x9800,
+            ReferenceValue = 1,
+            Mask = uint.MaxValue,
+            CompareFunction = 3,
+        };
+
+        GpuWaitRegistry.Clear();
+        try
+        {
+            GpuWaitRegistry.Register(waiter.WaitAddress, waiter);
+
+            Assert.Equal(1, GpuWaitRegistry.CountForMemory(collectionMemory));
+            var resumed = GpuWaitRegistry.CollectSatisfied(
+                collectionMemory,
+                (_, _) => 1);
+            Assert.NotNull(resumed);
+            Assert.Single(resumed);
+        }
+        finally
+        {
+            GpuWaitRegistry.Clear();
+        }
+    }
+
+    [Fact]
     public void IndirectDispatchRetryExpiresAtItsBoundedDeadline()
     {
         var memory = new object();
@@ -163,5 +197,16 @@ public sealed class AgcWaitVisibilityBarrierTests
         {
             GpuWaitRegistry.Clear();
         }
+    }
+
+    private sealed class MemoryWrapper(ICpuMemory inner) : ICpuMemory, ICpuMemoryWrapper
+    {
+        public ICpuMemory Inner { get; } = inner;
+
+        public bool TryRead(ulong virtualAddress, Span<byte> destination) =>
+            Inner.TryRead(virtualAddress, destination);
+
+        public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source) =>
+            Inner.TryWrite(virtualAddress, source);
     }
 }
