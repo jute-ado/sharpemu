@@ -100,6 +100,23 @@ public sealed class ThreeDimensionalTextureTests
                 arrayedView: false));
     }
 
+    [Theory]
+    [InlineData(false, 1u, false, true)]
+    [InlineData(true, 1u, false, true)]
+    [InlineData(true, 2u, false, false)]
+    [InlineData(false, 1u, true, false)]
+    public void GuestImageAliasRequiresSingleLayerNonCubeDescriptor(
+        bool arrayedView,
+        uint arrayLayers,
+        bool cubeView,
+        bool expected) =>
+        Assert.Equal(
+            expected,
+            VulkanVideoPresenter.CanUseSingleLayerGuestImageAlias(
+                arrayedView,
+                arrayLayers,
+                cubeView));
+
     private static GuestDrawTexture Texture() => new(
         Address: 0x1000,
         Width: 4,
