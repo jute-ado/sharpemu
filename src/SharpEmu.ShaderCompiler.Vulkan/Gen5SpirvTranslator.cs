@@ -20,6 +20,13 @@ public static partial class Gen5SpirvTranslator
         bool integerType) =>
         stage == Gen5SpirvStage.Pixel && integerType;
 
+    public static (bool ProgramActive, bool ExecActive) ResolveComputeInvocationState(
+        bool invocationInBounds,
+        bool emulateWave64) =>
+        (
+            ProgramActive: invocationInBounds || emulateWave64,
+            ExecActive: invocationInBounds);
+
     public static SpirvImageDim GetImageDimension(uint guestDimension) =>
         guestDimension switch
         {
@@ -1272,7 +1279,20 @@ public static partial class Gen5SpirvTranslator
                         componentInBounds);
                 }
 
-                Store(_programActive, invocationInBounds);
+                // Wave64 emulation uses workgroup barriers to rebuild EXEC/VCC.
+                // Vulkan requires every invocation in the workgroup to reach
+                // those barriers. Keep padded lanes in the interpreter loop,
+                // but mask their guest-visible vector and memory effects out
+                // through EXEC.
+                if (_emulateWave64)
+                {
+                    StoreWaveMask(126, invocationInBounds);
+                    Store(_programActive, _module.ConstantBool(true));
+                }
+                else
+                {
+                    Store(_programActive, invocationInBounds);
+                }
 
                 if (_state.ComputeSystemRegisters is { } registers)
                 {

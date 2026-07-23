@@ -3,12 +3,32 @@
 
 using SharpEmu.Libs.VideoOut;
 using SharpEmu.Libs.Gpu.Vulkan;
+using SharpEmu.ShaderCompiler.Vulkan;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests;
 
 public sealed class ComputeDispatchDiagnosticsTests
 {
+    [Theory]
+    [InlineData(true, true, true, true)]
+    [InlineData(false, true, true, false)]
+    [InlineData(true, false, true, true)]
+    [InlineData(false, false, false, false)]
+    public void PaddedWave64LanesStayInProgramForUniformBarriers(
+        bool invocationInBounds,
+        bool emulateWave64,
+        bool expectedProgramActive,
+        bool expectedExecActive)
+    {
+        var state = Gen5SpirvTranslator.ResolveComputeInvocationState(
+            invocationInBounds,
+            emulateWave64);
+
+        Assert.Equal(expectedProgramActive, state.ProgramActive);
+        Assert.Equal(expectedExecActive, state.ExecActive);
+    }
+
     [Fact]
     public void ComputeShaderSignatureIsStableAndContentSensitive()
     {
