@@ -295,6 +295,12 @@ internal static unsafe class VulkanVideoPresenter
                     ? ImageViewType.Type2DArray
                     : ImageViewType.Type2D;
 
+    internal static bool CanUseSingleLayerGuestImageAlias(
+        bool arrayedView,
+        uint arrayLayers,
+        bool cubeView) =>
+        !cubeView && (!arrayedView || arrayLayers <= 1);
+
     internal enum StorageImageComponentKind
     {
         Float,
@@ -8172,7 +8178,10 @@ internal static unsafe class VulkanVideoPresenter
 
             var vkFormat = GetTextureFormat(texture.Format, texture.NumberType);
             if (texture.Address != 0 &&
-                !(texture.ArrayedView && texture.ArrayLayers > 1) &&
+                CanUseSingleLayerGuestImageAlias(
+                    texture.ArrayedView,
+                    texture.ArrayLayers,
+                    texture.CubeView) &&
                 TryResolveGuestImageAlias(texture, vkFormat, out var guestImage) &&
                 TryGetOrCreateGuestImageView(
                     guestImage,
