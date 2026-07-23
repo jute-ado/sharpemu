@@ -313,6 +313,65 @@ public sealed class NativeImportBridgeTests
     }
 
     [HostX64Fact]
+    public async Task NativeImportResultWarningIncludesAllSysVRegisterArguments()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
+        {
+            return;
+        }
+
+        byte[] code =
+        [
+            0xBF, 0x14, 0x00, 0x00, 0x00, // mov edi, 20
+            0xBE, 0x16, 0x00, 0x00, 0x00, // mov esi, 22
+            0xBA, 0x0D, 0xF0, 0xAD, 0x0B, // mov edx, 0x0BADF00D
+            0xB9, 0x78, 0x56, 0x34, 0x12, // mov ecx, 0x12345678
+            0x41, 0xB8, 0x21, 0x43, 0x65, 0x87, // mov r8d, 0x87654321
+            0x41, 0xB9, 0xEF, 0xCD, 0xAB, 0x09, // mov r9d, 0x09ABCDEF
+            0xE8, 0xDB, 0x00, 0x00, 0x00, // call ImportAddress
+            0x31, 0xC0,                   // xor eax, eax
+            0xC3,                         // ret
+        ];
+        var previousError = Console.Error;
+        using var error = new StringWriter();
+        try
+        {
+            Console.SetError(error);
+            var execution = SyntheticNativeGuest.ExecuteModuleInitializer(
+                code,
+                Generation.Gen5,
+                "synthetic-all-register-arguments-native-import-warning",
+                new Dictionary<ulong, string> { [ImportAddress] = FailureNid },
+                moduleManager => moduleManager.RegisterExports(
+                [
+                    new ExportedFunction(
+                        "libSyntheticTest",
+                        FailureNid,
+                        "syntheticFailure",
+                        Generation.Gen5,
+                        context => context.SetReturn(
+                            OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT)),
+                ]),
+                CodeAddress);
+
+            AssertSuccessful(execution);
+        }
+        finally
+        {
+            Console.SetError(previousError);
+        }
+
+        var warning = error.ToString();
+        Assert.Contains($"result: ORBIS_GEN2_ERROR_INVALID_ARGUMENT ({FailureNid})", warning, StringComparison.Ordinal);
+        Assert.Contains("rdi=0x0000000000000014", warning, StringComparison.Ordinal);
+        Assert.Contains("rsi=0x0000000000000016", warning, StringComparison.Ordinal);
+        Assert.Contains("rdx=0x000000000BADF00D", warning, StringComparison.Ordinal);
+        Assert.Contains("rcx=0x0000000012345678", warning, StringComparison.Ordinal);
+        Assert.Contains("r8=0x0000000087654321", warning, StringComparison.Ordinal);
+        Assert.Contains("r9=0x0000000009ABCDEF", warning, StringComparison.Ordinal);
+    }
+
+    [HostX64Fact]
     public async Task NativeImportTraceIncludesGuestWorkerCalls()
     {
         if (await NativeTestProcess.RunIfNeededAsync(typeof(NativeImportBridgeTests)))
