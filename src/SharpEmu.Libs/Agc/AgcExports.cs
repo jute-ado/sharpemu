@@ -687,12 +687,7 @@ public static partial class AgcExports
             static _ => new SubmittedGpuState());
         lock (state.Gate)
         {
-            if (!state.ResourceRegistrationInitialized)
-            {
-                state.ResourceRegistrationInitialized = true;
-                state.ResourceRegistrationMaxOwners = uint.MaxValue;
-                state.ResourceRegistrationMaxResources = uint.MaxValue;
-            }
+            EnsureOptionalResourceRegistration(state);
         }
 
         TraceAgc($"agc.init state=0x{stateAddress:X16} version={version}");
@@ -3473,8 +3468,8 @@ public static partial class AgcExports
         uint resourceHandle;
         lock (state.Gate)
         {
-            if (!state.ResourceRegistrationInitialized ||
-                owner != state.DefaultOwner &&
+            EnsureOptionalResourceRegistration(state);
+            if (owner != state.DefaultOwner &&
                 !state.ResourceOwners.ContainsKey(owner) ||
                 state.RegisteredResources.Count >= state.ResourceRegistrationMaxResources)
             {
@@ -3514,6 +3509,18 @@ public static partial class AgcExports
             $"name={System.Text.Encoding.UTF8.GetString(nameBytes)} type={type} flags={flags}");
 
         return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    private static void EnsureOptionalResourceRegistration(SubmittedGpuState state)
+    {
+        if (state.ResourceRegistrationInitialized)
+        {
+            return;
+        }
+
+        state.ResourceRegistrationInitialized = true;
+        state.ResourceRegistrationMaxOwners = uint.MaxValue;
+        state.ResourceRegistrationMaxResources = uint.MaxValue;
     }
 
     // Synthetic label for an uncatalogued NID (the Unknown* convention); the NID is authoritative.

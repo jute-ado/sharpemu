@@ -108,6 +108,25 @@ public sealed class AgcResourceRegistrationTests
     }
 
     [Fact]
+    public void ResourceRegistrationBootstrapsOptionalStateBeforeAgcInitialization()
+    {
+        var fixture = CreateFixture(
+            includeSizeOutput: false,
+            includeHandleOutput: true);
+
+        Assert.Equal(
+            0,
+            RegisterResource(
+                fixture.Context,
+                resourceAddress: ResourceAddress,
+                owner: 0));
+        Assert.True(fixture.Memory.TryRead(
+            HandleOutputAddress,
+            fixture.Scratch.AsSpan(0, sizeof(uint))));
+        Assert.NotEqual(0U, BinaryPrimitives.ReadUInt32LittleEndian(fixture.Scratch));
+    }
+
+    [Fact]
     public void RejectedAgcInitializationLeavesOptionalOwnerRegistrationUsable()
     {
         var fixture = CreateFixture(
