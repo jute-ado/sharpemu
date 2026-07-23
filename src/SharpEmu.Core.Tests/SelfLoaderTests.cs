@@ -1219,6 +1219,63 @@ public sealed class SelfLoaderTests
         Assert.Equal(payload, mapped.ToArray());
     }
 
+    [Fact]
+    public void LoadsDynamicHeaderNestedInsideBlockedSelfPayload()
+    {
+        const ulong expectedInitializer = 0x1234_5000;
+        var self = CreateSelfWithNestedDynamicSegment(expectedInitializer);
+
+        var image = new SelfLoader().Load(self, new VirtualMemory());
+
+        Assert.Equal(expectedInitializer, image.InitFunctionEntryPoint);
+        Assert.Equal(new[] { expectedInitializer }, image.InitializerFunctions);
+    }
+
+    [Fact]
+    public void RejectsDynamicHeaderOutsideBlockedSelfPayload()
+    {
+        var self = CreateSelfWithNestedDynamicSegment(
+            initializer: 0,
+            dynamicInsidePayload: false);
+
+        var exception = Assert.Throws<NotSupportedException>(() =>
+            new SelfLoader().Load(self, new VirtualMemory()));
+
+        Assert.Contains("program header 1 could not be resolved", exception.Message);
+    }
+
+    [Fact]
+    public void DoesNotFallbackAroundUnavailableContainingSelfPayload()
+    {
+        var self = CreateSelfWithNestedDynamicSegment(
+            initializer: 0,
+            payloadFitsInImage: false);
+
+        var exception = Assert.Throws<NotSupportedException>(() =>
+            new SelfLoader().Load(self, new VirtualMemory()));
+
+        Assert.Contains("outside the available payload", exception.Message);
+    }
+
+    [Theory]
+    [InlineData(0x2UL, "encrypted")]
+    [InlineData(0x8UL, "compressed")]
+    public void DoesNotFallbackAroundProtectedContainingSelfPayload(
+        ulong segmentAttribute,
+        string protectionName)
+    {
+        var self = CreateSelfWithNestedDynamicSegment(
+            initializer: 0,
+            segmentAttributes: segmentAttribute,
+            payloadFitsInImage: false);
+
+        var exception = Assert.Throws<NotSupportedException>(() =>
+            new SelfLoader().Load(self, new VirtualMemory()));
+
+        Assert.Contains(protectionName, exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("decrypted ELF/FSELF", exception.Message);
+    }
+
     [Theory]
     [InlineData(0x2UL)]
     [InlineData(0x8UL)]
@@ -1536,6 +1593,112 @@ public sealed class SelfLoaderTests
         elf.AsSpan(0, ElfHeaderSize + ProgramHeaderSize).CopyTo(image.AsSpan(elfOffset));
         payload.CopyTo(image.AsSpan(SyntheticSelfPayloadOffset));
         return image;
+    }
+
+    private static byte[] CreateSelfWithNestedDynamicSegment(
+        ulong initializer,
+        bool dynamicInsidePayload = true,
+        ulong segmentAttributes = 0,
+        bool payloadFitsInImage = true)
+    {
+        const int imageSize = 0x500;
+        const ulong payloadLogicalOffset = 0x200;
+        const ulong payloadFileSize = 0x100;
+        const ulong mappedPayloadPhysicalOffset = 0x300;
+        const ulong truncatedPayloadPhysicalOffset = 0x4C0;
+        const ulong dynamicOffsetInPayload = 0x40;
+        const ulong payloadVirtualAddress = 0x0900_0000;
+        const ulong dynamicFileSize = 0x20;
+        const ulong unmappedDynamicOffset = 0x600;
+
+        var image = new byte[imageSize];
+        var selfHeader = image.AsSpan(0, SelfHeaderSize);
+        BinaryPrimitives.WriteUInt32BigEndian(selfHeader, 0x5414F5EE);
+        selfHeader[4] = 0x10;
+        selfHeader[5] = 0x01;
+        selfHeader[6] = 0x01;
+        selfHeader[7] = 0x12;
+        BinaryPrimitives.WriteUInt32LittleEndian(selfHeader[8..], 0x1000_0101);
+        BinaryPrimitives.WriteUInt16LittleEndian(selfHeader[12..], SelfHeaderSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(selfHeader[16..], imageSize);
+        BinaryPrimitives.WriteUInt16LittleEndian(selfHeader[24..], 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(selfHeader[26..], 0x32);
+
+        var selfSegment = image.AsSpan(SelfHeaderSize, SelfSegmentSize);
+        var payloadPhysicalOffset = payloadFitsInImage
+            ? mappedPayloadPhysicalOffset
+            : truncatedPayloadPhysicalOffset;
+        BinaryPrimitives.WriteUInt64LittleEndian(selfSegment, 0x800 | segmentAttributes);
+        BinaryPrimitives.WriteUInt64LittleEndian(selfSegment[8..], payloadPhysicalOffset);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            selfSegment[16..],
+            payloadFitsInImage
+                ? payloadFileSize
+                : (ulong)(imageSize - (int)truncatedPayloadPhysicalOffset));
+        BinaryPrimitives.WriteUInt64LittleEndian(selfSegment[24..], payloadFileSize);
+
+        var elfOffset = SelfHeaderSize + SelfSegmentSize;
+        var elf = CreateElf(
+            programHeaderOffset: ElfHeaderSize,
+            programHeaderCount: 2);
+        elf.AsSpan(0, ElfHeaderSize).CopyTo(image.AsSpan(elfOffset));
+
+        var programHeaders = image.AsSpan(elfOffset + ElfHeaderSize);
+        WriteNestedSelfProgramHeader(
+            programHeaders,
+            ProgramHeaderType.SceDynLibData,
+            payloadLogicalOffset,
+            payloadVirtualAddress,
+            payloadFileSize,
+            payloadFileSize,
+            0x10);
+        var dynamicLogicalOffset = dynamicInsidePayload
+            ? payloadLogicalOffset + dynamicOffsetInPayload
+            : unmappedDynamicOffset;
+        var dynamicVirtualAddress = dynamicInsidePayload
+            ? payloadVirtualAddress + dynamicOffsetInPayload
+            : payloadVirtualAddress + unmappedDynamicOffset;
+        WriteNestedSelfProgramHeader(
+            programHeaders[ProgramHeaderSize..],
+            ProgramHeaderType.Dynamic,
+            dynamicLogicalOffset,
+            dynamicVirtualAddress,
+            dynamicFileSize,
+            dynamicFileSize,
+            8);
+
+        if (dynamicInsidePayload && payloadFitsInImage)
+        {
+            var dynamicTable = image.AsSpan(
+                checked((int)(payloadPhysicalOffset + dynamicOffsetInPayload)),
+                checked((int)dynamicFileSize));
+            BinaryPrimitives.WriteInt64LittleEndian(dynamicTable, DynamicTagInit);
+            BinaryPrimitives.WriteUInt64LittleEndian(dynamicTable[8..], initializer);
+            BinaryPrimitives.WriteInt64LittleEndian(dynamicTable[16..], 0);
+            BinaryPrimitives.WriteUInt64LittleEndian(dynamicTable[24..], 0);
+        }
+
+        return image;
+    }
+
+    private static void WriteNestedSelfProgramHeader(
+        Span<byte> header,
+        ProgramHeaderType type,
+        ulong offset,
+        ulong virtualAddress,
+        ulong fileSize,
+        ulong memorySize,
+        ulong alignment)
+    {
+        header = header[..ProgramHeaderSize];
+        header.Clear();
+        BinaryPrimitives.WriteUInt32LittleEndian(header, (uint)type);
+        BinaryPrimitives.WriteUInt32LittleEndian(header[4..], (uint)ProgramHeaderFlags.Read);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[8..], offset);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[16..], virtualAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[32..], fileSize);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[40..], memorySize);
+        BinaryPrimitives.WriteUInt64LittleEndian(header[48..], alignment);
     }
 
     private static void WriteLoadHeader(

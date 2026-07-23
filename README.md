@@ -33,6 +33,9 @@ test-driven workflow. Major downstream differences include:
   Vulkan, and compatibility milestones
 - synthetic guest programs and executable shader-conformance workloads that
   require no copyrighted games, firmware, or proprietary assets
+- SELF loading translates nested program-header ranges through their blocked
+  container payloads and fails closed when an enclosing payload is unavailable,
+  encrypted, or compressed instead of bypassing it through raw file offsets
 - dimension-correct RDNA image translation and Vulkan resource aliasing,
   including three-coordinate 3D sampling and storage writes, 3D image/view
   creation, and path-sensitive scalar image and buffer descriptor evaluation
