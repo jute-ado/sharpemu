@@ -31,6 +31,7 @@ public static partial class KernelMemoryCompatExports
     private const int O_TRUNC = 0x0400;
     private const int O_DIRECTORY = 0x00020000;
     private const int OrbisKernelMapFixed = 0x0010;
+    private const ulong OrbisKernelSupportedFlexibleMapFlags = 0x0042_9D93;
     private const int OrbisKernelMapOpMapDirect = 0;
     private const int OrbisKernelMapOpUnmap = 1;
     private const int OrbisKernelMapOpProtect = 2;
@@ -4002,8 +4003,10 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
-        var fixedMapping = (flags & 0x10UL) != 0;
-        if ((length & (OrbisPageSize - 1)) != 0 ||
+        var fixedMapping = (flags & OrbisKernelMapFixed) != 0;
+        if ((flags & ~OrbisKernelSupportedFlexibleMapFlags) != 0 ||
+            (fixedMapping && requestedAddress == 0) ||
+            (length & (OrbisPageSize - 1)) != 0 ||
             (requestedAddress != 0 && !TryAddU64(requestedAddress, length, out _)) ||
             (fixedMapping && requestedAddress != 0 &&
              (requestedAddress & (OrbisPageSize - 1)) != 0))
