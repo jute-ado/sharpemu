@@ -180,6 +180,9 @@ test-driven workflow. Major downstream differences include:
   same process reset, with firmware-width status returns and clean reinitialization;
   Net and NetCtl share a stable locally administered virtual MAC address, with
   bounded binary-to-text formatting and no exposure of host hardware identity;
+  `sceNetInetPton` converts strict dotted-decimal IPv4 and scoped-free IPv6
+  presentation forms to network-order guest bytes, preserves destinations on
+  malformed input, and reports unsupported families through `SceNet` errno;
   NP manager synchronous and Gen5 asynchronous requests share one collision-free
   process registry, with bounded async capacity, abort/delete/poll lifecycle,
   deterministic offline reachability completion, and reset-safe worker teardown;
@@ -397,7 +400,10 @@ One of the few PS5 emulator projects available and very useful for studying nati
 Remains the baseline for this fork. The
 [direct Gen5 UCONFIG register builder](https://github.com/sharpemu/sharpemu/commit/8e5a0bfb19fde66d261188002cd90edb402110c7)
 was adapted with downstream export-generation, exact-packet, register-mask,
-cursor-advance, null-buffer, and capacity-failure tests.
+cursor-advance, null-buffer, and capacity-failure tests. The
+[`sceNetInetPton` import evidence](https://github.com/sharpemu/sharpemu/commit/7a108c6f87d787cb2f5d064d8bb90ed28e55bbe6)
+was also adapted with a stricter BSD presentation parser, address-family errno,
+transactional guest-write behavior, and downstream IPv4/IPv6 contract tests.
 
 * **[Acelogic's SharpEmu fork](https://github.com/Acelogic/sharpemu)**
 Provided valuable Gen5 loader research, including the object-symbol separation

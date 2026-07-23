@@ -17,15 +17,18 @@ public static class NetExports
     private const int NetErrorInvalidArgument = unchecked((int)0x80410116);
     private const int NetErrorNoSpace = unchecked((int)0x8041011C);
     private const int NetErrorWouldBlock = unchecked((int)0x80410123);
+    private const int NetErrorAddressFamilyNotSupported = unchecked((int)0x8041012F);
     private const int NetErrorAddressInUse = unchecked((int)0x80410130);
     private const int NetErrorNotInitialized = unchecked((int)0x804101C8);
     private const int NetErrnoBadFileDescriptor = 9;
     private const int NetErrnoInvalidArgument = 22;
     private const int NetErrnoNoSpace = 28;
     private const int NetErrnoWouldBlock = 35;
+    private const int NetErrnoAddressFamilyNotSupported = 47;
     private const int NetErrnoAddressInUse = 48;
     private const int NetErrnoNotInitialized = 200;
     private const int MaxNameLength = 256;
+    private const int Inet6AddressStringLength = 46;
     private const int EtherAddressLength = 6;
     private const int EtherAddressStringLength = 18;
 
@@ -175,6 +178,63 @@ public static class NetExports
         }
 
         return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "8Kcp5d-q1Uo",
+        ExportName = "sceNetInetPton",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceNet")]
+    public static int NetInetPton(CpuContext ctx)
+    {
+        var addressFamily = unchecked((int)ctx[CpuRegister.Rdi]);
+        var sourceAddress = ctx[CpuRegister.Rsi];
+        var destinationAddress = ctx[CpuRegister.Rdx];
+
+        if (addressFamily is not 2 and not 28)
+        {
+            return SetNetError(
+                ctx,
+                NetErrorAddressFamilyNotSupported,
+                NetErrnoAddressFamilyNotSupported);
+        }
+
+        if (sourceAddress == 0 ||
+            destinationAddress == 0 ||
+            !TryReadUtf8Z(
+                ctx,
+                sourceAddress,
+                Inet6AddressStringLength,
+                out var source) ||
+            source.Length >= Inet6AddressStringLength)
+        {
+            return SetNetError(ctx, NetErrorInvalidArgument, NetErrnoInvalidArgument);
+        }
+
+        Span<byte> addressBytes = stackalloc byte[16];
+        var addressLength = addressFamily == 2 ? 4 : 16;
+        var parsed = addressFamily == 2
+            ? TryParseStrictIpv4(source, addressBytes[..addressLength])
+            : TryParseStrictIpv6(source, addressBytes);
+        if (!parsed)
+        {
+            // BSD inet_pton returns zero for text that is not in presentation
+            // format and leaves the destination untouched.
+            return ctx.SetReturn(0);
+        }
+
+        if (!ctx.Memory.TryWrite(destinationAddress, addressBytes[..addressLength]))
+        {
+            return SetNetError(ctx, NetErrorInvalidArgument, NetErrnoInvalidArgument);
+        }
+
+        TraceNet(
+            "inet_pton",
+            addressFamily,
+            sourceAddress,
+            destinationAddress,
+            (ulong)addressLength);
+        return ctx.SetReturn(1);
     }
 
     [SysAbiExport(
@@ -780,6 +840,84 @@ public static class NetExports
         return value < 10
             ? (byte)('0' + value)
             : (byte)('a' + value - 10);
+    }
+
+    private static bool TryParseStrictIpv4(string source, Span<byte> destination)
+    {
+        var components = source.Split('.');
+        if (components.Length != 4 || destination.Length < 4)
+        {
+            return false;
+        }
+
+        for (var componentIndex = 0; componentIndex < components.Length; componentIndex++)
+        {
+            var component = components[componentIndex];
+            if (component.Length is < 1 or > 3)
+            {
+                return false;
+            }
+
+            var value = 0;
+            foreach (var character in component)
+            {
+                if (character is < '0' or > '9')
+                {
+                    return false;
+                }
+
+                value = (value * 10) + character - '0';
+            }
+
+            if (value > byte.MaxValue)
+            {
+                return false;
+            }
+
+            destination[componentIndex] = (byte)value;
+        }
+
+        return true;
+    }
+
+    private static bool TryParseStrictIpv6(string source, Span<byte> destination)
+    {
+        if (destination.Length < 16 ||
+            !source.Contains(':', StringComparison.Ordinal) ||
+            source.Contains('%', StringComparison.Ordinal) ||
+            source.Contains('[', StringComparison.Ordinal) ||
+            source.Contains(']', StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        foreach (var character in source)
+        {
+            if (!char.IsAsciiHexDigit(character) &&
+                character is not ':' and not '.')
+            {
+                return false;
+            }
+        }
+
+        var dottedDecimalIndex = source.LastIndexOf(':');
+        if (source.Contains('.', StringComparison.Ordinal) &&
+            (dottedDecimalIndex < 0 ||
+             !TryParseStrictIpv4(
+                 source[(dottedDecimalIndex + 1)..],
+                 stackalloc byte[4])))
+        {
+            return false;
+        }
+
+        if (!IPAddress.TryParse(source, out var parsed) ||
+            parsed.AddressFamily != AddressFamily.InterNetworkV6)
+        {
+            return false;
+        }
+
+        return parsed.TryWriteBytes(destination, out var bytesWritten) &&
+            bytesWritten == 16;
     }
 
     private static bool TryTranslateSocketParameters(
