@@ -52,7 +52,9 @@ test-driven workflow. Major downstream differences include:
   and storage usages, avoiding invalid sRGB storage inheritance on Vulkan, and
   arrayed shader aliases retain array view types instead of reusing scalar 2D
   views; cube descriptors carry six-face uploads into cube-compatible images
-  and cube views rather than binding dimension-incompatible 2D resources
+  and cube views rather than binding dimension-incompatible 2D resources;
+  storage-image initialization requires complete data for every volume slice
+  and array layer before recording a full-extent Vulkan upload
 - graphics-stage Gen5 ADD_TID LDS transfers lowered to per-invocation storage
   with guest lane and M0 addressing, while compute shaders retain shared
   workgroup LDS semantics
