@@ -141,6 +141,29 @@ internal static unsafe class VulkanVideoPresenter
 
     private static long _presentedGuestFrameCount;
 
+    internal static uint ResolveSwapchainExtentComponent(
+        uint value,
+        uint fallback,
+        uint minimum,
+        uint maximum)
+    {
+        value = value <= 1 && fallback > 1 ? fallback : value;
+        minimum = Math.Max(minimum, 1u);
+        if (maximum < minimum)
+        {
+            // Minimized or unmapped Win32 surfaces can report a zero maximum.
+            // Preserve the last/default extent instead of forcing 1x1.
+            maximum = Math.Max(fallback, minimum);
+        }
+
+        return Math.Clamp(value, minimum, maximum);
+    }
+
+    internal static bool ShouldUseSwapchainFallbackExtent(
+        uint surfaceWidth,
+        uint surfaceHeight) =>
+        surfaceWidth <= 1 || surfaceHeight <= 1;
+
     internal static bool IsPersistentPipelineCacheSizeAllowed(long length) =>
         length >= 0 && length <= MaxPersistentPipelineCacheBytes;
 
@@ -3573,7 +3596,6 @@ internal static unsafe class VulkanVideoPresenter
         private bool _splashPresented;
         private Presentation? _lastHostSplashPresentation;
         private Presentation? _pendingHostSplashReplay;
-        private bool _swapchainRecreateDeferred;
         private bool _tracedPresentedSwapchain;
         private bool _swapchainReadbackPending;
         private long _presentedSwapchainCount;
@@ -17287,12 +17309,7 @@ internal static unsafe class VulkanVideoPresenter
             uint fallback,
             uint minimum,
             uint maximum)
-        {
-            value = value <= 1 && fallback > 1 ? fallback : value;
-            minimum = Math.Max(minimum, 1u);
-            maximum = Math.Max(maximum, minimum);
-            return Math.Clamp(value, minimum, maximum);
-        }
+            => ResolveSwapchainExtentComponent(value, fallback, minimum, maximum);
 
         private static SurfaceFormatKHR ChooseSurfaceFormat(IReadOnlyList<SurfaceFormatKHR> formats)
         {
@@ -17583,20 +17600,15 @@ internal static unsafe class VulkanVideoPresenter
             var surfaceHeight = hasFixedExtent
                 ? capabilities.CurrentExtent.Height
                 : (uint)Math.Max(framebufferSize.Y, 0);
-            if (surfaceWidth <= 1 || surfaceHeight <= 1)
+            if (ShouldUseSwapchainFallbackExtent(surfaceWidth, surfaceHeight))
             {
-                if (!_swapchainRecreateDeferred)
-                {
-                    _swapchainRecreateDeferred = true;
-                    Console.Error.WriteLine(
-                        $"[LOADER][INFO] Vulkan VideoOut deferred swapchain recreation: " +
-                        $"surface={surfaceWidth}x{surfaceHeight}");
-                }
-
-                return;
+                // ChooseExtent converts the unusable report to the last known
+                // or default dimensions, allowing recovery after restoration.
+                Console.Error.WriteLine(
+                    "[LOADER][INFO] Vulkan VideoOut swapchain recreate using " +
+                    $"fallback extent (window reported {surfaceWidth}x{surfaceHeight})");
             }
 
-            _swapchainRecreateDeferred = false;
             Console.Error.WriteLine(
                 $"[LOADER][INFO] Vulkan VideoOut recreating swapchain after {operation}: {result}");
             _vk.DeviceWaitIdle(_device);

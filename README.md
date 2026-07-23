@@ -139,6 +139,9 @@ test-driven workflow. Major downstream differences include:
   state, an empty guest signal mask, and transactional guest-buffer writes
 - Vulkan color pipelines default a wholly omitted guest blend array per
   attachment while continuing to reject partially specified mismatches
+- Vulkan swapchain recovery treats minimized or unmapped zero-sized surface
+  reports as the last known or default extent, avoiding both permanent
+  recreation deferral and unusable 1×1 fallback swapchains
 - RFC 3339 RTC formatting for explicit or current UTC ticks, with signed timezone
   offsets, checked calendar bounds, and all-or-nothing guest output
 - stateful synchronous NP Manager request allocation with the console's 128-request
@@ -371,6 +374,10 @@ adapted with corrected post-return stack semantics and failure-atomic tests.
 Provided the reference for the Windows page-protection and fault-routing path,
 which was isolated from the accompanying vertex-cache experiment and covered
 with downstream platform and exception-routing tests before adoption.
+
+* **[Mike Saito's swapchain fallback research](https://github.com/sharpemu/sharpemu/pull/516)**
+Provided the minimized-surface recovery path, isolated from the larger Astro
+Bot stack and independently covered with downstream extent-policy tests.
 
 * **Ryujinx**
 Provided valuable references for filesystem handling and low-level C# implementation patterns.
