@@ -143,6 +143,25 @@ internal static unsafe class VulkanVideoPresenter
     internal static bool IsPersistentPipelineCacheSizeAllowed(long length) =>
         length >= 0 && length <= MaxPersistentPipelineCacheBytes;
 
+    internal static string FormatGuestSubmissionContext(
+        VulkanGuestQueueIdentity queue,
+        long workSequence,
+        IEnumerable<string> workNames)
+    {
+        var work = string.Join(
+            " | ",
+            workNames.Where(static name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.Ordinal)
+                .Take(3));
+        if (work.Length == 0)
+        {
+            work = "batch";
+        }
+
+        return $"queue={queue.Name} submission={queue.SubmissionId} " +
+            $"work_sequence={workSequence} work='{work}'";
+    }
+
     internal static string GetDefaultPipelineCachePath(
         string root,
         string? app0Directory)
@@ -5551,7 +5570,12 @@ internal static unsafe class VulkanVideoPresenter
                 };
                 Check(
                     _vk.QueueSubmit(_queue, 1, &submitInfo, fence),
-                    "vkQueueSubmit(guest)");
+                    "vkQueueSubmit(guest: " +
+                    FormatGuestSubmissionContext(
+                        _activeGuestQueue,
+                        _activeGuestWorkSequence,
+                        resources.Select(static resource => resource.DebugName)) +
+                    ")");
             }
             catch
             {
