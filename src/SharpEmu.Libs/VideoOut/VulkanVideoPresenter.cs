@@ -175,6 +175,24 @@ internal static unsafe class VulkanVideoPresenter
     internal static bool CanRecycleGuestSubmissionObjects(bool deviceLost) =>
         !deviceLost;
 
+    internal static uint ResolveComputeZSlicesPerSubmission(
+        uint groupCountX,
+        uint groupCountY,
+        uint groupCountZ)
+    {
+        const ulong maximumWorkgroupsPerSubmission = 64;
+        const uint maximumZSlicesPerSubmission = 8;
+        var groupsPerSlice = Math.Max(1UL, (ulong)groupCountX * groupCountY);
+        var watchdogBound = Math.Max(
+            1UL,
+            maximumWorkgroupsPerSubmission / groupsPerSlice);
+        return Math.Max(
+            1u,
+            Math.Min(
+                groupCountZ,
+                (uint)Math.Min(maximumZSlicesPerSubmission, watchdogBound)));
+    }
+
     internal static string FormatGuestSubmissionContext(
         VulkanGuestQueueIdentity queue,
         long workSequence,
@@ -10953,7 +10971,6 @@ internal static unsafe class VulkanVideoPresenter
             throw new InvalidOperationException("No compatible Vulkan host-visible memory type was found.");
         }
 
-        private const uint MaxComputeZSlicesPerSubmission = 8;
         // An indirect guest dispatch above this size is not credible frame work
         // (at the minimum 64-thread group used by the captured title this is
         // already over one billion invocations).  Treat it as poisoned
@@ -11026,9 +11043,13 @@ internal static unsafe class VulkanVideoPresenter
                 EnsureGuestSubmissionCapacity();
                 resources = CreateComputeDispatchResources(work);
 
+                var zSlicesPerSubmission = ResolveComputeZSlicesPerSubmission(
+                    work.GroupCountX,
+                    work.GroupCountY,
+                    work.GroupCountZ);
                 var batchCount = Math.Max(
                     1u,
-                    (uint)Math.Ceiling(work.GroupCountZ / (double)MaxComputeZSlicesPerSubmission));
+                    (uint)Math.Ceiling(work.GroupCountZ / (double)zSlicesPerSubmission));
                 var threadLimits = stackalloc uint[3]
                 {
                     work.ThreadCountX,
@@ -11038,8 +11059,8 @@ internal static unsafe class VulkanVideoPresenter
 
                 for (var batchIndex = 0u; batchIndex < batchCount; batchIndex++)
                 {
-                    var zStart = batchIndex * MaxComputeZSlicesPerSubmission;
-                    var zCount = Math.Min(MaxComputeZSlicesPerSubmission, work.GroupCountZ - zStart);
+                    var zStart = batchIndex * zSlicesPerSubmission;
+                    var zCount = Math.Min(zSlicesPerSubmission, work.GroupCountZ - zStart);
                     var isFirstBatch = batchIndex == 0;
                     var isLastBatch = batchIndex == batchCount - 1;
 
