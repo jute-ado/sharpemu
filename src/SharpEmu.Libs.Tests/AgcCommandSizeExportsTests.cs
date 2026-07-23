@@ -15,6 +15,7 @@ public sealed class AgcCommandSizeExportsTests
     [InlineData("dcb-acquire", 32)]
     [InlineData("cb-eop", 32)]
     [InlineData("dcb-rewind", 8)]
+    [InlineData("acb-jump", 16)]
     [InlineData("dcb-jump", 16)]
     public void PacketSizingProbeReturnsExactByteCount(
         string command,
@@ -29,6 +30,7 @@ public sealed class AgcCommandSizeExportsTests
             "dcb-acquire" => AgcExports.DcbAcquireMemGetSize(context),
             "cb-eop" => AgcExports.CbQueueEndOfPipeActionGetSize(context),
             "dcb-rewind" => AgcExports.DcbRewindGetSize(context),
+            "acb-jump" => AgcExports.AcbJumpGetSize(context),
             "dcb-jump" => AgcExports.DcbJumpGetSize(context),
             _ => throw new ArgumentOutOfRangeException(nameof(command)),
         };
