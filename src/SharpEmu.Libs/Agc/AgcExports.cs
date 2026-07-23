@@ -1836,6 +1836,62 @@ public static partial class AgcExports
         DcbSetRegistersIndirect(ctx, RUcRegsIndirect, "uc");
 
     [SysAbiExport(
+        Nid = "w4-d0n60hdo",
+        ExportName = "sceAgcDcbSetUcRegisterDirect",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DcbSetUcRegisterDirect(CpuContext ctx)
+    {
+        var commandBufferAddress = ctx[CpuRegister.Rdi];
+        var packedRegisterAndValue = ctx[CpuRegister.Rsi];
+
+        // Firmware 12.70 reserves three dwords and emits SET_UCONFIG_REG,
+        // the low 16 bits of the packed register offset, then its high-dword
+        // value. Keeping allocation and packet writes on the existing bounded
+        // DCB path makes failure leave the cursor unchanged.
+        if (commandBufferAddress == 0 ||
+            !TryAllocateCommandDwords(
+                ctx,
+                commandBufferAddress,
+                3,
+                out var commandAddress) ||
+            !TryWriteUInt32(
+                ctx,
+                commandAddress,
+                Pm4(3, ItSetUconfigReg, 0)) ||
+            !TryWriteUInt32(
+                ctx,
+                commandAddress + sizeof(uint),
+                (uint)packedRegisterAndValue & 0xFFFFu) ||
+            !TryWriteUInt32(
+                ctx,
+                commandAddress + (2 * sizeof(uint)),
+                (uint)(packedRegisterAndValue >> 32)))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        TraceAgc(
+            $"agc.dcb_set_uc_direct buf=0x{commandBufferAddress:X16} " +
+            $"cmd=0x{commandAddress:X16} " +
+            $"reg=0x{((uint)packedRegisterAndValue & 0xFFFF):X4} " +
+            $"value=0x{((uint)(packedRegisterAndValue >> 32)):X8}");
+        return ReturnPointer(ctx, commandAddress);
+    }
+
+    [SysAbiExport(
+        Nid = "aP1Ki9G3++4",
+        ExportName = "sceAgcDcbSetUcRegisterDirectGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int DcbSetUcRegisterDirectGetSize(CpuContext ctx)
+    {
+        const int packetBytes = 3 * sizeof(uint);
+        ctx[CpuRegister.Rax] = packetBytes;
+        return packetBytes;
+    }
+
+    [SysAbiExport(
         Nid = "GIIW2J37e70",
         ExportName = "sceAgcDcbSetIndexSize",
         Target = Generation.Gen5,
