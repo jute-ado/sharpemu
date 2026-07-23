@@ -39,6 +39,8 @@ public static class PadExports
     private static long _replayStartTimestamp = Stopwatch.GetTimestamp();
     private static readonly PadReplayConfiguration? ReplayConfiguration =
         LoadReplayConfiguration();
+    private static readonly PadInputTraceWriter? InputTraceWriter =
+        LoadInputTraceWriter();
 
     [SysAbiExport(
         Nid = "hv1luiJrqQM",
@@ -537,6 +539,7 @@ public static class PadExports
         var now = Stopwatch.GetTimestamp();
         if (_lastInputSampleTicks != 0 && now - _lastInputSampleTicks < InputSampleIntervalTicks)
         {
+            InputTraceWriter?.Record(_cachedInputState, now);
             return _cachedInputState;
         }
 
@@ -551,6 +554,7 @@ public static class PadExports
                 elapsedMilliseconds,
                 VulkanVideoPresenter.PresentedGuestFrameCount);
             _lastInputSampleTicks = now;
+            InputTraceWriter?.Record(_cachedInputState, now);
             return _cachedInputState;
         }
 
@@ -590,7 +594,26 @@ public static class PadExports
             L2: l2,
             R2: r2);
         _lastInputSampleTicks = now;
+        InputTraceWriter?.Record(_cachedInputState, now);
         return _cachedInputState;
+    }
+
+    private static PadInputTraceWriter? LoadInputTraceWriter()
+    {
+        var path = Environment.GetEnvironmentVariable(
+            "SHARPEMU_TEST_LAB_INPUT_TRACE");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var writer = PadInputTraceWriter.Create(
+            path,
+            Stopwatch.GetTimestamp());
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => writer.Dispose();
+        Console.Error.WriteLine(
+            "[LOADER][INFO] Deterministic controller input recording active.");
+        return writer;
     }
 
     private static PadReplayConfiguration? LoadReplayConfiguration()
