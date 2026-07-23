@@ -10,6 +10,23 @@ namespace SharpEmu.Libs.Tests;
 public sealed class VulkanImageViewUsageTests
 {
     [Fact]
+    public void ArrayedAliasNeverReusesNonArrayBaseView()
+    {
+        Assert.False(VulkanVideoPresenter.CanReuseGuestImageBaseView(
+            Format.R8G8B8A8Unorm,
+            0xFAC,
+            Format.R8G8B8A8Unorm,
+            0xFAC,
+            arrayedView: true));
+        Assert.True(VulkanVideoPresenter.CanReuseGuestImageBaseView(
+            Format.R8G8B8A8Unorm,
+            0xFAC,
+            Format.R8G8B8A8Unorm,
+            0xFAC,
+            arrayedView: false));
+    }
+
+    [Fact]
     public void SrgbCompatibleViewDoesNotInheritUnsupportedStorageUsage()
     {
         var usage = VulkanVideoPresenter.ResolveGuestImageViewUsage(

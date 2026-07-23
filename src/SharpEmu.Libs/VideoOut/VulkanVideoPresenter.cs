@@ -3220,7 +3220,9 @@ internal static unsafe class VulkanVideoPresenter
         Format imageFormat,
         uint baseViewDstSelect,
         Format requestedFormat,
-        uint requestedDstSelect) =>
+        uint requestedDstSelect,
+        bool arrayedView = false) =>
+        !arrayedView &&
         requestedFormat == imageFormat &&
         requestedDstSelect == baseViewDstSelect;
 
@@ -13609,7 +13611,8 @@ internal static unsafe class VulkanVideoPresenter
                     resource.Format,
                     resource.ViewDstSelect,
                     format,
-                    dstSelect))
+                    dstSelect,
+                    arrayedView))
             {
                 if (mipLevel == 0 && levelCount == resource.MipLevels)
                 {
