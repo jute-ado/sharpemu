@@ -32,6 +32,19 @@ public sealed class NativeBackendConstructionTests
         Assert.True(DirectExecutionBackend.NativeWorkerControlCallbacksUseDelegateThunks);
     }
 
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(1, false)]
+    [InlineData(2, false)]
+    public void NativeWorkersAreRetiredAfterOneGuestRun(
+        int completedRuns,
+        bool expectedReusable)
+    {
+        Assert.Equal(
+            expectedReusable,
+            DirectExecutionBackend.CanReuseNativeGuestWorker(completedRuns));
+    }
+
     [Fact]
     public void ConstructorReleasesFirstTlsSlotWhenSecondAllocationFails()
     {
