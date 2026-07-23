@@ -24,6 +24,7 @@ public static class TestLabProbe
           "adapterVersion": "1.0.0",
           "capabilities": [
             "bundle_fingerprint",
+            "controller_recording",
             "controller_replay",
             "guest_image_write_capture",
             "presented_image_capture",
