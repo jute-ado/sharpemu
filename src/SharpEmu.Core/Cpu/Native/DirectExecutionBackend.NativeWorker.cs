@@ -33,6 +33,10 @@ public sealed partial class DirectExecutionBackend
 	private readonly object _nativeWorkerGate = new();
 	private readonly List<NativeGuestExecutor> _allNativeWorkers = new();
 	private readonly Stack<NativeGuestExecutor> _idleNativeWorkers = new();
+	// CLR reverse-P/Invoke attachment is fragile when several freshly-created native
+	// workers enter their managed prologues together. Serialize only that transition;
+	// workers remain fully concurrent once the prologue acknowledges the guest stub.
+	private readonly SemaphoreSlim _nativeWorkerStartGate = new(1, 1);
 	private bool _nativeWorkersDisposed;
 	private int _nativeWorkerCreationFailedLogged;
 
@@ -52,6 +56,23 @@ public sealed partial class DirectExecutionBackend
 	// on a freshly attached native thread.
 	internal static bool CanReuseNativeGuestWorker(int completedRuns) =>
 		completedRuns == 0;
+
+	internal static void StartNativeWorkerRun(
+		SemaphoreSlim gate,
+		Action signalWorkAvailable,
+		Action waitForPrologue)
+	{
+		gate.Wait();
+		try
+		{
+			signalWorkAvailable();
+			waitForPrologue();
+		}
+		finally
+		{
+			gate.Release();
+		}
+	}
 
 	// Runs an emitted guest entry stub on a dedicated native worker. The historical
 	// inline calli remains available only through the explicit diagnostic override;
@@ -213,6 +234,7 @@ public sealed partial class DirectExecutionBackend
 
 		private readonly DirectExecutionBackend _backend;
 		private nint _workEvent;
+		private nint _startedEvent;
 		private nint _doneEvent;
 
 		// RunPrologue/RunEpilogue compile to the host ABI. The host platform
@@ -328,8 +350,17 @@ public sealed partial class DirectExecutionBackend
 			prologuePtr = _backend._hostNativeInterop.AdaptGuestAbiCallback(prologuePtr);
 			epiloguePtr = _backend._hostNativeInterop.AdaptGuestAbiCallback(epiloguePtr);
 			_workEvent = _backend._hostNativeInterop.CreateWorkerEvent();
+			if (_workEvent == 0)
+			{
+				return false;
+			}
+			_startedEvent = _backend._hostNativeInterop.CreateWorkerEvent();
+			if (_startedEvent == 0)
+			{
+				return false;
+			}
 			_doneEvent = _backend._hostNativeInterop.CreateWorkerEvent();
-			if (_workEvent == 0 || _doneEvent == 0)
+			if (_doneEvent == 0)
 			{
 				return false;
 			}
@@ -378,6 +409,17 @@ public sealed partial class DirectExecutionBackend
 			EmitMovRcxImm64((ulong)executorHandle);
 			EmitMovRaxImm64((ulong)prologuePtr);
 			EmitCallRax();                                  // rax = entry stub, or 0 on failure
+			Emit(0x49); Emit(0xBB);                         // mov r11, controlBlock
+			*(ulong*)(code + offset) = (ulong)_controlBlock;
+			offset += sizeof(ulong);
+			Emit(0x49); Emit(0x89); Emit(0x43); Emit(0x08); // mov [r11+8], rax
+			EmitMovRcxImm64((ulong)_startedEvent);
+			EmitMovRaxImm64((ulong)_setEventAddress);
+			EmitCallRax();
+			Emit(0x49); Emit(0xBB);                         // mov r11, controlBlock
+			*(ulong*)(code + offset) = (ulong)_controlBlock;
+			offset += sizeof(ulong);
+			Emit(0x49); Emit(0x8B); Emit(0x43); Emit(0x08); // mov rax, [r11+8]
 			Emit(0x48); Emit(0x85); Emit(0xC0);             // test rax, rax
 			Emit(0x0F); Emit(0x84);                         // je skipEntry
 			int skipJump = offset;
@@ -464,7 +506,10 @@ public sealed partial class DirectExecutionBackend
 			_runHardwareExceptionAccessAddress = 0;
 			_runHardwareExceptionRegisters = null;
 			_runHardwareExceptionThreadHandle = 0;
-			SignalWorkAvailable();
+			StartNativeWorkerRun(
+				_backend._nativeWorkerStartGate,
+				SignalWorkAvailable,
+				WaitPrologueCompleted);
 			WaitWorkCompleted();
 			Interlocked.Increment(ref _completedRuns);
 			_runContext = null;
@@ -496,6 +541,11 @@ public sealed partial class DirectExecutionBackend
 		private void WaitWorkCompleted()
 		{
 			_ = _backend._hostNativeInterop.WaitWorkerEvent(_doneEvent, -1);
+		}
+
+		private void WaitPrologueCompleted()
+		{
+			_ = _backend._hostNativeInterop.WaitWorkerEvent(_startedEvent, -1);
 		}
 
 		public static nint RunPrologue(nint executorHandle)
@@ -715,6 +765,11 @@ public sealed partial class DirectExecutionBackend
 			{
 				_backend._hostNativeInterop.CloseWorkerEvent(_doneEvent);
 				_doneEvent = 0;
+			}
+			if (_startedEvent != 0)
+			{
+				_backend._hostNativeInterop.CloseWorkerEvent(_startedEvent);
+				_startedEvent = 0;
 			}
 		}
 	}
