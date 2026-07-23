@@ -81,6 +81,33 @@ public sealed class AgcResourceRegistrationTests
     }
 
     [Fact]
+    public void AgcInitializationExposesAndAcceptsZeroDefaultOwner()
+    {
+        var fixture = CreateFixture(
+            includeSizeOutput: false,
+            includeHandleOutput: true);
+        fixture.Memory.AddRegion(
+            OwnerOutputAddress,
+            new byte[sizeof(uint)]);
+
+        Assert.Equal(0, InitializeAgc(fixture.Context));
+
+        fixture.Context[CpuRegister.Rdi] = OwnerOutputAddress;
+        Assert.Equal(0, AgcExports.DriverGetDefaultOwner(fixture.Context));
+        Assert.True(fixture.Memory.TryRead(
+            OwnerOutputAddress,
+            fixture.Scratch.AsSpan(0, sizeof(uint))));
+        Assert.Equal(0U, BinaryPrimitives.ReadUInt32LittleEndian(fixture.Scratch));
+
+        Assert.Equal(
+            0,
+            RegisterResource(
+                fixture.Context,
+                resourceAddress: ResourceAddress,
+                owner: 0));
+    }
+
+    [Fact]
     public void RejectedAgcInitializationLeavesOptionalOwnerRegistrationUsable()
     {
         var fixture = CreateFixture(
@@ -245,7 +272,7 @@ public sealed class AgcResourceRegistrationTests
     private static int RegisterResource(
         CpuContext context,
         ulong resourceAddress,
-        uint owner = 1)
+        uint owner = 0)
     {
         context[CpuRegister.Rdi] = HandleOutputAddress;
         context[CpuRegister.Rsi] = owner;
