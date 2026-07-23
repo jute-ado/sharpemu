@@ -69,7 +69,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
         finally
         {
             GuestImageWriteTracker.Untrack(address);
-            NativeMemory.Free(allocation);
+            NativeMemory.AlignedFree(allocation);
         }
     }
 
@@ -100,7 +100,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
         finally
         {
             GuestImageWriteTracker.Untrack(address);
-            NativeMemory.Free(allocation);
+            NativeMemory.AlignedFree(allocation);
         }
     }
 
@@ -129,7 +129,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
         finally
         {
             GuestImageWriteTracker.Untrack(address);
-            NativeMemory.Free(allocation);
+            NativeMemory.AlignedFree(allocation);
         }
     }
 

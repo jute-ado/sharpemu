@@ -58,6 +58,10 @@ test-driven workflow. Major downstream differences include:
   workgroup LDS semantics
 - formatted buffer loads in vertex stages retain resolved global-buffer
   bindings when they are structured-resource reads rather than vertex inputs
+- guest-image CPU-write tracking now uses page protection on Windows as well as
+  POSIX hosts, routing only tracked write access violations through the Vulkan
+  cache invalidation path while leaving read, execute, and unrelated faults to
+  the normal guest exception machinery
 - PS5 VideoOut VRR-status privilege setup and inactive-status event registration,
   with exact library identities and the same handle/equeue validation as other
   display events
@@ -352,6 +356,11 @@ One of the few PS5 emulator projects available and very useful for studying nati
 * **[Acelogic's SharpEmu fork](https://github.com/Acelogic/sharpemu)**
 Provided valuable Gen5 loader research, including the object-symbol separation
 work adapted and independently regression-tested in this fork.
+
+* **[microvision9's Windows write-tracker research](https://github.com/par274/sharpemu/pull/512)**
+Provided the reference for the Windows page-protection and fault-routing path,
+which was isolated from the accompanying vertex-cache experiment and covered
+with downstream platform and exception-routing tests before adoption.
 
 * **Ryujinx**
 Provided valuable references for filesystem handling and low-level C# implementation patterns.
