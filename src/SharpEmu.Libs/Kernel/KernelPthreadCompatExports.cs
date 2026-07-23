@@ -883,7 +883,10 @@ public static class KernelPthreadCompatExports
                 }
             }
 
-            if (state.OwnerThreadId == 0)
+            // A zero owner with queued tickets is a handoff window, not an
+            // uncontended mutex. Keep it reserved for the oldest waiter so a
+            // newcomer or the releasing thread cannot barge ahead of the FIFO.
+            if (state.OwnerThreadId == 0 && state.WaitTickets.Count == 0)
             {
                 state.OwnerThreadId = currentThreadId;
                 state.RecursionCount = 1;
