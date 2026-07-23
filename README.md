@@ -114,6 +114,8 @@ test-driven workflow. Major downstream differences include:
 - firmware-recovered Gen5 libc `bsearch` and `strtoull` exports used by Grand
   Theft Auto V, including guest comparator callbacks, C-locale integer parsing,
   overflow saturation, and fault-ordered `errno`/end-pointer publication
+- Vulkan color pipelines default a wholly omitted guest blend array per
+  attachment while continuing to reject partially specified mismatches
 - RFC 3339 RTC formatting for explicit or current UTC ticks, with signed timezone
   offsets, checked calendar bounds, and all-or-nothing guest output
 - stateful synchronous NP Manager request allocation with the console's 128-request

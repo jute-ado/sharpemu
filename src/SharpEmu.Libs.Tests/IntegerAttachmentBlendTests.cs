@@ -10,6 +10,20 @@ namespace SharpEmu.Libs.Tests;
 public sealed class IntegerAttachmentBlendTests
 {
     [Fact]
+    public void EmptyBlendListDefaultsEveryColorAttachment()
+    {
+        var normalized = GuestBlendStateNormalizer.NormalizeIntegerAttachments(
+            [],
+            [false, true],
+            out var normalizedCount);
+
+        Assert.Equal(2, normalizedCount);
+        Assert.Equal(
+            [GuestBlendState.Default, GuestBlendState.Default],
+            normalized);
+    }
+
+    [Fact]
     public void IntegerAttachmentDisablesBlendWithoutChangingOtherState()
     {
         var enabled = GuestBlendState.Default with
