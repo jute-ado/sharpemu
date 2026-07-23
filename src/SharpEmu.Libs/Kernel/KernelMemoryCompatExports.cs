@@ -7490,8 +7490,14 @@ public static partial class KernelMemoryCompatExports
             return false;
         }
 
+        var affectedNames = new Dictionary<ulong, string>();
         foreach (var region in affected)
         {
+            if (_mappedRegionNames.Remove(region.Address, out var name))
+            {
+                affectedNames[region.Address] = name;
+            }
+
             _mappedRegions.Remove(region.Address);
         }
 
@@ -7500,17 +7506,21 @@ public static partial class KernelMemoryCompatExports
             var regionEnd = region.Address + region.Length;
             var protectStart = Math.Max(region.Address, address);
             var protectEnd = Math.Min(regionEnd, endAddress);
+            var regionName = affectedNames.GetValueOrDefault(region.Address);
 
             if (region.Address < protectStart)
             {
                 AddMappedRegionSliceLocked(region, region.Address, protectStart, region.Protection);
+                RestoreMappedRegionNameLocked(region.Address, regionName);
             }
 
             AddMappedRegionSliceLocked(region, protectStart, protectEnd, protection, memoryType);
+            RestoreMappedRegionNameLocked(protectStart, regionName);
 
             if (protectEnd < regionEnd)
             {
                 AddMappedRegionSliceLocked(region, protectEnd, regionEnd, region.Protection);
+                RestoreMappedRegionNameLocked(protectEnd, regionName);
             }
         }
 
@@ -7660,26 +7670,36 @@ public static partial class KernelMemoryCompatExports
 
         if (overlapping is not null)
         {
+            var overlappingNames = new Dictionary<ulong, string>();
             foreach (var region in overlapping)
             {
+                if (_mappedRegionNames.Remove(region.Address, out var name))
+                {
+                    overlappingNames[region.Address] = name;
+                }
+
                 _mappedRegions.Remove(region.Address);
             }
 
             foreach (var region in overlapping)
             {
                 var regionEnd = region.Address + region.Length;
+                var regionName = overlappingNames.GetValueOrDefault(region.Address);
                 if (region.Address < start)
                 {
                     AddMappedRegionSliceLocked(region, region.Address, start, region.Protection);
+                    RestoreMappedRegionNameLocked(region.Address, regionName);
                 }
 
                 if (regionEnd > replacementEnd)
                 {
                     AddMappedRegionSliceLocked(region, replacementEnd, regionEnd, region.Protection);
+                    RestoreMappedRegionNameLocked(replacementEnd, regionName);
                 }
             }
         }
 
+        _mappedRegionNames.Remove(start);
         _mappedRegions[start] = replacement;
     }
 

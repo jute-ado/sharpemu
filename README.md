@@ -128,10 +128,11 @@ test-driven workflow. Major downstream differences include:
   exhaustion before changing guest mappings, 16 KiB flexible-map granularity,
   fixed-address requirements, supported-flag validation, matching automatic
   placement, named-map pointer and 32-byte length validation with names retained
-  in virtual-query results, explicit anonymous naming for four-argument and batch
-  mappings, primary process stack and page-aligned static TLS/TCB startup
-  accounting, and idempotent fixed-range reservations; process reset also
-  releases tracked libc
+  in virtual-query results across protection and fixed-remap splits while
+  displaced-region names are discarded, explicit anonymous naming for
+  four-argument and batch mappings, primary process stack and page-aligned
+  static TLS/TCB startup accounting, and idempotent fixed-range reservations;
+  process reset also releases tracked libc
   heap allocations, discards stale mappings and names, and restarts direct and
   flexible-memory accounting for the next title
 - sandboxed guest filesystem handling with virtual `/dev/random` and

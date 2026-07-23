@@ -757,6 +757,94 @@ public sealed class KernelMemoryCompatExportsTests
     }
 
     [Fact]
+    public void Mprotect_PreservesNameAcrossSplitFlexibleRegion()
+    {
+        const ulong memoryBase = 0x17_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        const ulong nameAddress = memoryBase + 0x200;
+        const ulong infoAddress = memoryBase + 0x300;
+        const ulong mappedAddress = memoryBase + 0x4000;
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(memoryBase, new byte[0x2_0000]);
+        var context = new CpuContext(memory, Generation.Gen5);
+        Assert.True(memory.TryWrite(inOutAddress, BitConverter.GetBytes(mappedAddress)));
+        Assert.True(memory.TryWrite(nameAddress, "streaming_arena\0"u8));
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0xC000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+        context[CpuRegister.R8] = nameAddress;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context));
+
+        context[CpuRegister.Rdi] = mappedAddress + 0x4000;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x01;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelMprotect(context));
+
+        Assert.Equal("streaming_arena", QueryVirtualRegionName(context, memory, mappedAddress, infoAddress));
+        Assert.Equal("streaming_arena", QueryVirtualRegionName(context, memory, mappedAddress + 0x4000, infoAddress));
+        Assert.Equal("streaming_arena", QueryVirtualRegionName(context, memory, mappedAddress + 0x8000, infoAddress));
+    }
+
+    [Fact]
+    public void FixedFlexibleRemap_PreservesNameOnSurvivingSlices()
+    {
+        const ulong memoryBase = 0x18_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        const ulong originalNameAddress = memoryBase + 0x200;
+        const ulong replacementNameAddress = memoryBase + 0x240;
+        const ulong infoAddress = memoryBase + 0x300;
+        const ulong mappedAddress = memoryBase + 0x4000;
+        var memory = new FakeCpuMemory(memoryBase, 0x2_0000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(mappedAddress));
+        memory.WriteCString(originalNameAddress, "original_arena");
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0xC000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+        context[CpuRegister.R8] = originalNameAddress;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context));
+
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(mappedAddress + 0x4000));
+        memory.WriteCString(replacementNameAddress, "replacement");
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x01;
+        context[CpuRegister.Rcx] = 0x10;
+        context[CpuRegister.R8] = replacementNameAddress;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context));
+
+        Assert.Equal("original_arena", QueryVirtualRegionName(context, memory, mappedAddress, infoAddress));
+        Assert.Equal("replacement", QueryVirtualRegionName(context, memory, mappedAddress + 0x4000, infoAddress));
+        Assert.Equal("original_arena", QueryVirtualRegionName(context, memory, mappedAddress + 0x8000, infoAddress));
+    }
+
+    [Fact]
+    public void ReplacingNamedMapping_DiscardsDisplacedRegionName()
+    {
+        const ulong memoryBase = 0x19_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        const ulong nameAddress = memoryBase + 0x200;
+        const ulong infoAddress = memoryBase + 0x300;
+        const ulong mappedAddress = memoryBase + 0x4000;
+        var memory = new FakeCpuMemory(memoryBase, 0x1_0000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(mappedAddress));
+        memory.WriteCString(nameAddress, "displaced_name");
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+        context[CpuRegister.R8] = nameAddress;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context));
+
+        KernelMemoryCompatExports.RegisterReservedVirtualRange(mappedAddress, 0x4000);
+
+        Assert.Equal(string.Empty, QueryVirtualRegionName(context, memory, mappedAddress, infoAddress));
+    }
+
+    [Fact]
     public void MapFlexibleMemory_UsesAnonymousNameWithoutFifthArgument()
     {
         const ulong memoryBase = 0x16_0000_0000;
@@ -927,5 +1015,23 @@ public sealed class KernelMemoryCompatExportsTests
         var result = KernelMemoryCompatExports.KernelMunmap(context);
 
         Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND, result);
+    }
+
+    private static string QueryVirtualRegionName(
+        CpuContext context,
+        ICpuMemory memory,
+        ulong queryAddress,
+        ulong infoAddress)
+    {
+        context[CpuRegister.Rdi] = queryAddress;
+        context[CpuRegister.Rsi] = 0;
+        context[CpuRegister.Rdx] = infoAddress;
+        context[CpuRegister.Rcx] = 0x48;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelVirtualQuery(context));
+
+        Span<byte> nameBytes = stackalloc byte[32];
+        Assert.True(memory.TryRead(infoAddress + 33, nameBytes));
+        var terminator = nameBytes.IndexOf((byte)0);
+        return Encoding.ASCII.GetString(terminator >= 0 ? nameBytes[..terminator] : nameBytes);
     }
 }
