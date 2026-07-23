@@ -8,6 +8,11 @@ namespace SharpEmu.Libs.Kernel;
 /// </summary>
 public static class KernelMemoryLifecycle
 {
+    public static void ConfigureFlexibleMemorySize(ulong size)
+    {
+        KernelMemoryCompatExports.ConfigureFlexibleMemorySize(size);
+    }
+
     public static void ResetRuntimeState()
     {
         KernelMemoryCompatExports.ResetMemoryRuntimeState();

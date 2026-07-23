@@ -29,7 +29,8 @@ public sealed record Ps5ApplicationMetadata(
     string? Title,
     string? TitleId,
     string? ContentId,
-    string? Version);
+    string? Version,
+    ulong? FlexibleMemorySize = null);
 
 public static class Ps5ParamJsonReader
 {
@@ -91,8 +92,22 @@ public static class Ps5ParamJsonReader
             TryGetString(root, "contentVersion")
             ?? TryGetString(root, "masterVersion")
             ?? TryGetString(root, "targetContentVersion");
+        ulong? flexibleMemorySize = null;
+        if (TryGetObject(root, "kernel", out var kernel) &&
+            kernel.TryGetProperty("flexibleMemorySize", out var flexibleMemoryValue) &&
+            flexibleMemoryValue.ValueKind == JsonValueKind.Number &&
+            flexibleMemoryValue.TryGetUInt64(out var parsedFlexibleMemorySize) &&
+            parsedFlexibleMemorySize != 0)
+        {
+            flexibleMemorySize = parsedFlexibleMemorySize;
+        }
 
-        return new Ps5ApplicationMetadata(ExtractTitleName(root), titleId, contentId, version);
+        return new Ps5ApplicationMetadata(
+            ExtractTitleName(root),
+            titleId,
+            contentId,
+            version,
+            flexibleMemorySize);
     }
 
     private static Ps5ApplicationMetadata EmptyMetadata() => new(null, null, null, null);

@@ -83,6 +83,31 @@ public sealed class KernelMunmapRangeTests : IDisposable
     }
 
     [Fact]
+    public void ConfiguredFlexibleMemorySizeControlsAvailableCapacity()
+    {
+        const ulong configuredSize = 438UL * 1024 * 1024;
+        var context = CreateContext();
+
+        KernelMemoryLifecycle.ConfigureFlexibleMemorySize(configuredSize);
+
+        Assert.Equal(configuredSize, QueryConfiguredFlexibleMemory(context));
+        Assert.Equal(configuredSize, QueryAvailableFlexibleMemory(context));
+    }
+
+    [Fact]
+    public void ResetRestoresDefaultFlexibleMemoryCapacity()
+    {
+        var context = CreateContext();
+        var defaultSize = QueryConfiguredFlexibleMemory(context);
+        KernelMemoryLifecycle.ConfigureFlexibleMemorySize(438UL * 1024 * 1024);
+
+        KernelMemoryLifecycle.ResetRuntimeState();
+
+        Assert.Equal(defaultSize, QueryConfiguredFlexibleMemory(context));
+        Assert.Equal(defaultSize, QueryAvailableFlexibleMemory(context));
+    }
+
+    [Fact]
     public void MunmapCanSpanAdjacentTrackedRegions()
     {
         const ulong reservationStart = 0x0000_0012_8000_0000;
@@ -160,6 +185,17 @@ public sealed class KernelMunmapRangeTests : IDisposable
         Assert.Equal(
             (int)OrbisGen2Result.ORBIS_GEN2_OK,
             KernelMemoryCompatExports.KernelAvailableFlexibleMemorySize(context));
+        Span<byte> value = stackalloc byte[sizeof(ulong)];
+        Assert.True(context.Memory.TryRead(OutputAddress, value));
+        return BinaryPrimitives.ReadUInt64LittleEndian(value);
+    }
+
+    private static ulong QueryConfiguredFlexibleMemory(CpuContext context)
+    {
+        context[CpuRegister.Rdi] = OutputAddress;
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_OK,
+            KernelMemoryCompatExports.KernelConfiguredFlexibleMemorySize(context));
         Span<byte> value = stackalloc byte[sizeof(ulong)];
         Assert.True(context.Memory.TryRead(OutputAddress, value));
         return BinaryPrimitives.ReadUInt64LittleEndian(value);
