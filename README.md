@@ -125,9 +125,10 @@ test-driven workflow. Major downstream differences include:
   virtual unmapping that preserves covered edge slices and flexible-memory
   accounting, title-declared `kernel.flexibleMemorySize` capacity, fixed
   flexible remaps that charge only newly covered bytes and reject capacity
-  exhaustion before changing guest mappings, primary process stack and
-  page-aligned static TLS/TCB startup accounting, and idempotent fixed-range
-  reservations; process reset also
+  exhaustion before changing guest mappings, 16 KiB flexible-map length and
+  fixed-address validation with matching automatic placement, primary process
+  stack and page-aligned static TLS/TCB startup accounting, and idempotent
+  fixed-range reservations; process reset also
   releases tracked libc
   heap allocations, discards stale mappings and names, and restarts direct and
   flexible-memory accounting for the next title
