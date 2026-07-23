@@ -20,6 +20,14 @@ public sealed partial class DirectExecutionBackend
 	private const ulong LazyCommitWindowBytes = 0x0200_0000UL;
 	private static int _lazyCommitTraceCount;
 
+	internal static bool TryHandleGuestImageWriteFault(
+		uint exceptionCode,
+		ulong accessType,
+		ulong faultAddress) =>
+		exceptionCode == WindowsFaultCodes.AccessViolation &&
+		accessType == 1 &&
+		GuestImageWriteTracker.TryHandleWriteFault(faultAddress);
+
 	private unsafe void SetupExceptionHandler()
 	{
 		if (_usePosixSignalHandling)
@@ -27,6 +35,10 @@ public sealed partial class DirectExecutionBackend
 			SetupPosixExceptionHandler();
 			return;
 		}
+
+		// Pre-JIT the tracker path before a hardware fault enters the managed
+		// vectored handler, mirroring the POSIX signal bridge's warm-up.
+		GuestImageWriteTracker.WarmUp();
 
 		if (!string.Equals(Environment.GetEnvironmentVariable("SHARPEMU_DISABLE_RAW_HANDLER"), "1", StringComparison.Ordinal))
 		{
@@ -118,6 +130,14 @@ public sealed partial class DirectExecutionBackend
 
 			ulong rip = ReadCtxU64(contextRecord, CTX_RIP);
 			ulong rsp = ReadCtxU64(contextRecord, CTX_RSP);
+			if (exceptionRecord->NumberParameters >= 2 &&
+				TryHandleGuestImageWriteFault(
+					exceptionCode,
+					exceptionRecord->ExceptionInformation[0],
+					exceptionRecord->ExceptionInformation[1]))
+			{
+				return -1;
+			}
 
 			// Thread-mode probe: a hardware exception raised while this thread is inside
 			// the managed import gateway means the VEH->managed reentry happened from
