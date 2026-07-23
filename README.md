@@ -134,6 +134,9 @@ test-driven workflow. Major downstream differences include:
 - firmware-recovered Gen5 libc `bsearch` and `strtoull` exports used by Grand
   Theft Auto V, including guest comparator callbacks, C-locale integer parsing,
   overflow saturation, and fault-ordered `errno`/end-pointer publication
+- firmware-layout libc `setjmp` context capture for Gen4 and Gen5, including
+  the post-return stack pointer, callee-saved registers, floating-point control
+  state, an empty guest signal mask, and transactional guest-buffer writes
 - Vulkan color pipelines default a wholly omitted guest blend array per
   attachment while continuing to reject partially specified mismatches
 - RFC 3339 RTC formatting for explicit or current UTC ticks, with signed timezone
@@ -360,7 +363,9 @@ One of the few PS5 emulator projects available and very useful for studying nati
 Provided valuable Gen5 loader research, including the object-symbol separation
 work adapted and independently regression-tested in this fork, plus the
 [pthread mutex handoff-starvation analysis](https://github.com/Acelogic/sharpemu/commit/b591baa1)
-used to close the remaining barging window in the downstream FIFO ticket path.
+used to close the remaining barging window in the downstream FIFO ticket path,
+and the [firmware `jmp_buf` layout research](https://github.com/Acelogic/sharpemu/commit/4c3cf8d9)
+adapted with corrected post-return stack semantics and failure-atomic tests.
 
 * **[microvision9's Windows write-tracker research](https://github.com/par274/sharpemu/pull/512)**
 Provided the reference for the Windows page-protection and fault-routing path,
