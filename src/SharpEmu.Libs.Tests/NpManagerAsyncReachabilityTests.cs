@@ -164,6 +164,96 @@ public sealed class NpManagerAsyncReachabilityTests : IDisposable
     }
 
     [Fact]
+    public void InvalidAsyncHandlesPreserveFirmwareErrorOrdering()
+    {
+        _ctx[CpuRegister.Rdi] = 0;
+        _ctx[CpuRegister.Rsi] = ResultAddress;
+        AssertResult(ErrorInvalidArgument, NpManagerExports.NpAbortRequest);
+        AssertResult(ErrorInvalidArgument, NpManagerExports.NpPollAsync);
+        AssertResult(ErrorInvalidArgument, NpManagerExports.NpCheckNpReachability);
+
+        _ctx[CpuRegister.Rdi] = 99;
+        AssertResult(ErrorRequestNotFound, NpManagerExports.NpAbortRequest);
+        AssertResult(ErrorRequestNotFound, NpManagerExports.NpPollAsync);
+        AssertResult(
+            ErrorRequestNotFound,
+            NpManagerExports.NpCheckNpReachability);
+
+        _ctx[CpuRegister.Rsi] = 0;
+        AssertResult(ErrorInvalidArgument, NpManagerExports.NpPollAsync);
+    }
+
+    [Fact]
+    public void AbortDuringWorkerOverridesItsLocalResult()
+    {
+        var requestId = CreateAsyncRequest();
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        Assert.Equal(
+            0,
+            NpManagerRequestRegistry.StartLocalOperation(
+                requestId,
+                context =>
+                {
+                    entered.Set();
+                    release.Wait(TimeSpan.FromSeconds(5));
+                    return context.IsAbortRequested ? ErrorAborted : 77;
+                }));
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(2)));
+
+        _ctx[CpuRegister.Rdi] = unchecked((ulong)requestId);
+        AssertResult(0, NpManagerExports.NpAbortRequest);
+        release.Set();
+        Assert.True(
+            NpManagerRequestRegistry.WaitForCompletionForTests(
+                requestId,
+                TimeSpan.FromSeconds(2)));
+
+        _ctx[CpuRegister.Rsi] = ResultAddress;
+        AssertResult(0, NpManagerExports.NpPollAsync);
+        Assert.Equal(ErrorAborted, ReadResult());
+    }
+
+    [Fact]
+    public async Task DeleteUnlinksThenWaitsForAttachedWorker()
+    {
+        var requestId = CreateAsyncRequest();
+        using var entered = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        Assert.Equal(
+            0,
+            NpManagerRequestRegistry.StartLocalOperation(
+                requestId,
+                _ =>
+                {
+                    entered.Set();
+                    release.Wait(TimeSpan.FromSeconds(5));
+                    return 0;
+                }));
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(2)));
+
+        var deleteContext = new CpuContext(_memory, Generation.Gen5);
+        deleteContext[CpuRegister.Rdi] = unchecked((ulong)requestId);
+        var deleteTask = Task.Run(
+            () => NpManagerExports.NpDeleteRequest(deleteContext));
+        Assert.True(
+            SpinWait.SpinUntil(
+                () => NpManagerRequestRegistry.LiveCountForTests == 0,
+                TimeSpan.FromSeconds(2)));
+        Assert.NotSame(
+            deleteTask,
+            await Task.WhenAny(
+                deleteTask,
+                Task.Delay(TimeSpan.FromMilliseconds(100))));
+
+        release.Set();
+        Assert.Equal(0, await deleteTask);
+        Assert.Equal(0UL, deleteContext[CpuRegister.Rax]);
+        _ctx[CpuRegister.Rdi] = unchecked((ulong)requestId);
+        AssertResult(ErrorRequestNotFound, NpManagerExports.NpAbortRequest);
+    }
+
+    [Fact]
     public void SyncAndAsyncRequestsShareIdsWithoutColliding()
     {
         AssertResult(1, NpManagerExports.NpCreateRequest);

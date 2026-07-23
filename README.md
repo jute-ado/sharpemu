@@ -180,6 +180,9 @@ test-driven workflow. Major downstream differences include:
   same process reset, with firmware-width status returns and clean reinitialization;
   Net and NetCtl share a stable locally administered virtual MAC address, with
   bounded binary-to-text formatting and no exposure of host hardware identity;
+  NP manager synchronous and Gen5 asynchronous requests share one collision-free
+  process registry, with bounded async capacity, abort/delete/poll lifecycle,
+  deterministic offline reachability completion, and reset-safe worker teardown;
   bounded HTTP URI parsing and construction support size queries, guest-owned
   components, option masks, default and explicit ports, and transactional
   output validation
@@ -400,7 +403,11 @@ plus the [RUDP ownership and teardown model](https://github.com/Acelogic/sharpem
 extended here to participate in process-session network reset, and the
 [Gen5 FLAT-memory address model](https://github.com/Acelogic/sharpemu/commit/322449f2645fc0092b632a3af6cfb3fc442c7abe)
 adapted without the overlapping 3D-image work and expanded with downstream
-decode-width, writable-store, unresolved-provenance, and GLOBAL-isolation tests.
+decode-width, writable-store, unresolved-provenance, and GLOBAL-isolation tests,
+plus the [Gen5 NP reachability lifecycle research](https://github.com/Acelogic/sharpemu/commit/ca4133b)
+adapted onto this fork's existing synchronous request support through a shared
+ID registry and expanded with mixed-request, capacity, polling, abort, deletion,
+worker-join, and process-reset tests.
 
 * **[microvision9's Windows write-tracker research](https://github.com/par274/sharpemu/pull/512)**
 Provided the reference for the Windows page-protection and fault-routing path,
