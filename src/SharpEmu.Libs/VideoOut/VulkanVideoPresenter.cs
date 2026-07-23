@@ -131,6 +131,7 @@ internal readonly record struct VulkanGuestQueueIdentity(
 
 internal readonly record struct VulkanTextureImageShape(
     bool IsThreeDimensional,
+    bool IsCube,
     uint Depth,
     uint ArrayLayers);
 
@@ -239,12 +240,40 @@ internal static unsafe class VulkanVideoPresenter
         texture.ThreeDimensionalView
             ? new(
                 IsThreeDimensional: true,
+                IsCube: false,
                 Depth: Math.Max(texture.Depth, 1),
                 ArrayLayers: 1)
+            : texture.CubeView
+                ? new(
+                    IsThreeDimensional: false,
+                    IsCube: true,
+                    Depth: 1,
+                    ArrayLayers: 6)
             : new(
                 IsThreeDimensional: false,
+                IsCube: false,
                 Depth: 1,
                 ArrayLayers: Math.Max(texture.ArrayLayers, 1));
+
+    internal static ImageCreateFlags ResolveTextureImageCreateFlags(
+        bool supportsAttachmentUsage,
+        VulkanTextureImageShape shape) =>
+        (supportsAttachmentUsage
+            ? ImageCreateFlags.CreateMutableFormatBit |
+              ImageCreateFlags.CreateExtendedUsageBit
+            : 0) |
+        (shape.IsCube ? ImageCreateFlags.CreateCubeCompatibleBit : 0);
+
+    internal static ImageViewType ResolveTextureImageViewType(
+        VulkanTextureImageShape shape,
+        bool arrayedView) =>
+        shape.IsThreeDimensional
+            ? ImageViewType.Type3D
+            : shape.IsCube
+                ? ImageViewType.TypeCube
+                : arrayedView
+                    ? ImageViewType.Type2DArray
+                    : ImageViewType.Type2D;
 
     internal enum StorageImageComponentKind
     {
@@ -8465,7 +8494,8 @@ internal static unsafe class VulkanVideoPresenter
                 texture.ArrayedView,
                 Math.Max(texture.ArrayLayers, 1),
                 Math.Max(texture.Depth, 1),
-                texture.ThreeDimensionalView);
+                texture.ThreeDimensionalView,
+                texture.CubeView);
             if (_textureCache.TryGetValue(key, out var cached))
             {
                 return cached;
@@ -8896,7 +8926,19 @@ internal static unsafe class VulkanVideoPresenter
                 : CreateFallbackTexturePixels(texture.Format, rowLength, height, expectedSize);
             if (!ReferenceEquals(pixels, texture.RgbaPixels))
             {
-                layers = 1;
+                if (shape.IsCube)
+                {
+                    var face = pixels;
+                    pixels = new byte[checked(face.Length * 6)];
+                    for (var layer = 0; layer < 6; layer++)
+                    {
+                        face.CopyTo(pixels, layer * face.Length);
+                    }
+                }
+                else
+                {
+                    layers = 1;
+                }
                 depth = 1;
             }
             if (AddressListContains("SHARPEMU_FORCE_WHITE_TEXTURE_TARGETS", texture.Address))
@@ -8925,9 +8967,9 @@ internal static unsafe class VulkanVideoPresenter
             var imageInfo = new ImageCreateInfo
             {
                 SType = StructureType.ImageCreateInfo,
-                Flags = supportsAttachmentUsage
-                    ? ImageCreateFlags.CreateMutableFormatBit | ImageCreateFlags.CreateExtendedUsageBit
-                    : 0,
+                Flags = ResolveTextureImageCreateFlags(
+                    supportsAttachmentUsage,
+                    shape),
                 ImageType = shape.IsThreeDimensional
                     ? ImageType.Type3D
                     : ImageType.Type2D,
@@ -8964,11 +9006,9 @@ internal static unsafe class VulkanVideoPresenter
             {
                 SType = StructureType.ImageViewCreateInfo,
                 Image = image,
-                ViewType = shape.IsThreeDimensional
-                    ? ImageViewType.Type3D
-                    : texture.ArrayedView
-                        ? ImageViewType.Type2DArray
-                        : ImageViewType.Type2D,
+                ViewType = ResolveTextureImageViewType(
+                    shape,
+                    texture.ArrayedView),
                 Format = vkFormat,
                 Components = ToVkComponentMapping(texture.DstSelect),
                 SubresourceRange = ColorSubresourceRange(layerCount: layers),

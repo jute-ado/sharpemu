@@ -4,6 +4,7 @@
 using SharpEmu.Libs.Gpu;
 using SharpEmu.Libs.VideoOut;
 using SharpEmu.ShaderCompiler.Vulkan;
+using Silk.NET.Vulkan;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests;
@@ -74,6 +75,29 @@ public sealed class ThreeDimensionalTextureTests
         Assert.False(shape.IsThreeDimensional);
         Assert.Equal(1u, shape.Depth);
         Assert.Equal(4u, shape.ArrayLayers);
+    }
+
+    [Fact]
+    public void CubeTextureUsesSixArrayLayersAndCubeShape()
+    {
+        var texture = Texture() with { CubeView = true };
+
+        var shape = VulkanVideoPresenter.ResolveTextureImageShape(texture);
+
+        Assert.True(shape.IsCube);
+        Assert.False(shape.IsThreeDimensional);
+        Assert.Equal(1u, shape.Depth);
+        Assert.Equal(6u, shape.ArrayLayers);
+        Assert.Equal(
+            ImageCreateFlags.CreateCubeCompatibleBit,
+            VulkanVideoPresenter.ResolveTextureImageCreateFlags(
+                supportsAttachmentUsage: false,
+                shape));
+        Assert.Equal(
+            ImageViewType.TypeCube,
+            VulkanVideoPresenter.ResolveTextureImageViewType(
+                shape,
+                arrayedView: false));
     }
 
     private static GuestDrawTexture Texture() => new(

@@ -52,7 +52,8 @@ internal sealed record GuestDrawTexture(
     bool ArrayedView = false,
     uint ArrayLayers = 1,
     uint Depth = 1,
-    bool ThreeDimensionalView = false);
+    bool ThreeDimensionalView = false,
+    bool CubeView = false);
 
 /// <summary>Raw guest sampler descriptor dwords, copied verbatim from guest memory.</summary>
 internal readonly record struct GuestSampler(
@@ -77,7 +78,8 @@ internal readonly record struct TextureContentIdentity(
     bool Arrayed = false,
     uint ArrayLayers = 1,
     uint Depth = 1,
-    bool ThreeDimensional = false);
+    bool ThreeDimensional = false,
+    bool Cube = false);
 
 internal sealed record GuestMemoryBuffer(
     ulong BaseAddress,

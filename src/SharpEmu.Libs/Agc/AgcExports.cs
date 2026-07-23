@@ -9217,6 +9217,7 @@ public static partial class AgcExports
     {
         texture = default!;
         var isThreeDimensional = dimension == 2;
+        var isCube = dimension == 3 && !isStorage;
         GuestDrawTexture CreateFallback() =>
             CreateFallbackGuestDrawTexture(
                 isStorage,
@@ -9226,6 +9227,7 @@ public static partial class AgcExports
             {
                 Depth = isThreeDimensional ? Math.Max(descriptor.Depth, 1) : 1,
                 ThreeDimensionalView = isThreeDimensional,
+                CubeView = isCube,
             };
         if ((descriptor.Type != Gen5TextureType1D &&
              descriptor.Type != Gen5TextureType2D &&
@@ -9324,7 +9326,14 @@ public static partial class AgcExports
              descriptor.Type == Gen5TextureType1DArray) &&
             descriptor.Depth > 1 &&
             _arrayUploadRetryTracker.ShouldAttempt(descriptor.Address);
-        var arrayUploadLayers = wantsArrayUpload ? descriptor.Depth : 1u;
+        var wantsCubeUpload = isCube &&
+            descriptor.Address != 0 &&
+            _arrayUploadRetryTracker.ShouldAttempt(descriptor.Address);
+        var arrayUploadLayers = wantsArrayUpload
+            ? descriptor.Depth
+            : wantsCubeUpload
+                ? 6u
+                : 1u;
         var volumeUploadDepth = isThreeDimensional
             ? Math.Max(descriptor.Depth, 1)
             : 1u;
@@ -9335,6 +9344,7 @@ public static partial class AgcExports
         // through the texel copy below so the refresh path re-uploads.
         if (!isStorage &&
             !wantsArrayUpload &&
+            !wantsCubeUpload &&
             !isThreeDimensional &&
             descriptor.Address != 0 &&
             GuestGpu.Current.IsGuestImageUploadKnown(
@@ -9361,7 +9371,8 @@ public static partial class AgcExports
                 Sampler: ToGuestSampler(samplerDescriptor),
                 ArrayedView: isArrayed,
                 Depth: volumeUploadDepth,
-                ThreeDimensionalView: isThreeDimensional);
+                ThreeDimensionalView: isThreeDimensional,
+                CubeView: isCube);
             return true;
         }
 
@@ -9483,7 +9494,8 @@ public static partial class AgcExports
                     isArrayed,
                     arrayUploadLayers,
                     volumeUploadDepth,
-                    isThreeDimensional)))
+                    isThreeDimensional,
+                    isCube)))
         {
             texture = new GuestDrawTexture(
                 descriptor.Address,
@@ -9505,13 +9517,15 @@ public static partial class AgcExports
                 ArrayedView: isArrayed,
                 ArrayLayers: arrayUploadLayers,
                 Depth: volumeUploadDepth,
-                ThreeDimensionalView: isThreeDimensional);
+                ThreeDimensionalView: isThreeDimensional,
+                CubeView: isCube);
             return true;
         }
 
-        if (wantsArrayUpload || (isThreeDimensional && volumeUploadDepth > 1))
+        if (wantsArrayUpload || wantsCubeUpload ||
+            (isThreeDimensional && volumeUploadDepth > 1))
         {
-            var sliceCount = wantsArrayUpload
+            var sliceCount = wantsArrayUpload || wantsCubeUpload
                 ? arrayUploadLayers
                 : volumeUploadDepth;
             var layerBytes = checked((int)sourceByteCount);
@@ -9564,9 +9578,10 @@ public static partial class AgcExports
                         Sampler: sampler,
                         WriteGeneration: hasWriteGeneration ? writeGeneration : -1,
                         ArrayedView: wantsArrayUpload,
-                        ArrayLayers: wantsArrayUpload ? sliceCount : 1,
-                        Depth: wantsArrayUpload ? 1 : sliceCount,
-                        ThreeDimensionalView: isThreeDimensional);
+                        ArrayLayers: wantsArrayUpload || wantsCubeUpload ? sliceCount : 1,
+                        Depth: wantsArrayUpload || wantsCubeUpload ? 1 : sliceCount,
+                        ThreeDimensionalView: isThreeDimensional,
+                        CubeView: isCube);
                     return true;
                 }
             }
@@ -9638,7 +9653,8 @@ public static partial class AgcExports
             WriteGeneration: hasWriteGeneration ? writeGeneration : -1,
             ArrayedView: isArrayed,
             Depth: volumeUploadDepth,
-            ThreeDimensionalView: isThreeDimensional);
+            ThreeDimensionalView: isThreeDimensional,
+            CubeView: isCube);
         return true;
     }
 
