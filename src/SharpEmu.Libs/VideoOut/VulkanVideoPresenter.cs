@@ -2418,6 +2418,8 @@ internal static unsafe class VulkanVideoPresenter
     {
         var format = (dataFormat, numberType) switch
         {
+            (2, 4) => Format.R16Uint,
+            (2, 5) => Format.R16Sint,
             (4, 4) => Format.R32Uint,
             (4, 5) => Format.R32Sint,
             (4, 7) => Format.R32Sfloat,
@@ -2460,10 +2462,10 @@ internal static unsafe class VulkanVideoPresenter
 
         var outputKind = format switch
         {
-            Format.R8Uint or Format.R32Uint or Format.R16G16Uint or
+            Format.R8Uint or Format.R16Uint or Format.R32Uint or Format.R16G16Uint or
                 Format.R8G8B8A8Uint or Format.R16G16B16A16Uint or
                 Format.R32G32B32A32Uint => Gen5PixelOutputKind.Uint,
-            Format.R32Sint or Format.R16G16Sint or Format.R8G8B8A8Sint or
+            Format.R16Sint or Format.R32Sint or Format.R16G16Sint or Format.R8G8B8A8Sint or
                 Format.R16G16B16A16Sint or Format.R32G32B32A32Sint =>
                     Gen5PixelOutputKind.Sint,
             _ => Gen5PixelOutputKind.Float,
