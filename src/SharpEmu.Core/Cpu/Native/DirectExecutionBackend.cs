@@ -6048,12 +6048,22 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			}
 			if (ActiveForcedGuestExit)
 			{
+				if (_hostShutdownRequested)
+				{
+					// A host/window close is an orderly cancellation, not evidence that
+					// the guest trapped. The import bridge has already redirected active
+					// guest threads to their host-exit stubs at this point.
+					RequestGuestThreadTeardown(3000);
+					result = OrbisGen2Result.ORBIS_GEN2_OK;
+					LastError = null;
+					LastTrapInfo = null;
+					return true;
+				}
+
 				result = OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP;
 				if (string.IsNullOrEmpty(LastError))
 				{
-					LastError = _hostShutdownRequested
-						? "Host shutdown requested."
-						: "Detected repeating import loop and forced guest unwind to host.";
+					LastError = "Detected repeating import loop and forced guest unwind to host.";
 				}
 				Console.Error.WriteLine("[LOADER][ERROR] " + LastError);
 				RequestGuestThreadTeardown(3000);

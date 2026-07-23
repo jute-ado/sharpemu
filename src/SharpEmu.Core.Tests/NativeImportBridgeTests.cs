@@ -934,7 +934,7 @@ public sealed class NativeImportBridgeTests
             useDedicatedHostThreads: true));
         await shutdownRequest.WaitAsync(TimeSpan.FromSeconds(10));
 
-        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP, execution.Result);
+        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, execution.Result);
     }
 
     [HostX64Fact]
