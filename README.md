@@ -197,6 +197,8 @@ test-driven workflow. Major downstream differences include:
   for source control, ASLR-stable shader-signature write captures, and
   presented-frame-relative controller replay for deterministic menu automation
   when host execution speed varies
+- complete six-register SysV argument diagnostics for resolved native-import
+  failures, matching unresolved-import and structured-trace evidence
 - queue-ordered `WAIT_REG_MEM` visibility points that publish completed shader
   buffer writes across logical GPU queues and latch transient completion values
   without fabricating or mutating guest labels

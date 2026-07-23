@@ -538,7 +538,8 @@ public sealed partial class DirectExecutionBackend
 				{
 					Console.Error.WriteLine(
 						$"[LOADER][WARN] Import#{num} result: {orbisGen2Result} ({importStubEntry.Nid}) " +
-						$"rdi=0x{value:X16} rsi=0x{value2:X16} rdx=0x{num3:X16} rcx=0x{num4:X16} ret=0x{num7:X16}");
+						$"rdi=0x{value:X16} rsi=0x{value2:X16} rdx=0x{num3:X16} rcx=0x{num4:X16} " +
+						$"r8=0x{num5:X16} r9=0x{num6:X16} ret=0x{num7:X16}");
 				}
 
 				recentImportTraceEntry?.Complete(cpuContext[CpuRegister.Rax]);
