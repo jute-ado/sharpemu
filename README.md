@@ -43,7 +43,9 @@ test-driven workflow. Major downstream differences include:
   engine programs beyond the former 4,096-instruction ceiling; bounded Vulkan
   presenter shutdown waits keep capture and embedded-surface cleanup ordered
   after GPU resources have actually been released, while persistent Vulkan
-  pipeline caches are isolated per game and capped at 64 MiB on load and save
+  pipeline caches are isolated per game and capped at 64 MiB on load and save;
+  mutable guest-image views advertise only format-supported sampled, attachment,
+  and storage usages, avoiding invalid sRGB storage inheritance on Vulkan
 - graphics-stage Gen5 ADD_TID LDS transfers lowered to per-invocation storage
   with guest lane and M0 addressing, while compute shaders retain shared
   workgroup LDS semantics

@@ -143,6 +143,17 @@ internal static unsafe class VulkanVideoPresenter
     internal static bool IsPersistentPipelineCacheSizeAllowed(long length) =>
         length >= 0 && length <= MaxPersistentPipelineCacheBytes;
 
+    internal static ImageUsageFlags ResolveGuestImageViewUsage(
+        bool supportsColorAttachment,
+        bool supportsStorageImage) =>
+        ImageUsageFlags.SampledBit |
+        (supportsColorAttachment
+            ? ImageUsageFlags.ColorAttachmentBit
+            : (ImageUsageFlags)0) |
+        (supportsStorageImage
+            ? ImageUsageFlags.StorageBit
+            : (ImageUsageFlags)0);
+
     internal static string FormatGuestSubmissionContext(
         VulkanGuestQueueIdentity queue,
         long workSequence,
@@ -8742,9 +8753,17 @@ internal static unsafe class VulkanVideoPresenter
                 _vk.BindImageMemory(_device, image, memory, 0),
                 "vkBindImageMemory(storage scratch)");
 
+            var viewUsage = new ImageViewUsageCreateInfo
+            {
+                SType = StructureType.ImageViewUsageCreateInfo,
+                Usage = ResolveGuestImageViewUsage(
+                    SupportsColorAttachment(vkFormat),
+                    SupportsStorageImage(vkFormat)),
+            };
             var viewInfo = new ImageViewCreateInfo
             {
                 SType = StructureType.ImageViewCreateInfo,
+                PNext = &viewUsage,
                 Image = image,
                 ViewType = ImageViewType.Type2D,
                 Format = vkFormat,
@@ -12739,9 +12758,17 @@ internal static unsafe class VulkanVideoPresenter
             // chain once so full-chain sampled binds never read Undefined layout.
             TransitionNewGuestImageToSampled(image, mipLevels);
 
+            var viewUsage = new ImageViewUsageCreateInfo
+            {
+                SType = StructureType.ImageViewUsageCreateInfo,
+                Usage = ResolveGuestImageViewUsage(
+                    !threeDimensional && SupportsColorAttachment(format),
+                    SupportsStorageImage(format)),
+            };
             var viewInfo = new ImageViewCreateInfo
             {
                 SType = StructureType.ImageViewCreateInfo,
+                PNext = &viewUsage,
                 Image = image,
                 ViewType = threeDimensional
                     ? ImageViewType.Type3D
@@ -13607,9 +13634,17 @@ internal static unsafe class VulkanVideoPresenter
                 return existing;
             }
 
+            var viewUsage = new ImageViewUsageCreateInfo
+            {
+                SType = StructureType.ImageViewUsageCreateInfo,
+                Usage = ResolveGuestImageViewUsage(
+                    !resource.IsThreeDimensional && SupportsColorAttachment(format),
+                    SupportsStorageImage(format)),
+            };
             var viewInfo = new ImageViewCreateInfo
             {
                 SType = StructureType.ImageViewCreateInfo,
+                PNext = &viewUsage,
                 Image = resource.Image,
                 ViewType = resource.IsThreeDimensional
                     ? ImageViewType.Type3D
