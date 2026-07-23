@@ -705,6 +705,87 @@ public sealed class KernelMemoryCompatExportsTests
     [Theory]
     [InlineData(Generation.Gen4)]
     [InlineData(Generation.Gen5)]
+    public void MapNamedDirectMemory_NullNameReturnsMemoryFault(Generation generation)
+    {
+        const ulong memoryBase = 0x23_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        const ulong stackPointer = memoryBase + 0x200;
+        const ulong mappedAddress = memoryBase + 0x4000;
+        var memory = new FakeCpuMemory(memoryBase, 0x1_0000);
+        var context = new CpuContext(memory, generation);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(mappedAddress));
+        memory.TryWrite(stackPointer + sizeof(ulong), BitConverter.GetBytes(0UL));
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+        context[CpuRegister.R8] = 0x0040_0000;
+        context[CpuRegister.R9] = 0x4000;
+        context[CpuRegister.Rsp] = stackPointer;
+
+        var result = KernelMemoryCompatExports.KernelMapNamedDirectMemory(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+    }
+
+    [Theory]
+    [InlineData(Generation.Gen4)]
+    [InlineData(Generation.Gen5)]
+    public void MapNamedDirectMemory_ThirtyTwoByteNameReturnsNameTooLong(Generation generation)
+    {
+        const ulong memoryBase = 0x24_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        const ulong stackPointer = memoryBase + 0x200;
+        const ulong nameAddress = memoryBase + 0x300;
+        const ulong mappedAddress = memoryBase + 0x4000;
+        var memory = new FakeCpuMemory(memoryBase, 0x1_0000);
+        var context = new CpuContext(memory, generation);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(mappedAddress));
+        memory.TryWrite(stackPointer + sizeof(ulong), BitConverter.GetBytes(nameAddress));
+        memory.WriteCString(nameAddress, new string('n', 32));
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+        context[CpuRegister.R8] = 0x0040_0000;
+        context[CpuRegister.R9] = 0x4000;
+        context[CpuRegister.Rsp] = stackPointer;
+
+        var result = KernelMemoryCompatExports.KernelMapNamedDirectMemory(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_NAME_TOO_LONG, result);
+    }
+
+    [Fact]
+    public void MapNamedDirectMemory_ValidNameIsReportedByVirtualQuery()
+    {
+        const ulong memoryBase = 0x25_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        const ulong stackPointer = memoryBase + 0x200;
+        const ulong nameAddress = memoryBase + 0x300;
+        const ulong infoAddress = memoryBase + 0x400;
+        const ulong mappedAddress = memoryBase + 0x4000;
+        var memory = new FakeCpuMemory(memoryBase, 0x1_0000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(mappedAddress));
+        memory.TryWrite(stackPointer + sizeof(ulong), BitConverter.GetBytes(nameAddress));
+        memory.WriteCString(nameAddress, "ue5_direct_pool");
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+        context[CpuRegister.R8] = 0x0040_0000;
+        context[CpuRegister.R9] = 0x4000;
+        context[CpuRegister.Rsp] = stackPointer;
+
+        Assert.Equal(0, KernelMemoryCompatExports.KernelMapNamedDirectMemory(context));
+
+        Assert.Equal("ue5_direct_pool", QueryVirtualRegionName(context, memory, mappedAddress, infoAddress));
+    }
+
+    [Theory]
+    [InlineData(Generation.Gen4)]
+    [InlineData(Generation.Gen5)]
     public void MapNamedFlexibleMemory_ThirtyTwoByteNameReturnsNameTooLong(Generation generation)
     {
         const ulong memoryBase = 0x14_0000_0000;
