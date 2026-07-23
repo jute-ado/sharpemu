@@ -28,6 +28,9 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
     // hosts use the equivalent layout one slot lower at 0x6FFx.
     private static readonly ulong StackBaseAddress = OperatingSystem.IsWindows() ? 0x7FFF_F000_0000UL : 0x6FFF_F000_0000UL;
     private const ulong StackSize = 0x0020_0000UL;
+    private const ulong OrbisPageSize = 0x0000_4000UL;
+    private const ulong TcbSize = 0x40UL;
+    private const ulong TlsAllocationAlignment = 0x20UL;
     private static readonly ulong TlsBaseAddress = OperatingSystem.IsWindows() ? 0x7FFE_0000_0000UL : 0x6FFE_0000_0000UL;
     private const ulong TlsSize = 0x0001_0000UL;
     // Static TLS blocks use FreeBSD/AMD64 Variant II and live below the TCB.
@@ -93,6 +96,15 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
     public string? LastRecentControlTransferTrace { get; private set; }
 
     public CpuSessionSummary LastSessionSummary { get; private set; }
+
+    internal static ulong CalculateStartupFlexibleMemoryUsage(ulong staticTlsSize)
+    {
+        var alignedStaticTlsSize = AlignUp(staticTlsSize, TlsAllocationAlignment);
+        var primaryTlsSize = AlignUp(
+            checked(alignedStaticTlsSize + TcbSize),
+            OrbisPageSize);
+        return checked(StackSize + primaryTlsSize);
+    }
 
     public OrbisGen2Result DispatchEntry(
         ulong entryPoint,
@@ -563,6 +575,11 @@ public sealed class CpuDispatcher : ICpuDispatcher, IDisposable
         context[CpuRegister.Rbp] = sentinelFrame;
         context[CpuRegister.Rsp] = seedRsp;
         return true;
+    }
+
+    private static ulong AlignUp(ulong value, ulong alignment)
+    {
+        return checked(value + alignment - 1) & ~(alignment - 1);
     }
 
     private static bool InitializeProcessEntryFrame(

@@ -151,6 +151,37 @@ public sealed class KernelMunmapRangeTests : IDisposable
     }
 
     [Fact]
+    public void StartupReservationReducesAvailableCapacityAndBlocksReconfiguration()
+    {
+        const ulong configuredCapacity = 0x20_0000;
+        const ulong startupReservation = 0x10_4000;
+        var context = CreateContext();
+        KernelMemoryLifecycle.ConfigureFlexibleMemorySize(configuredCapacity);
+
+        Assert.True(KernelMemoryLifecycle.TryReserveStartupFlexibleMemory(startupReservation));
+
+        Assert.Equal(
+            configuredCapacity - startupReservation,
+            QueryAvailableFlexibleMemory(context));
+        Assert.Throws<InvalidOperationException>(
+            () => KernelMemoryLifecycle.ConfigureFlexibleMemorySize(configuredCapacity + 0x4000));
+    }
+
+    [Fact]
+    public void RejectedStartupReservationLeavesCapacityUnchanged()
+    {
+        const ulong configuredCapacity = 0x20_0000;
+        var context = CreateContext();
+        KernelMemoryLifecycle.ConfigureFlexibleMemorySize(configuredCapacity);
+
+        Assert.False(
+            KernelMemoryLifecycle.TryReserveStartupFlexibleMemory(configuredCapacity + 1));
+
+        Assert.Equal(configuredCapacity, QueryAvailableFlexibleMemory(context));
+        KernelMemoryLifecycle.ConfigureFlexibleMemorySize(configuredCapacity + 0x4000);
+    }
+
+    [Fact]
     public void ResetRestoresDefaultFlexibleMemoryCapacity()
     {
         var context = CreateContext();

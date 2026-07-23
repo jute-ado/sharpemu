@@ -217,6 +217,14 @@ public sealed class SharpEmuRuntime : ISharpEmuRuntime
         ResetRunState();
         var preparedApplication = PrepareApplicationCore(normalizedEbootPath);
         onApplicationPrepared?.Invoke(preparedApplication);
+        if (_cpuDispatcher is CpuDispatcher &&
+            !KernelMemoryLifecycle.TryReserveStartupFlexibleMemory(
+                CpuDispatcher.CalculateStartupFlexibleMemoryUsage(
+                    GuestTlsTemplate.StaticTlsSize)))
+        {
+            Log.Error("Flexible memory capacity is too small for the primary stack and TLS block.");
+            return OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
         var image = preparedApplication.MainImage;
         var loadedModuleImages = preparedApplication.Modules;
         var generation = preparedApplication.Generation;
