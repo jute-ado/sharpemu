@@ -8,16 +8,15 @@ using SharpEmu.Core.Cpu.Emulation;
 
 namespace SharpEmu.Core.Cpu.Native;
 
-// Software fallback for the BMI1/BMI2/ABM general-purpose-register instructions.
+// Software fallback for unsupported guest CPU instructions.
 //
 // Guest code runs natively, so the guest and host share the same virtual address space and the
 // same registers (the OS delivers them in the CONTEXT record on a fault). When the host CPU lacks
 // one of these extensions it raises #UD instead of executing the opcode; without this the title
 // simply aborts. Here we decode the faulting instruction, evaluate it against the trapped register
 // and memory state, write the result back into the CONTEXT, step RIP past the instruction and ask
-// the OS to continue. Only the register-only BMI/ABM forms are handled; anything else returns false
-// and falls through to the existing diagnostics unchanged, so this can never mis-handle an opcode it
-// does not fully model.
+// the OS to continue. BMI1/BMI2/ABM GPR operations and Intel SHA-1 XMM operations are handled;
+// anything else falls through to the existing diagnostics unchanged.
 public sealed partial class DirectExecutionBackend
 {
     // Windows x64 CONTEXT.EFlags lives just past the segment selectors. The GPR offsets it shares
@@ -34,12 +33,19 @@ public sealed partial class DirectExecutionBackend
 
     private static int _bmiSoftwareFallbackAnnounced;
     private static long _bmiInstructionsEmulated;
+    private static int _sha1SoftwareFallbackAnnounced;
+    private static long _sha1InstructionsEmulated;
 
     private unsafe bool TryRecoverIllegalInstruction(void* contextRecord, ulong rip)
     {
         if (!TryReadFaultingInstruction(rip, out var instruction))
         {
             return false;
+        }
+
+        if (TryRecoverSha1Instruction(contextRecord, rip, in instruction))
+        {
+            return true;
         }
 
         if (instruction.Op0Kind != OpKind.Register ||
@@ -70,6 +76,104 @@ public sealed partial class DirectExecutionBackend
         }
 
         return true;
+    }
+
+    private unsafe bool TryRecoverSha1Instruction(
+        void* contextRecord,
+        ulong rip,
+        in Instruction instruction)
+    {
+        if ((!OperatingSystem.IsWindows() && !_posixXmmContextBridged) ||
+            instruction.Mnemonic is not (Mnemonic.Sha1msg1 or Mnemonic.Sha1msg2 or
+                Mnemonic.Sha1nexte or Mnemonic.Sha1rnds4) ||
+            instruction.Op0Kind != OpKind.Register ||
+            !TryGetXmmOffset(instruction.Op0Register, out var destinationOffset) ||
+            !TryReadSha1VectorOperand(contextRecord, in instruction, 1, out var source))
+        {
+            return false;
+        }
+
+        var destination = ReadSha1Vector(contextRecord, destinationOffset);
+        Sha1Vector result = instruction.Mnemonic switch
+        {
+            Mnemonic.Sha1msg1 => Sha1InstructionEmulator.MessageSchedule1(destination, source),
+            Mnemonic.Sha1msg2 => Sha1InstructionEmulator.MessageSchedule2(destination, source),
+            Mnemonic.Sha1nexte => Sha1InstructionEmulator.NextE(destination, source),
+            Mnemonic.Sha1rnds4 when instruction.Op2Kind == OpKind.Immediate8 =>
+                Sha1InstructionEmulator.FourRounds(destination, source, instruction.Immediate8),
+            _ => default,
+        };
+        if (instruction.Mnemonic == Mnemonic.Sha1rnds4 &&
+            instruction.Op2Kind != OpKind.Immediate8)
+        {
+            return false;
+        }
+
+        WriteSha1Vector(contextRecord, destinationOffset, result);
+        WriteCtxU64(contextRecord, CTX_RIP, rip + (ulong)instruction.Length);
+        if (!_posixSignalWarmup)
+        {
+            Interlocked.Increment(ref _sha1InstructionsEmulated);
+            if (Interlocked.Exchange(ref _sha1SoftwareFallbackAnnounced, 1) == 0)
+            {
+                Console.Error.WriteLine(
+                    "[LOADER][INFO] Host lacks Intel SHA instructions used by the guest; " +
+                    "emulating SHA-1 instructions in software.");
+            }
+        }
+
+        return true;
+    }
+
+    private unsafe bool TryReadSha1VectorOperand(
+        void* contextRecord,
+        in Instruction instruction,
+        int operandIndex,
+        out Sha1Vector value)
+    {
+        switch (instruction.GetOpKind(operandIndex))
+        {
+            case OpKind.Register:
+                if (TryGetXmmOffset(instruction.GetOpRegister(operandIndex), out var sourceOffset))
+                {
+                    value = ReadSha1Vector(contextRecord, sourceOffset);
+                    return true;
+                }
+                break;
+            case OpKind.Memory:
+                if (TryComputeMemoryAddress(contextRecord, in instruction, out var address))
+                {
+                    Span<byte> bytes = stackalloc byte[16];
+                    if (TryReadHostBytes(address, bytes))
+                    {
+                        value = new Sha1Vector(
+                            BinaryPrimitives.ReadUInt32LittleEndian(bytes[..4]),
+                            BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(4, 4)),
+                            BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(8, 4)),
+                            BinaryPrimitives.ReadUInt32LittleEndian(bytes.Slice(12, 4)));
+                        return true;
+                    }
+                }
+                break;
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static unsafe Sha1Vector ReadSha1Vector(void* contextRecord, int offset)
+    {
+        uint* lanes = (uint*)((byte*)contextRecord + offset);
+        return new Sha1Vector(lanes[0], lanes[1], lanes[2], lanes[3]);
+    }
+
+    private static unsafe void WriteSha1Vector(void* contextRecord, int offset, Sha1Vector value)
+    {
+        uint* lanes = (uint*)((byte*)contextRecord + offset);
+        lanes[0] = value.Lane0;
+        lanes[1] = value.Lane1;
+        lanes[2] = value.Lane2;
+        lanes[3] = value.Lane3;
     }
 
     private unsafe bool TryEvaluate(
@@ -194,19 +298,31 @@ public sealed partial class DirectExecutionBackend
         }
     }
 
+    [ThreadStatic]
+    private static byte[]? _illegalInstructionDecodeBuffer;
+    [ThreadStatic]
+    private static ByteArrayCodeReader? _illegalInstructionDecodeReader;
+    [ThreadStatic]
+    private static Decoder? _illegalInstructionDecoder;
+
     private unsafe bool TryReadFaultingInstruction(ulong rip, out Instruction instruction)
     {
+        var buffer = _illegalInstructionDecodeBuffer ??= new byte[MaxInstructionBytes];
+        var reader = _illegalInstructionDecodeReader ??= new ByteArrayCodeReader(buffer);
+        var decoder = _illegalInstructionDecoder ??= Decoder.Create(64, reader);
+
         // Try the full instruction window first, then shrink so a fault near the end of a mapped
-        // page (where fewer than 15 bytes are readable) still decodes.
+        // page (where fewer than 15 bytes are readable) still decodes. Clear the reusable tail so
+        // bytes from a prior wider attempt cannot affect decoding.
         foreach (var attempt in DecodeWindowSizes)
         {
-            var buffer = new byte[attempt];
-            if (!TryReadHostBytes(rip, buffer))
+            if (!TryReadHostBytes(rip, buffer.AsSpan(0, attempt)))
             {
                 continue;
             }
 
-            var decoder = Decoder.Create(64, new ByteArrayCodeReader(buffer));
+            buffer.AsSpan(attempt).Clear();
+            reader.Position = 0;
             decoder.IP = rip;
             decoder.Decode(out instruction);
             if (instruction.Code != Code.INVALID && instruction.Length > 0 && instruction.Length <= attempt)
@@ -246,8 +362,8 @@ public sealed partial class DirectExecutionBackend
                 }
 
                 var byteCount = size == GprOperandSize.Bits64 ? 8 : 4;
-                var buffer = new byte[byteCount];
-                if (!TryReadHostBytes(address, buffer))
+                Span<byte> buffer = stackalloc byte[8];
+                if (!TryReadHostBytes(address, buffer[..byteCount]))
                 {
                     return false;
                 }

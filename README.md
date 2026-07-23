@@ -53,6 +53,9 @@ test-driven workflow. Major downstream differences include:
   with exact library identities and the same handle/equeue validation as other
   display events
 - generated HLE export registration instead of runtime reflection discovery
+- allocation-free illegal-instruction recovery software-emulates Intel SHA-1
+  operations when Rosetta 2 does not expose SHA-NI, with Darwin/Linux XMM
+  signal-context round-tripping limited to the `SIGILL` path
 - a guest-thread scheduler with callback, synchronization, and lifecycle
   behavior exercised through native guest-code tests, including distinct
   POSIX `-1`/`errno` and SCE kernel semaphore contracts, distinct POSIX errno

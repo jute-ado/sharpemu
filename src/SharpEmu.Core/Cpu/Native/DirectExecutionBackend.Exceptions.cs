@@ -1009,7 +1009,10 @@ public sealed partial class DirectExecutionBackend
 		}
 	}
 
-	private unsafe bool TryReadHostBytes(ulong address, byte[] buffer)
+	private unsafe bool TryReadHostBytes(ulong address, byte[] buffer) =>
+		TryReadHostBytes(address, buffer.AsSpan());
+
+	private unsafe bool TryReadHostBytes(ulong address, Span<byte> buffer)
 	{
 		if (address < 65536)
 		{
@@ -1033,7 +1036,7 @@ public sealed partial class DirectExecutionBackend
 
 		try
 		{
-			Marshal.Copy((nint)address, buffer, 0, buffer.Length);
+			new ReadOnlySpan<byte>((void*)address, buffer.Length).CopyTo(buffer);
 			return true;
 		}
 		catch
