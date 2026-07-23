@@ -146,12 +146,13 @@ internal static unsafe class VulkanVideoPresenter
 
     internal static ImageUsageFlags ResolveGuestImageViewUsage(
         bool supportsColorAttachment,
-        bool supportsStorageImage) =>
+        bool supportsStorageImage,
+        bool backingImageSupportsStorage = true) =>
         ImageUsageFlags.SampledBit |
         (supportsColorAttachment
             ? ImageUsageFlags.ColorAttachmentBit
             : (ImageUsageFlags)0) |
-        (supportsStorageImage
+        (supportsStorageImage && backingImageSupportsStorage
             ? ImageUsageFlags.StorageBit
             : (ImageUsageFlags)0);
 
@@ -13736,7 +13737,8 @@ internal static unsafe class VulkanVideoPresenter
                 SType = StructureType.ImageViewUsageCreateInfo,
                 Usage = ResolveGuestImageViewUsage(
                     !resource.IsThreeDimensional && SupportsColorAttachment(format),
-                    SupportsStorageImage(format)),
+                    SupportsStorageImage(format),
+                    resource.SupportsStorageUsage),
             };
             var viewInfo = new ImageViewCreateInfo
             {
