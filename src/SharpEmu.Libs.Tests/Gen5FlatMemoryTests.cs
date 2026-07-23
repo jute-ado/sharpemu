@@ -178,7 +178,7 @@ public sealed class Gen5FlatMemoryTests
         [
             // Low and high address halves derive from non-adjacent SGPRs.
             0xD70F6A01u, 0x00020C0Cu,
-            0x50041AF9u, 0x86860F80u,
+            0x50041EF9u, 0x86860680u,
             0xDC300000u, 0x007D0801u,
             SEndpgm,
         ]);
@@ -206,7 +206,7 @@ public sealed class Gen5FlatMemoryTests
                 CreateState(program),
                 out var evaluation,
                 out var evaluationError));
-        Assert.Empty(evaluation.GlobalMemoryBindings);
+        Assert.Null(evaluation);
         Assert.Contains("flat-address-base-unresolved", evaluationError);
     }
 

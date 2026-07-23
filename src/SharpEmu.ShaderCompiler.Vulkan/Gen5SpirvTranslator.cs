@@ -3009,12 +3009,29 @@ public static partial class Gen5SpirvTranslator
                 return false;
             }
 
+            var memoryOpcode =
+                control.UsesFlatAddress &&
+                instruction.Opcode.StartsWith("Flat", StringComparison.Ordinal)
+                    ? "Global" + instruction.Opcode["Flat".Length..]
+                    : instruction.Opcode;
+            var vectorByteAddress = LoadV(control.VectorAddress);
+            if (control.UsesFlatAddress)
+            {
+                // FLAT carries a complete guest address in a VGPR pair. The
+                // evaluator binds the inferred SGPR base, so turn the low
+                // address dword into a byte offset within that binding.
+                vectorByteAddress = _module.AddInstruction(
+                    SpirvOp.ISub,
+                    _uintType,
+                    vectorByteAddress,
+                    LoadS(control.ScalarAddress));
+            }
             var byteAddress = IAdd(
-                LoadV(control.VectorAddress),
+                vectorByteAddress,
                 UInt(unchecked((uint)control.OffsetBytes)));
             var dwordAddress = ShiftRightLogical(byteAddress, UInt(2));
 
-            if (instruction.Opcode is
+            if (memoryOpcode is
                 "GlobalLoadUbyteD16" or "GlobalLoadUbyteD16Hi" or
                 "GlobalLoadSbyteD16" or "GlobalLoadSbyteD16Hi" or
                 "GlobalLoadShortD16" or "GlobalLoadShortD16Hi")
@@ -3026,15 +3043,15 @@ public static partial class Gen5SpirvTranslator
                         EmitBufferSubwordLoad(
                             bindingIndex,
                             byteAddress,
-                            instruction.Opcode.Contains("byte", StringComparison.Ordinal)
+                            memoryOpcode.Contains("byte", StringComparison.Ordinal)
                                 ? 8u
                                 : 16u,
-                            instruction.Opcode.Contains("Sbyte", StringComparison.Ordinal)),
-                        instruction.Opcode.EndsWith("Hi", StringComparison.Ordinal)));
+                            memoryOpcode.Contains("Sbyte", StringComparison.Ordinal)),
+                        memoryOpcode.EndsWith("Hi", StringComparison.Ordinal)));
                 return true;
             }
 
-            if (instruction.Opcode is
+            if (memoryOpcode is
                 "GlobalLoadUbyte" or "GlobalLoadSbyte" or
                 "GlobalLoadUshort" or "GlobalLoadSshort")
             {
@@ -3043,19 +3060,19 @@ public static partial class Gen5SpirvTranslator
                     EmitBufferSubwordLoad(
                         bindingIndex,
                         byteAddress,
-                        instruction.Opcode.EndsWith("short", StringComparison.OrdinalIgnoreCase)
+                            memoryOpcode.EndsWith("short", StringComparison.OrdinalIgnoreCase)
                             ? 16u
                             : 8u,
-                        instruction.Opcode.Contains("LoadS", StringComparison.Ordinal)));
+                        memoryOpcode.Contains("LoadS", StringComparison.Ordinal)));
                 return true;
             }
 
-            if (instruction.Opcode.StartsWith("GlobalAtomic", StringComparison.Ordinal))
+            if (memoryOpcode.StartsWith("GlobalAtomic", StringComparison.Ordinal))
             {
                 EmitExecConditional(() =>
                 {
                     var original = EmitStorageBufferAtomic32(
-                        instruction.Opcode,
+                        memoryOpcode,
                         BufferWordPointer(bindingIndex, dwordAddress),
                         control.VectorData);
                     if (control.Glc)
@@ -3067,7 +3084,7 @@ public static partial class Gen5SpirvTranslator
                 return true;
             }
 
-            if (instruction.Opcode is
+            if (memoryOpcode is
                 "GlobalStoreByteD16Hi" or "GlobalStoreShortD16Hi")
             {
                 EmitExecConditional(() =>
@@ -3075,22 +3092,22 @@ public static partial class Gen5SpirvTranslator
                         bindingIndex,
                         byteAddress,
                         ShiftRightLogical(LoadV(control.VectorData), UInt(16)),
-                        instruction.Opcode == "GlobalStoreShortD16Hi" ? 16u : 8u));
+                        memoryOpcode == "GlobalStoreShortD16Hi" ? 16u : 8u));
                 return true;
             }
 
-            if (instruction.Opcode is "GlobalStoreByte" or "GlobalStoreShort")
+            if (memoryOpcode is "GlobalStoreByte" or "GlobalStoreShort")
             {
                 EmitExecConditional(() =>
                     EmitBufferSubwordStore(
                         bindingIndex,
                         byteAddress,
                         LoadV(control.VectorData),
-                        instruction.Opcode == "GlobalStoreShort" ? 16u : 8u));
+                        memoryOpcode == "GlobalStoreShort" ? 16u : 8u));
                 return true;
             }
 
-            if (instruction.Opcode.StartsWith("GlobalStoreDword", StringComparison.Ordinal))
+            if (memoryOpcode.StartsWith("GlobalStoreDword", StringComparison.Ordinal))
             {
                 EmitExecConditional(() =>
                 {
@@ -3108,7 +3125,7 @@ public static partial class Gen5SpirvTranslator
                 return true;
             }
 
-            if (!instruction.Opcode.StartsWith("GlobalLoadDword", StringComparison.Ordinal))
+            if (!memoryOpcode.StartsWith("GlobalLoadDword", StringComparison.Ordinal))
             {
                 error = $"unsupported global-memory opcode {instruction.Opcode}";
                 return false;

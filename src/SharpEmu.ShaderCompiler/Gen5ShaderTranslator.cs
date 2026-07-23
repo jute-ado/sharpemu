@@ -430,7 +430,15 @@ public static class Gen5ShaderTranslator
                 }
             }
 
-            instructions.Add(CreateInstruction(pc, encoding, name, words));
+            var instruction = CreateInstruction(pc, encoding, name, words);
+            if (instruction.Control is Gen5GlobalMemoryControl
+                {
+                    UsesFlatAddress: true,
+                })
+            {
+                instruction = ResolveFlatAddressBase(instructions, instruction);
+            }
+            instructions.Add(instruction);
             instructionCount++;
 
             pc += sizeDwords * sizeof(uint);
@@ -1861,7 +1869,8 @@ public static class Gen5ShaderTranslator
             return "image";
         }
 
-        if (name.StartsWith("Global", StringComparison.Ordinal))
+        if (name.StartsWith("Global", StringComparison.Ordinal) ||
+            name.StartsWith("Flat", StringComparison.Ordinal))
         {
             return "global_memory";
         }
@@ -1957,6 +1966,81 @@ public static class Gen5ShaderTranslator
         }
 
         return true;
+    }
+
+    private static Gen5ShaderInstruction ResolveFlatAddressBase(
+        IReadOnlyList<Gen5ShaderInstruction> precedingInstructions,
+        Gen5ShaderInstruction instruction)
+    {
+        if (instruction.Control is not Gen5GlobalMemoryControl
+            {
+                UsesFlatAddress: true,
+            } control ||
+            !TryFindVectorDefinition(
+                precedingInstructions,
+                control.VectorAddress,
+                out var lowDefinition) ||
+            !TryFindVectorDefinition(
+                precedingInstructions,
+                control.VectorAddress + 1,
+                out var highDefinition))
+        {
+            return instruction;
+        }
+
+        foreach (var lowSource in lowDefinition.Sources)
+        {
+            if (lowSource.Kind != Gen5OperandKind.ScalarRegister)
+            {
+                continue;
+            }
+
+            foreach (var highSource in highDefinition.Sources)
+            {
+                if (highSource.Kind != Gen5OperandKind.ScalarRegister ||
+                    highSource.Value != lowSource.Value + 1)
+                {
+                    continue;
+                }
+
+                return instruction with
+                {
+                    Sources =
+                    [
+                        .. instruction.Sources,
+                        Gen5Operand.Scalar(lowSource.Value),
+                    ],
+                    Control = control with
+                    {
+                        ScalarAddress = lowSource.Value,
+                    },
+                };
+            }
+        }
+
+        return instruction;
+    }
+
+    private static bool TryFindVectorDefinition(
+        IReadOnlyList<Gen5ShaderInstruction> instructions,
+        uint register,
+        out Gen5ShaderInstruction definition)
+    {
+        for (var index = instructions.Count - 1; index >= 0; index--)
+        {
+            var candidate = instructions[index];
+            if (candidate.Destinations.Any(
+                    destination =>
+                        destination.Kind == Gen5OperandKind.VectorRegister &&
+                        destination.Value == register))
+            {
+                definition = candidate;
+                return true;
+            }
+        }
+
+        definition = default!;
+        return false;
     }
 
     private static Gen5ShaderInstruction CreateInstruction(
@@ -2443,6 +2527,9 @@ public static class Gen5ShaderTranslator
                 var vectorDestination = (extra >> 24) & 0xFF;
                 var scalarAddress = (extra >> 16) & 0x7F;
                 var glc = ((word >> 16) & 1) != 0;
+                var usesFlatAddress = opcode.StartsWith(
+                    "Flat",
+                    StringComparison.Ordinal);
                 var operation = opcode.StartsWith("Global", StringComparison.Ordinal)
                     ? opcode["Global".Length..]
                     : opcode.StartsWith("Scratch", StringComparison.Ordinal)
@@ -2479,8 +2566,15 @@ public static class Gen5ShaderTranslator
                 var globalSources = new List<Gen5Operand>
                 {
                     Gen5Operand.Vector(vectorAddress),
-                    Gen5Operand.Scalar(scalarAddress),
                 };
+                if (usesFlatAddress)
+                {
+                    globalSources.Add(Gen5Operand.Vector(vectorAddress + 1));
+                }
+                else
+                {
+                    globalSources.Add(Gen5Operand.Scalar(scalarAddress));
+                }
                 var isAtomic = operation.StartsWith("Atomic", StringComparison.Ordinal);
                 if (operation.StartsWith("Store", StringComparison.Ordinal) || isAtomic)
                 {
@@ -2505,10 +2599,11 @@ public static class Gen5ShaderTranslator
                     vectorAddress,
                     vectorData,
                     vectorDestination,
-                    scalarAddress,
+                    usesFlatAddress ? uint.MaxValue : scalarAddress,
                     SignExtend(word & 0x1FFF, 13),
                     glc,
-                    ((word >> 17) & 1) != 0);
+                    ((word >> 17) & 1) != 0,
+                    usesFlatAddress);
                 break;
             }
             case Gen5ShaderEncoding.Mubuf:

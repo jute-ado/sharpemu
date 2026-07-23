@@ -4195,49 +4195,6 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
-    public void RejectsUnsupportedFlatMemoryInsteadOfCompilingNoOp()
-    {
-        var ctx = CreateContext(
-        [
-            0xDC300000u, 0x00000800u, // flat_load_dword v8, v[0:1]
-            SEndpgm,
-        ]);
-        Assert.True(
-            Gen5ShaderTranslator.TryDecodeProgram(
-                ctx,
-                CodeAddress,
-                out var program,
-                out var decodeError),
-            decodeError);
-        Assert.Equal(["FlatLoadDword", "SEndpgm"], program.Instructions.Select(i => i.Opcode));
-
-        var scalarRegisters = new uint[128];
-        var state = new Gen5ShaderState(program, [], Metadata: null);
-        var evaluation = new Gen5ShaderEvaluation(
-            scalarRegisters,
-            scalarRegisters,
-            new Dictionary<uint, IReadOnlyList<uint>>(),
-            [],
-            [
-                new Gen5GlobalMemoryBinding(
-                    ScalarAddress: 0,
-                    BaseAddress: 0x2000_0000,
-                    [program.Instructions[0].Pc],
-                    new byte[64]),
-            ]);
-        Assert.False(
-            Gen5SpirvTranslator.TryCompileComputeShader(
-                state,
-                evaluation,
-                localSizeX: 32,
-                localSizeY: 1,
-                localSizeZ: 1,
-                out _,
-                out var compileError));
-        Assert.Contains("unsupported global-memory opcode FlatLoadDword", compileError);
-    }
-
-    [Fact]
     public void CompilesPairedLdsExchange32OperationsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified
