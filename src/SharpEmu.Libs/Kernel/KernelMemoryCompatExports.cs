@@ -324,6 +324,28 @@ public static partial class KernelMemoryCompatExports
         }
     }
 
+    internal static bool TryReserveStartupFlexibleMemory(ulong size)
+    {
+        if (size == 0)
+        {
+            return true;
+        }
+
+        lock (_memoryGate)
+        {
+            var available = _allocatedFlexibleBytes >= _configuredFlexibleMemoryBytes
+                ? 0
+                : _configuredFlexibleMemoryBytes - _allocatedFlexibleBytes;
+            if (size > available)
+            {
+                return false;
+            }
+
+            _allocatedFlexibleBytes += size;
+            return true;
+        }
+    }
+
     public static bool TryUnregisterGuestPathMount(string guestMountPoint)
     {
         if (string.IsNullOrWhiteSpace(guestMountPoint))

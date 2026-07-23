@@ -13,6 +13,11 @@ public static class KernelMemoryLifecycle
         KernelMemoryCompatExports.ConfigureFlexibleMemorySize(size);
     }
 
+    public static bool TryReserveStartupFlexibleMemory(ulong size)
+    {
+        return KernelMemoryCompatExports.TryReserveStartupFlexibleMemory(size);
+    }
+
     public static void ResetRuntimeState()
     {
         KernelMemoryCompatExports.ResetMemoryRuntimeState();

@@ -584,6 +584,63 @@ public sealed class SharpEmuRuntimeTests
     }
 
     [HostX64Fact]
+    public async Task RuntimeChargesPrimaryStackAndTlsToFlexibleMemory()
+    {
+        if (await NativeTestProcess.RunIfNeededAsync(typeof(SharpEmuRuntimeTests)))
+        {
+            return;
+        }
+
+        const ulong outputAddress = 0x1000;
+        const ulong expectedStartupUsage = 0x20_4000;
+        var testDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "sharpemu-runtime-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(testDirectory);
+        var executablePath = Path.Combine(testDirectory, "eboot.bin");
+        File.WriteAllBytes(
+            executablePath,
+            SyntheticElfImage.CreateExecutable([0x31, 0xC0, 0xC3]));
+
+        try
+        {
+            using var runtime = SharpEmuRuntime.CreateDefault();
+
+            Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, runtime.Run(executablePath));
+
+            var queryMemory = new VirtualMemory();
+            queryMemory.Map(
+                outputAddress,
+                sizeof(ulong),
+                fileOffset: 0,
+                new byte[sizeof(ulong)],
+                ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+            var context = new CpuContext(queryMemory, Generation.Gen5);
+            context[CpuRegister.Rdi] = outputAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelMemoryCompatExports.KernelConfiguredFlexibleMemorySize(context));
+            Span<byte> configuredBytes = stackalloc byte[sizeof(ulong)];
+            Assert.True(queryMemory.TryRead(outputAddress, configuredBytes));
+            var configured = BinaryPrimitives.ReadUInt64LittleEndian(configuredBytes);
+
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelMemoryCompatExports.KernelAvailableFlexibleMemorySize(context));
+            Span<byte> availableBytes = stackalloc byte[sizeof(ulong)];
+            Assert.True(queryMemory.TryRead(outputAddress, availableBytes));
+            Assert.Equal(
+                configured - expectedStartupUsage,
+                BinaryPrimitives.ReadUInt64LittleEndian(availableBytes));
+        }
+        finally
+        {
+            Directory.Delete(testDirectory, recursive: true);
+        }
+    }
+
+    [HostX64Fact]
     public async Task DefaultRuntimeBootsContentFreeSyntheticExecutable()
     {
         var execution = await RunSyntheticExecutableInCliAsync(

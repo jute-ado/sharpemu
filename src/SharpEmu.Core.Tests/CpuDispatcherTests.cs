@@ -13,6 +13,19 @@ namespace SharpEmu.Core.Tests;
 public sealed class CpuDispatcherTests
 {
     [Theory]
+    [InlineData(0x0UL, 0x20_4000UL)]
+    [InlineData(0x468UL, 0x20_4000UL)]
+    [InlineData(0x3FF0UL, 0x20_8000UL)]
+    public void StartupFlexibleMemoryUsageUsesPlatformStackAndAlignedPrimaryTls(
+        ulong staticTlsSize,
+        ulong expectedUsage)
+    {
+        Assert.Equal(
+            expectedUsage,
+            CpuDispatcher.CalculateStartupFlexibleMemoryUsage(staticTlsSize));
+    }
+
+    [Theory]
     [InlineData(
         OrbisGen2Result.ORBIS_GEN2_ERROR_CPU_TRAP,
         CpuExitReason.CpuTrap)]
