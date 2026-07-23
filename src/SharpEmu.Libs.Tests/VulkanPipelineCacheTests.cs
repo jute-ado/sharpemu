@@ -22,6 +22,17 @@ public sealed class VulkanPipelineCacheTests
             expected,
             VulkanVideoPresenter.ResolveMaxInFlightGuestSubmissions(configured));
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void SubmissionCapacityIsHardExceptOnMainThreadEventPumpHosts(
+        bool requiresResponsiveEventPump,
+        bool expected) =>
+        Assert.Equal(
+            expected,
+            VulkanVideoPresenter.ShouldHardBlockAtGuestSubmissionCapacity(
+                requiresResponsiveEventPump));
+
     [Fact]
     public void BatchWorkNamesAreDistinctAndBounded()
     {

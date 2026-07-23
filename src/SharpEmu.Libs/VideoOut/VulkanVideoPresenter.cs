@@ -184,6 +184,10 @@ internal static unsafe class VulkanVideoPresenter
             ? value
             : 8;
 
+    internal static bool ShouldHardBlockAtGuestSubmissionCapacity(
+        bool requiresResponsiveEventPump) =>
+        !requiresResponsiveEventPump;
+
     internal static string[] ResolveBatchWorkNames(
         IEnumerable<string> resourceNames,
         IEnumerable<string> operationNames,
@@ -5860,10 +5864,15 @@ internal static unsafe class VulkanVideoPresenter
             CollectCompletedGuestSubmissions(waitForOldest: false);
             if (_pendingGuestSubmissions.Count >= MaxInFlightGuestSubmissions)
             {
-                if (MaxInFlightGuestSubmissions == 1)
+                if (MaxInFlightGuestSubmissions == 1 ||
+                    ShouldHardBlockAtGuestSubmissionCapacity(
+                        OperatingSystem.IsMacOS()))
                 {
-                    // Diagnostic serialization: wait without a soft-cap timeout so
-                    // a reported loss belongs to the sole submitted workload.
+                    // Windows/Linux render on dedicated threads, so the configured
+                    // capacity is a real bound. This prevents a slow guest shader
+                    // from turning a nominal eight-submission limit into an
+                    // unbounded driver queue. macOS must periodically return to its
+                    // main-thread event pump and keeps the bounded probe below.
                     CollectCompletedGuestSubmissions(
                         waitForOldest: true,
                         maxWaitNs: ulong.MaxValue);
