@@ -153,6 +153,9 @@ test-driven workflow. Major downstream differences include:
 - process-scoped network teardown that disposes `libSceNet` sockets, releases
   per-thread errno storage, clears pool, resolver, SSL, HTTP/2, template, and
   NetCtl callback registries, and restarts guest-visible IDs between titles;
+  RUDP initialization additionally retains a validated caller-owned allocator
+  region, callback and internal-I/O configuration until explicit end or the
+  same process reset, with firmware-width status returns and clean reinitialization;
   Net and NetCtl share a stable locally administered virtual MAC address, with
   bounded binary-to-text formatting and no exposure of host hardware identity;
   bounded HTTP URI parsing and construction support size queries, guest-owned
@@ -370,7 +373,9 @@ work adapted and independently regression-tested in this fork, plus the
 [pthread mutex handoff-starvation analysis](https://github.com/Acelogic/sharpemu/commit/b591baa1)
 used to close the remaining barging window in the downstream FIFO ticket path,
 and the [firmware `jmp_buf` layout research](https://github.com/Acelogic/sharpemu/commit/4c3cf8d9)
-adapted with corrected post-return stack semantics and failure-atomic tests.
+adapted with corrected post-return stack semantics and failure-atomic tests,
+plus the [RUDP ownership and teardown model](https://github.com/Acelogic/sharpemu/commit/c891dfd)
+extended here to participate in process-session network reset.
 
 * **[microvision9's Windows write-tracker research](https://github.com/par274/sharpemu/pull/512)**
 Provided the reference for the Windows page-protection and fault-routing path,
