@@ -3984,6 +3984,14 @@ public static partial class KernelMemoryCompatExports
         LibraryName = "libKernel")]
     public static int KernelMapNamedFlexibleMemory(CpuContext ctx)
     {
+        return KernelMapFlexibleMemoryCore(ctx, ctx[CpuRegister.R8]);
+    }
+
+    private static int KernelMapFlexibleMemoryCore(
+        CpuContext ctx,
+        ulong nameAddress,
+        string? implicitName = null)
+    {
         var inOutAddressPointer = ctx[CpuRegister.Rdi];
         var length = ctx[CpuRegister.Rsi];
         var protection = unchecked((int)ctx[CpuRegister.Rdx]);
@@ -4012,6 +4020,31 @@ public static partial class KernelMemoryCompatExports
              (requestedAddress & (OrbisPageSize - 1)) != 0))
         {
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
+        string mappingName;
+        if (implicitName is not null)
+        {
+            mappingName = implicitName;
+        }
+        else
+        {
+            if (nameAddress == 0)
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+
+            if (!TryReadCString(ctx, nameAddress, OrbisKernelMaximumNameLength, out var nameBytes))
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            }
+
+            if (nameBytes.Length >= OrbisKernelMaximumNameLength)
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NAME_TOO_LONG;
+            }
+
+            mappingName = Encoding.UTF8.GetString(nameBytes);
         }
 
         ulong mappedAddress;
@@ -4070,6 +4103,7 @@ public static partial class KernelMemoryCompatExports
                 IsFlexible: true,
                 IsDirect: false,
                 DirectStart: 0));
+            _mappedRegionNames[mappedAddress] = mappingName;
         }
 
         if (!ctx.TryWriteUInt64(inOutAddressPointer, mappedAddress))
@@ -4119,7 +4153,7 @@ public static partial class KernelMemoryCompatExports
         LibraryName = "libKernel")]
     public static int KernelMapFlexibleMemory(CpuContext ctx)
     {
-        return KernelMapNamedFlexibleMemory(ctx);
+        return KernelMapFlexibleMemoryCore(ctx, nameAddress: 0, implicitName: "anon");
     }
 
     [SysAbiExport(
@@ -7323,7 +7357,7 @@ public static partial class KernelMemoryCompatExports
                     entry.Protection),
                 OrbisKernelMapOpMapFlexible => InvokeKernelMemoryOperation(
                     ctx,
-                    KernelMapNamedFlexibleMemory,
+                    KernelMapFlexibleMemory,
                     entryAddress + OrbisKernelBatchMapEntryStartOffset,
                     entry.Length,
                     entry.Protection,

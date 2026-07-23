@@ -680,6 +680,110 @@ public sealed class KernelMemoryCompatExportsTests
         Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT, result);
     }
 
+    [Theory]
+    [InlineData(Generation.Gen4)]
+    [InlineData(Generation.Gen5)]
+    public void MapNamedFlexibleMemory_NullNameReturnsMemoryFault(Generation generation)
+    {
+        const ulong memoryBase = 0x13_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        const ulong mappedAddress = memoryBase + 0x4000;
+        var memory = new FakeCpuMemory(memoryBase, 0x1_0000);
+        var context = new CpuContext(memory, generation);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(mappedAddress));
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+        context[CpuRegister.R8] = 0;
+
+        var result = KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+    }
+
+    [Theory]
+    [InlineData(Generation.Gen4)]
+    [InlineData(Generation.Gen5)]
+    public void MapNamedFlexibleMemory_ThirtyTwoByteNameReturnsNameTooLong(Generation generation)
+    {
+        const ulong memoryBase = 0x14_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        const ulong nameAddress = memoryBase + 0x200;
+        const ulong mappedAddress = memoryBase + 0x4000;
+        var memory = new FakeCpuMemory(memoryBase, 0x1_0000);
+        var context = new CpuContext(memory, generation);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(mappedAddress));
+        memory.WriteCString(nameAddress, new string('n', 32));
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+        context[CpuRegister.R8] = nameAddress;
+
+        var result = KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_NAME_TOO_LONG, result);
+    }
+
+    [Fact]
+    public void MapNamedFlexibleMemory_ValidNameIsReportedByVirtualQuery()
+    {
+        const ulong memoryBase = 0x15_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        const ulong nameAddress = memoryBase + 0x200;
+        const ulong infoAddress = memoryBase + 0x300;
+        const ulong mappedAddress = memoryBase + 0x4000;
+        var memory = new FakeCpuMemory(memoryBase, 0x1_0000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(mappedAddress));
+        memory.WriteCString(nameAddress, "ue5_streaming");
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+        context[CpuRegister.R8] = nameAddress;
+
+        Assert.Equal(0, KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context));
+
+        context[CpuRegister.Rdi] = mappedAddress;
+        context[CpuRegister.Rsi] = 0;
+        context[CpuRegister.Rdx] = infoAddress;
+        context[CpuRegister.Rcx] = 0x48;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelVirtualQuery(context));
+        Span<byte> nameBytes = stackalloc byte[32];
+        Assert.True(memory.TryRead(infoAddress + 33, nameBytes));
+        Assert.Equal("ue5_streaming", Encoding.ASCII.GetString(nameBytes[..13]));
+    }
+
+    [Fact]
+    public void MapFlexibleMemory_UsesAnonymousNameWithoutFifthArgument()
+    {
+        const ulong memoryBase = 0x16_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        const ulong infoAddress = memoryBase + 0x300;
+        const ulong mappedAddress = memoryBase + 0x4000;
+        var memory = new FakeCpuMemory(memoryBase, 0x1_0000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(mappedAddress));
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+        context[CpuRegister.R8] = 0;
+
+        Assert.Equal(0, KernelMemoryCompatExports.KernelMapFlexibleMemory(context));
+
+        context[CpuRegister.Rdi] = mappedAddress;
+        context[CpuRegister.Rsi] = 0;
+        context[CpuRegister.Rdx] = infoAddress;
+        context[CpuRegister.Rcx] = 0x48;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelVirtualQuery(context));
+        Span<byte> nameBytes = stackalloc byte[32];
+        Assert.True(memory.TryRead(infoAddress + 33, nameBytes));
+        Assert.Equal("anon", Encoding.ASCII.GetString(nameBytes[..4]));
+    }
+
     [Fact]
     public void MapNamedFlexibleMemory_UnreadableInOutPointerReturnsMemoryFault()
     {
@@ -716,6 +820,7 @@ public sealed class KernelMemoryCompatExportsTests
         context[CpuRegister.Rsi] = committedLength;
         context[CpuRegister.Rdx] = 0x03;
         context[CpuRegister.Rcx] = 0x10; // fixed mapping
+        context[CpuRegister.R8] = memory.WriteCString(memoryBase + 0x1_6000, "fixed_commit");
 
         Assert.Equal(0, KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context));
 

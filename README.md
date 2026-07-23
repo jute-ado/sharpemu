@@ -127,7 +127,9 @@ test-driven workflow. Major downstream differences include:
   flexible remaps that charge only newly covered bytes and reject capacity
   exhaustion before changing guest mappings, 16 KiB flexible-map granularity,
   fixed-address requirements, supported-flag validation, matching automatic
-  placement, primary process stack and page-aligned static TLS/TCB startup
+  placement, named-map pointer and 32-byte length validation with names retained
+  in virtual-query results, explicit anonymous naming for four-argument and batch
+  mappings, primary process stack and page-aligned static TLS/TCB startup
   accounting, and idempotent fixed-range reservations; process reset also
   releases tracked libc
   heap allocations, discards stale mappings and names, and restarts direct and
