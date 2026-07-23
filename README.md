@@ -111,6 +111,9 @@ test-driven workflow. Major downstream differences include:
 - distinct four-argument POSIX and named five-argument Sony pthread creation
   ABIs, so unused registers cannot become guest thread names, with transactional
   output validation and rollback when guest scheduling fails
+- firmware-recovered Gen5 libc `bsearch` and `strtoull` exports used by Grand
+  Theft Auto V, including guest comparator callbacks, C-locale integer parsing,
+  overflow saturation, and fault-ordered `errno`/end-pointer publication
 - RFC 3339 RTC formatting for explicit or current UTC ticks, with signed timezone
   offsets, checked calendar bounds, and all-or-nothing guest output
 - stateful synchronous NP Manager request allocation with the console's 128-request
