@@ -61,6 +61,28 @@ public sealed class ImportResultLoggingTests
     }
 
     [Theory]
+    [InlineData("BmMjYxmew1w", (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT)]
+    [InlineData("upoVrzMHFeE", (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY)]
+    public void CanonicalPthreadControlResultsAreExpected(string nid, int result)
+    {
+        Assert.True(
+            DirectExecutionBackend.IsExpectedImportResult(
+                nid,
+                (OrbisGen2Result)result));
+    }
+
+    [Theory]
+    [InlineData("BmMjYxmew1w", (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY)]
+    [InlineData("upoVrzMHFeE", (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT)]
+    public void CanonicalPthreadExpectationsRequireMatchingResults(string nid, int result)
+    {
+        Assert.False(
+            DirectExecutionBackend.IsExpectedImportResult(
+                nid,
+                (OrbisGen2Result)result));
+    }
+
+    [Theory]
     [InlineData(true, false, true)]
     [InlineData(false, true, true)]
     [InlineData(true, true, true)]

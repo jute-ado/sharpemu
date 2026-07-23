@@ -958,8 +958,10 @@ public sealed partial class DirectExecutionBackend
 			result == OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND &&
 			IsExpectedFileProbeNotFoundNid(nid);
 		var expectedTimedWaitTimeout =
-			string.Equals(nid, "27bAgiJmOh0", StringComparison.Ordinal) &&
-			unchecked((int)result) == 60;
+			(string.Equals(nid, "27bAgiJmOh0", StringComparison.Ordinal) &&
+			 resultValue == 60) ||
+			(string.Equals(nid, "BmMjYxmew1w", StringComparison.Ordinal) &&
+			 result == OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT);
 		var expectedEqueueTimeout =
 			string.Equals(nid, "fzyMKs9kim0", StringComparison.Ordinal) &&
 			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
@@ -967,7 +969,7 @@ public sealed partial class DirectExecutionBackend
 			string.Equals(nid, "JTvBflhYazQ", StringComparison.Ordinal) &&
 			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT;
 		var expectedMutexTrylockBusy =
-			string.Equals(nid, "K-jXhbt2gn4", StringComparison.Ordinal) &&
+			(nid is "K-jXhbt2gn4" or "upoVrzMHFeE") &&
 			result == OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY;
 		var expectedSemaphoreTrywaitAgain =
 			string.Equals(nid, "H2a+IN9TP0E", StringComparison.Ordinal) &&
