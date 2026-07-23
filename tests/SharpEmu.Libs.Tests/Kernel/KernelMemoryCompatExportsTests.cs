@@ -640,6 +640,46 @@ public sealed class KernelMemoryCompatExportsTests
         Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT, result);
     }
 
+    [Theory]
+    [InlineData(Generation.Gen4)]
+    [InlineData(Generation.Gen5)]
+    public void MapNamedFlexibleMemory_FixedMappingRequiresAddress(Generation generation)
+    {
+        const ulong memoryBase = 0x1_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        var memory = new FakeCpuMemory(memoryBase, 0x1_0000);
+        var context = new CpuContext(memory, generation);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(0UL));
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+
+        var result = KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT, result);
+    }
+
+    [Theory]
+    [InlineData(Generation.Gen4)]
+    [InlineData(Generation.Gen5)]
+    public void MapNamedFlexibleMemory_UnsupportedFlagsReturnInvalidArgument(Generation generation)
+    {
+        const ulong memoryBase = 0x1_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        var memory = new FakeCpuMemory(memoryBase, 0x1_0000);
+        var context = new CpuContext(memory, generation);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(memoryBase));
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x08;
+
+        var result = KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT, result);
+    }
+
     [Fact]
     public void MapNamedFlexibleMemory_UnreadableInOutPointerReturnsMemoryFault()
     {
