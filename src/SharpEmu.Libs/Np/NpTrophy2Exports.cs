@@ -99,6 +99,19 @@ public static class NpTrophy2Exports
     public static int NpTrophy2GetTrophyInfo(CpuContext ctx) =>
         SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND);
 
+    /// <summary>
+    /// Gen5 bulk trophy-info query. Until the array element layouts are
+    /// confirmed, report the same unavailable result as the single-item query
+    /// rather than exposing zero-filled records as real trophy metadata.
+    /// </summary>
+    [SysAbiExport(
+        Nid = "y3zHpdZO6ME",
+        ExportName = "sceNpTrophy2GetTrophyInfoArray",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpTrophy2")]
+    public static int NpTrophy2GetTrophyInfoArray(CpuContext ctx) =>
+        SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND);
+
     private static int WriteIdAndReturn(CpuContext ctx, ulong outAddress, ref int nextId)
     {
         if (outAddress == 0)
