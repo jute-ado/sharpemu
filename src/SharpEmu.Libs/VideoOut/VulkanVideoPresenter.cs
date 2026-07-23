@@ -2434,6 +2434,8 @@ internal static unsafe class VulkanVideoPresenter
             (12, 4) => Format.R16G16B16A16Uint,
             (12, 5) => Format.R16G16B16A16Sint,
             (12, 7) => Format.R16G16B16A16Sfloat,
+            (13, 4) or (14, 4) => Format.R32G32B32A32Uint,
+            (13, 5) or (14, 5) => Format.R32G32B32A32Sint,
             (13, 7) or (14, 7) => Format.R32G32B32A32Sfloat,
             (20, 0) => Format.R32Uint,
             (29, 0) or (4, 0) => Format.R32Sfloat,
@@ -2459,9 +2461,11 @@ internal static unsafe class VulkanVideoPresenter
         var outputKind = format switch
         {
             Format.R8Uint or Format.R32Uint or Format.R16G16Uint or
-                Format.R8G8B8A8Uint or Format.R16G16B16A16Uint => Gen5PixelOutputKind.Uint,
+                Format.R8G8B8A8Uint or Format.R16G16B16A16Uint or
+                Format.R32G32B32A32Uint => Gen5PixelOutputKind.Uint,
             Format.R32Sint or Format.R16G16Sint or Format.R8G8B8A8Sint or
-                Format.R16G16B16A16Sint => Gen5PixelOutputKind.Sint,
+                Format.R16G16B16A16Sint or Format.R32G32B32A32Sint =>
+                    Gen5PixelOutputKind.Sint,
             _ => Gen5PixelOutputKind.Float,
         };
         result = new VulkanRenderTargetFormat(format, outputKind);
@@ -10904,31 +10908,9 @@ internal static unsafe class VulkanVideoPresenter
             };
 
         private static Format GetRenderTargetFormat(uint format, uint numberType) =>
-            (format, numberType) switch
-            {
-                (4, 4) => Format.R32Uint,
-                (4, 5) => Format.R32Sint,
-                (4, 7) => Format.R32Sfloat,
-                (5, 4) => Format.R16G16Uint,
-                (5, 5) => Format.R16G16Sint,
-                (5, 7) => Format.R16G16Sfloat,
-                (6, 7) => Format.B10G11R11UfloatPack32,
-                (7, 7) => Format.B10G11R11UfloatPack32,
-                (9, _) => Format.A2B10G10R10UnormPack32,
-                (10, 9) => Format.R8G8B8A8Srgb,
-                (10, 4) => Format.R8G8B8A8Uint,
-                (10, 5) => Format.R8G8B8A8Sint,
-                (10, _) => Format.R8G8B8A8Unorm,
-                (11, 7) => Format.R32G32Sfloat,
-                (12, 4) => Format.R16G16B16A16Uint,
-                (12, 5) => Format.R16G16B16A16Sint,
-                (12, 7) => Format.R16G16B16A16Sfloat,
-                (13, 7) => Format.R32G32B32A32Sfloat,
-                (14, 7) => Format.R32G32B32A32Sfloat,
-                (_, 0) => GetTextureFormat(format, numberType),
-                (_, 9) => GetTextureFormat(format, numberType),
-                _ => Format.Undefined,
-            };
+            TryDecodeRenderTargetFormat(format, numberType, out var result)
+                ? result.Format
+                : Format.Undefined;
         private static bool IsBlockCompressedFormat(Format format) =>
             format is Format.BC1RgbaUnormBlock or
                 Format.BC1RgbaSrgbBlock or

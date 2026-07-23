@@ -234,6 +234,8 @@ internal static class MetalGuestFormats
             (12, 4) => MtlPixelFormat.Rgba16Uint,
             (12, 5) => MtlPixelFormat.Rgba16Sint,
             (12, 7) => MtlPixelFormat.Rgba16Float,
+            (13, 4) or (14, 4) => MtlPixelFormat.Rgba32Uint,
+            (13, 5) or (14, 5) => MtlPixelFormat.Rgba32Sint,
             (13, 7) or (14, 7) => MtlPixelFormat.Rgba32Float,
             (20, 0) => MtlPixelFormat.R32Uint,
             (29, 0) or (4, 0) => MtlPixelFormat.R32Float,
@@ -259,9 +261,10 @@ internal static class MetalGuestFormats
         var outputKind = format switch
         {
             MtlPixelFormat.R8Uint or MtlPixelFormat.R32Uint or MtlPixelFormat.Rg16Uint or
-                MtlPixelFormat.Rgba8Uint or MtlPixelFormat.Rgba16Uint => Gen5PixelOutputKind.Uint,
+                MtlPixelFormat.Rgba8Uint or MtlPixelFormat.Rgba16Uint or
+                MtlPixelFormat.Rgba32Uint => Gen5PixelOutputKind.Uint,
             MtlPixelFormat.R32Sint or MtlPixelFormat.Rg16Sint or MtlPixelFormat.Rgba8Sint or
-                MtlPixelFormat.Rgba16Sint => Gen5PixelOutputKind.Sint,
+                MtlPixelFormat.Rgba16Sint or MtlPixelFormat.Rgba32Sint => Gen5PixelOutputKind.Sint,
             _ => Gen5PixelOutputKind.Float,
         };
         result = new MetalRenderTargetFormat(format, outputKind);
