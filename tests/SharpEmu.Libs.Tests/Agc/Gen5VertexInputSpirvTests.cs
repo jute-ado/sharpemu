@@ -9,6 +9,57 @@ namespace SharpEmu.Libs.Tests.Agc;
 
 public sealed class Gen5VertexInputSpirvTests
 {
+    [Fact]
+    public void FormattedVertexStageLoadFallsBackToGlobalBufferBinding()
+    {
+        var instruction = new Gen5ShaderInstruction(
+            0,
+            Gen5ShaderEncoding.Mubuf,
+            "BufferLoadFormatXyzw",
+            [],
+            [Gen5Operand.Vector(0), Gen5Operand.Scalar(4)],
+            [Gen5Operand.Vector(8)],
+            new Gen5BufferMemoryControl(
+                8,
+                0,
+                4,
+                0,
+                0,
+                IndexEnabled: true,
+                OffsetEnabled: false,
+                Glc: false,
+                Slc: false));
+        var end = new Gen5ShaderInstruction(
+            4,
+            Gen5ShaderEncoding.Sopp,
+            "SEndpgm",
+            [],
+            [],
+            [],
+            null);
+        var state = new Gen5ShaderState(
+            new Gen5ShaderProgram(0, [instruction, end]),
+            [],
+            null);
+        var registers = new uint[256];
+        registers[5] = 16u << 16;
+        var evaluation = new Gen5ShaderEvaluation(
+            registers,
+            registers,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [new Gen5GlobalMemoryBinding(4, 0x1000, [0], new byte[64])],
+            VertexInputs: []);
+
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileVertexShader(
+                state,
+                evaluation,
+                out _,
+                out var error),
+            error);
+    }
+
     [Theory]
     [InlineData(0u, null)]
     [InlineData(4u, 0u)]
