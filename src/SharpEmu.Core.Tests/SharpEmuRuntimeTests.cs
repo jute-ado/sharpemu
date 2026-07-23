@@ -8,6 +8,7 @@ using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
 using SharpEmu.Core.Runtime;
 using SharpEmu.HLE;
+using SharpEmu.Libs.Kernel;
 using SharpEmu.Logging;
 using Xunit;
 
@@ -413,6 +414,57 @@ public sealed class SharpEmuRuntimeTests
         var exception = Assert.Throws<InvalidOperationException>(() => runtime.Run("eboot.bin"));
 
         Assert.Contains("image inspection", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void InspectionRuntimeAppliesTitleFlexibleMemoryCapacity()
+    {
+        const ulong configuredSize = 438UL * 1024 * 1024;
+        const ulong outputAddress = 0x1000;
+        var testDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "sharpemu-runtime-tests",
+            Guid.NewGuid().ToString("N"));
+        var systemDirectory = Path.Combine(testDirectory, "sce_sys");
+        Directory.CreateDirectory(systemDirectory);
+        var executablePath = Path.Combine(testDirectory, "eboot.bin");
+
+        try
+        {
+            File.WriteAllBytes(executablePath, SyntheticElfImage.CreateExecutable([0xC3]));
+            File.WriteAllText(
+                Path.Combine(systemDirectory, "param.json"),
+                """
+                { "kernel": { "flexibleMemorySize": 459276288 } }
+                """);
+            using var runtime = SharpEmuRuntime.CreateForInspection();
+
+            var application = runtime.PrepareApplication(executablePath);
+
+            Assert.Equal(configuredSize, application.MainImage.FlexibleMemorySize);
+            Assert.Equal(configuredSize, runtime.LastApplicationMetadata?.FlexibleMemorySize);
+            var queryMemory = new VirtualMemory();
+            queryMemory.Map(
+                outputAddress,
+                sizeof(ulong),
+                fileOffset: 0,
+                new byte[sizeof(ulong)],
+                ProgramHeaderFlags.Read | ProgramHeaderFlags.Write);
+            var context = new CpuContext(queryMemory, Generation.Gen5);
+            context[CpuRegister.Rdi] = outputAddress;
+            Assert.Equal(
+                (int)OrbisGen2Result.ORBIS_GEN2_OK,
+                KernelMemoryCompatExports.KernelConfiguredFlexibleMemorySize(context));
+            Span<byte> configuredSizeBytes = stackalloc byte[sizeof(ulong)];
+            Assert.True(queryMemory.TryRead(outputAddress, configuredSizeBytes));
+            Assert.Equal(
+                configuredSize,
+                BinaryPrimitives.ReadUInt64LittleEndian(configuredSizeBytes));
+        }
+        finally
+        {
+            Directory.Delete(testDirectory, recursive: true);
+        }
     }
 
     [Fact]

@@ -58,7 +58,7 @@ public static partial class KernelMemoryCompatExports
     // the package capacity lets titles budget memory that they cannot map.
     private const ulong DirectMemorySizeBytes = 13_824UL * 1024 * 1024;
     private const ulong UnsetMainDirectMemoryPoolBase = ulong.MaxValue;
-    private const ulong FlexibleMemorySizeBytes = 448UL * 1024 * 1024;
+    private const ulong DefaultFlexibleMemorySizeBytes = 448UL * 1024 * 1024;
     private const int OrbisVirtualQueryInfoSize = 72;
     private const int OrbisKernelMaximumNameLength = 32;
     private const uint MemCommit = 0x1000;
@@ -215,6 +215,7 @@ public static partial class KernelMemoryCompatExports
             _nextPhysicalAddress = 0;
             _nextVirtualAddress = 0;
             _mainDirectMemoryPoolBase = UnsetMainDirectMemoryPoolBase;
+            _configuredFlexibleMemoryBytes = DefaultFlexibleMemorySizeBytes;
             _allocatedFlexibleBytes = 0;
             _threadAtexitCountCallback = 0;
             _threadAtexitReportCallback = 0;
@@ -241,6 +242,7 @@ public static partial class KernelMemoryCompatExports
     private static readonly ulong DefaultMapSearchBase =
         OperatingSystem.IsWindows() ? 0x1_0000_0000UL : 0x20_0000_0000UL;
     private static ulong _mainDirectMemoryPoolBase = UnsetMainDirectMemoryPoolBase;
+    private static ulong _configuredFlexibleMemoryBytes = DefaultFlexibleMemorySizeBytes;
     private static ulong _allocatedFlexibleBytes;
     private static ulong _threadAtexitCountCallback;
     private static ulong _threadAtexitReportCallback;
@@ -300,6 +302,25 @@ public static partial class KernelMemoryCompatExports
             _negativeStatCache.RemoveWhere(path =>
                 string.Equals(path, normalizedMountPoint, StringComparison.OrdinalIgnoreCase) ||
                 path.StartsWith(normalizedMountPoint + "/", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    internal static void ConfigureFlexibleMemorySize(ulong size)
+    {
+        if (size == 0 || size > DirectMemorySizeBytes)
+        {
+            throw new ArgumentOutOfRangeException(nameof(size));
+        }
+
+        lock (_memoryGate)
+        {
+            if (_allocatedFlexibleBytes != 0)
+            {
+                throw new InvalidOperationException(
+                    "Flexible memory capacity cannot change after allocations begin.");
+            }
+
+            _configuredFlexibleMemoryBytes = size;
         }
     }
 
@@ -3478,9 +3499,9 @@ public static partial class KernelMemoryCompatExports
         ulong available;
         lock (_memoryGate)
         {
-            available = _allocatedFlexibleBytes >= FlexibleMemorySizeBytes
+            available = _allocatedFlexibleBytes >= _configuredFlexibleMemoryBytes
                 ? 0
-                : FlexibleMemorySizeBytes - _allocatedFlexibleBytes;
+                : _configuredFlexibleMemoryBytes - _allocatedFlexibleBytes;
         }
 
         if (!ctx.TryWriteUInt64(outSizeAddress, available))
@@ -3505,7 +3526,13 @@ public static partial class KernelMemoryCompatExports
         }
 
         Span<byte> sizeBytes = stackalloc byte[sizeof(ulong)];
-        BinaryPrimitives.WriteUInt64LittleEndian(sizeBytes, FlexibleMemorySizeBytes);
+        ulong configuredSize;
+        lock (_memoryGate)
+        {
+            configuredSize = _configuredFlexibleMemoryBytes;
+        }
+
+        BinaryPrimitives.WriteUInt64LittleEndian(sizeBytes, configuredSize);
         return ctx.Memory.TryWrite(outSizeAddress, sizeBytes)
             ? (int)OrbisGen2Result.ORBIS_GEN2_OK
             : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
@@ -3960,6 +3987,17 @@ public static partial class KernelMemoryCompatExports
             var desiredAddress = requestedAddress != 0
                 ? requestedAddress
                 : AlignUp(_nextVirtualAddress == 0 ? DefaultMapSearchBase : _nextVirtualAddress, 0x1000UL);
+            var reusedFlexibleBytes = fixedMapping && requestedAddress != 0
+                ? CountFlexibleBytesInRangeLocked(requestedAddress, length)
+                : 0;
+            var additionalFlexibleBytes = length - reusedFlexibleBytes;
+            var availableFlexibleBytes = _allocatedFlexibleBytes >= _configuredFlexibleMemoryBytes
+                ? 0
+                : _configuredFlexibleMemoryBytes - _allocatedFlexibleBytes;
+            if (additionalFlexibleBytes > availableFlexibleBytes)
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+            }
 
             if (fixedMapping && requestedAddress != 0)
             {
@@ -3990,7 +4028,7 @@ public static partial class KernelMemoryCompatExports
             }
 
             _nextVirtualAddress = Math.Max(_nextVirtualAddress, mappedAddress + length);
-            _allocatedFlexibleBytes = Math.Min(FlexibleMemorySizeBytes, _allocatedFlexibleBytes + length);
+            _allocatedFlexibleBytes += additionalFlexibleBytes;
             ReplaceMappedRegionRangeLocked(new MappedRegion(
                 mappedAddress,
                 length,
@@ -4007,6 +4045,38 @@ public static partial class KernelMemoryCompatExports
         }
 
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static ulong CountFlexibleBytesInRangeLocked(ulong address, ulong length)
+    {
+        if (length == 0 || !TryAddU64(address, length, out var endAddress))
+        {
+            return 0;
+        }
+
+        var coveredBytes = 0UL;
+        foreach (var region in _mappedRegions.Values)
+        {
+            if (!region.IsFlexible || region.Length == 0 ||
+                !TryAddU64(region.Address, region.Length, out var regionEnd))
+            {
+                continue;
+            }
+
+            if (region.Address >= endAddress)
+            {
+                break;
+            }
+
+            var overlapStart = Math.Max(address, region.Address);
+            var overlapEnd = Math.Min(endAddress, regionEnd);
+            if (overlapEnd > overlapStart)
+            {
+                coveredBytes += overlapEnd - overlapStart;
+            }
+        }
+
+        return coveredBytes;
     }
 
     [SysAbiExport(

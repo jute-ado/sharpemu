@@ -362,7 +362,8 @@ public sealed class SelfLoader : ISelfLoader
             ehFrameHeaderAddress,
             ehFrameAddress,
             ehFrameSize,
-            finalizedRuntimeDataSymbols);
+            finalizedRuntimeDataSymbols,
+            applicationInfo.FlexibleMemorySize);
     }
 
     private static void ResolveUnwindInfo(
