@@ -3747,18 +3747,15 @@ public static partial class Gen5SpirvTranslator
         private uint ConvertByteToSnorm(uint byteValue)
         {
             var signedValue = _module.AddInstruction(
-                SpirvOp.SConvert,
+                SpirvOp.BitFieldSExtract,
                 _intType,
-                _module.AddInstruction(
-                    SpirvOp.BitFieldSExtract,
-                    _intType,
-                    Bitcast(_intType, byteValue),
-                    UInt(0),
-                    UInt(8)));
+                Bitcast(_intType, byteValue),
+                UInt(0),
+                UInt(8));
             var floatValue = _module.AddInstruction(
-                SpirvOp.SConvert,
-                    _floatType,
-                    signedValue);
+                SpirvOp.ConvertSToF,
+                _floatType,
+                signedValue);
             var divisor = Float(127.0f);
             return Bitcast(
                 _uintType,
@@ -3799,18 +3796,16 @@ public static partial class Gen5SpirvTranslator
 
         private uint ConvertShortToSnorm(uint shortValue)
         {
-            var signedValue = Bitcast(
+            var signedValue = _module.AddInstruction(
+                SpirvOp.BitFieldSExtract,
                 _intType,
-                _module.AddInstruction(
-                    SpirvOp.BitFieldSExtract,
-                    _intType,
-                    Bitcast(_intType, shortValue),
-                    UInt(0),
-                    UInt(16)));
+                Bitcast(_intType, shortValue),
+                UInt(0),
+                UInt(16));
             var floatValue = _module.AddInstruction(
-                SpirvOp.SConvert,
-                    _floatType,
-                    signedValue);
+                SpirvOp.ConvertSToF,
+                _floatType,
+                signedValue);
             var divisor = Float(32767.0f);
             return Bitcast(
                 _uintType,
@@ -4432,12 +4427,9 @@ public static partial class Gen5SpirvTranslator
                             SpirvOp.BitFieldSExtract,
                             _intType,
                             _module.AddInstruction(
-                                SpirvOp.SConvert,
+                                SpirvOp.ConvertFToS,
                                 _intType,
-                                _module.AddInstruction(
-                                    SpirvOp.ConvertFToS,
-                                    _intType,
-                                    ClampFloatN11(floatVal))),
+                                ClampFloatN11(floatVal)),
                             UInt(0),
                             UInt(8)),
                         UInt(0xFF)),
@@ -4478,12 +4470,9 @@ public static partial class Gen5SpirvTranslator
                             SpirvOp.BitFieldSExtract,
                             _intType,
                             _module.AddInstruction(
-                                SpirvOp.SConvert,
+                                SpirvOp.ConvertFToS,
                                 _intType,
-                                _module.AddInstruction(
-                                    SpirvOp.ConvertFToS,
-                                    _intType,
-                                    ClampFloatN11(floatVal))),
+                                ClampFloatN11(floatVal)),
                             UInt(0),
                             UInt(16)),
                         UInt(0xFFFF)),
