@@ -127,6 +127,30 @@ public sealed class AgcResourceRegistrationTests
     }
 
     [Fact]
+    public void ResourceHandlesRemainValidAcrossMemoryWrappers()
+    {
+        var fixture = CreateFixture(
+            includeSizeOutput: false,
+            includeHandleOutput: true);
+        var registerContext = new CpuContext(
+            new MemoryWrapper(fixture.Memory),
+            Generation.Gen5);
+        registerContext[CpuRegister.Rsp] = StackAddress;
+
+        Assert.Equal(0, RegisterResource(registerContext, ResourceAddress));
+        Assert.True(fixture.Memory.TryRead(
+            HandleOutputAddress,
+            fixture.Scratch.AsSpan(0, sizeof(uint))));
+        var handle = BinaryPrimitives.ReadUInt32LittleEndian(fixture.Scratch);
+
+        var unregisterContext = new CpuContext(
+            new MemoryWrapper(fixture.Memory),
+            Generation.Gen5);
+        unregisterContext[CpuRegister.Rdi] = handle;
+        Assert.Equal(0, AgcExports.DriverUnregisterResource(unregisterContext));
+    }
+
+    [Fact]
     public void RejectedAgcInitializationLeavesOptionalOwnerRegistrationUsable()
     {
         var fixture = CreateFixture(
@@ -325,4 +349,15 @@ public sealed class AgcResourceRegistrationTests
     }
 
     private sealed record Fixture(FakeGuestMemory Memory, CpuContext Context, byte[] Scratch);
+
+    private sealed class MemoryWrapper(ICpuMemory inner) : ICpuMemory, ICpuMemoryWrapper
+    {
+        public ICpuMemory Inner { get; } = inner;
+
+        public bool TryRead(ulong virtualAddress, Span<byte> destination) =>
+            Inner.TryRead(virtualAddress, destination);
+
+        public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source) =>
+            Inner.TryWrite(virtualAddress, source);
+    }
 }
