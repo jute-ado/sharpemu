@@ -7135,7 +7135,7 @@ public static partial class KernelMemoryCompatExports
         return true;
     }
 
-    private static bool TryWriteCompat(CpuContext ctx, ulong address, ReadOnlySpan<byte> source)
+    internal static bool TryWriteCompat(CpuContext ctx, ulong address, ReadOnlySpan<byte> source)
     {
         if (source.IsEmpty)
         {
