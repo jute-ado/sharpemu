@@ -47,4 +47,15 @@ public sealed class VulkanImageViewUsageTests
 
         Assert.True((usage & ImageUsageFlags.StorageBit) != 0);
     }
+
+    [Fact]
+    public void AliasViewCannotAddStorageUsageMissingFromBackingImage()
+    {
+        var usage = VulkanVideoPresenter.ResolveGuestImageViewUsage(
+            supportsColorAttachment: true,
+            supportsStorageImage: true,
+            backingImageSupportsStorage: false);
+
+        Assert.False((usage & ImageUsageFlags.StorageBit) != 0);
+    }
 }
