@@ -9,6 +9,20 @@ namespace SharpEmu.Libs.Tests;
 public sealed class VulkanPipelineCacheTests
 {
     [Fact]
+    public void GuestSubmissionFailureContextIdentifiesQueueSequenceAndWork()
+    {
+        var context = VulkanVideoPresenter.FormatGuestSubmissionContext(
+            new VulkanGuestQueueIdentity("graphics.main", 42),
+            workSequence: 173,
+            ["SharpEmu draw sig=ABC", "SharpEmu compute sig=DEF"]);
+
+        Assert.Equal(
+            "queue=graphics.main submission=42 work_sequence=173 " +
+            "work='SharpEmu draw sig=ABC | SharpEmu compute sig=DEF'",
+            context);
+    }
+
+    [Fact]
     public void DefaultCachePathIsStableAndScopedPerGame()
     {
         var root = Path.Combine(Path.GetTempPath(), "sharpemu-pipeline-cache-tests");
