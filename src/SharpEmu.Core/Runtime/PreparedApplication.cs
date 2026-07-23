@@ -18,6 +18,29 @@ public sealed class PreparedApplication
         IReadOnlyDictionary<ulong, string> importStubs,
         IReadOnlyDictionary<string, ulong> runtimeSymbols,
         string processImageName)
+        : this(
+            mainImage,
+            modules,
+            skippedModules,
+            moduleLoadFailures,
+            generation,
+            importStubs,
+            runtimeSymbols,
+            new Dictionary<string, ulong>(StringComparer.Ordinal),
+            processImageName)
+    {
+    }
+
+    internal PreparedApplication(
+        SelfImage mainImage,
+        IReadOnlyList<PreparedModule> modules,
+        IReadOnlyList<SkippedModule> skippedModules,
+        IReadOnlyList<ModuleLoadFailure> moduleLoadFailures,
+        Generation generation,
+        IReadOnlyDictionary<ulong, string> importStubs,
+        IReadOnlyDictionary<string, ulong> runtimeSymbols,
+        IReadOnlyDictionary<string, ulong> runtimeDataSymbols,
+        string processImageName)
     {
         MainImage = mainImage ?? throw new ArgumentNullException(nameof(mainImage));
         ArgumentNullException.ThrowIfNull(modules);
@@ -25,6 +48,7 @@ public sealed class PreparedApplication
         ArgumentNullException.ThrowIfNull(moduleLoadFailures);
         ArgumentNullException.ThrowIfNull(importStubs);
         ArgumentNullException.ThrowIfNull(runtimeSymbols);
+        ArgumentNullException.ThrowIfNull(runtimeDataSymbols);
 
         Modules = modules.ToArray();
         SkippedModules = skippedModules.ToArray();
@@ -33,6 +57,8 @@ public sealed class PreparedApplication
         ImportStubs = new ReadOnlyDictionary<ulong, string>(new Dictionary<ulong, string>(importStubs));
         RuntimeSymbols = new ReadOnlyDictionary<string, ulong>(
             new Dictionary<string, ulong>(runtimeSymbols, StringComparer.Ordinal));
+        RuntimeDataSymbols = new ReadOnlyDictionary<string, ulong>(
+            new Dictionary<string, ulong>(runtimeDataSymbols, StringComparer.Ordinal));
         ProcessImageName = processImageName ?? throw new ArgumentNullException(nameof(processImageName));
     }
 
@@ -49,6 +75,8 @@ public sealed class PreparedApplication
     internal IReadOnlyDictionary<ulong, string> ImportStubs { get; }
 
     internal IReadOnlyDictionary<string, ulong> RuntimeSymbols { get; }
+
+    internal IReadOnlyDictionary<string, ulong> RuntimeDataSymbols { get; }
 
     internal string ProcessImageName { get; }
 }

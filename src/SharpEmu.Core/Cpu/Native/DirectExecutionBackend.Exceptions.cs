@@ -1079,6 +1079,18 @@ public sealed partial class DirectExecutionBackend
 		_runtimeSymbolsByAddress = list.ToArray();
 	}
 
+	private void InitializeRuntimeDataSymbolIndex(IReadOnlyDictionary<string, ulong> runtimeDataSymbols)
+	{
+		_runtimeDataSymbolsByName.Clear();
+		foreach (var (name, address) in runtimeDataSymbols)
+		{
+			if (!string.IsNullOrWhiteSpace(name) && IsRuntimeSymbolAddressUsable(address))
+			{
+				_runtimeDataSymbolsByName[name] = address;
+			}
+		}
+	}
+
 	private bool TryFormatNearestRuntimeSymbol(ulong address, out string text)
 	{
 		text = string.Empty;

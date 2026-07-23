@@ -10,4 +10,5 @@ public readonly record struct ImportedSymbolRelocation(
     bool IsData,
     string? LibraryName = null,
     string? ModuleName = null,
-    string? SymbolName = null);
+    string? SymbolName = null,
+    bool IsWeak = false);

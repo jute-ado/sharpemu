@@ -69,6 +69,29 @@ public sealed class CpuDispatcherTests
     }
 
     [Fact]
+    public void NativeDispatch_PreservesSeparateCallableAndDataSymbolMaps()
+    {
+        var backend = new SuccessfulNativeBackend();
+        using var dispatcher = new CpuDispatcher(
+            new VirtualMemory(),
+            new ModuleManager(),
+            backend);
+
+        var result = dispatcher.DispatchModuleInitializer(
+            0x0000_0008_0000_0000,
+            Generation.Gen5,
+            runtimeSymbols: new Dictionary<string, ulong> { ["callable"] = 0x2000_0000 },
+            runtimeDataSymbols: new Dictionary<string, ulong> { ["object"] = 0x3000_0000 },
+            moduleName: "symbol-map-separation");
+
+        Assert.Equal(OrbisGen2Result.ORBIS_GEN2_OK, result);
+        Assert.Equal(0x2000_0000UL, backend.RuntimeSymbols["callable"]);
+        Assert.DoesNotContain("object", backend.RuntimeSymbols);
+        Assert.Equal(0x3000_0000UL, backend.RuntimeDataSymbols["object"]);
+        Assert.DoesNotContain("callable", backend.RuntimeDataSymbols);
+    }
+
+    [Fact]
     public void FailedNativeDispatchReportsProgressBeforeFailure()
     {
         var backend = new FailingNativeBackend(
@@ -518,6 +541,7 @@ public sealed class CpuDispatcherTests
             Generation generation,
             IReadOnlyDictionary<ulong, string> importStubs,
             IReadOnlyDictionary<string, ulong> runtimeSymbols,
+            IReadOnlyDictionary<string, ulong> runtimeDataSymbols,
             CpuExecutionOptions executionOptions,
             NativeEntryReturnContract returnContract,
             out OrbisGen2Result executionResult)
@@ -547,18 +571,27 @@ public sealed class CpuDispatcherTests
 
         public List<NativeEntryReturnContract> ReturnContracts { get; } = [];
 
+        public IReadOnlyDictionary<string, ulong> RuntimeSymbols { get; private set; } =
+            new Dictionary<string, ulong>();
+
+        public IReadOnlyDictionary<string, ulong> RuntimeDataSymbols { get; private set; } =
+            new Dictionary<string, ulong>();
+
         public bool TryExecute(
             CpuContext context,
             ulong entryPoint,
             Generation generation,
             IReadOnlyDictionary<ulong, string> importStubs,
             IReadOnlyDictionary<string, ulong> runtimeSymbols,
+            IReadOnlyDictionary<string, ulong> runtimeDataSymbols,
             CpuExecutionOptions executionOptions,
             NativeEntryReturnContract returnContract,
             out OrbisGen2Result executionResult)
         {
             ExecutionCount++;
             ReturnContracts.Add(returnContract);
+            RuntimeSymbols = runtimeSymbols;
+            RuntimeDataSymbols = runtimeDataSymbols;
             executionResult = OrbisGen2Result.ORBIS_GEN2_OK;
             return true;
         }
@@ -578,6 +611,7 @@ public sealed class CpuDispatcherTests
             Generation generation,
             IReadOnlyDictionary<ulong, string> importStubs,
             IReadOnlyDictionary<string, ulong> runtimeSymbols,
+            IReadOnlyDictionary<string, ulong> runtimeDataSymbols,
             CpuExecutionOptions executionOptions,
             NativeEntryReturnContract returnContract,
             out OrbisGen2Result executionResult)
@@ -624,6 +658,7 @@ public sealed class CpuDispatcherTests
             Generation generation,
             IReadOnlyDictionary<ulong, string> importStubs,
             IReadOnlyDictionary<string, ulong> runtimeSymbols,
+            IReadOnlyDictionary<string, ulong> runtimeDataSymbols,
             CpuExecutionOptions executionOptions,
             NativeEntryReturnContract returnContract,
             out OrbisGen2Result executionResult)
@@ -658,6 +693,7 @@ public sealed class CpuDispatcherTests
             Generation generation,
             IReadOnlyDictionary<ulong, string> importStubs,
             IReadOnlyDictionary<string, ulong> runtimeSymbols,
+            IReadOnlyDictionary<string, ulong> runtimeDataSymbols,
             CpuExecutionOptions executionOptions,
             NativeEntryReturnContract returnContract,
             out OrbisGen2Result executionResult)
