@@ -9,6 +9,18 @@ namespace SharpEmu.Libs.Tests;
 public sealed class VulkanPipelineCacheTests
 {
     [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("0", true)]
+    [InlineData("1", false)]
+    public void StandaloneWindowVisibilityIsExplicitlyConfigurable(
+        string? headless,
+        bool expectedVisible) =>
+        Assert.Equal(
+            expectedVisible,
+            VulkanVideoPresenter.ShouldShowStandaloneWindow(headless));
+
+    [Theory]
     [InlineData(null, 8)]
     [InlineData("", 8)]
     [InlineData("0", 8)]

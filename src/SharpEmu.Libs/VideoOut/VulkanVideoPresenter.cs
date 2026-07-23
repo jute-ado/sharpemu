@@ -167,6 +167,9 @@ internal static unsafe class VulkanVideoPresenter
     internal static bool IsPersistentPipelineCacheSizeAllowed(long length) =>
         length >= 0 && length <= MaxPersistentPipelineCacheBytes;
 
+    internal static bool ShouldShowStandaloneWindow(string? headless) =>
+        !string.Equals(headless, "1", StringComparison.Ordinal);
+
     internal static ImageUsageFlags ResolveGuestImageViewUsage(
         bool supportsColorAttachment,
         bool supportsStorageImage,
@@ -3983,6 +3986,8 @@ internal static unsafe class VulkanVideoPresenter
             options.Size = new Vector2D<int>((int)DefaultWindowWidth, (int)DefaultWindowHeight);
             options.Title = VideoOutExports.GetWindowTitle();
             options.WindowBorder = WindowBorder.Fixed;
+            options.IsVisible = ShouldShowStandaloneWindow(
+                Environment.GetEnvironmentVariable("SHARPEMU_HEADLESS_WINDOW"));
             options.VSync = true;
             options.FramesPerSecond = 60;
             options.UpdatesPerSecond = 60;
