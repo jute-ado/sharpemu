@@ -599,6 +599,47 @@ public sealed class KernelMemoryCompatExportsTests
         Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT, result);
     }
 
+    [Theory]
+    [InlineData(Generation.Gen4)]
+    [InlineData(Generation.Gen5)]
+    public void MapNamedFlexibleMemory_LengthMustUseGuestPageGranularity(Generation generation)
+    {
+        const ulong memoryBase = 0x1_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        var memory = new FakeCpuMemory(memoryBase, 0x1_0000);
+        var context = new CpuContext(memory, generation);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(memoryBase));
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x6000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+
+        var result = KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT, result);
+    }
+
+    [Theory]
+    [InlineData(Generation.Gen4)]
+    [InlineData(Generation.Gen5)]
+    public void MapNamedFlexibleMemory_FixedAddressMustUseGuestPageGranularity(Generation generation)
+    {
+        const ulong memoryBase = 0x1_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        const ulong unalignedAddress = memoryBase + 0x2000;
+        var memory = new FakeCpuMemory(memoryBase, 0x1_0000);
+        var context = new CpuContext(memory, generation);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(unalignedAddress));
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+
+        var result = KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT, result);
+    }
+
     [Fact]
     public void MapNamedFlexibleMemory_UnreadableInOutPointerReturnsMemoryFault()
     {
@@ -623,7 +664,7 @@ public sealed class KernelMemoryCompatExportsTests
     {
         const ulong memoryBase = 0x12_0000_0000;
         const ulong reservedLength = 0x1_0000;
-        const ulong committedLength = 0x2000;
+        const ulong committedLength = 0x4000;
         const ulong inOutAddress = memoryBase + 0x1_7000;
         const ulong infoAddress = memoryBase + 0x1_8000;
         var memory = new FakeCpuMemory(memoryBase, 0x2_0000);

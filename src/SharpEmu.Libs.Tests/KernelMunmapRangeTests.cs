@@ -116,23 +116,23 @@ public sealed class KernelMunmapRangeTests : IDisposable
     [Fact]
     public void FlexibleMapBeyondAvailableCapacityFailsWithoutConsumingBudget()
     {
-        const ulong configuredCapacity = 0x8000;
+        const ulong configuredCapacity = 0xC000;
         const ulong firstAddress = 0x0000_0006_3000_0000;
         const ulong rejectedAddress = 0x0000_0006_4000_0000;
         var context = CreateContext();
         KernelMemoryLifecycle.ConfigureFlexibleMemorySize(configuredCapacity);
-        AssertFlexibleMap(context, firstAddress, 0x6000);
+        AssertFlexibleMap(context, firstAddress, 0x8000);
 
         Assert.True(context.TryWriteUInt64(OutputAddress, rejectedAddress));
         context[CpuRegister.Rdi] = OutputAddress;
-        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rsi] = 0x8000;
         context[CpuRegister.Rdx] = 0x03;
         context[CpuRegister.Rcx] = 0x10;
 
         Assert.Equal(
             (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND,
             KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context));
-        Assert.Equal(0x2000UL, QueryAvailableFlexibleMemory(context));
+        Assert.Equal(0x4000UL, QueryAvailableFlexibleMemory(context));
         Assert.Equal(
             (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED,
             QueryRegion(context, rejectedAddress, out _, out _));

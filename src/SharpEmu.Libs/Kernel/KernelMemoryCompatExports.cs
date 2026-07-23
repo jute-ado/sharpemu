@@ -4002,13 +4002,21 @@ public static partial class KernelMemoryCompatExports
             return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
         }
 
+        var fixedMapping = (flags & 0x10UL) != 0;
+        if ((length & (OrbisPageSize - 1)) != 0 ||
+            (requestedAddress != 0 && !TryAddU64(requestedAddress, length, out _)) ||
+            (fixedMapping && requestedAddress != 0 &&
+             (requestedAddress & (OrbisPageSize - 1)) != 0))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+        }
+
         ulong mappedAddress;
         lock (_memoryGate)
         {
-            var fixedMapping = (flags & 0x10UL) != 0;
             var desiredAddress = requestedAddress != 0
                 ? requestedAddress
-                : AlignUp(_nextVirtualAddress == 0 ? DefaultMapSearchBase : _nextVirtualAddress, 0x1000UL);
+                : AlignUp(_nextVirtualAddress == 0 ? DefaultMapSearchBase : _nextVirtualAddress, OrbisPageSize);
             var reusedFlexibleBytes = fixedMapping && requestedAddress != 0
                 ? CountFlexibleBytesInRangeLocked(requestedAddress, length)
                 : 0;
@@ -4035,7 +4043,7 @@ public static partial class KernelMemoryCompatExports
             }
             else if (!TryReserveGuestVirtualRange(ctx, desiredAddress, length, protection, OrbisPageSize, out mappedAddress))
             {
-                mappedAddress = AllocateMappedGuestAddress(ctx, length, 0x1000UL);
+                mappedAddress = AllocateMappedGuestAddress(ctx, length, OrbisPageSize);
             }
 
             if (ShouldTraceDirectMemory())
