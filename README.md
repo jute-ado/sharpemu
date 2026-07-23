@@ -257,7 +257,8 @@ test-driven workflow. Major downstream differences include:
   overtaking the immutable capture of the frame it protects on Vulkan or Metal
 - AGC indirect-draw command builders that decode full 64-bit modifiers into
   GFX10 patch offsets and initiators, bounded Cx/Sh/Uc indirect-register count
-  patching with complete Gen5 export registration, and current-SDK shader-half
+  patching with complete Gen5 export registration, exact three-dword direct
+  UCONFIG register packets with bounded cursor allocation, and current-SDK shader-half
   fusion that builds a type-2 header over 32-byte-aligned, bounded combined
   context- and shader-register tables; the AGC driver also exposes an exact
   Gen5 inactive GPU-capture status and lazily bootstraps optional resource
@@ -391,6 +392,12 @@ Helped with understanding the basic architecture of the PlayStation 4.
 
 * **[Kyty](https://github.com/InoriRus/Kyty)**
 One of the few PS5 emulator projects available and very useful for studying native code execution.
+
+* **[SharpEmu upstream](https://github.com/sharpemu/sharpemu)**
+Remains the baseline for this fork. The
+[direct Gen5 UCONFIG register builder](https://github.com/sharpemu/sharpemu/commit/8e5a0bfb19fde66d261188002cd90edb402110c7)
+was adapted with downstream export-generation, exact-packet, register-mask,
+cursor-advance, null-buffer, and capacity-failure tests.
 
 * **[Acelogic's SharpEmu fork](https://github.com/Acelogic/sharpemu)**
 Provided valuable Gen5 loader research, including the object-symbol separation
