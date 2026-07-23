@@ -2810,6 +2810,60 @@ public sealed class Gen5DecoderTests
         Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.Store) >= 20);
     }
 
+    [Theory]
+    [InlineData(1u)]
+    [InlineData(2u)]
+    public void FormatBufferStoreSnormAvoidsSameWidthSignedConversion(uint dataFormat)
+    {
+        var ctx = CreateContext(
+        [
+            0xE0100000u, 0x80000800u, // buffer_store_format_x v8, off, s[0:3], 0
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[128];
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    [program.Instructions[0].Pc],
+                    new byte[64]),
+            ],
+            BufferFormatBindings:
+            [
+                new Gen5BufferFormatBinding(
+                    program.Instructions[0].Pc,
+                    DataFormat: dataFormat,
+                    NumberFormat: 1),
+            ]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ConvertFToS) >= 1);
+        Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldSExtract) >= 1);
+        Assert.Equal(0, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SConvert));
+    }
+
     [Fact]
     public void FormatBufferLoadR8UnormEmitsConversion()
     {
@@ -2864,6 +2918,64 @@ public sealed class Gen5DecoderTests
             compileError);
         Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ConvertUToF) >= 1);
         Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FDiv) >= 1);
+    }
+
+    [Theory]
+    [InlineData(1u)]
+    [InlineData(2u)]
+    public void FormatBufferLoadSnormUsesSignedFloatConversion(uint dataFormat)
+    {
+        var ctx = CreateContext(
+        [
+            0xE0000000u, 0x80000800u, // buffer_load_format_x v8, off, s[0:3], 0
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+
+        var scalarRegisters = new uint[128];
+        scalarRegisters[0] = 0x2000_0000;
+        scalarRegisters[1] = 0x0000;
+        scalarRegisters[2] = 0x0000_0100;
+        scalarRegisters[3] = 0x0000_1000;
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        var evaluation = new Gen5ShaderEvaluation(
+            scalarRegisters,
+            scalarRegisters,
+            new Dictionary<uint, IReadOnlyList<uint>>(),
+            [],
+            [
+                new Gen5GlobalMemoryBinding(
+                    ScalarAddress: 0,
+                    BaseAddress: 0x2000_0000,
+                    [program.Instructions[0].Pc],
+                    new byte[64]),
+            ],
+            BufferFormatBindings:
+            [
+                new Gen5BufferFormatBinding(
+                    program.Instructions[0].Pc,
+                    DataFormat: dataFormat,
+                    NumberFormat: 1),
+            ]);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldSExtract) >= 1);
+        Assert.True(CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.ConvertSToF) >= 1);
+        Assert.Equal(0, CountSpirvOpcode(shader.Spirv, (ushort)SpirvOp.SConvert));
     }
 
     [Fact]

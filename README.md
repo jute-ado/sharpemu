@@ -59,7 +59,9 @@ test-driven workflow. Major downstream differences include:
   with guest lane and M0 addressing, while compute shaders retain shared
   workgroup LDS semantics
 - formatted buffer loads in vertex stages retain resolved global-buffer
-  bindings when they are structured-resource reads rather than vertex inputs
+  bindings when they are structured-resource reads rather than vertex inputs;
+  8-bit and 16-bit SNORM formatted buffer loads and stores use valid signed
+  integer/float conversion opcodes without redundant same-width conversions
 - guest-image CPU-write tracking now uses page protection on Windows as well as
   POSIX hosts, routing only tracked write access violations through the Vulkan
   cache invalidation path while leaving read, execute, and unrelated faults to
