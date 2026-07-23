@@ -298,6 +298,27 @@ internal static unsafe class VulkanVideoPresenter
                 Depth: 1,
                 ArrayLayers: Math.Max(texture.ArrayLayers, 1));
 
+    internal static bool IsCompleteTextureUpload(
+        ulong byteCount,
+        ulong bytesPerSlice,
+        uint depth,
+        uint layers)
+    {
+        if (bytesPerSlice == 0 || depth == 0 || layers == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            return byteCount == checked(bytesPerSlice * depth * layers);
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+    }
+
     internal static ImageCreateFlags ResolveTextureImageCreateFlags(
         bool supportsAttachmentUsage,
         VulkanTextureImageShape shape) =>
@@ -8773,7 +8794,11 @@ internal static unsafe class VulkanVideoPresenter
                     texture.Format,
                     texture.Width,
                     texture.Height);
-                if ((ulong)texture.RgbaPixels.Length == expectedSize &&
+                if (IsCompleteTextureUpload(
+                        (ulong)texture.RgbaPixels.Length,
+                        expectedSize,
+                        resource.Depth,
+                        resource.Layers) &&
                     texture.RgbaPixels.AsSpan().IndexOfAnyExcept((byte)0) >= 0)
                 {
                     var uploadPixels = texture.Format == 13
