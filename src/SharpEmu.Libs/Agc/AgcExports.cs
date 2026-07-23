@@ -635,6 +635,11 @@ public static partial class AgcExports
         public long WaitMonitorSignalVersion { get; set; }
     }
 
+    private static SubmittedGpuState GetSubmittedGpuState(CpuContext ctx) =>
+        _submittedGpuStates.GetValue(
+            CpuMemoryIdentity.Resolve(ctx.Memory),
+            static _ => new SubmittedGpuState());
+
     private readonly record struct RegisteredAgcResource(
         uint Owner,
         ulong Address,
@@ -682,9 +687,7 @@ public static partial class AgcExports
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        var state = _submittedGpuStates.GetValue(
-            ctx.Memory,
-            static _ => new SubmittedGpuState());
+        var state = GetSubmittedGpuState(ctx);
         lock (state.Gate)
         {
             EnsureOptionalResourceRegistration(state);
@@ -3316,7 +3319,7 @@ public static partial class AgcExports
         }
 
         GuestGpu.Current.AttachGuestMemory(ctx.Memory);
-        var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        var gpuState = GetSubmittedGpuState(ctx);
         lock (gpuState.Gate)
         {
             gpuState.Graphics.QueueName = "dcb.graphics";
@@ -3368,7 +3371,7 @@ public static partial class AgcExports
         }
 
         GuestGpu.Current.AttachGuestMemory(ctx.Memory);
-        var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        var gpuState = GetSubmittedGpuState(ctx);
         lock (gpuState.Gate)
         {
             if (!gpuState.ComputeQueues.TryGetValue(ownerHandle, out var queueState))
@@ -3464,7 +3467,7 @@ public static partial class AgcExports
             return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        var state = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        var state = GetSubmittedGpuState(ctx);
         uint resourceHandle;
         lock (state.Gate)
         {
@@ -3549,9 +3552,7 @@ public static partial class AgcExports
     public static int SuspendPoint(CpuContext ctx)
     {
         GuestGpu.Current.AttachGuestMemory(ctx.Memory);
-        var gpuState = _submittedGpuStates.GetValue(
-            ctx.Memory,
-            static _ => new SubmittedGpuState());
+        var gpuState = GetSubmittedGpuState(ctx);
         lock (gpuState.Gate)
         {
             _ = DrainResumableDcbs(ctx, gpuState, tracePackets: _traceAgc);
@@ -4559,6 +4560,11 @@ public static partial class AgcExports
         ulong length,
         string debugName)
     {
+        if (memory is ICpuMemory cpuMemory)
+        {
+            memory = CpuMemoryIdentity.Resolve(cpuMemory);
+        }
+
         if (address == 0 || length == 0)
         {
             return null;
@@ -4636,6 +4642,11 @@ public static partial class AgcExports
         bool stale,
         ulong? currentValue = null)
     {
+        if (memory is ICpuMemory cpuMemory)
+        {
+            memory = CpuMemoryIdentity.Resolve(cpuMemory);
+        }
+
         LabelProducerTrace? producer = null;
         lock (_labelProducerGate)
         {
@@ -5541,7 +5552,7 @@ public static partial class AgcExports
             return false;
         }
 
-        var key = (ctx.Memory, packetAddress);
+        var key = (CpuMemoryIdentity.Resolve(ctx.Memory), packetAddress);
         lock (_indirectDimsGate)
         {
             if (_indirectDimsExpired.Remove(key))
@@ -5575,9 +5586,7 @@ public static partial class AgcExports
         };
 
         GpuWaitRegistry.Register(dimensionsAddress, waiter);
-        var gpuState = _submittedGpuStates.GetValue(
-            ctx.Memory,
-            static _ => new SubmittedGpuState());
+        var gpuState = GetSubmittedGpuState(ctx);
         var visibilityWaiter = waiter;
         var visibilitySequence = SubmitWaitVisibilityBarrier(
             GuestGpu.Current.SubmitGuestMemoryVisibilityAction,
@@ -5806,9 +5815,7 @@ public static partial class AgcExports
         }
 
         GpuWaitRegistry.Register(waitAddress, waiter);
-        var gpuState = _submittedGpuStates.GetValue(
-            ctx.Memory,
-            static _ => new SubmittedGpuState());
+        var gpuState = GetSubmittedGpuState(ctx);
         EnsureGpuWaitMonitor(ctx, gpuState);
         var visibilityWaiter = waiter;
         _ = SubmitWaitVisibilityBarrier(
@@ -6051,7 +6058,9 @@ public static partial class AgcExports
                 {
                     foreach (var retry in expiredRetries)
                     {
-                        _indirectDimsExpired.Add((ctx.Memory, retry.ResumeAddress));
+                        _indirectDimsExpired.Add((
+                            CpuMemoryIdentity.Resolve(ctx.Memory),
+                            retry.ResumeAddress));
                     }
                 }
 
@@ -12422,7 +12431,8 @@ public static partial class AgcExports
     {
         lock (_registerDefaultsGate)
         {
-            if (_registerDefaultsAllocations.TryGetValue(ctx.Memory, out allocation!))
+            var memoryIdentity = CpuMemoryIdentity.Resolve(ctx.Memory);
+            if (_registerDefaultsAllocations.TryGetValue(memoryIdentity, out allocation!))
             {
                 return true;
             }
@@ -12447,7 +12457,7 @@ public static partial class AgcExports
             }
 
             allocation = new RegisterDefaultsAllocation(primaryAddress, internalAddress);
-            _registerDefaultsAllocations.Add(ctx.Memory, allocation);
+            _registerDefaultsAllocations.Add(memoryIdentity, allocation);
             return true;
         }
     }
@@ -13181,7 +13191,7 @@ public static partial class AgcExports
         var tracePackets = string.Equals(
             Environment.GetEnvironmentVariable("SHARPEMU_LOG_AGC"), "1", StringComparison.Ordinal);
 
-        var gpuState = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        var gpuState = GetSubmittedGpuState(ctx);
         lock (gpuState.Gate)
         {
             Gen5ShaderScalarEvaluator.BeginGlobalMemoryReadScope();
@@ -13291,7 +13301,7 @@ public static partial class AgcExports
             (memorySize - ownerTableSize) / ResourceRegistrationBytesPerResource,
             uint.MaxValue);
 
-        var state = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        var state = GetSubmittedGpuState(ctx);
         lock (state.Gate)
         {
             state.ResourceRegistrationInitialized = true;
@@ -13320,7 +13330,7 @@ public static partial class AgcExports
     public static int DriverRegisterDefaultOwner(CpuContext ctx)
     {
         var owner = (uint)ctx[CpuRegister.Rdi];
-        var state = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        var state = GetSubmittedGpuState(ctx);
         lock (state.Gate)
         {
             state.DefaultOwner = owner;
@@ -13349,7 +13359,7 @@ public static partial class AgcExports
             return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        var state = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        var state = GetSubmittedGpuState(ctx);
         uint owner;
         lock (state.Gate)
         {
@@ -13417,7 +13427,7 @@ public static partial class AgcExports
     public static int DriverUnregisterOwnerAndResources(CpuContext ctx)
     {
         var owner = (uint)ctx[CpuRegister.Rdi];
-        var state = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        var state = GetSubmittedGpuState(ctx);
         int resources;
         lock (state.Gate)
         {
@@ -13442,7 +13452,7 @@ public static partial class AgcExports
     public static int DriverUnregisterAllResourcesForOwner(CpuContext ctx)
     {
         var owner = (uint)ctx[CpuRegister.Rdi];
-        var state = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        var state = GetSubmittedGpuState(ctx);
         int resources;
         lock (state.Gate)
         {
@@ -13461,7 +13471,7 @@ public static partial class AgcExports
     public static int DriverUnregisterResource(CpuContext ctx)
     {
         var resourceHandle = (uint)ctx[CpuRegister.Rdi];
-        var state = _submittedGpuStates.GetValue(ctx.Memory, static _ => new SubmittedGpuState());
+        var state = GetSubmittedGpuState(ctx);
         lock (state.Gate)
         {
             if (!state.RegisteredResources.Remove(resourceHandle))
