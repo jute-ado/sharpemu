@@ -29,7 +29,8 @@ public sealed class SelfImage
         IReadOnlyList<uint>? unsupportedRelocationTypes = null,
         ulong ehFrameHeaderAddress = 0,
         ulong ehFrameAddress = 0,
-        ulong ehFrameSize = 0)
+        ulong ehFrameSize = 0,
+        IReadOnlyDictionary<string, ulong>? runtimeDataSymbols = null)
     {
         ArgumentNullException.ThrowIfNull(programHeaders);
         ArgumentNullException.ThrowIfNull(mappedRegions);
@@ -40,6 +41,7 @@ public sealed class SelfImage
         MappedRegions = mappedRegions;
         ImportStubs = importStubs ?? new Dictionary<ulong, string>();
         RuntimeSymbols = runtimeSymbols ?? new Dictionary<string, ulong>(StringComparer.Ordinal);
+        RuntimeDataSymbols = runtimeDataSymbols ?? new Dictionary<string, ulong>(StringComparer.Ordinal);
         ImportedRelocations = importedRelocations ?? Array.Empty<ImportedSymbolRelocation>();
         PreInitializerFunctions = preInitializerFunctions ?? Array.Empty<ulong>();
         InitializerFunctions = initializerFunctions ?? Array.Empty<ulong>();
@@ -79,6 +81,9 @@ public sealed class SelfImage
     public IReadOnlyDictionary<ulong, string> ImportStubs { get; }
 
     public IReadOnlyDictionary<string, ulong> RuntimeSymbols { get; }
+
+    /// <summary>Defined object symbols, kept separate from callable resolution.</summary>
+    public IReadOnlyDictionary<string, ulong> RuntimeDataSymbols { get; }
 
     public IReadOnlyList<ImportedSymbolRelocation> ImportedRelocations { get; }
 

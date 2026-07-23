@@ -36,6 +36,10 @@ test-driven workflow. Major downstream differences include:
 - SELF loading translates nested program-header ranges through their blocked
   container payloads and fails closed when an enclosing payload is unavailable,
   encrypted, or compressed instead of bypassing it through raw file offsets
+- ELF object definitions and imports remain separate from callable symbols:
+  object relocations never receive executable trap stubs, module and global
+  `dlsym` still see data definitions, and unresolved weak objects apply the ELF
+  `S=0` signed-addend rule while required unresolved objects fail closed
 - dimension-correct RDNA image translation and Vulkan resource aliasing,
   including three-coordinate 3D sampling and storage writes, 3D image/view
   creation, and path-sensitive scalar image and buffer descriptor evaluation
@@ -202,8 +206,9 @@ test-driven workflow. Major downstream differences include:
   for source control, ASLR-stable shader-signature write captures, and
   presented-frame-relative controller replay for deterministic menu automation
   when host execution speed varies
-- complete six-register SysV argument diagnostics for resolved native-import
-  failures, matching unresolved-import and structured-trace evidence
+- complete six-register and first-stack-argument SysV diagnostics for resolved
+  native-import failures, matching unresolved-import and structured-trace
+  evidence
 - queue-ordered `WAIT_REG_MEM` visibility points that publish completed shader
   buffer writes across logical GPU queues and latch transient completion values
   without fabricating or mutating guest labels
@@ -343,6 +348,10 @@ Helped with understanding the basic architecture of the PlayStation 4.
 
 * **[Kyty](https://github.com/InoriRus/Kyty)**
 One of the few PS5 emulator projects available and very useful for studying native code execution.
+
+* **[Acelogic's SharpEmu fork](https://github.com/Acelogic/sharpemu)**
+Provided valuable Gen5 loader research, including the object-symbol separation
+work adapted and independently regression-tested in this fork.
 
 * **Ryujinx**
 Provided valuable references for filesystem handling and low-level C# implementation patterns.

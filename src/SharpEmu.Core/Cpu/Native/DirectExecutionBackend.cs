@@ -358,6 +358,10 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 	private readonly ConcurrentDictionary<string, ulong> _runtimeSymbolsByName =
 		new(StringComparer.Ordinal);
 
+	// Data is visible to dlsym, but never to direct-call resolution or callable diagnostics.
+	private readonly Dictionary<string, ulong> _runtimeDataSymbolsByName =
+		new(StringComparer.Ordinal);
+
 	// Keep in sync with SelfLoader import-stub mapping constants.
 	private const ulong ImportStubRegionCanonicalBase = 0x0000_7000_0000_0000UL;
 
@@ -1157,11 +1161,12 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		}
 	}
 
-	public bool TryExecute(CpuContext context, ulong entryPoint, Generation generation, IReadOnlyDictionary<ulong, string> importStubs, IReadOnlyDictionary<string, ulong> runtimeSymbols, CpuExecutionOptions executionOptions, NativeEntryReturnContract returnContract, out OrbisGen2Result result)
+	public bool TryExecute(CpuContext context, ulong entryPoint, Generation generation, IReadOnlyDictionary<ulong, string> importStubs, IReadOnlyDictionary<string, ulong> runtimeSymbols, IReadOnlyDictionary<string, ulong> runtimeDataSymbols, CpuExecutionOptions executionOptions, NativeEntryReturnContract returnContract, out OrbisGen2Result result)
 	{
 		Console.Error.WriteLine("[LOADER][INFO] === Execute START ===");
 		Console.Error.WriteLine($"[LOADER][INFO] EntryPoint: 0x{entryPoint:X16}, ImportStubs: {importStubs.Count}");
 		Console.Error.WriteLine($"[LOADER][INFO] RuntimeSymbols: {runtimeSymbols.Count}");
+		Console.Error.WriteLine($"[LOADER][INFO] RuntimeDataSymbols: {runtimeDataSymbols.Count}");
 		Console.Error.WriteLine(_moduleManager.TryGetExport("QrZZdJ8XsX0", out ExportedFunction export) ? ("[LOADER][INFO] ExportCheck fputs: " + export.LibraryName + ":" + export.Name) : "[LOADER][INFO] ExportCheck fputs: MISSING");
 		Console.Error.WriteLine(_moduleManager.TryGetExport("L-Q3LEjIbgA", out ExportedFunction export2) ? ("[LOADER][INFO] ExportCheck map_direct: " + export2.LibraryName + ":" + export2.Name) : "[LOADER][INFO] ExportCheck map_direct: MISSING");
 		_entryPoint = entryPoint;
@@ -1181,6 +1186,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		_entryThreadDiagnostics.Reset();
 		var workerImportsBefore = GetTotalGuestThreadImports();
 		InitializeRuntimeSymbolIndex(runtimeSymbols);
+		InitializeRuntimeDataSymbolIndex(runtimeDataSymbols);
 		ResetLazyDlsymStubState();
 		lock (_deferredBootstrapTraceGate)
 		{
@@ -1345,6 +1351,26 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			Console.Error.WriteLine("[LOADER][INFO] === Execute END (LastError: " + (LastError ?? "null") + ") ===");
 		}
 	}
+
+	internal bool TryExecute(
+		CpuContext context,
+		ulong entryPoint,
+		Generation generation,
+		IReadOnlyDictionary<ulong, string> importStubs,
+		IReadOnlyDictionary<string, ulong> runtimeSymbols,
+		CpuExecutionOptions executionOptions,
+		NativeEntryReturnContract returnContract,
+		out OrbisGen2Result result) =>
+		TryExecute(
+			context,
+			entryPoint,
+			generation,
+			importStubs,
+			runtimeSymbols,
+			new Dictionary<string, ulong>(StringComparer.Ordinal),
+			executionOptions,
+			returnContract,
+			out result);
 
 	private TlsSetupCheckpoint CaptureTlsSetupCheckpoint() => new(
 		_tlsHandlerAddress,
