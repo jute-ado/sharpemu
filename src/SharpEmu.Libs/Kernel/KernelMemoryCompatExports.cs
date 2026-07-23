@@ -3987,6 +3987,17 @@ public static partial class KernelMemoryCompatExports
             var desiredAddress = requestedAddress != 0
                 ? requestedAddress
                 : AlignUp(_nextVirtualAddress == 0 ? DefaultMapSearchBase : _nextVirtualAddress, 0x1000UL);
+            var reusedFlexibleBytes = fixedMapping && requestedAddress != 0
+                ? CountFlexibleBytesInRangeLocked(requestedAddress, length)
+                : 0;
+            var additionalFlexibleBytes = length - reusedFlexibleBytes;
+            var availableFlexibleBytes = _allocatedFlexibleBytes >= _configuredFlexibleMemoryBytes
+                ? 0
+                : _configuredFlexibleMemoryBytes - _allocatedFlexibleBytes;
+            if (additionalFlexibleBytes > availableFlexibleBytes)
+            {
+                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+            }
 
             if (fixedMapping && requestedAddress != 0)
             {
@@ -4017,9 +4028,7 @@ public static partial class KernelMemoryCompatExports
             }
 
             _nextVirtualAddress = Math.Max(_nextVirtualAddress, mappedAddress + length);
-            _allocatedFlexibleBytes = Math.Min(
-                _configuredFlexibleMemoryBytes,
-                _allocatedFlexibleBytes + length);
+            _allocatedFlexibleBytes += additionalFlexibleBytes;
             ReplaceMappedRegionRangeLocked(new MappedRegion(
                 mappedAddress,
                 length,
@@ -4036,6 +4045,38 @@ public static partial class KernelMemoryCompatExports
         }
 
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    private static ulong CountFlexibleBytesInRangeLocked(ulong address, ulong length)
+    {
+        if (length == 0 || !TryAddU64(address, length, out var endAddress))
+        {
+            return 0;
+        }
+
+        var coveredBytes = 0UL;
+        foreach (var region in _mappedRegions.Values)
+        {
+            if (!region.IsFlexible || region.Length == 0 ||
+                !TryAddU64(region.Address, region.Length, out var regionEnd))
+            {
+                continue;
+            }
+
+            if (region.Address >= endAddress)
+            {
+                break;
+            }
+
+            var overlapStart = Math.Max(address, region.Address);
+            var overlapEnd = Math.Min(endAddress, regionEnd);
+            if (overlapEnd > overlapStart)
+            {
+                coveredBytes += overlapEnd - overlapStart;
+            }
+        }
+
+        return coveredBytes;
     }
 
     [SysAbiExport(
