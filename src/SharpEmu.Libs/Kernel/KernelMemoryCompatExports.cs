@@ -4240,21 +4240,18 @@ public static partial class KernelMemoryCompatExports
 
         if (!TryReadCString(ctx, nameAddress, OrbisKernelMaximumNameLength, out var nameBytes))
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        if (nameBytes.Length >= OrbisKernelMaximumNameLength)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NAME_TOO_LONG;
         }
 
         var name = Encoding.UTF8.GetString(nameBytes);
         lock (_memoryGate)
         {
-            if (!TryFindVirtualQueryRegionLocked(address, findNext: false, out var region) ||
-                length > region.Length ||
-                address < region.Address ||
-                length > region.Address + region.Length - address)
-            {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
-            }
-
-            _mappedRegionNames[region.Address] = name;
+            RenameMappedRegionRangeLocked(address, length, name);
         }
 
         ctx[CpuRegister.Rax] = 0;
@@ -7527,6 +7524,67 @@ public static partial class KernelMemoryCompatExports
         return true;
     }
 
+    private static void RenameMappedRegionRangeLocked(ulong address, ulong length, string name)
+    {
+        if (length == 0 || !TryAddU64(address, length, out var endAddress))
+        {
+            return;
+        }
+
+        var affected = new List<MappedRegion>();
+        foreach (var region in _mappedRegions.Values)
+        {
+            if (!TryAddU64(region.Address, region.Length, out var regionEnd))
+            {
+                continue;
+            }
+
+            if (region.Address >= endAddress)
+            {
+                break;
+            }
+
+            if (regionEnd > address)
+            {
+                affected.Add(region);
+            }
+        }
+
+        var affectedNames = new Dictionary<ulong, string>();
+        foreach (var region in affected)
+        {
+            if (_mappedRegionNames.Remove(region.Address, out var existingName))
+            {
+                affectedNames[region.Address] = existingName;
+            }
+
+            _mappedRegions.Remove(region.Address);
+        }
+
+        foreach (var region in affected)
+        {
+            var regionEnd = region.Address + region.Length;
+            var renameStart = Math.Max(region.Address, address);
+            var renameEnd = Math.Min(regionEnd, endAddress);
+            var existingName = affectedNames.GetValueOrDefault(region.Address);
+
+            if (region.Address < renameStart)
+            {
+                AddMappedRegionSliceLocked(region, region.Address, renameStart, region.Protection);
+                RestoreMappedRegionNameLocked(region.Address, existingName);
+            }
+
+            AddMappedRegionSliceLocked(region, renameStart, renameEnd, region.Protection);
+            _mappedRegionNames[renameStart] = name;
+
+            if (renameEnd < regionEnd)
+            {
+                AddMappedRegionSliceLocked(region, renameEnd, regionEnd, region.Protection);
+                RestoreMappedRegionNameLocked(renameEnd, existingName);
+            }
+        }
+    }
+
     private static bool TryRemoveMappedRegionRangeLocked(
         ulong address,
         ulong length,
@@ -7619,7 +7677,7 @@ public static partial class KernelMemoryCompatExports
 
     private static void RestoreMappedRegionNameLocked(ulong address, string? name)
     {
-        if (!string.IsNullOrEmpty(name))
+        if (name is not null)
         {
             _mappedRegionNames[address] = name;
         }

@@ -787,6 +787,36 @@ public sealed class KernelMemoryCompatExportsTests
     }
 
     [Fact]
+    public void Mprotect_PreservesExplicitEmptyNameAcrossSplitFlexibleRegion()
+    {
+        const ulong memoryBase = 0x1F_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        const ulong nameAddress = memoryBase + 0x200;
+        const ulong infoAddress = memoryBase + 0x300;
+        const ulong mappedAddress = memoryBase + 0x4000;
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(memoryBase, new byte[0x2_0000]);
+        var context = new CpuContext(memory, Generation.Gen5);
+        Assert.True(memory.TryWrite(inOutAddress, BitConverter.GetBytes(mappedAddress)));
+        Assert.True(memory.TryWrite(nameAddress, "\0"u8));
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0xC000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+        context[CpuRegister.R8] = nameAddress;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context));
+
+        context[CpuRegister.Rdi] = mappedAddress + 0x4000;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x01;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelMprotect(context));
+
+        Assert.Equal(string.Empty, QueryVirtualRegionName(context, memory, mappedAddress, infoAddress));
+        Assert.Equal(string.Empty, QueryVirtualRegionName(context, memory, mappedAddress + 0x4000, infoAddress));
+        Assert.Equal(string.Empty, QueryVirtualRegionName(context, memory, mappedAddress + 0x8000, infoAddress));
+    }
+
+    [Fact]
     public void FixedFlexibleRemap_PreservesNameOnSurvivingSlices()
     {
         const ulong memoryBase = 0x18_0000_0000;
@@ -842,6 +872,119 @@ public sealed class KernelMemoryCompatExportsTests
         KernelMemoryCompatExports.RegisterReservedVirtualRange(mappedAddress, 0x4000);
 
         Assert.Equal(string.Empty, QueryVirtualRegionName(context, memory, mappedAddress, infoAddress));
+    }
+
+    [Theory]
+    [InlineData(Generation.Gen4)]
+    [InlineData(Generation.Gen5)]
+    public void SetVirtualRangeName_UnreadableNameReturnsMemoryFault(Generation generation)
+    {
+        const ulong memoryBase = 0x1A_0000_0000;
+        var memory = new FakeCpuMemory(memoryBase, 0x1000);
+        var context = new CpuContext(memory, generation);
+        context[CpuRegister.Rdi] = memoryBase + 0x4000;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = memoryBase + 0x1_0000;
+
+        var result = KernelMemoryCompatExports.KernelSetVirtualRangeName(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT, result);
+    }
+
+    [Theory]
+    [InlineData(Generation.Gen4)]
+    [InlineData(Generation.Gen5)]
+    public void SetVirtualRangeName_ThirtyTwoByteNameReturnsNameTooLong(Generation generation)
+    {
+        const ulong memoryBase = 0x1B_0000_0000;
+        const ulong nameAddress = memoryBase + 0x100;
+        var memory = new FakeCpuMemory(memoryBase, 0x1000);
+        var context = new CpuContext(memory, generation);
+        memory.WriteCString(nameAddress, new string('n', 32));
+        context[CpuRegister.Rdi] = memoryBase + 0x4000;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = nameAddress;
+
+        var result = KernelMemoryCompatExports.KernelSetVirtualRangeName(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_NAME_TOO_LONG, result);
+    }
+
+    [Fact]
+    public void SetVirtualRangeName_RenamesOnlyRequestedSubrange()
+    {
+        const ulong memoryBase = 0x1C_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        const ulong originalNameAddress = memoryBase + 0x200;
+        const ulong replacementNameAddress = memoryBase + 0x240;
+        const ulong infoAddress = memoryBase + 0x300;
+        const ulong mappedAddress = memoryBase + 0x4000;
+        var memory = new FakeCpuMemory(memoryBase, 0x2_0000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(mappedAddress));
+        memory.WriteCString(originalNameAddress, "whole_arena");
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0xC000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+        context[CpuRegister.R8] = originalNameAddress;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context));
+
+        memory.WriteCString(replacementNameAddress, "middle_page");
+        context[CpuRegister.Rdi] = mappedAddress + 0x4000;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = replacementNameAddress;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelSetVirtualRangeName(context));
+
+        Assert.Equal("whole_arena", QueryVirtualRegionName(context, memory, mappedAddress, infoAddress));
+        Assert.Equal("middle_page", QueryVirtualRegionName(context, memory, mappedAddress + 0x4000, infoAddress));
+        Assert.Equal("whole_arena", QueryVirtualRegionName(context, memory, mappedAddress + 0x8000, infoAddress));
+    }
+
+    [Fact]
+    public void SetVirtualRangeName_ZeroLengthIsSuccessfulNoOp()
+    {
+        const ulong memoryBase = 0x1D_0000_0000;
+        const ulong inOutAddress = memoryBase + 0x100;
+        const ulong originalNameAddress = memoryBase + 0x200;
+        const ulong replacementNameAddress = memoryBase + 0x240;
+        const ulong infoAddress = memoryBase + 0x300;
+        const ulong mappedAddress = memoryBase + 0x4000;
+        var memory = new FakeCpuMemory(memoryBase, 0x1_0000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        memory.TryWrite(inOutAddress, BitConverter.GetBytes(mappedAddress));
+        memory.WriteCString(originalNameAddress, "unchanged");
+        context[CpuRegister.Rdi] = inOutAddress;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = 0x03;
+        context[CpuRegister.Rcx] = 0x10;
+        context[CpuRegister.R8] = originalNameAddress;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context));
+
+        memory.WriteCString(replacementNameAddress, "ignored");
+        context[CpuRegister.Rdi] = mappedAddress;
+        context[CpuRegister.Rsi] = 0;
+        context[CpuRegister.Rdx] = replacementNameAddress;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelSetVirtualRangeName(context));
+
+        Assert.Equal("unchanged", QueryVirtualRegionName(context, memory, mappedAddress, infoAddress));
+    }
+
+    [Fact]
+    public void SetVirtualRangeName_UnmappedRangeIsSuccessfulNoOp()
+    {
+        const ulong memoryBase = 0x1E_0000_0000;
+        const ulong nameAddress = memoryBase + 0x100;
+        var memory = new FakeCpuMemory(memoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        memory.WriteCString(nameAddress, "optional_range");
+        context[CpuRegister.Rdi] = memoryBase + 0x4000;
+        context[CpuRegister.Rsi] = 0x4000;
+        context[CpuRegister.Rdx] = nameAddress;
+
+        var result = KernelMemoryCompatExports.KernelSetVirtualRangeName(context);
+
+        Assert.Equal(0, result);
     }
 
     [Fact]
