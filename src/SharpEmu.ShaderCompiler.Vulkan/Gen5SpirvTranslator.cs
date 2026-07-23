@@ -15,6 +15,11 @@ public static partial class Gen5SpirvTranslator
     private const uint RdnaWaveLaneCount = 32;
     private const uint GraphicsWaveLaneCount = 64;
 
+    public static bool RequiresFlatInput(
+        Gen5SpirvStage stage,
+        bool integerType) =>
+        stage == Gen5SpirvStage.Pixel && integerType;
+
     public static SpirvImageDim GetImageDimension(uint guestDimension) =>
         guestDimension switch
         {
@@ -957,6 +962,12 @@ public static partial class Gen5SpirvTranslator
                         _localInvocationIndexInput,
                         SpirvDecoration.BuiltIn,
                         (uint)SpirvBuiltIn.LocalInvocationIndex);
+                    if (RequiresFlatInput(_stage, integerType: true))
+                    {
+                        _module.AddDecoration(
+                            _localInvocationIndexInput,
+                            SpirvDecoration.Flat);
+                    }
                     _interfaces.Add(_localInvocationIndexInput);
                 }
                 else
@@ -968,6 +979,12 @@ public static partial class Gen5SpirvTranslator
                         _subgroupInvocationIdInput,
                         SpirvDecoration.BuiltIn,
                         (uint)SpirvBuiltIn.SubgroupLocalInvocationId);
+                    if (RequiresFlatInput(_stage, integerType: true))
+                    {
+                        _module.AddDecoration(
+                            _subgroupInvocationIdInput,
+                            SpirvDecoration.Flat);
+                    }
                     _interfaces.Add(_subgroupInvocationIdInput);
                 }
             }
