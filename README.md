@@ -208,7 +208,9 @@ test-driven workflow. Major downstream differences include:
 - C++ ABI session teardown that releases abandoned static-initializer guards so
   later titles cannot skip initialization or spin on stale owner threads
 - application-service session teardown that resets PlayGo initialization and
-  clears JSON guest objects and callback pointers between titles
+  clears JSON guest objects and callback pointers between titles; the Gen4/Gen5
+  JSON initializer termination import follows its void, opaque-instance ABI
+  without dereferencing guest storage or conflating it with process reset
 - bounded GameUpdate request ownership with validated 48-byte offline check
   records, deterministic no-update results, deletion, and per-session reset
 - NP Universal Data System property objects backed by owned guest allocations,
@@ -403,7 +405,10 @@ was adapted with downstream export-generation, exact-packet, register-mask,
 cursor-advance, null-buffer, and capacity-failure tests. The
 [`sceNetInetPton` import evidence](https://github.com/sharpemu/sharpemu/commit/7a108c6f87d787cb2f5d064d8bb90ed28e55bbe6)
 was also adapted with a stricter BSD presentation parser, address-family errno,
-transactional guest-write behavior, and downstream IPv4/IPv6 contract tests.
+transactional guest-write behavior, and downstream IPv4/IPv6 contract tests;
+the same upstream import set's JSON initializer termination NID was independently
+cross-checked against current KytyPS5 and console library catalogs, then covered
+with downstream Gen4/Gen5 registration and opaque-pointer dispatch tests.
 
 * **[Acelogic's SharpEmu fork](https://github.com/Acelogic/sharpemu)**
 Provided valuable Gen5 loader research, including the object-symbol separation
