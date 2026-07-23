@@ -218,6 +218,8 @@ internal static class MetalGuestFormats
     {
         var format = (dataFormat, numberType) switch
         {
+            (2, 4) => MtlPixelFormat.R16Uint,
+            (2, 5) => MtlPixelFormat.R16Sint,
             (4, 4) => MtlPixelFormat.R32Uint,
             (4, 5) => MtlPixelFormat.R32Sint,
             (4, 7) => MtlPixelFormat.R32Float,
@@ -260,10 +262,12 @@ internal static class MetalGuestFormats
 
         var outputKind = format switch
         {
-            MtlPixelFormat.R8Uint or MtlPixelFormat.R32Uint or MtlPixelFormat.Rg16Uint or
+            MtlPixelFormat.R8Uint or MtlPixelFormat.R16Uint or MtlPixelFormat.R32Uint or
+                MtlPixelFormat.Rg16Uint or
                 MtlPixelFormat.Rgba8Uint or MtlPixelFormat.Rgba16Uint or
                 MtlPixelFormat.Rgba32Uint => Gen5PixelOutputKind.Uint,
-            MtlPixelFormat.R32Sint or MtlPixelFormat.Rg16Sint or MtlPixelFormat.Rgba8Sint or
+            MtlPixelFormat.R16Sint or MtlPixelFormat.R32Sint or MtlPixelFormat.Rg16Sint or
+                MtlPixelFormat.Rgba8Sint or
                 MtlPixelFormat.Rgba16Sint or MtlPixelFormat.Rgba32Sint => Gen5PixelOutputKind.Sint,
             _ => Gen5PixelOutputKind.Float,
         };
