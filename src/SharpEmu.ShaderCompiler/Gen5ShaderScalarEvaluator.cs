@@ -350,7 +350,8 @@ public static class Gen5ShaderScalarEvaluator
 
             if (instruction.Control is Gen5GlobalMemoryControl globalMemory)
             {
-                if (!instruction.Opcode.StartsWith("Global", StringComparison.Ordinal))
+                if (!instruction.Opcode.StartsWith("Global", StringComparison.Ordinal) &&
+                    !instruction.Opcode.StartsWith("Flat", StringComparison.Ordinal))
                 {
                     continue;
                 }
@@ -358,7 +359,10 @@ public static class Gen5ShaderScalarEvaluator
                 if (globalMemory.ScalarAddress >= ScalarRegisterCount - 1)
                 {
                     error =
-                        $"global-address-register-range pc=0x{instruction.Pc:X} " +
+                        $"{(globalMemory.UsesFlatAddress
+                            ? "flat-address-base-unresolved"
+                            : "global-address-register-range")} " +
+                        $"pc=0x{instruction.Pc:X} " +
                         $"s{globalMemory.ScalarAddress}";
                     return false;
                 }
@@ -738,7 +742,9 @@ public static class Gen5ShaderScalarEvaluator
 
     private static bool IsGlobalMemoryWrite(string opcode) =>
         opcode.StartsWith("GlobalStore", StringComparison.Ordinal) ||
-        opcode.StartsWith("GlobalAtomic", StringComparison.Ordinal);
+        opcode.StartsWith("GlobalAtomic", StringComparison.Ordinal) ||
+        opcode.StartsWith("FlatStore", StringComparison.Ordinal) ||
+        opcode.StartsWith("FlatAtomic", StringComparison.Ordinal);
 
     private static bool IsBufferMemoryWrite(string opcode) =>
         opcode.StartsWith("BufferStore", StringComparison.Ordinal) ||

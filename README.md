@@ -67,6 +67,9 @@ test-driven workflow. Major downstream differences include:
   bindings when they are structured-resource reads rather than vertex inputs;
   8-bit and 16-bit SNORM formatted buffer loads and stores use valid signed
   integer/float conversion opcodes without redundant same-width conversions
+- Gen5 FLAT loads and stores recover their scalar allocation base from the
+  defining address-pair instructions, fail closed when that provenance is
+  unresolved, and lower the full vector address to a bounded binding offset
 - guest-image CPU-write tracking now uses page protection on Windows as well as
   POSIX hosts, routing only tracked write access violations through the Vulkan
   cache invalidation path while leaving read, execute, and unrelated faults to
@@ -394,7 +397,10 @@ used to close the remaining barging window in the downstream FIFO ticket path,
 and the [firmware `jmp_buf` layout research](https://github.com/Acelogic/sharpemu/commit/4c3cf8d9)
 adapted with corrected post-return stack semantics and failure-atomic tests,
 plus the [RUDP ownership and teardown model](https://github.com/Acelogic/sharpemu/commit/c891dfd)
-extended here to participate in process-session network reset.
+extended here to participate in process-session network reset, and the
+[Gen5 FLAT-memory address model](https://github.com/Acelogic/sharpemu/commit/322449f2645fc0092b632a3af6cfb3fc442c7abe)
+adapted without the overlapping 3D-image work and expanded with downstream
+decode-width, writable-store, unresolved-provenance, and GLOBAL-isolation tests.
 
 * **[microvision9's Windows write-tracker research](https://github.com/par274/sharpemu/pull/512)**
 Provided the reference for the Windows page-protection and fault-routing path,
