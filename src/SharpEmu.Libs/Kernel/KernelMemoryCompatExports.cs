@@ -3974,7 +3974,38 @@ public static partial class KernelMemoryCompatExports
         LibraryName = "libKernel")]
     public static int KernelMapNamedDirectMemory(CpuContext ctx)
     {
-        return KernelMapDirectMemory(ctx);
+        if (!TryAddU64(ctx[CpuRegister.Rsp], sizeof(ulong), out var namePointerAddress) ||
+            !ctx.TryReadUInt64(namePointerAddress, out var nameAddress) ||
+            nameAddress == 0 ||
+            !TryReadCString(ctx, nameAddress, OrbisKernelMaximumNameLength, out var nameBytes))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        if (nameBytes.Length >= OrbisKernelMaximumNameLength)
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NAME_TOO_LONG;
+        }
+
+        var result = KernelMapDirectMemory(ctx);
+        if (result != 0)
+        {
+            return result;
+        }
+
+        var inOutAddressPointer = ctx[CpuRegister.Rdi];
+        if (!ctx.TryReadUInt64(inOutAddressPointer, out var mappedAddress))
+        {
+            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+        }
+
+        var name = Encoding.UTF8.GetString(nameBytes);
+        lock (_memoryGate)
+        {
+            RenameMappedRegionRangeLocked(mappedAddress, ctx[CpuRegister.Rsi], name);
+        }
+
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
     [SysAbiExport(
