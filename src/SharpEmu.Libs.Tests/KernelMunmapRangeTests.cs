@@ -66,7 +66,7 @@ public sealed class KernelMunmapRangeTests : IDisposable
         context[CpuRegister.Rcx] = 0x10;
         Assert.Equal(
             (int)OrbisGen2Result.ORBIS_GEN2_OK,
-            KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context));
+            KernelMemoryCompatExports.KernelMapFlexibleMemory(context));
         Assert.Equal(
             configuredCapacity - mappingLength,
             QueryAvailableFlexibleMemory(context));
@@ -131,7 +131,7 @@ public sealed class KernelMunmapRangeTests : IDisposable
 
         Assert.Equal(
             (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND,
-            KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context));
+            KernelMemoryCompatExports.KernelMapFlexibleMemory(context));
         Assert.Equal(0x4000UL, QueryAvailableFlexibleMemory(context));
         Assert.Equal(
             (int)OrbisGen2Result.ORBIS_GEN2_ERROR_DELETED,
@@ -275,7 +275,7 @@ public sealed class KernelMunmapRangeTests : IDisposable
         context[CpuRegister.Rcx] = 0x10;
         Assert.Equal(
             (int)OrbisGen2Result.ORBIS_GEN2_OK,
-            KernelMemoryCompatExports.KernelMapNamedFlexibleMemory(context));
+            KernelMemoryCompatExports.KernelMapFlexibleMemory(context));
     }
 
     private static ulong QueryAvailableFlexibleMemory(CpuContext context)
