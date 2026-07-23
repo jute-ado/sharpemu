@@ -45,7 +45,15 @@ public sealed partial class DirectExecutionBackend
 		Marshal.GetFunctionPointerForDelegate(NativeWorkerPrologue) != 0 &&
 		Marshal.GetFunctionPointerForDelegate(NativeWorkerEpilogue) != 0;
 
-	// Runs an emitted guest entry stub on a pooled native worker. The historical
+	// A foreign thread that repeatedly crosses the CLR reverse-P/Invoke boundary
+	// can retain stale transition state between guest runs. The next import then
+	// fail-fasts the whole process before managed code can observe or recover it.
+	// Retire the worker after its first completed run so every guest entry starts
+	// on a freshly attached native thread.
+	internal static bool CanReuseNativeGuestWorker(int completedRuns) =>
+		completedRuns == 0;
+
+	// Runs an emitted guest entry stub on a dedicated native worker. The historical
 	// inline calli remains available only through the explicit diagnostic override;
 	// silently using it after worker creation fails can fail-fast the CLR process.
 	//
@@ -150,11 +158,13 @@ public sealed partial class DirectExecutionBackend
 	{
 		lock (_nativeWorkerGate)
 		{
-			if (!_nativeWorkersDisposed)
+			if (!_nativeWorkersDisposed &&
+				CanReuseNativeGuestWorker(worker.CompletedRuns))
 			{
 				_idleNativeWorkers.Push(worker);
 				return;
 			}
+			_allNativeWorkers.Remove(worker);
 		}
 		worker.Dispose();
 	}
@@ -179,7 +189,7 @@ public sealed partial class DirectExecutionBackend
 		}
 	}
 
-	// A pooled raw OS thread that executes guest entry stubs. The run loop is emitted
+	// A raw OS thread that executes one guest entry stub. The run loop is emitted
 	// native code (no CLR unwind info required — nothing ever unwinds through it):
 	//
 	//   loop: WaitForSingleObject(work);
@@ -234,6 +244,7 @@ public sealed partial class DirectExecutionBackend
 		private CpuRegisterSnapshot? _runHardwareExceptionRegisters;
 		private ulong _runHardwareExceptionThreadHandle;
 		private bool _runPrologueFailed;
+		private int _completedRuns;
 
 		// Prologue -> epilogue carry, only touched on the worker thread.
 		private DirectExecutionBackend? _prevBackend;
@@ -263,6 +274,8 @@ public sealed partial class DirectExecutionBackend
 		{
 			_backend = backend;
 		}
+
+		public int CompletedRuns => Volatile.Read(ref _completedRuns);
 
 		public static NativeGuestExecutor? TryCreate(DirectExecutionBackend backend)
 		{
@@ -453,6 +466,7 @@ public sealed partial class DirectExecutionBackend
 			_runHardwareExceptionThreadHandle = 0;
 			SignalWorkAvailable();
 			WaitWorkCompleted();
+			Interlocked.Increment(ref _completedRuns);
 			_runContext = null;
 			_runState = null;
 			yieldRequested = _runYieldRequested;
