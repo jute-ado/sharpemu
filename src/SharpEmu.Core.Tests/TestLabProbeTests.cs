@@ -33,6 +33,7 @@ public sealed class TestLabProbeTests
         Assert.Equal(
             [
                 "bundle_fingerprint",
+                "controller_recording",
                 "controller_replay",
                 "guest_image_write_capture",
                 "presented_image_capture",
