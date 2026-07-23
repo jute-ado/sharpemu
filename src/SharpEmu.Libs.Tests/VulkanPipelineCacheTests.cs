@@ -8,6 +8,31 @@ namespace SharpEmu.Libs.Tests;
 
 public sealed class VulkanPipelineCacheTests
 {
+    [Theory]
+    [InlineData(null, 8)]
+    [InlineData("", 8)]
+    [InlineData("0", 8)]
+    [InlineData("9", 8)]
+    [InlineData("1", 1)]
+    [InlineData("4", 4)]
+    public void InFlightSubmissionOverrideStaysWithinSafeBound(
+        string? configured,
+        int expected) =>
+        Assert.Equal(
+            expected,
+            VulkanVideoPresenter.ResolveMaxInFlightGuestSubmissions(configured));
+
+    [Fact]
+    public void BatchWorkNamesAreDistinctAndBounded()
+    {
+        Assert.Equal(
+            new[] { "draw:first", "image-clear", "image-copy" },
+            VulkanVideoPresenter.ResolveBatchWorkNames(
+                new[] { "draw:first", "draw:first" },
+                new[] { "image-clear", "image-copy", "image-upload" },
+                maximumNames: 3));
+    }
+
     [Fact]
     public void GuestSubmissionFailureContextIdentifiesQueueSequenceAndWork()
     {

@@ -155,6 +155,22 @@ internal static unsafe class VulkanVideoPresenter
             ? ImageUsageFlags.StorageBit
             : (ImageUsageFlags)0);
 
+    internal static int ResolveMaxInFlightGuestSubmissions(string? configured) =>
+        int.TryParse(configured, out var value) && value is >= 1 and <= 8
+            ? value
+            : 8;
+
+    internal static string[] ResolveBatchWorkNames(
+        IEnumerable<string> resourceNames,
+        IEnumerable<string> operationNames,
+        int maximumNames = 3) =>
+        resourceNames
+            .Concat(operationNames)
+            .Where(static name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.Ordinal)
+            .Take(Math.Max(0, maximumNames))
+            .ToArray();
+
     internal static string FormatGuestSubmissionContext(
         VulkanGuestQueueIdentity queue,
         long workSequence,
@@ -3413,7 +3429,10 @@ internal static unsafe class VulkanVideoPresenter
         private readonly VulkanHostSurface? _hostSurface;
         private int _lastHostResizeGeneration;
         private bool _embeddedLoopClosed;
-        private const int MaxInFlightGuestSubmissions = 8;
+        private static readonly int MaxInFlightGuestSubmissions =
+            ResolveMaxInFlightGuestSubmissions(
+                Environment.GetEnvironmentVariable(
+                    "SHARPEMU_MAX_IN_FLIGHT_GUEST_SUBMISSIONS"));
         private Vk _vk = null!;
         private KhrSurface _surfaceApi = null!;
         private KhrSwapchain _swapchainApi = null!;
@@ -5484,6 +5503,7 @@ internal static unsafe class VulkanVideoPresenter
         private int _batchDrawCount;
         private readonly List<TranslatedDrawResources> _batchResources = new();
         private readonly List<GuestImageResource> _batchTraceImages = new();
+        private readonly List<string> _batchWorkNames = new();
 
         // Consecutive draws into the same target stay inside one render pass:
         // on MoltenVK every render pass is a Metal render encoder, and one
@@ -5564,7 +5584,10 @@ internal static unsafe class VulkanVideoPresenter
                     _batchCommandBuffer,
                     _batchResources.ToArray(),
                     _batchTraceImages.ToArray(),
-                    _batchRetireBuffers.Count > 0 ? _batchRetireBuffers.ToArray() : []);
+                    _batchRetireBuffers.Count > 0 ? _batchRetireBuffers.ToArray() : [],
+                    debugNames: ResolveBatchWorkNames(
+                        _batchResources.Select(static resource => resource.DebugName),
+                        _batchWorkNames));
             }
             catch
             {
@@ -5590,6 +5613,7 @@ internal static unsafe class VulkanVideoPresenter
                 _batchResources.Clear();
                 _batchTraceImages.Clear();
                 _batchRetireBuffers.Clear();
+                _batchWorkNames.Clear();
                 _batchCommandBuffer = default;
             }
         }
@@ -5599,7 +5623,8 @@ internal static unsafe class VulkanVideoPresenter
             IReadOnlyList<TranslatedDrawResources> resources,
             IReadOnlyList<GuestImageResource> traceImages,
             IReadOnlyList<(VkBuffer Buffer, DeviceMemory Memory)>? retireBuffers = null,
-            IReadOnlyList<TranslatedDrawResources>? referencedResources = null)
+            IReadOnlyList<TranslatedDrawResources>? referencedResources = null,
+            IReadOnlyList<string>? debugNames = null)
         {
             var fence = AcquireGuestFence();
             try
@@ -5616,7 +5641,7 @@ internal static unsafe class VulkanVideoPresenter
                     FormatGuestSubmissionContext(
                         _activeGuestQueue,
                         _activeGuestWorkSequence,
-                        resources.Select(static resource => resource.DebugName)) +
+                        debugNames ?? resources.Select(static resource => resource.DebugName)) +
                     ")");
             }
             catch
@@ -5745,6 +5770,16 @@ internal static unsafe class VulkanVideoPresenter
             CollectCompletedGuestSubmissions(waitForOldest: false);
             if (_pendingGuestSubmissions.Count >= MaxInFlightGuestSubmissions)
             {
+                if (MaxInFlightGuestSubmissions == 1)
+                {
+                    // Diagnostic serialization: wait without a soft-cap timeout so
+                    // a reported loss belongs to the sole submitted workload.
+                    CollectCompletedGuestSubmissions(
+                        waitForOldest: true,
+                        maxWaitNs: ulong.MaxValue);
+                    return;
+                }
+
                 // Bounded wait so the macOS main thread returns to its event
                 // pump promptly under a slow-compute backlog; if the oldest
                 // isn't done yet we proceed (soft cap, dynamic pools).
@@ -12241,6 +12276,7 @@ internal static unsafe class VulkanVideoPresenter
             // preserves queue-order semantics against earlier batched draws,
             // and the fill no longer costs a submit + full queue drain.
             var commandBuffer = BeginBatchedGuestCommands();
+            _batchWorkNames.Add("image-clear");
             CloseOpenTranslatedRenderPass();
             var toTransferDst = new ImageMemoryBarrier
             {
@@ -12324,6 +12360,7 @@ internal static unsafe class VulkanVideoPresenter
             }
 
             var commandBuffer = BeginBatchedGuestCommands();
+            _batchWorkNames.Add("image-copy");
             CloseOpenTranslatedRenderPass();
             var entryBarriers = stackalloc ImageMemoryBarrier[2]
             {
@@ -12498,6 +12535,7 @@ internal static unsafe class VulkanVideoPresenter
                 // the batch's retire list and is destroyed when the batch
                 // fence signals, so the upload costs no queue drain.
                 var commandBuffer = BeginBatchedGuestCommands();
+                _batchWorkNames.Add("image-upload");
                 CloseOpenTranslatedRenderPass();
 
                 var toTransferDst = new ImageMemoryBarrier
