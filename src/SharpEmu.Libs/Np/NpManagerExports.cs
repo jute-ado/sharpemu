@@ -12,20 +12,13 @@ public static class NpManagerExports
     private const int NpTitleSecretSize = 128;
     private const int NpErrorInvalidArgument = unchecked((int)0x80550003);
     private const int NpErrorSignedOut = unchecked((int)0x80550006);
-    private const int NpErrorRequestMaximum = unchecked((int)0x80550013);
     private const int NpErrorRequestNotFound = unchecked((int)0x80550014);
-    private const int RequestLimit = 128;
+    private const int NpErrorInvalidAsyncParameterSize =
+        unchecked((int)0x80550011);
+    private const ulong NpAsyncParameterSize = 0x18;
 
-    private static readonly object _requestGate = new();
-    private static readonly bool[] _activeRequests = new bool[RequestLimit];
-
-    internal static void ResetRuntimeState()
-    {
-        lock (_requestGate)
-        {
-            Array.Clear(_activeRequests);
-        }
-    }
+    internal static void ResetRuntimeState() =>
+        NpManagerRequestRegistry.Reset();
 
     [SysAbiExport(
         Nid = "3Zl8BePTh9Y",
@@ -45,21 +38,46 @@ public static class NpManagerExports
         LibraryName = "libSceNpManager")]
     public static int NpCreateRequest(CpuContext ctx)
     {
-        lock (_requestGate)
-        {
-            for (var slot = 0; slot < _activeRequests.Length; slot++)
-            {
-                if (_activeRequests[slot])
-                {
-                    continue;
-                }
+        return ctx.SetReturn(NpManagerRequestRegistry.CreateSync());
+    }
 
-                _activeRequests[slot] = true;
-                return ctx.SetReturn(slot + 1);
-            }
+    [SysAbiExport(
+        Nid = "eiqMCt9UshI",
+        ExportName = "sceNpCreateAsyncRequest",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpCreateAsyncRequest(CpuContext ctx)
+    {
+        if (!NpManagerRequestRegistry.IsInitialized)
+        {
+            return SetReturn(ctx, NpManagerRequestRegistry.ErrorNotInitialized);
         }
 
-        return ctx.SetReturn(NpErrorRequestMaximum);
+        var parameterAddress = ctx[CpuRegister.Rdi];
+        if (parameterAddress == 0)
+        {
+            return SetReturn(ctx, NpManagerRequestRegistry.ErrorInvalidArgument);
+        }
+
+        if (!ctx.TryReadUInt64(parameterAddress, out var size))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        if (size != NpAsyncParameterSize)
+        {
+            return SetReturn(ctx, NpErrorInvalidAsyncParameterSize);
+        }
+
+        if (!ctx.TryReadUInt64(parameterAddress + 0x08, out var affinity) ||
+            !ctx.TryReadUInt32(parameterAddress + 0x10, out var priority))
+        {
+            return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        return SetReturn(
+            ctx,
+            NpManagerRequestRegistry.CreateAsync(priority, affinity));
     }
 
     [SysAbiExport(
@@ -76,12 +94,9 @@ public static class NpManagerExports
             return ctx.SetReturn(NpErrorInvalidArgument);
         }
 
-        lock (_requestGate)
+        if (!NpManagerRequestRegistry.ContainsSync(requestId))
         {
-            if (requestId > _activeRequests.Length || !_activeRequests[requestId - 1])
-            {
-                return ctx.SetReturn(NpErrorRequestNotFound);
-            }
+            return ctx.SetReturn(NpErrorRequestNotFound);
         }
 
         Span<byte> age = stackalloc byte[1];
@@ -98,17 +113,80 @@ public static class NpManagerExports
     public static int NpDeleteRequest(CpuContext ctx)
     {
         var requestId = unchecked((int)ctx[CpuRegister.Rdi]);
-        lock (_requestGate)
-        {
-            if (requestId <= 0 || requestId > _activeRequests.Length || !_activeRequests[requestId - 1])
-            {
-                return ctx.SetReturn(NpErrorRequestNotFound);
-            }
+        return SetReturn(ctx, NpManagerRequestRegistry.Delete(requestId));
+    }
 
-            _activeRequests[requestId - 1] = false;
+    [SysAbiExport(
+        Nid = "OzKvTvg3ZYU",
+        ExportName = "sceNpAbortRequest",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpAbortRequest(CpuContext ctx)
+    {
+        return SetReturn(
+            ctx,
+            NpManagerRequestRegistry.Abort(
+                unchecked((int)ctx[CpuRegister.Rdi])));
+    }
+
+    [SysAbiExport(
+        Nid = "uqcPJLWL08M",
+        ExportName = "sceNpPollAsync",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpPollAsync(CpuContext ctx)
+    {
+        if (!NpManagerRequestRegistry.IsInitialized)
+        {
+            return SetReturn(ctx, NpManagerRequestRegistry.ErrorNotInitialized);
         }
 
-        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+        var resultAddress = ctx[CpuRegister.Rsi];
+        if (resultAddress == 0)
+        {
+            return SetReturn(ctx, NpManagerRequestRegistry.ErrorInvalidArgument);
+        }
+
+        var pollResult = NpManagerRequestRegistry.Poll(
+            unchecked((int)ctx[CpuRegister.Rdi]),
+            out var completed,
+            out var operationResult);
+        if (pollResult != 0 || !completed)
+        {
+            return SetReturn(ctx, pollResult);
+        }
+
+        return ctx.TryWriteInt32(resultAddress, operationResult)
+            ? SetReturn(ctx, 0)
+            : ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    [SysAbiExport(
+        Nid = "KfGZg2y73oM",
+        ExportName = "sceNpCheckNpReachability",
+        Target = Generation.Gen5,
+        LibraryName = "libSceNpManager")]
+    public static int NpCheckNpReachability(CpuContext ctx)
+    {
+        if (!NpManagerRequestRegistry.IsInitialized)
+        {
+            return SetReturn(ctx, NpManagerRequestRegistry.ErrorNotInitialized);
+        }
+
+        var requestId = unchecked((int)ctx[CpuRegister.Rdi]);
+        var userId = unchecked((int)ctx[CpuRegister.Rsi]);
+        if (requestId <= 0 || userId == -1)
+        {
+            return SetReturn(ctx, NpManagerRequestRegistry.ErrorInvalidArgument);
+        }
+
+        var result = NpManagerRequestRegistry.StartLocalOperation(
+            requestId,
+            _ => 0);
+        TraceNp(
+            $"check_np_reachability request={requestId} user={userId} " +
+            $"result=0x{result:X8}");
+        return SetReturn(ctx, result);
     }
 
     [SysAbiExport(
