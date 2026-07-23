@@ -76,7 +76,8 @@ test-driven workflow. Major downstream differences include:
   rollback of failed read/write-lock initialization, input-only equeue timeout
   handling that avoids mutating guest polling intervals, bounded pthread-key
   destructor callbacks and thread-specific value cleanup when guest threads
-  exit before they become joinable, and post-join scheduler, metadata, and
+  exit before they become joinable, FIFO mutex handoff that prevents newcomers
+  and releasing threads from barging ahead of queued waiters, and post-join scheduler, metadata, and
   unmanaged-handle reaping with deferred and late-detach cleanup; backend
   teardown also reaps unjoined workers and registered primary threads, with
   stale primary-thread identities recreated safely and process-scoped pthread
@@ -357,7 +358,9 @@ One of the few PS5 emulator projects available and very useful for studying nati
 
 * **[Acelogic's SharpEmu fork](https://github.com/Acelogic/sharpemu)**
 Provided valuable Gen5 loader research, including the object-symbol separation
-work adapted and independently regression-tested in this fork.
+work adapted and independently regression-tested in this fork, plus the
+[pthread mutex handoff-starvation analysis](https://github.com/Acelogic/sharpemu/commit/b591baa1)
+used to close the remaining barging window in the downstream FIFO ticket path.
 
 * **[microvision9's Windows write-tracker research](https://github.com/par274/sharpemu/pull/512)**
 Provided the reference for the Windows page-protection and fault-routing path,
