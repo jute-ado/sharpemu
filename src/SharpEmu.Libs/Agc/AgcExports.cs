@@ -12918,6 +12918,37 @@ public static partial class AgcExports
             : null;
     }
 
+    internal static bool ShaderDumpFilterMatches(
+        string? addressFilter,
+        string? signatureFilter,
+        ulong shaderAddress,
+        ReadOnlySpan<byte> payload)
+    {
+        if (!string.IsNullOrWhiteSpace(addressFilter))
+        {
+            var span = addressFilter.AsSpan().Trim();
+            if (span.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                span = span[2..];
+            }
+
+            if (!ulong.TryParse(
+                    span,
+                    System.Globalization.NumberStyles.HexNumber,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var filteredAddress) ||
+                shaderAddress != filteredAddress)
+            {
+                return false;
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(signatureFilter) ||
+            VulkanVideoPresenter.ComputeShaderSignatureListContains(
+                signatureFilter,
+                payload);
+    }
+
     private static void DumpCompiledShader(
         string stage,
         ulong shaderAddress,
@@ -12934,25 +12965,13 @@ public static partial class AgcExports
             return;
         }
 
-        var addressFilter = Environment.GetEnvironmentVariable(
-            "SHARPEMU_DUMP_SPIRV_ADDRESS");
-        if (!string.IsNullOrWhiteSpace(addressFilter))
+        if (!ShaderDumpFilterMatches(
+                Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SPIRV_ADDRESS"),
+                Environment.GetEnvironmentVariable("SHARPEMU_DUMP_SPIRV_SIGNATURE"),
+                shaderAddress,
+                shader.Payload))
         {
-            var span = addressFilter.AsSpan();
-            if (span.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-            {
-                span = span[2..];
-            }
-
-            if (!ulong.TryParse(
-                    span,
-                    System.Globalization.NumberStyles.HexNumber,
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    out var filteredAddress) ||
-                shaderAddress != filteredAddress)
-            {
-                return;
-            }
+            return;
         }
 
         var directory = Path.Combine(AppContext.BaseDirectory, "shader-dumps");
