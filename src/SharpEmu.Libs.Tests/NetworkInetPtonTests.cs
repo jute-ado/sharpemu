@@ -79,6 +79,25 @@ public sealed class NetworkInetPtonTests : IDisposable
             ReadBytes(memory, DestinationAddress, 17));
     }
 
+    [Fact]
+    public void ConvertsIpv4MappedIpv6WithAStrictDottedDecimalTail()
+    {
+        var (manager, context, memory) = CreateContext("::ffff:192.0.2.128", 16);
+        context[CpuRegister.Rdi] = AfInet6;
+
+        Assert.True(manager.TryDispatch(InetPtonNid, context, out var result));
+        Assert.Equal(1, (int)result);
+        Assert.Equal(
+            new byte[]
+            {
+                0, 0, 0, 0,
+                0, 0, 0, 0,
+                0, 0, 0xFF, 0xFF,
+                192, 0, 2, 128,
+            },
+            ReadBytes(memory, DestinationAddress, 16));
+    }
+
     [Theory]
     [InlineData("127.1")]
     [InlineData("0x7f.0.0.1")]
@@ -155,6 +174,26 @@ public sealed class NetworkInetPtonTests : IDisposable
         context[CpuRegister.Rsi] = SourceAddress;
         context[CpuRegister.Rdx] = DestinationAddress + 4;
         Assert.True(manager.TryDispatch(InetPtonNid, context, out result));
+        Assert.Equal(NetErrorInvalidArgument, (int)result);
+        Assert.Equal(22, ReadNetErrno(context));
+        Assert.Equal(
+            Enumerable.Repeat((byte)0xCC, 4),
+            ReadBytes(memory, DestinationAddress, 4));
+    }
+
+    [Fact]
+    public void UnterminatedMaximumLengthSourceReportsInvalidArgument()
+    {
+        var manager = CreateManager(Generation.Gen5);
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(SourceAddress, Enumerable.Repeat((byte)'1', 46).ToArray());
+        memory.AddRegion(DestinationAddress, Enumerable.Repeat((byte)0xCC, 4).ToArray());
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = AfInet;
+        context[CpuRegister.Rsi] = SourceAddress;
+        context[CpuRegister.Rdx] = DestinationAddress;
+
+        Assert.True(manager.TryDispatch(InetPtonNid, context, out var result));
         Assert.Equal(NetErrorInvalidArgument, (int)result);
         Assert.Equal(22, ReadNetErrno(context));
         Assert.Equal(
