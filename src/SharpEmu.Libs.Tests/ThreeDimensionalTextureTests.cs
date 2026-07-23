@@ -61,6 +61,26 @@ public sealed class ThreeDimensionalTextureTests
         Assert.Equal(1u, shape.ArrayLayers);
     }
 
+    [Theory]
+    [InlineData(512ul, 512ul, 16u, 1u, false)]
+    [InlineData(8192ul, 512ul, 16u, 1u, true)]
+    [InlineData(2048ul, 512ul, 1u, 4u, true)]
+    [InlineData(0ul, 0ul, 1u, 1u, false)]
+    [InlineData(ulong.MaxValue, ulong.MaxValue, 2u, 1u, false)]
+    public void TextureUploadMustCoverEveryDepthSliceAndLayer(
+        ulong byteCount,
+        ulong bytesPerSlice,
+        uint depth,
+        uint layers,
+        bool expected) =>
+        Assert.Equal(
+            expected,
+            VulkanVideoPresenter.IsCompleteTextureUpload(
+                byteCount,
+                bytesPerSlice,
+                depth,
+                layers));
+
     [Fact]
     public void ArrayTextureKeepsLayersAndUnitDepth()
     {
