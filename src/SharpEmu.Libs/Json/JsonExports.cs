@@ -84,6 +84,21 @@ public static class JsonExports
     }
 
     [SysAbiExport(
+        Nid = "PR5k1penBLM",
+        ExportName = "_ZN3sce4Json11Initializer9terminateEv",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceJson")]
+    public static int InitializerTerminate(CpuContext ctx)
+    {
+        // Firmware exposes this as a void instance method. The initializer
+        // pointer is opaque here: neither the reference implementation nor
+        // observed callers require guest-memory access or process-wide state
+        // teardown. ApplicationServicesLifecycle owns process reset instead.
+        TraceJson("Initializer.terminate", ctx[CpuRegister.Rdi], 0);
+        return SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
         Nid = "Cxwy7wHq4J0",
         ExportName = "_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE",
         Target = Generation.Gen4 | Generation.Gen5,
