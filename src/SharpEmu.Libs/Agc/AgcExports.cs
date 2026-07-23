@@ -3421,7 +3421,7 @@ public static partial class AgcExports
         return SetReturn(ctx, OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
-    private const uint DefaultAgcOwner = 1;
+    private const uint DefaultAgcOwner = 0;
     [SysAbiExport(
         Nid = "F0ZXt5q0ZTA",
         ExportName = "sceAgcDriverGetDefaultOwner",
