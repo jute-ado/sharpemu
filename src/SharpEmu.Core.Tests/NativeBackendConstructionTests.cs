@@ -46,6 +46,35 @@ public sealed class NativeBackendConstructionTests
     }
 
     [Fact]
+    public void NativeWorkerStartGateCoversSignalThroughPrologueAcknowledgement()
+    {
+        using var gate = new SemaphoreSlim(1, 1);
+        var transitions = new List<string>();
+
+        DirectExecutionBackend.StartNativeWorkerRun(
+            gate,
+            () => transitions.Add("signal"),
+            () => transitions.Add("prologue-ready"));
+
+        Assert.Equal(["signal", "prologue-ready"], transitions);
+        Assert.Equal(1, gate.CurrentCount);
+    }
+
+    [Fact]
+    public void NativeWorkerStartGateIsReleasedWhenAcknowledgementFails()
+    {
+        using var gate = new SemaphoreSlim(1, 1);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            DirectExecutionBackend.StartNativeWorkerRun(
+                gate,
+                static () => { },
+                static () => throw new InvalidOperationException("failed")));
+
+        Assert.Equal(1, gate.CurrentCount);
+    }
+
+    [Fact]
     public void ConstructorReleasesFirstTlsSlotWhenSecondAllocationFails()
     {
         var threading = new RecordingHostThreading([17u, uint.MaxValue]);
