@@ -11,6 +11,23 @@ namespace SharpEmu.Libs.Tests;
 public sealed class ComputeDispatchDiagnosticsTests
 {
     [Theory]
+    [InlineData(1u, 1u, 16u, 8u)]
+    [InlineData(4u, 4u, 8u, 4u)]
+    [InlineData(8u, 8u, 8u, 1u)]
+    [InlineData(32u, 32u, 8u, 1u)]
+    public void ComputeSubmissionSlicesBoundWatchdogWork(
+        uint groupCountX,
+        uint groupCountY,
+        uint groupCountZ,
+        uint expected) =>
+        Assert.Equal(
+            expected,
+            VulkanVideoPresenter.ResolveComputeZSlicesPerSubmission(
+                groupCountX,
+                groupCountY,
+                groupCountZ));
+
+    [Theory]
     [InlineData(true, true, true, true)]
     [InlineData(false, true, true, false)]
     [InlineData(true, false, true, true)]
