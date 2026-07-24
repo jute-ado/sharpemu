@@ -20,10 +20,14 @@ public sealed class KernelFilesystemContractTests : IDisposable
     private const int OpenDirectory = 0x0002_0000;
     private const int InvalidArgument =
         (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+    private const int NotFound =
+        (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
     private const int PermissionDenied =
         (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED;
     private const int AlreadyExists =
         (int)OrbisGen2Result.ORBIS_GEN2_ERROR_ALREADY_EXISTS;
+    private const int MemoryFault =
+        (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
 
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
@@ -78,6 +82,102 @@ public sealed class KernelFilesystemContractTests : IDisposable
         WritePath(directoryPath);
         Assert.Equal(0, KernelMemoryCompatExports.KernelRmdir(_context));
         Assert.False(Directory.Exists(Path.Combine(_root, "cache")));
+    }
+
+    [Fact]
+    public void GetdentsRejectsRegularFileDescriptorInReturnRegister()
+    {
+        var filePath = _mount + "/data.bin";
+        File.WriteAllText(Path.Combine(_root, "data.bin"), "fixture");
+        WritePath(filePath);
+        Assert.Equal(0, KernelExports.KernelOpen(_context));
+        var fd = unchecked((int)_context[CpuRegister.Rax]);
+
+        try
+        {
+            _context[CpuRegister.Rdi] = unchecked((ulong)fd);
+            _context[CpuRegister.Rsi] = StatAddress;
+            _context[CpuRegister.Rdx] = 512;
+
+            Assert.Equal(
+                InvalidArgument,
+                KernelMemoryCompatExports.KernelGetdents(_context));
+            Assert.Equal(
+                unchecked((ulong)InvalidArgument),
+                _context[CpuRegister.Rax]);
+        }
+        finally
+        {
+            CloseFileDescriptor(fd);
+        }
+    }
+
+    [Theory]
+    [InlineData(-1, InvalidArgument)]
+    [InlineData(int.MaxValue, NotFound)]
+    public void GetdentsDescriptorErrorsReachReturnRegister(
+        int fd,
+        int expected)
+    {
+        _context[CpuRegister.Rdi] = unchecked((ulong)fd);
+        _context[CpuRegister.Rsi] = StatAddress;
+        _context[CpuRegister.Rdx] = 512;
+        _context[CpuRegister.Rax] = 0xA5A5_A5A5_A5A5_A5A5;
+
+        Assert.Equal(
+            expected,
+            KernelMemoryCompatExports.KernelGetdents(_context));
+        Assert.Equal(unchecked((ulong)expected), _context[CpuRegister.Rax]);
+    }
+
+    [Fact]
+    public void EmptyDirectoryEnumeratesDotEntriesBeforeEof()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "empty"));
+        WritePath(_mount + "/empty");
+        _context[CpuRegister.Rsi] = OpenDirectory;
+        Assert.Equal(0, KernelExports.KernelOpen(_context));
+        var fd = unchecked((int)_context[CpuRegister.Rax]);
+
+        try
+        {
+            Assert.Equal(".", ReadNextDirectoryEntry(fd));
+            Assert.Equal("..", ReadNextDirectoryEntry(fd));
+            Assert.Null(ReadNextDirectoryEntry(fd));
+        }
+        finally
+        {
+            CloseFileDescriptor(fd);
+        }
+    }
+
+    [Fact]
+    public void GetdirentriesWritesMemoryFaultToReturnRegister()
+    {
+        Directory.CreateDirectory(Path.Combine(_root, "empty"));
+        WritePath(_mount + "/empty");
+        _context[CpuRegister.Rsi] = OpenDirectory;
+        Assert.Equal(0, KernelExports.KernelOpen(_context));
+        var fd = unchecked((int)_context[CpuRegister.Rax]);
+
+        try
+        {
+            _context[CpuRegister.Rdi] = unchecked((ulong)fd);
+            _context[CpuRegister.Rsi] = StatAddress;
+            _context[CpuRegister.Rdx] = 512;
+            _context[CpuRegister.Rcx] = MemoryBase + 0x5000;
+
+            Assert.Equal(
+                MemoryFault,
+                KernelMemoryCompatExports.KernelGetdirentries(_context));
+            Assert.Equal(
+                unchecked((ulong)MemoryFault),
+                _context[CpuRegister.Rax]);
+        }
+        finally
+        {
+            CloseFileDescriptor(fd);
+        }
     }
 
     [Fact]
@@ -292,6 +392,33 @@ public sealed class KernelFilesystemContractTests : IDisposable
         _context[CpuRegister.Rdi] = PathAddress;
         _context[CpuRegister.Rsi] = 0;
         _context[CpuRegister.Rdx] = 0;
+    }
+
+    private string? ReadNextDirectoryEntry(int fd)
+    {
+        _context[CpuRegister.Rdi] = unchecked((ulong)fd);
+        _context[CpuRegister.Rsi] = StatAddress;
+        _context[CpuRegister.Rdx] = 512;
+        Assert.Equal(0, KernelMemoryCompatExports.KernelGetdents(_context));
+        var byteCount = unchecked((int)_context[CpuRegister.Rax]);
+        Assert.True(byteCount is 0 or 512);
+        if (byteCount == 0)
+        {
+            return null;
+        }
+
+        Assert.True(_context.TryReadByte(StatAddress + 6, out var entryType));
+        Assert.Equal(4, entryType);
+        Assert.True(_context.TryReadByte(StatAddress + 7, out var nameLength));
+        var nameBytes = new byte[nameLength];
+        Assert.True(_context.Memory.TryRead(StatAddress + 8, nameBytes));
+        return Encoding.UTF8.GetString(nameBytes);
+    }
+
+    private void CloseFileDescriptor(int fd)
+    {
+        _context[CpuRegister.Rdi] = unchecked((ulong)fd);
+        Assert.Equal(0, KernelMemoryCompatExports.KernelClose(_context));
     }
 
     private int DispatchReachability(ModuleManager manager, string path)
