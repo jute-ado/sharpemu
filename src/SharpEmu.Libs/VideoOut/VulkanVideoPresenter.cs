@@ -939,7 +939,9 @@ internal static unsafe class VulkanVideoPresenter
         LoadPresentedGuestImageCaptureRequest()
     {
         var value = Environment.GetEnvironmentVariable(
-            "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME");
+                "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAMES")
+            ?? Environment.GetEnvironmentVariable(
+                "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME");
         if (PresentedGuestImageCaptureRequest.TryParse(value, out var request))
         {
             return request;
@@ -947,6 +949,7 @@ internal static unsafe class VulkanVideoPresenter
 
         Console.Error.WriteLine(
             "[LOADER][WARN] Invalid " +
+            "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAMES or " +
             "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME; " +
             "presented-image capture disabled.");
         return default;

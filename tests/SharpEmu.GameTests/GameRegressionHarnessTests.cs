@@ -1109,6 +1109,8 @@ public sealed class GameRegressionHarnessTests
         startInfo.Environment[
             "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME"] = "stale";
         startInfo.Environment[
+            "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAMES"] = "stale";
+        startInfo.Environment[
             "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR"] = "stale";
         startInfo.Environment[
             "SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE"] = "stale";
@@ -1139,6 +1141,9 @@ public sealed class GameRegressionHarnessTests
         Assert.False(
             startInfo.Environment.ContainsKey(
                 "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME"));
+        Assert.False(
+            startInfo.Environment.ContainsKey(
+                "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAMES"));
         Assert.False(
             startInfo.Environment.ContainsKey(
                 "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR"));
