@@ -227,26 +227,44 @@ public sealed class NpManagerAsyncReachabilityTests : IDisposable
                 _ =>
                 {
                     entered.Set();
-                    release.Wait(TimeSpan.FromSeconds(5));
+                    release.Wait();
                     return 0;
                 }));
         Assert.True(entered.Wait(TimeSpan.FromSeconds(2)));
 
         var deleteContext = new CpuContext(_memory, Generation.Gen5);
         deleteContext[CpuRegister.Rdi] = unchecked((ulong)requestId);
-        var deleteTask = Task.Run(
-            () => NpManagerExports.NpDeleteRequest(deleteContext));
-        Assert.True(
-            SpinWait.SpinUntil(
-                () => NpManagerRequestRegistry.LiveCountForTests == 0,
-                TimeSpan.FromSeconds(2)));
-        Assert.NotSame(
-            deleteTask,
-            await Task.WhenAny(
-                deleteTask,
-                Task.Delay(TimeSpan.FromMilliseconds(100))));
+        using var deleteReturned = new ManualResetEventSlim();
+        // A dedicated thread keeps the deletion contract independent from
+        // thread-pool starvation while the attached worker is deliberately held.
+        var deleteTask = Task.Factory.StartNew(
+            () =>
+            {
+                try
+                {
+                    return NpManagerExports.NpDeleteRequest(deleteContext);
+                }
+                finally
+                {
+                    deleteReturned.Set();
+                }
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+        try
+        {
+            Assert.True(
+                SpinWait.SpinUntil(
+                    () => NpManagerRequestRegistry.LiveCountForTests == 0,
+                    TimeSpan.FromSeconds(2)));
+            Assert.False(deleteReturned.Wait(TimeSpan.FromMilliseconds(100)));
+        }
+        finally
+        {
+            release.Set();
+        }
 
-        release.Set();
         Assert.Equal(0, await deleteTask);
         Assert.Equal(0UL, deleteContext[CpuRegister.Rax]);
         _ctx[CpuRegister.Rdi] = unchecked((ulong)requestId);

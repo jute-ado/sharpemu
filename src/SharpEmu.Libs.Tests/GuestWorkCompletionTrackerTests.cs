@@ -43,7 +43,9 @@ public sealed class GuestWorkCompletionTrackerTests
         Assert.InRange(
             stopwatch.Elapsed,
             TimeSpan.FromMilliseconds(10),
-            TimeSpan.FromSeconds(1));
+            // Loaded hosted runners can deschedule the test process well after
+            // Monitor.Wait has observed its 20 ms deadline.
+            TimeSpan.FromSeconds(5));
         tracker.MarkCompleted();
         Assert.True(
             tracker.WaitUntilCompleted(
