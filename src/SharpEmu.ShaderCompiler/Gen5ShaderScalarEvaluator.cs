@@ -425,17 +425,17 @@ public static class Gen5ShaderScalarEvaluator
                 }
 
                 if (resolveVertexInputs &&
-                    IsVertexFetchCandidate(instruction, bufferMemory, bufferDescriptor))
+                    TryGetVertexInputOffset(
+                        state.Program,
+                        instruction,
+                        bufferMemory,
+                        bufferDescriptor,
+                        scalarRegisters,
+                        out var bindingOffset))
                 {
                     var vertexReadSize = bufferDescriptor.SizeBytes;
-                    if (vertexRecordLimit is { } recordLimit &&
-                        instruction.Sources.Count > 2 &&
-                        TryEvaluateScalarOperand(
-                            instruction.Sources[2],
-                            scalarRegisters,
-                            out var scalarOffset))
+                    if (vertexRecordLimit is { } recordLimit)
                     {
-                        var bindingOffset = unchecked((uint)bufferMemory.OffsetBytes + scalarOffset);
                         var requiredBytes =
                             (ulong)bindingOffset +
                             (ulong)(Math.Max(recordLimit, 1u) - 1u) * bufferDescriptor.Stride +
@@ -459,22 +459,14 @@ public static class Gen5ShaderScalarEvaluator
                         return false;
                     }
 
-                    if (!TryCreateVertexInputBinding(
+                    vertexInputBindings.Add(
+                        CreateVertexInputBinding(
                             instruction,
                             bufferMemory,
                             bufferDescriptor,
                             vertexData,
                             (uint)vertexInputBindings.Count,
-                            scalarRegisters,
-                            out var vertexInputBinding))
-                    {
-                        error =
-                            $"vertex-input-binding-failed pc=0x{instruction.Pc:X} " +
-                            $"s{bufferMemory.ScalarResource}";
-                        return false;
-                    }
-
-                    vertexInputBindings.Add(vertexInputBinding);
+                            bindingOffset));
                     continue;
                 }
 
@@ -687,52 +679,70 @@ public static class Gen5ShaderScalarEvaluator
         return true;
     }
 
-    private static bool TryCreateVertexInputBinding(
+    private static Gen5VertexInputBinding CreateVertexInputBinding(
         Gen5ShaderInstruction instruction,
         Gen5BufferMemoryControl control,
         BufferDescriptor descriptor,
         byte[] data,
         uint location,
-        uint[] scalarRegisters,
-        out Gen5VertexInputBinding binding)
+        uint bindingOffset)
     {
-        binding = default!;
-        if (!IsVertexFetchCandidate(instruction, control, descriptor) ||
+        return new Gen5VertexInputBinding(
+            instruction.Pc,
+            location,
+            control.DwordCount,
+            descriptor.DataFormat,
+            descriptor.NumberFormat,
+            descriptor.BaseAddress,
+            descriptor.Stride,
+            bindingOffset,
+            data);
+    }
+
+    private static bool TryGetVertexInputOffset(
+        Gen5ShaderProgram program,
+        Gen5ShaderInstruction instruction,
+        Gen5BufferMemoryControl control,
+        BufferDescriptor descriptor,
+        uint[] scalarRegisters,
+        out uint bindingOffset)
+    {
+        bindingOffset = 0;
+        if (!control.IndexEnabled ||
+            control.DwordCount is < 1 or > 4 ||
+            descriptor.BaseAddress == 0 ||
+            descriptor.Stride == 0 ||
+            (!instruction.Opcode.StartsWith("BufferLoadFormat", StringComparison.Ordinal) &&
+             !instruction.Opcode.StartsWith("TBufferLoadFormat", StringComparison.Ordinal)) ||
             instruction.Sources.Count <= 2 ||
-            !TryEvaluateScalarOperand(instruction.Sources[2], scalarRegisters, out var scalarOffset))
+            !TryEvaluateScalarOperand(
+                instruction.Sources[2],
+                scalarRegisters,
+                out var scalarOffset))
         {
             return false;
         }
 
-        var bindingData = data;
-        var bindingStride = descriptor.Stride;
-        var bindingOffset = unchecked((uint)control.OffsetBytes + scalarOffset);
-        var bindingDataFormat = descriptor.DataFormat;
-        var bindingNumberFormat = descriptor.NumberFormat;
-        binding = new Gen5VertexInputBinding(
-            instruction.Pc,
-            location,
-            control.DwordCount,
-            bindingDataFormat,
-            bindingNumberFormat,
-            descriptor.BaseAddress,
-            bindingStride,
-            bindingOffset,
-            bindingData);
+        var vectorOffset = 0u;
+        if (control.OffsetEnabled &&
+            !TryResolveVectorConstantBefore(
+                program,
+                instruction.Pc,
+                control.VectorAddress + 1u,
+                out vectorOffset))
+        {
+            // A dynamic voffset cannot be represented by a fixed host vertex
+            // attribute offset. Keep the instruction on the general-buffer
+            // path so the translated shader evaluates it at runtime.
+            return false;
+        }
+
+        bindingOffset = unchecked(
+            (uint)control.OffsetBytes +
+            scalarOffset +
+            vectorOffset);
         return true;
     }
-
-    private static bool IsVertexFetchCandidate(
-        Gen5ShaderInstruction instruction,
-        Gen5BufferMemoryControl control,
-        BufferDescriptor descriptor) =>
-        control.IndexEnabled &&
-        !control.OffsetEnabled &&
-        control.DwordCount is >= 1 and <= 4 &&
-        descriptor.BaseAddress != 0 &&
-        descriptor.Stride != 0 &&
-        (instruction.Opcode.StartsWith("BufferLoadFormat", StringComparison.Ordinal) ||
-         instruction.Opcode.StartsWith("TBufferLoadFormat", StringComparison.Ordinal));
 
     private static bool IsFormatBufferInstruction(string opcode) =>
         opcode.StartsWith("BufferLoadFormat", StringComparison.Ordinal) ||
@@ -810,19 +820,33 @@ public static class Gen5ShaderScalarEvaluator
         for (var index = program.Instructions.Count - 1; index >= 0; index--)
         {
             var instruction = program.Instructions[index];
-            if (instruction.Pc >= pc ||
-                instruction.Destinations.Count != 1 ||
-                instruction.Destinations[0] is not
-                {
-                    Kind: Gen5OperandKind.VectorRegister,
-                    Value: var destination,
-                } ||
-                destination != vectorRegister)
+            if (instruction.Pc >= pc)
             {
                 continue;
             }
 
-            if (instruction.Opcode == "VMovB32" &&
+            var writesRegister = false;
+            foreach (var destination in instruction.Destinations)
+            {
+                if (destination is
+                {
+                    Kind: Gen5OperandKind.VectorRegister,
+                    Value: var destinationRegister,
+                } &&
+                    destinationRegister == vectorRegister)
+                {
+                    writesRegister = true;
+                    break;
+                }
+            }
+
+            if (!writesRegister)
+            {
+                continue;
+            }
+
+            if (instruction.Destinations.Count == 1 &&
+                instruction.Opcode == "VMovB32" &&
                 instruction.Sources.Count == 1 &&
                 TryResolveConstantOperand(instruction.Sources[0], out value))
             {
