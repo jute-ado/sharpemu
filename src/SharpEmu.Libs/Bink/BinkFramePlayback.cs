@@ -152,7 +152,8 @@ internal sealed class BinkFramePlayback : IDisposable
 
             var frameDurationSeconds =
                 (double)FramesPerSecondDenominator / FramesPerSecondNumerator;
-            if (_playbackClockStarted &&
+            if (!advanced &&
+                _playbackClockStarted &&
                 _decoderCompleted &&
                 _decodedFrames.Count == 0 &&
                 elapsedSeconds >= (_currentFrameIndex + 1) * frameDurationSeconds)
