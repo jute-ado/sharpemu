@@ -33,12 +33,15 @@ public sealed class TestLabProbeTests
         Assert.Equal(
             [
                 "bundle_fingerprint",
+                "console_profile_ps5",
                 "controller_recording",
                 "controller_replay",
                 "guest_image_write_capture",
                 "presented_image_capture",
                 "multi_presented_image_capture",
                 "presented_frame_timing_trace",
+                "render_resolution_scale",
+                "strict_dynlib_resolution",
                 "structured_report",
                 "video_out_fingerprint",
             ],
