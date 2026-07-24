@@ -19,6 +19,7 @@ public static class AudioOut2Exports
     private const uint MaxAttributeCount = 1024;
     private const uint DefaultQueueDepth = 4;
     private const uint DefaultNumGrains = 512;
+    private const int AudioOut2SpeakerInfoSize = 0x50;
     private const int AudioOut2ErrorNotReady = unchecked((int)0x80268008);
     private static readonly ConcurrentDictionary<ulong, ContextState> Contexts = new();
     private static readonly ConcurrentDictionary<ulong, PortState> Ports = new();
@@ -350,11 +351,17 @@ public static class AudioOut2Exports
             return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
-        Span<byte> info = stackalloc byte[0x40];
+        // SceAudioOut2SpeakerInfo is a 0x50-byte structure:
+        // byte type, padding, capability/flags words, then 16 angle pairs.
+        Span<byte> info = stackalloc byte[AudioOut2SpeakerInfoSize];
         info.Clear();
-        BinaryPrimitives.WriteUInt32LittleEndian(info[0x00..], 1);
-        BinaryPrimitives.WriteUInt32LittleEndian(info[0x04..], 2);
-        BinaryPrimitives.WriteUInt32LittleEndian(info[0x08..], 48000);
+        info[0x00] = 0;
+        BinaryPrimitives.WriteUInt32LittleEndian(info[0x04..], 0x03);
+        BinaryPrimitives.WriteUInt32LittleEndian(info[0x08..], 0);
+        BinaryPrimitives.WriteInt16LittleEndian(info[0x10..], -30);
+        BinaryPrimitives.WriteInt16LittleEndian(info[0x12..], 0);
+        BinaryPrimitives.WriteInt16LittleEndian(info[0x14..], 30);
+        BinaryPrimitives.WriteInt16LittleEndian(info[0x16..], 0);
 
         return ctx.Memory.TryWrite(infoAddress, info)
             ? ctx.SetReturn(0)
