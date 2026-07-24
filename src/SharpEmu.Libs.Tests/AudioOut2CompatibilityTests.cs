@@ -546,18 +546,37 @@ public sealed class AudioOut2CompatibilityTests
     public void GetSpeakerInfoWritesExactLayoutAndPreservesTail()
     {
         var memory = new FakeGuestMemory();
-        var allocation = FilledBuffer(0x50);
+        var allocation = FilledBuffer(0x60);
         memory.AddRegion(BufferAddress, allocation);
         var context = CreateContext(memory);
         context[CpuRegister.Rdi] = BufferAddress;
+        context[CpuRegister.Rsi] = 0xCAFE;
 
         AssertSuccess(AudioOut2Exports.AudioOut2GetSpeakerInfo(context), context);
 
-        Assert.Equal(1U, BinaryPrimitives.ReadUInt32LittleEndian(allocation));
-        Assert.Equal(2U, BinaryPrimitives.ReadUInt32LittleEndian(allocation.AsSpan(4)));
-        Assert.Equal(48_000U, BinaryPrimitives.ReadUInt32LittleEndian(allocation.AsSpan(8)));
-        Assert.All(allocation.AsSpan(0x0C, 0x34).ToArray(), value => Assert.Equal(0, value));
-        Assert.All(allocation.AsSpan(0x40).ToArray(), value => Assert.Equal(Canary, value));
+        Assert.Equal(0, allocation[0x00]);
+        Assert.Equal(3U, BinaryPrimitives.ReadUInt32LittleEndian(allocation.AsSpan(0x04)));
+        Assert.Equal(0U, BinaryPrimitives.ReadUInt32LittleEndian(allocation.AsSpan(0x08)));
+        Assert.Equal(-30, BinaryPrimitives.ReadInt16LittleEndian(allocation.AsSpan(0x10)));
+        Assert.Equal(0, BinaryPrimitives.ReadInt16LittleEndian(allocation.AsSpan(0x12)));
+        Assert.Equal(30, BinaryPrimitives.ReadInt16LittleEndian(allocation.AsSpan(0x14)));
+        Assert.Equal(0, BinaryPrimitives.ReadInt16LittleEndian(allocation.AsSpan(0x16)));
+        Assert.All(allocation.AsSpan(0x18, 0x38).ToArray(), value => Assert.Equal(0, value));
+        Assert.All(allocation.AsSpan(0x50).ToArray(), value => Assert.Equal(Canary, value));
+    }
+
+    [Fact]
+    public void GetSpeakerInfoRequiresTheFullGuestStructureToBeWritable()
+    {
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(BufferAddress, new byte[0x40]);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = BufferAddress;
+
+        AssertError(
+            AudioOut2Exports.AudioOut2GetSpeakerInfo(context),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
 
     [Fact]
