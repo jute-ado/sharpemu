@@ -57,6 +57,27 @@ public sealed class BinkFramePlaybackTests
         Assert.Equal(2, WaitForAdvancedFrame(playback)[0]);
     }
 
+    [Fact]
+    public void LatePresentationReturnsFinalFrameBeforeCompleting()
+    {
+        using var playback = new BinkFramePlayback(new SequenceDecoder(1, 2));
+
+        Assert.Equal(1, WaitForFrame(playback, advanceClock: false)[0]);
+        Assert.True(playback.TryGetFrame(true, out var held, out var advanced));
+        Assert.False(advanced);
+        Assert.Equal(1, held[0]);
+
+        Thread.Sleep(150);
+
+        Assert.True(playback.TryGetFrame(true, out var final, out advanced));
+        Assert.True(advanced);
+        Assert.Equal(2, final[0]);
+        Assert.False(playback.IsFinished);
+
+        Assert.False(playback.TryGetFrame(true, out _, out _));
+        Assert.True(playback.IsFinished);
+    }
+
     private static byte[] WaitForFrame(
         BinkFramePlayback playback,
         bool advanceClock)
