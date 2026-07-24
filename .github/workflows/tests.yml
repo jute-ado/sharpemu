@@ -54,8 +54,12 @@ jobs:
 
       - name: Test with coverage
         if: ${{ runner.os == 'Linux' }}
+        # Coverlet instruments shared product assemblies in place. Keep solution
+        # project test hosts serial so two collectors cannot rewrite/read the same
+        # module concurrently and leave a truncated instrumentation stream.
         run: >-
           dotnet test SharpEmu.slnx
+          -m:1
           -c Release
           --no-restore
           -warnaserror
