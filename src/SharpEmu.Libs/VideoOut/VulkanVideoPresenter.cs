@@ -170,6 +170,73 @@ internal static unsafe class VulkanVideoPresenter
     internal static bool IsPersistentPipelineCacheSizeAllowed(long length) =>
         length >= 0 && length <= MaxPersistentPipelineCacheBytes;
 
+    internal static bool TryConvertGuestImageToRgb(
+        Format format,
+        uint width,
+        uint height,
+        ReadOnlySpan<byte> bytes,
+        out byte[] rgb)
+    {
+        rgb = [];
+        var pixelCount64 = (ulong)width * height;
+        if (pixelCount64 > int.MaxValue / 4)
+        {
+            return false;
+        }
+
+        var pixelCount = (int)pixelCount64;
+        if (bytes.Length != pixelCount * 4)
+        {
+            return false;
+        }
+        if (format is not (
+                Format.R8G8B8A8Uint or
+                Format.R8G8B8A8Sint or
+                Format.R8G8B8A8Unorm or
+                Format.A2R10G10B10UnormPack32 or
+                Format.A2B10G10R10UnormPack32))
+        {
+            return false;
+        }
+
+        rgb = new byte[checked(pixelCount * 3)];
+        for (var pixel = 0; pixel < pixelCount; pixel++)
+        {
+            var sourceOffset = pixel * 4;
+            var destinationOffset = pixel * 3;
+            if (format is
+                Format.A2R10G10B10UnormPack32 or
+                Format.A2B10G10R10UnormPack32)
+            {
+                var packed = BinaryPrimitives.ReadUInt32LittleEndian(
+                    bytes.Slice(sourceOffset, 4));
+                var low = packed & 0x3FF;
+                var green = packed >> 10 & 0x3FF;
+                var high = packed >> 20 & 0x3FF;
+                var red = format == Format.A2R10G10B10UnormPack32
+                    ? high
+                    : low;
+                var blue = format == Format.A2R10G10B10UnormPack32
+                    ? low
+                    : high;
+                rgb[destinationOffset] = Unorm10ToByte(red);
+                rgb[destinationOffset + 1] = Unorm10ToByte(green);
+                rgb[destinationOffset + 2] = Unorm10ToByte(blue);
+            }
+            else
+            {
+                rgb[destinationOffset] = bytes[sourceOffset];
+                rgb[destinationOffset + 1] = bytes[sourceOffset + 1];
+                rgb[destinationOffset + 2] = bytes[sourceOffset + 2];
+            }
+        }
+
+        return true;
+    }
+
+    private static byte Unorm10ToByte(uint value) =>
+        (byte)((value * 255 + 511) / 1023);
+
     internal static bool ShouldShowStandaloneWindow(string? headless) =>
         !string.Equals(headless, "1", StringComparison.Ordinal);
 
@@ -14909,36 +14976,13 @@ internal static unsafe class VulkanVideoPresenter
         private static bool TryConvertGuestImageToRgb(
             GuestImageResource image,
             ReadOnlySpan<byte> bytes,
-            out byte[] rgb)
-        {
-            rgb = [];
-            if (image.Format is not (
-                    Format.R8G8B8A8Uint or
-                    Format.R8G8B8A8Sint or
-                    Format.R8G8B8A8Unorm))
-            {
-                return false;
-            }
-
-            var pixelCount = checked(
-                (int)((ulong)image.Width * image.Height));
-            if (bytes.Length != checked(pixelCount * 4))
-            {
-                return false;
-            }
-
-            rgb = new byte[checked(pixelCount * 3)];
-            for (var pixel = 0; pixel < pixelCount; pixel++)
-            {
-                var sourceOffset = pixel * 4;
-                var destinationOffset = pixel * 3;
-                rgb[destinationOffset] = bytes[sourceOffset];
-                rgb[destinationOffset + 1] = bytes[sourceOffset + 1];
-                rgb[destinationOffset + 2] = bytes[sourceOffset + 2];
-            }
-
-            return true;
-        }
+            out byte[] rgb) =>
+            VulkanVideoPresenter.TryConvertGuestImageToRgb(
+                image.Format,
+                image.Width,
+                image.Height,
+                bytes,
+                out rgb);
 
         // Metal cannot blend into integer render targets or 32-bit-per-channel
         // float targets (unsupported on Apple-family GPUs). Enabling blend on
