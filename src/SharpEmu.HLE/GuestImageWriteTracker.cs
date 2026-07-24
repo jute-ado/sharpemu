@@ -25,6 +25,9 @@ public static unsafe class GuestImageWriteTracker
     private const int ClockMonotonicRaw = 4;
     private const uint PageReadOnly = 0x02;
     private const uint PageReadWrite = 0x04;
+    private const uint MemCommit = 0x1000;
+    private const uint MemReserve = 0x2000;
+    private const uint MemRelease = 0x8000;
     private static readonly ulong PageSize = checked((ulong)Environment.SystemPageSize);
     private static readonly ulong PageMask = PageSize - 1;
 
@@ -112,6 +115,20 @@ public static unsafe class GuestImageWriteTracker
         uint newProtection,
         out uint oldProtection);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern nint VirtualAlloc(
+        nint address,
+        nuint length,
+        uint allocationType,
+        uint protection);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool VirtualFree(
+        nint address,
+        nuint length,
+        uint freeType);
+
     [DllImport("libc", EntryPoint = "clock_gettime", SetLastError = false)]
     private static extern int ClockGetTime(int clockId, Timespec* time);
 
@@ -139,6 +156,46 @@ public static unsafe class GuestImageWriteTracker
     public static bool Enabled => _enabled;
 
     /// <summary>
+    /// Allocates memory suitable for page protection. Windows receives a
+    /// dedicated virtual-memory reservation so protection never covers a
+    /// shared CRT heap segment.
+    /// </summary>
+    internal static nint AllocateProtectionPages(nuint byteCount)
+    {
+        if (byteCount == 0)
+        {
+            return 0;
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            return VirtualAlloc(
+                0,
+                byteCount,
+                MemCommit | MemReserve,
+                PageReadWrite);
+        }
+
+        return (nint)NativeMemory.AlignedAlloc(byteCount, checked((nuint)PageSize));
+    }
+
+    internal static void FreeProtectionPages(nint allocation)
+    {
+        if (allocation == 0)
+        {
+            return;
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            _ = VirtualFree(allocation, 0, MemRelease);
+            return;
+        }
+
+        NativeMemory.AlignedFree((void*)allocation);
+    }
+
+    /// <summary>
     /// Exercises the fault-handling path once outside signal context so every
     /// branch is JIT-compiled (and, under Rosetta 2, translated) before a real
     /// fault arrives — a cold signal path is silently never entered there.
@@ -151,15 +208,15 @@ public static unsafe class GuestImageWriteTracker
         }
 
         var nativePageSize = checked((nuint)PageSize);
-        var scratch = NativeMemory.AlignedAlloc(nativePageSize, nativePageSize);
-        if (scratch is null)
+        var scratch = AllocateProtectionPages(nativePageSize);
+        if (scratch == 0)
         {
             return;
         }
 
         try
         {
-            NativeMemory.Clear(scratch, nativePageSize);
+            NativeMemory.Clear((void*)scratch, nativePageSize);
             // Warm the timestamp P/Invoke used by the signal-safe scalar
             // capture path before a real protected-page write reaches it.
             _ = GetMonotonicNanoseconds();
@@ -171,7 +228,7 @@ public static unsafe class GuestImageWriteTracker
         }
         finally
         {
-            NativeMemory.AlignedFree(scratch);
+            FreeProtectionPages(scratch);
         }
     }
 
