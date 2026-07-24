@@ -29,6 +29,7 @@ public static class TestLabProbe
             "guest_image_write_capture",
             "presented_image_capture",
             "multi_presented_image_capture",
+            "presented_frame_timing_trace",
             "structured_report",
             "video_out_fingerprint"
           ]

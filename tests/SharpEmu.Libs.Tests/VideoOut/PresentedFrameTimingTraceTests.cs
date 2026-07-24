@@ -17,7 +17,7 @@ public sealed class PresentedFrameTimingTraceTests : IDisposable
 
     [Theory]
     [InlineData("100", "31", 100, 31)]
-    [InlineData("0", "1000001", 0, 1_000_001)]
+    [InlineData("1", "1000001", 1, 1_000_001)]
     public void ParsesBoundedTraceWindow(
         string start,
         string count,
@@ -38,6 +38,7 @@ public sealed class PresentedFrameTimingTraceTests : IDisposable
     [Theory]
     [InlineData(null, "1", "2")]
     [InlineData("trace.jsonl", "-1", "2")]
+    [InlineData("trace.jsonl", "0", "2")]
     [InlineData("trace.jsonl", "1", "1")]
     [InlineData("trace.jsonl", "1", "1000002")]
     [InlineData("trace.jsonl", "one", "2")]
