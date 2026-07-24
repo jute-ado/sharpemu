@@ -4,6 +4,7 @@
 using SharpEmu.HLE;
 using SharpEmu.HLE.Host;
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 
@@ -11,8 +12,17 @@ namespace SharpEmu.Libs.Audio;
 
 public static class AudioOutExports
 {
+    private const int AudioOutOutputParamSize = 16;
+    private const int AudioOutMaximumOutputCount = 25;
+
+    internal const int AudioOutErrorInvalidPort = unchecked((int)0x80260003);
+    internal const int AudioOutErrorInvalidPointer = unchecked((int)0x80260004);
+    internal const int AudioOutErrorPortFull = unchecked((int)0x80260005);
+    internal const int AudioOutErrorInvalidSize = unchecked((int)0x80260006);
+
     private static readonly ConcurrentDictionary<int, PortState> Ports = new();
     private static int _nextPortHandle;
+    private static Func<uint, IHostAudioStream?>? _streamFactoryForTests;
 
     // Diagnostic: confirm sceAudioOutOutput is actually called and whether the
     // guest submits real samples or silence. Gated so it costs nothing when off.
@@ -59,6 +69,7 @@ public static class AudioOutExports
         public bool IsFloat { get; }
         public int BufferByteLength { get; }
         public IHostAudioStream? Backend { get; }
+        public object SubmissionGate { get; } = new();
         public volatile float Volume = 1.0f;
 
         public void PaceSilence()
@@ -84,7 +95,24 @@ public static class AudioOutExports
             }
         }
 
-        public void Dispose() => Backend?.Dispose();
+        public void Dispose()
+        {
+            lock (SubmissionGate)
+            {
+                Backend?.Dispose();
+            }
+        }
+    }
+
+    private readonly record struct OutputDescriptor(int Handle, ulong SourceAddress);
+
+    private struct ResolvedOutput
+    {
+        public int Handle;
+        public ulong SourceAddress;
+        public PortState Port;
+        public byte[]? HostBuffer;
+        public int HostBufferLength;
     }
 
     [SysAbiExport(
@@ -122,9 +150,18 @@ public static class AudioOutExports
         string backendName;
         try
         {
-            var audio = HostPlatform.Audio;
-            backend = audio.OpenStereoPcm16Stream(frequency);
-            backendName = audio.BackendName;
+            var streamFactory = Volatile.Read(ref _streamFactoryForTests);
+            if (streamFactory is not null)
+            {
+                backend = streamFactory(frequency);
+                backendName = "test";
+            }
+            else
+            {
+                var audio = HostPlatform.Audio;
+                backend = audio.OpenStereoPcm16Stream(frequency);
+                backendName = audio.BackendName;
+            }
         }
         catch (Exception exception)
         {
@@ -201,6 +238,48 @@ public static class AudioOutExports
     }
 
     [SysAbiExport(
+        Nid = "w3PdaSTSwGE",
+        ExportName = "sceAudioOutOutputs",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libSceAudioOut")]
+    public static int AudioOutOutputs(CpuContext ctx)
+    {
+        var parameterAddress = ctx[CpuRegister.Rdi];
+        var outputCount = unchecked((uint)ctx[CpuRegister.Rsi]);
+        if (outputCount == 0 || outputCount > AudioOutMaximumOutputCount)
+        {
+            return ctx.SetReturn(AudioOutErrorPortFull);
+        }
+
+        if (parameterAddress == 0)
+        {
+            return ctx.SetReturn(AudioOutErrorInvalidPointer);
+        }
+
+        var count = checked((int)outputCount);
+        Span<byte> parameterBytes =
+            stackalloc byte[AudioOutMaximumOutputCount * AudioOutOutputParamSize];
+        parameterBytes = parameterBytes[..checked(count * AudioOutOutputParamSize)];
+        if (!ctx.Memory.TryRead(parameterAddress, parameterBytes))
+        {
+            return ctx.SetReturn(AudioOutErrorInvalidPointer);
+        }
+
+        Span<OutputDescriptor> descriptors = stackalloc OutputDescriptor[count];
+        for (var i = 0; i < count; i++)
+        {
+            var entry = parameterBytes.Slice(
+                i * AudioOutOutputParamSize,
+                AudioOutOutputParamSize);
+            descriptors[i] = new OutputDescriptor(
+                BinaryPrimitives.ReadInt32LittleEndian(entry),
+                BinaryPrimitives.ReadUInt64LittleEndian(entry[8..]));
+        }
+
+        return ctx.SetReturn(SubmitOutputs(ctx, descriptors));
+    }
+
+    [SysAbiExport(
         Nid = "QOQtbeDqsT4",
         ExportName = "sceAudioOutOutput",
         Target = Generation.Gen5,
@@ -224,59 +303,252 @@ public static class AudioOutExports
             return ctx.SetReturn(0);
         }
 
-        var buffer = ArrayPool<byte>.Shared.Rent(port.BufferByteLength);
-        try
+        lock (port.SubmissionGate)
         {
-            var source = buffer.AsSpan(0, port.BufferByteLength);
-            if (!ctx.Memory.TryRead(sourceAddress, source))
+            if (!Ports.TryGetValue(handle, out var current) ||
+                !ReferenceEquals(current, port))
             {
-                return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                return ctx.SetReturn(_shutdown
+                    ? 0
+                    : (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
             }
 
-            if (_traceOutput)
-            {
-                var n = Interlocked.Increment(ref _outputCount);
-                if (n <= 8 || n % 200 == 0)
-                {
-                    var peak = PeakAmplitude(source, port.IsFloat, port.BytesPerSample);
-                    Console.Error.WriteLine(
-                        $"[LOADER][TRACE] audioout.output#{n} handle={handle} bytes={source.Length} ch={port.Channels} float={port.IsFloat} vol={port.Volume:F2} peak={peak:F4} backend={(port.Backend is null ? "none" : "coreaudio")}");
-                }
-            }
-
-            if (port.Backend is null)
-            {
-                port.PaceSilence();
-                return ctx.SetReturn(0);
-            }
-
-            var outputLength = checked((int)port.BufferLength * AudioPcmConversion.OutputFrameSize);
-            var output = ArrayPool<byte>.Shared.Rent(outputLength);
+            var buffer = ArrayPool<byte>.Shared.Rent(port.BufferByteLength);
             try
             {
-                AudioPcmConversion.ConvertToStereoPcm16(
-                    source,
-                    output.AsSpan(0, outputLength),
-                    checked((int)port.BufferLength),
-                    port.Channels,
-                    port.BytesPerSample,
-                    port.IsFloat,
-                    port.Volume);
-                if (!port.Backend.Submit(output.AsSpan(0, outputLength)))
+                var source = buffer.AsSpan(0, port.BufferByteLength);
+                if (!ctx.Memory.TryRead(sourceAddress, source))
+                {
+                    return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
+                TraceOutput(handle, port, source);
+
+                if (port.Backend is null)
                 {
                     port.PaceSilence();
+                    return ctx.SetReturn(0);
                 }
+
+                var outputLength = checked(
+                    (int)port.BufferLength * AudioPcmConversion.OutputFrameSize);
+                var output = ArrayPool<byte>.Shared.Rent(outputLength);
+                try
+                {
+                    AudioPcmConversion.ConvertToStereoPcm16(
+                        source,
+                        output.AsSpan(0, outputLength),
+                        checked((int)port.BufferLength),
+                        port.Channels,
+                        port.BytesPerSample,
+                        port.IsFloat,
+                        port.Volume);
+                    if (!port.Backend.Submit(output.AsSpan(0, outputLength)))
+                    {
+                        port.PaceSilence();
+                    }
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(output);
+                }
+
+                return ctx.SetReturn(0);
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(output);
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
+    }
+
+    private static int SubmitOutputs(
+        CpuContext ctx,
+        ReadOnlySpan<OutputDescriptor> descriptors)
+    {
+        var resolvedArray = ArrayPool<ResolvedOutput>.Shared.Rent(descriptors.Length);
+        var resolved = resolvedArray.AsSpan(0, descriptors.Length);
+        resolved.Clear();
+        Span<int> lockOrder = stackalloc int[descriptors.Length];
+        var acquiredLocks = 0;
+
+        try
+        {
+            uint bufferLength = 0;
+            for (var i = 0; i < descriptors.Length; i++)
+            {
+                var descriptor = descriptors[i];
+                for (var previous = 0; previous < i; previous++)
+                {
+                    if (resolved[previous].Handle == descriptor.Handle)
+                    {
+                        return AudioOutErrorInvalidPort;
+                    }
+                }
+
+                if (!Ports.TryGetValue(descriptor.Handle, out var port))
+                {
+                    return _shutdown ? 0 : AudioOutErrorInvalidPort;
+                }
+
+                if (i == 0)
+                {
+                    bufferLength = port.BufferLength;
+                }
+                else if (port.BufferLength != bufferLength)
+                {
+                    return AudioOutErrorInvalidSize;
+                }
+
+                resolved[i].Handle = descriptor.Handle;
+                resolved[i].SourceAddress = descriptor.SourceAddress;
+                resolved[i].Port = port;
+                lockOrder[i] = i;
             }
 
-            return ctx.SetReturn(0);
+            SortLocksByHandle(lockOrder, resolved);
+            for (; acquiredLocks < lockOrder.Length; acquiredLocks++)
+            {
+                Monitor.Enter(resolved[lockOrder[acquiredLocks]].Port.SubmissionGate);
+            }
+
+            for (var i = 0; i < resolved.Length; i++)
+            {
+                if (!Ports.TryGetValue(resolved[i].Handle, out var current) ||
+                    !ReferenceEquals(current, resolved[i].Port))
+                {
+                    return _shutdown ? 0 : AudioOutErrorInvalidPort;
+                }
+            }
+
+            for (var i = 0; i < resolved.Length; i++)
+            {
+                ref var output = ref resolved[i];
+                if (output.SourceAddress == 0)
+                {
+                    continue;
+                }
+
+                var sourceBuffer =
+                    ArrayPool<byte>.Shared.Rent(output.Port.BufferByteLength);
+                try
+                {
+                    var source = sourceBuffer.AsSpan(
+                        0,
+                        output.Port.BufferByteLength);
+                    if (!ctx.Memory.TryRead(output.SourceAddress, source))
+                    {
+                        return AudioOutErrorInvalidPointer;
+                    }
+
+                    TraceOutput(output.Handle, output.Port, source);
+                    output.HostBufferLength = checked(
+                        (int)output.Port.BufferLength *
+                        AudioPcmConversion.OutputFrameSize);
+                    output.HostBuffer =
+                        ArrayPool<byte>.Shared.Rent(output.HostBufferLength);
+                    AudioPcmConversion.ConvertToStereoPcm16(
+                        source,
+                        output.HostBuffer.AsSpan(0, output.HostBufferLength),
+                        checked((int)output.Port.BufferLength),
+                        output.Port.Channels,
+                        output.Port.BytesPerSample,
+                        output.Port.IsFloat,
+                        output.Port.Volume);
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(sourceBuffer);
+                }
+            }
+
+            PortState? pacingPort = null;
+            for (var i = 0; i < resolved.Length; i++)
+            {
+                ref var output = ref resolved[i];
+                if (output.HostBuffer is null)
+                {
+                    continue;
+                }
+
+                if (output.Port.Backend is null ||
+                    !output.Port.Backend.Submit(
+                        output.HostBuffer.AsSpan(0, output.HostBufferLength)))
+                {
+                    if (pacingPort is null ||
+                        HasLongerBufferDuration(output.Port, pacingPort))
+                    {
+                        pacingPort = output.Port;
+                    }
+                }
+            }
+
+            pacingPort?.PaceSilence();
+            return checked((int)resolved[0].Port.BufferLength);
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(buffer);
+            for (var i = acquiredLocks - 1; i >= 0; i--)
+            {
+                Monitor.Exit(resolved[lockOrder[i]].Port.SubmissionGate);
+            }
+
+            for (var i = 0; i < resolved.Length; i++)
+            {
+                if (resolved[i].HostBuffer is { } hostBuffer)
+                {
+                    ArrayPool<byte>.Shared.Return(hostBuffer);
+                }
+            }
+
+            ArrayPool<ResolvedOutput>.Shared.Return(
+                resolvedArray,
+                clearArray: true);
+        }
+    }
+
+    private static void SortLocksByHandle(
+        Span<int> lockOrder,
+        ReadOnlySpan<ResolvedOutput> resolved)
+    {
+        for (var i = 1; i < lockOrder.Length; i++)
+        {
+            var index = lockOrder[i];
+            var position = i;
+            while (position > 0 &&
+                   resolved[lockOrder[position - 1]].Handle >
+                   resolved[index].Handle)
+            {
+                lockOrder[position] = lockOrder[position - 1];
+                position--;
+            }
+
+            lockOrder[position] = index;
+        }
+    }
+
+    private static bool HasLongerBufferDuration(
+        PortState candidate,
+        PortState current) =>
+        (ulong)candidate.BufferLength * current.Frequency >
+        (ulong)current.BufferLength * candidate.Frequency;
+
+    private static void TraceOutput(
+        int handle,
+        PortState port,
+        ReadOnlySpan<byte> source)
+    {
+        if (!_traceOutput)
+        {
+            return;
+        }
+
+        var n = Interlocked.Increment(ref _outputCount);
+        if (n <= 8 || n % 200 == 0)
+        {
+            var peak = PeakAmplitude(source, port.IsFloat, port.BytesPerSample);
+            Console.Error.WriteLine(
+                $"[LOADER][TRACE] audioout.output#{n} handle={handle} bytes={source.Length} ch={port.Channels} float={port.IsFloat} vol={port.Volume:F2} peak={peak:F4} backend={(port.Backend is null ? "none" : "host")}");
         }
     }
 
@@ -370,8 +642,13 @@ public static class AudioOutExports
         DisposeAllPorts();
         Interlocked.Exchange(ref _nextPortHandle, 0);
         Interlocked.Exchange(ref _outputCount, 0);
+        Volatile.Write(ref _streamFactoryForTests, null);
         Volatile.Write(ref _shutdown, false);
     }
+
+    internal static void SetStreamFactoryForTests(
+        Func<uint, IHostAudioStream?>? streamFactory) =>
+        Volatile.Write(ref _streamFactoryForTests, streamFactory);
 
     private static void DisposeAllPorts()
     {

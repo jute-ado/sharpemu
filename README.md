@@ -197,7 +197,10 @@ accepted game expectations.
   output validation
 - audio session teardown that disposes host AudioOut streams, clears the
   presentation-shutdown state, resets AudioOut2, ACM, NGS2, and FMOD compatibility
-  registries, and restarts guest-visible audio handles between titles; AudioOut2
+  registries, and restarts guest-visible audio handles between titles; AudioOut
+  batch submission validates and stages every guest buffer before the first host
+  write, serializes overlapping port sets without deadlocks, and paces a failed
+  multi-port batch only once; AudioOut2
   context and port attribute lists share capped, overflow-checked, exact-size
   descriptor reads, with context calls additionally validating live handles
 - media-player session teardown that terminates retained FFmpeg decoder processes,
