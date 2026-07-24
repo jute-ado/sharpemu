@@ -29,6 +29,12 @@ assistance is a development tool here, not evidence that a change is correct.
 The fork is kept synchronized with upstream while experimenting with a more
 test-driven workflow. Major downstream differences include:
 
+Game compatibility work can also use an external, local-only regression
+framework without placing commercial games or game-derived artifacts in this
+repository. Contributors and AI agents should read
+[the Emulator Test Lab workflow](docs/emulator-test-lab.md) before changing
+accepted game expectations.
+
 - broader regression coverage for CPU execution, memory, loading, HLE, shaders,
   Vulkan, and compatibility milestones
 - synthetic guest programs and executable shader-conformance workloads that
