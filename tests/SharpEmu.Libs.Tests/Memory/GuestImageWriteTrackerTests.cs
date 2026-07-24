@@ -25,10 +25,67 @@ public sealed unsafe class GuestImageWriteTrackerTests
     private const nuint TrackedByteCount = 4096;
     private const nuint HostPageAlignment = 16384;
 
+    [StructLayout(LayoutKind.Sequential)]
+    private readonly struct MemoryBasicInformation
+    {
+        public readonly nint BaseAddress;
+        public readonly nint AllocationBase;
+        public readonly uint AllocationProtect;
+        public readonly ushort PartitionId;
+        public readonly nuint RegionSize;
+        public readonly uint State;
+        public readonly uint Protect;
+        public readonly uint Type;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern nuint VirtualQuery(
+        nint address,
+        out MemoryBasicInformation information,
+        nuint length);
+
     private static ulong AllocateTrackedPages(out void* allocation)
     {
-        allocation = NativeMemory.AlignedAlloc(2 * HostPageAlignment, HostPageAlignment);
+        allocation = (void*)GuestImageWriteTracker.AllocateProtectionPages(
+            2 * HostPageAlignment);
         return (ulong)allocation;
+    }
+
+    private static void FreeTrackedPages(void* allocation) =>
+        GuestImageWriteTracker.FreeProtectionPages((nint)allocation);
+
+    [Fact]
+    public void ProtectionPagesUseDedicatedWindowsReservation()
+    {
+        if (!GuestImageWriteTracker.Enabled)
+        {
+            return;
+        }
+
+        var address = AllocateTrackedPages(out var allocation);
+        Assert.NotEqual(0UL, address);
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                Assert.NotEqual(
+                    0u,
+                    VirtualQuery(
+                        (nint)allocation,
+                        out var information,
+                        (nuint)Marshal.SizeOf<MemoryBasicInformation>()));
+                Assert.Equal((nint)allocation, information.AllocationBase);
+            }
+
+            GuestImageWriteTracker.Track(address, TrackedByteCount);
+            Assert.True(GuestImageWriteTracker.TryHandleWriteFault(address));
+            Assert.True(GuestImageWriteTracker.ConsumeDirty(address));
+        }
+        finally
+        {
+            GuestImageWriteTracker.Untrack(address);
+            FreeTrackedPages(allocation);
+        }
     }
 
     [Fact]
@@ -69,7 +126,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
         finally
         {
             GuestImageWriteTracker.Untrack(address);
-            NativeMemory.AlignedFree(allocation);
+            FreeTrackedPages(allocation);
         }
     }
 
@@ -100,7 +157,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
         finally
         {
             GuestImageWriteTracker.Untrack(address);
-            NativeMemory.AlignedFree(allocation);
+            FreeTrackedPages(allocation);
         }
     }
 
@@ -129,7 +186,7 @@ public sealed unsafe class GuestImageWriteTrackerTests
         finally
         {
             GuestImageWriteTracker.Untrack(address);
-            NativeMemory.AlignedFree(allocation);
+            FreeTrackedPages(allocation);
         }
     }
 
