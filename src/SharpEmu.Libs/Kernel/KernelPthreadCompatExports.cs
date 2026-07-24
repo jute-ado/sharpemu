@@ -57,6 +57,17 @@ public static class KernelPthreadCompatExports
         }
     }
 
+    internal static int PthreadOnceGateCount
+    {
+        get
+        {
+            lock (_stateGate)
+            {
+                return _onceGates.Count;
+            }
+        }
+    }
+
     private sealed class PthreadMutexState
     {
         public ulong OwnerThreadId { get; set; }
@@ -679,6 +690,7 @@ public static class KernelPthreadCompatExports
                 }
 
                 Monitor.PulseAll(gate);
+                RemovePthreadOnceGate(onceAddress, gate);
             }
         }
 
@@ -1986,6 +1998,18 @@ public static class KernelPthreadCompatExports
             }
 
             return gate;
+        }
+    }
+
+    private static void RemovePthreadOnceGate(ulong onceAddress, object gate)
+    {
+        lock (_stateGate)
+        {
+            if (_onceGates.TryGetValue(onceAddress, out var currentGate) &&
+                ReferenceEquals(currentGate, gate))
+            {
+                _onceGates.Remove(onceAddress);
+            }
         }
     }
 
