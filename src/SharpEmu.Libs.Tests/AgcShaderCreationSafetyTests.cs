@@ -24,6 +24,12 @@ public sealed class AgcShaderCreationSafetyTests
     private const uint ShaderVersion = 0x18;
     private const uint ComputePgmLo = 0x20C;
     private const uint ComputePgmHi = 0x20D;
+    private const uint SpiShaderPgmLoVs = 0x48;
+    private const uint SpiShaderPgmHiVs = 0x49;
+    private const uint SpiShaderPgmLoHs = 0x108;
+    private const uint SpiShaderPgmHiHs = 0x109;
+    private const uint SpiShaderPgmRsrc1Hs = 0x10A;
+    private const uint SpiShaderPgmRsrc2Hs = 0x10B;
 
     [Fact]
     public void CreateShaderRelocatesPointersAndPatchesProgramRegisters()
@@ -134,18 +140,106 @@ public sealed class AgcShaderCreationSafetyTests
             AgcExports.CreateShader(context));
     }
 
+    [Fact]
+    public void CreateShaderFindsHullProgramRegistersAfterResourceEntries()
+    {
+        var registers = CreateRegisterTable(
+            (SpiShaderPgmRsrc1Hs, 0x1111_1111),
+            (SpiShaderPgmRsrc2Hs, 0x2222_2222),
+            (SpiShaderPgmLoHs, 0),
+            (SpiShaderPgmHiHs, 0));
+        var (_, context) = CreateFixture(
+            shaderType: 5,
+            registers: registers);
+        context[CpuRegister.Rdi] = DestinationAddress;
+
+        Assert.Equal(0, AgcExports.CreateShader(context));
+        Assert.True(context.TryReadUInt32(ShaderRegistersAddress + 4, out var resource1));
+        Assert.Equal(0x1111_1111U, resource1);
+        Assert.True(context.TryReadUInt32(ShaderRegistersAddress + 12, out var resource2));
+        Assert.Equal(0x2222_2222U, resource2);
+        Assert.True(context.TryReadUInt32(ShaderRegistersAddress + 20, out var programLo));
+        Assert.Equal((uint)((ShaderCodeAddress >> 8) & uint.MaxValue), programLo);
+        Assert.True(context.TryReadUInt32(ShaderRegistersAddress + 28, out var programHi));
+        Assert.Equal((uint)((ShaderCodeAddress >> 40) & 0xFF), programHi);
+    }
+
+    [Fact]
+    public void CreateShaderPatchesVertexProgramRegisters()
+    {
+        var registers = CreateRegisterTable(
+            (SpiShaderPgmLoVs, 0),
+            (SpiShaderPgmHiVs, 0));
+        var (_, context) = CreateFixture(
+            shaderType: 3,
+            registers: registers);
+
+        Assert.Equal(0, AgcExports.CreateShader(context));
+        Assert.True(context.TryReadUInt32(ShaderRegistersAddress + 4, out var programLo));
+        Assert.Equal((uint)((ShaderCodeAddress >> 8) & uint.MaxValue), programLo);
+        Assert.True(context.TryReadUInt32(ShaderRegistersAddress + 12, out var programHi));
+        Assert.Equal((uint)((ShaderCodeAddress >> 40) & 0xFF), programHi);
+    }
+
+    [Fact]
+    public void CreateShaderAcceptsHullResourceTableWithoutProgramRegisters()
+    {
+        var registers = CreateRegisterTable(
+            (SpiShaderPgmRsrc1Hs, 0x1111_1111),
+            (SpiShaderPgmRsrc2Hs, 0x2222_2222));
+        var (_, context) = CreateFixture(
+            shaderType: 5,
+            registers: registers);
+        context[CpuRegister.Rdi] = DestinationAddress;
+
+        Assert.Equal(0, AgcExports.CreateShader(context));
+        Assert.True(context.TryReadUInt64(DestinationAddress, out var shaderAddress));
+        Assert.Equal(ShaderHeaderAddress, shaderAddress);
+        Assert.True(context.TryReadUInt64(
+            ShaderHeaderAddress + ShaderCodeOffset,
+            out var codeAddress));
+        Assert.Equal(ShaderCodeAddress, codeAddress);
+        Assert.True(context.TryReadUInt32(ShaderRegistersAddress + 4, out var resource1));
+        Assert.Equal(0x1111_1111U, resource1);
+        Assert.True(context.TryReadUInt32(ShaderRegistersAddress + 12, out var resource2));
+        Assert.Equal(0x2222_2222U, resource2);
+    }
+
+    [Fact]
+    public void CreateShaderRejectsTruncatedDeclaredRegisterTable()
+    {
+        var registers = CreateRegisters();
+        var (_, context) = CreateFixture(
+            registers: registers,
+            registerCount: 3);
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT,
+            AgcExports.CreateShader(context));
+        Assert.True(context.TryReadUInt32(ShaderRegistersAddress + 4, out var programLo));
+        Assert.Equal(0U, programLo);
+        Assert.True(context.TryReadUInt32(ShaderRegistersAddress + 12, out var programHi));
+        Assert.Equal(0U, programHi);
+    }
+
     private static (FakeGuestMemory Memory, CpuContext Context) CreateFixture(
         ulong headerAddress = ShaderHeaderAddress,
         ulong cxRegistersRelativePointer = 0,
-        ulong outputSemanticsRelativePointer = 0)
+        ulong outputSemanticsRelativePointer = 0,
+        byte shaderType = 0,
+        byte[]? registers = null,
+        byte? registerCount = null)
     {
+        registers ??= CreateRegisters();
         var header = CreateHeader(
             headerAddress,
             cxRegistersRelativePointer,
-            outputSemanticsRelativePointer);
+            outputSemanticsRelativePointer,
+            shaderType,
+            registerCount ?? checked((byte)(registers.Length / sizeof(ulong))));
         var memory = new FakeGuestMemory();
         memory.AddRegion(headerAddress, header);
-        memory.AddRegion(ShaderRegistersAddress, CreateRegisters());
+        memory.AddRegion(ShaderRegistersAddress, registers);
         memory.AddRegion(DestinationAddress, new byte[sizeof(ulong)]);
         return (memory, CreateContext(memory, headerAddress));
     }
@@ -153,7 +247,9 @@ public sealed class AgcShaderCreationSafetyTests
     private static byte[] CreateHeader(
         ulong headerAddress,
         ulong cxRegistersRelativePointer = 0,
-        ulong outputSemanticsRelativePointer = 0)
+        ulong outputSemanticsRelativePointer = 0,
+        byte shaderType = 0,
+        byte registerCount = 2)
     {
         var header = new byte[ShaderHeaderSize];
         BinaryPrimitives.WriteUInt32LittleEndian(header, ShaderFileHeader);
@@ -169,16 +265,27 @@ public sealed class AgcShaderCreationSafetyTests
         BinaryPrimitives.WriteUInt64LittleEndian(
             header.AsSpan(ShaderOutputSemanticsOffset),
             outputSemanticsRelativePointer);
-        header[0x5A] = 0;
-        header[0x5C] = 2;
+        header[0x5A] = shaderType;
+        header[0x5C] = registerCount;
         return header;
     }
 
-    private static byte[] CreateRegisters()
+    private static byte[] CreateRegisters() =>
+        CreateRegisterTable(
+            (ComputePgmLo, 0),
+            (ComputePgmHi, 0));
+
+    private static byte[] CreateRegisterTable(
+        params (uint Offset, uint Value)[] entries)
     {
-        var registers = new byte[2 * sizeof(ulong)];
-        BinaryPrimitives.WriteUInt32LittleEndian(registers, ComputePgmLo);
-        BinaryPrimitives.WriteUInt32LittleEndian(registers.AsSpan(sizeof(ulong)), ComputePgmHi);
+        var registers = new byte[entries.Length * sizeof(ulong)];
+        for (var index = 0; index < entries.Length; index++)
+        {
+            var entry = registers.AsSpan(index * sizeof(ulong), sizeof(ulong));
+            BinaryPrimitives.WriteUInt32LittleEndian(entry, entries[index].Offset);
+            BinaryPrimitives.WriteUInt32LittleEndian(entry[sizeof(uint)..], entries[index].Value);
+        }
+
         return registers;
     }
 

@@ -81,8 +81,14 @@ public static partial class AgcExports
     private const uint RIndexCount = 0x1C;
     private const uint SpiShaderPgmLoPs = 0x8;
     private const uint SpiShaderPgmHiPs = 0x9;
+    private const uint SpiShaderPgmLoVs = 0x48;
+    private const uint SpiShaderPgmHiVs = 0x49;
     private const uint SpiShaderPgmLoEs = 0xC8;
     private const uint SpiShaderPgmHiEs = 0xC9;
+    private const uint SpiShaderPgmLoHs = 0x108;
+    private const uint SpiShaderPgmHiHs = 0x109;
+    private const uint SpiShaderPgmRsrc1Hs = 0x10A;
+    private const uint SpiShaderPgmRsrc2Hs = 0x10B;
     private const uint SpiShaderPgmLoLs = 0x148;
     private const uint SpiShaderPgmHiLs = 0x149;
     private const uint SpiShaderPgmLoGs = 0x8A;
@@ -199,7 +205,7 @@ public static partial class AgcExports
     private const ulong ShaderNumShRegistersOffset = 0x5C;
     private const ulong ShaderHeaderSize = 0x60;
     private const ulong ShaderUserDataPointersSize = 0x28;
-    private const ulong ShaderProgramRegistersSize = 0x10;
+    private const ulong ShaderRegisterEntrySize = sizeof(ulong);
     private const int MaxIndirectCommandBufferDepth = 8;
     private const ulong CommandBufferCursorUpOffset = 0x10;
     private const ulong CommandBufferCursorDownOffset = 0x18;
@@ -11999,15 +12005,8 @@ public static partial class AgcExports
             return false;
         }
 
-        if (!GuestAddress.IsRangeValid(
-                shRegistersAddress,
-                ShaderProgramRegistersSize))
-        {
-            return false;
-        }
-
-        if (!TryReadUInt32(ctx, shRegistersAddress, out var loRegister) ||
-            !TryReadUInt32(ctx, shRegistersAddress + 8, out var hiRegister))
+        var registerTableSize = (ulong)registerCount * ShaderRegisterEntrySize;
+        if (!GuestAddress.IsRangeValid(shRegistersAddress, registerTableSize))
         {
             return false;
         }
@@ -12017,7 +12016,9 @@ public static partial class AgcExports
             0 => ComputePgmLo,
             1 => SpiShaderPgmLoPs,
             2 or 6 => SpiShaderPgmLoEs,
+            3 => SpiShaderPgmLoVs,
             4 => SpiShaderPgmLoGs,
+            5 => SpiShaderPgmLoHs,
             7 => SpiShaderPgmLoLs,
             _ => 0u,
         };
@@ -12026,20 +12027,99 @@ public static partial class AgcExports
             0 => ComputePgmHi,
             1 => SpiShaderPgmHiPs,
             2 or 6 => SpiShaderPgmHiEs,
+            3 => SpiShaderPgmHiVs,
             4 => SpiShaderPgmHiGs,
+            5 => SpiShaderPgmHiHs,
             7 => SpiShaderPgmHiLs,
             _ => 0u,
         };
-        if (expectedLo == 0 || loRegister != expectedLo || hiRegister != expectedHi)
+
+        if (expectedLo == 0)
         {
-            TraceCreateShader(0, headerAddress, codeAddress, $"unexpected-registers type={shaderType} lo=0x{loRegister:X8} hi=0x{hiRegister:X8}");
+            TraceCreateShader(
+                0,
+                headerAddress,
+                codeAddress,
+                $"unsupported-register-table type={shaderType}");
+            return false;
+        }
+
+        ulong loEntryAddress = 0;
+        ulong hiEntryAddress = 0;
+        var hasHullRsrc1 = false;
+        var hasHullRsrc2 = false;
+        for (uint index = 0; index < registerCount; index++)
+        {
+            var entryAddress = shRegistersAddress + (index * ShaderRegisterEntrySize);
+            if (!TryReadUInt32(ctx, entryAddress, out var register))
+            {
+                return false;
+            }
+
+            if (register == expectedLo)
+            {
+                if (loEntryAddress != 0)
+                {
+                    TraceCreateShader(
+                        0,
+                        headerAddress,
+                        codeAddress,
+                        $"duplicate-pgm-lo type={shaderType} register=0x{register:X8}");
+                    return false;
+                }
+
+                loEntryAddress = entryAddress;
+            }
+            else if (register == expectedHi)
+            {
+                if (hiEntryAddress != 0)
+                {
+                    TraceCreateShader(
+                        0,
+                        headerAddress,
+                        codeAddress,
+                        $"duplicate-pgm-hi type={shaderType} register=0x{register:X8}");
+                    return false;
+                }
+
+                hiEntryAddress = entryAddress;
+            }
+
+            if (shaderType == 5)
+            {
+                hasHullRsrc1 |= register == SpiShaderPgmRsrc1Hs;
+                hasHullRsrc2 |= register == SpiShaderPgmRsrc2Hs;
+            }
+        }
+
+        if (loEntryAddress == 0 || hiEntryAddress == 0)
+        {
+            if (loEntryAddress == 0 &&
+                hiEntryAddress == 0 &&
+                shaderType == 5 &&
+                hasHullRsrc1 &&
+                hasHullRsrc2)
+            {
+                TraceCreateShader(
+                    0,
+                    headerAddress,
+                    codeAddress,
+                    "hull-program-registers-deferred");
+                return true;
+            }
+
+            TraceCreateShader(
+                0,
+                headerAddress,
+                codeAddress,
+                $"incomplete-program-registers type={shaderType} lo={loEntryAddress != 0} hi={hiEntryAddress != 0}");
             return false;
         }
 
         var loValue = (uint)((codeAddress >> 8) & 0xFFFF_FFFFUL);
         var hiValue = (uint)((codeAddress >> 40) & 0xFFUL);
-        return TryWriteUInt32(ctx, shRegistersAddress + sizeof(uint), loValue) &&
-               TryWriteUInt32(ctx, shRegistersAddress + 8 + sizeof(uint), hiValue);
+        return TryWriteUInt32(ctx, loEntryAddress + sizeof(uint), loValue) &&
+               TryWriteUInt32(ctx, hiEntryAddress + sizeof(uint), hiValue);
     }
 
     private static bool IsEsGeometryShaderType(byte shaderType) =>
