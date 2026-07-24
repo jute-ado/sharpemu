@@ -140,6 +140,9 @@ internal static unsafe class VulkanVideoPresenter
     internal const long MaxPersistentPipelineCacheBytes = 64L * 1024 * 1024;
 
     private static long _presentedGuestFrameCount;
+    private static readonly PresentedFrameTimingTrace?
+        _presentedFrameTimingTrace =
+            PresentedFrameTimingTrace.TryCreateFromEnvironment();
 
     internal static uint ResolveSwapchainExtentComponent(
         uint value,
@@ -939,7 +942,9 @@ internal static unsafe class VulkanVideoPresenter
         LoadPresentedGuestImageCaptureRequest()
     {
         var value = Environment.GetEnvironmentVariable(
-            "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME");
+                "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAMES")
+            ?? Environment.GetEnvironmentVariable(
+                "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME");
         if (PresentedGuestImageCaptureRequest.TryParse(value, out var request))
         {
             return request;
@@ -947,6 +952,7 @@ internal static unsafe class VulkanVideoPresenter
 
         Console.Error.WriteLine(
             "[LOADER][WARN] Invalid " +
+            "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAMES or " +
             "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME; " +
             "presented-image capture disabled.");
         return default;
@@ -14515,6 +14521,12 @@ internal static unsafe class VulkanVideoPresenter
 
             CheckSwapchainResult(presentResult, "vkQueuePresentKHR");
             recreateAfterPresent |= presentResult == Result.SuboptimalKhr;
+            if (presentedGuestImage is not null)
+            {
+                _presentedFrameTimingTrace?.Record(
+                    _directPresentationCount,
+                    PresentedFrameTimingTrace.GetMonotonicNanoseconds());
+            }
             VideoOutExports.ReportPresentedFrame();
             PerfOverlay.RecordPresent();
             if (_hostSurface is not null && !_firstHostFramePresented)

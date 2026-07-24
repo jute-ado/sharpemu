@@ -168,6 +168,8 @@ internal static class GameRegressionRunner
         startInfo.Environment.Remove(
             "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAME");
         startInfo.Environment.Remove(
+            "SHARPEMU_CAPTURE_PRESENTED_GUEST_IMAGE_FRAMES");
+        startInfo.Environment.Remove(
             "SHARPEMU_PRESENTED_GUEST_IMAGE_DUMP_DIR");
         startInfo.Environment.Remove("SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE");
         startInfo.Environment.Remove("SHARPEMU_GUEST_IMAGE_DUMP_DIR");

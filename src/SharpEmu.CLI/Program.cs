@@ -6,6 +6,7 @@ using SharpEmu.Core.Cpu;
 using SharpEmu.Core.Cpu.Native;
 using SharpEmu.Core.Loader;
 using SharpEmu.Core.Runtime;
+using SharpEmu.Core.Testing;
 using SharpEmu.GUI;
 using SharpEmu.HLE;
 using SharpEmu.Libs.VideoOut;
@@ -91,6 +92,12 @@ internal static partial class Program
         // itself to a console before the first write.
         EnsureCliConsole();
         UseUtf8ConsoleOutput();
+        if (TestLabProbe.IsRequest(args))
+        {
+            Console.Out.WriteLine(TestLabProbe.CreateJson());
+            return 0;
+        }
+
         if (isMitigatedChild && TryGetLogFileArgument(args, out var earlyLogFilePath))
         {
             TryEnableConsoleFileMirror(earlyLogFilePath);

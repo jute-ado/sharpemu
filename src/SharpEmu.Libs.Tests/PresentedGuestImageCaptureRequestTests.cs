@@ -20,12 +20,29 @@ public sealed class PresentedGuestImageCaptureRequestTests
         Assert.False(request.ShouldCapture(1));
     }
 
+    [Fact]
+    public void ParsesBoundedStrictlyIncreasingFrameSchedule()
+    {
+        Assert.True(
+            PresentedGuestImageCaptureRequest.TryParse(
+                "1,30,120",
+                out var request));
+
+        Assert.True(request.IsEnabled);
+        Assert.True(request.ShouldCapture(1));
+        Assert.True(request.ShouldCapture(30));
+        Assert.True(request.ShouldCapture(120));
+        Assert.False(request.ShouldCapture(31));
+    }
+
     [Theory]
     [InlineData("0")]
     [InlineData("-1")]
-    [InlineData("1,30")]
+    [InlineData("30,1")]
+    [InlineData("1,1")]
+    [InlineData("1,,30")]
     [InlineData("not-a-frame")]
-    public void RejectsInvalidOrMultipleFrameMilestones(string value)
+    public void RejectsInvalidFrameSchedules(string value)
     {
         Assert.False(
             PresentedGuestImageCaptureRequest.TryParse(
