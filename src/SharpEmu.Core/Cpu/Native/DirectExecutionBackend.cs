@@ -2153,7 +2153,7 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 		};
 	}
 
-	private static bool IsSafeLleLibcExport(string exportName)
+	internal static bool IsSafeLleLibcExport(string exportName)
 	{
 		return exportName switch
 		{
@@ -2170,12 +2170,11 @@ public sealed unsafe partial class DirectExecutionBackend : INativeCpuBackend, I
 			// fallback used to serve. Serving the wrong layout made the bundled printf engine
 			// render every Sys_Error message as an empty string (isdigit misfired during
 			// %-directive parsing) and made mcpp drop 'a'-'f' from identifiers ("texture" ->
-			// "txtur", the 0x80 bit reads as _BB/control there). _Getptolower/_Getptoupper
-			// already resolve to the bundled module because no HLE export shadows them; this
-			// keeps _Getpctype consistent with them. It is a pure accessor returning a pointer
-			// to a const table, so it is also the cheapest possible LLE call - important
-			// because parsers hit it once per input character.
-			"_Getpctype" => true,
+			// "txtur", the 0x80 bit reads as _BB/control there). Keep all three table
+			// accessors together: each is a pure, cheap lookup returning a const pointer.
+			"_Getpctype" or
+			"_Getptolower" or
+			"_Getptoupper" => true,
 			_ => false,
 		};
 	}

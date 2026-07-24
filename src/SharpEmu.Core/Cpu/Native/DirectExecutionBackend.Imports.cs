@@ -1133,11 +1133,11 @@ public sealed partial class DirectExecutionBackend
 			"mJ7aghmgvfc" or // sceKernelGetEventId
 			"23CPPI1tyBY" or // sceKernelGetEventFilter
 			"kwGyyjohI50" or // sceKernelGetEventData
-			// _Getpctype is a per-character ctype table lookup; the embedded mcpp preprocessor
-			// re-fetches the table pointer on every isdigit()/isalpha() check, so classifying a
-			// large input legitimately calls it hundreds of thousands of times back-to-back -
-			// real, finite work that would otherwise trip the loop guard.
-			"sUP1hBaouOw";   // _Getpctype
+			// Parsers can re-fetch the ctype tables for every classified or converted byte.
+			// Keep these scalar pointer accessors on the cheap leaf-import path.
+			"sUP1hBaouOw" or // _Getpctype
+			"1uJgoVq3bQU" or // _Getptolower
+			"rcQCUr0EaRU";   // _Getptoupper
 	}
 
 	private long NextImportDispatchIndex()

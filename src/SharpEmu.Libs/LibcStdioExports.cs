@@ -67,6 +67,8 @@ public static class LibcStdioExports
 
     private static readonly object _ctypeTableGate = new();
     private static nint _ctypeTableBase;
+    private static nint _ctypeLowerTableBase;
+    private static nint _ctypeUpperTableBase;
 
     [SysAbiExport(
         Nid = "xeYO4u7uyJ0",
@@ -861,6 +863,28 @@ public static class LibcStdioExports
         return (int)OrbisGen2Result.ORBIS_GEN2_OK;
     }
 
+    [SysAbiExport(
+        Nid = "1uJgoVq3bQU",
+        ExportName = "_Getptolower",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libc")]
+    public static int GetPtolower(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = unchecked((ulong)EnsureCtypeCaseTable(toUpper: false));
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
+    [SysAbiExport(
+        Nid = "rcQCUr0EaRU",
+        ExportName = "_Getptoupper",
+        Target = Generation.Gen4 | Generation.Gen5,
+        LibraryName = "libc")]
+    public static int GetPtoupper(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = unchecked((ulong)EnsureCtypeCaseTable(toUpper: true));
+        return (int)OrbisGen2Result.ORBIS_GEN2_OK;
+    }
+
     private static unsafe nint EnsureCtypeTable()
     {
         lock (_ctypeTableGate)
@@ -883,6 +907,50 @@ public static class LibcStdioExports
             _ctypeTableBase = storage - (CtypeTableLowerBound * sizeof(ushort));
             return _ctypeTableBase;
         }
+    }
+
+    private static unsafe nint EnsureCtypeCaseTable(bool toUpper)
+    {
+        lock (_ctypeTableGate)
+        {
+            ref var tableBase = ref toUpper
+                ? ref _ctypeUpperTableBase
+                : ref _ctypeLowerTableBase;
+            if (tableBase != 0)
+            {
+                return tableBase;
+            }
+
+            var storage = Marshal.AllocHGlobal(CtypeTableEntryCount * sizeof(short));
+            var entries = new Span<short>((void*)storage, CtypeTableEntryCount);
+            for (var i = 0; i < CtypeTableEntryCount; i++)
+            {
+                var c = i + CtypeTableLowerBound;
+                entries[i] = ComputeCtypeCaseMapping(c, toUpper);
+            }
+
+            // Dinkumware indexes these tables with signed chars as well as EOF (-1).
+            tableBase = storage - (CtypeTableLowerBound * sizeof(short));
+            return tableBase;
+        }
+    }
+
+    private static short ComputeCtypeCaseMapping(int c, bool toUpper)
+    {
+        if (c == -1)
+        {
+            return -1;
+        }
+
+        if (c is >= 0 and <= 0x7F)
+        {
+            var character = (char)c;
+            return unchecked((short)(toUpper
+                ? char.ToUpperInvariant(character)
+                : char.ToLowerInvariant(character)));
+        }
+
+        return unchecked((short)(c & 0xFF));
     }
 
     private static ushort ComputeCtypeFlags(int c)
