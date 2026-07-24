@@ -9056,18 +9056,30 @@ public static partial class KernelMemoryCompatExports
     {
         if (fd < 0 || bufferAddress == 0 || requested < 512)
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT;
+            return ctx.SetReturn(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
         }
 
         OpenDirectory? directory;
+        bool isKnownNonDirectory;
         lock (_fdGate)
         {
             _openDirectories.TryGetValue(fd, out directory);
+            isKnownNonDirectory = directory is null &&
+                (_openFiles.ContainsKey(fd) ||
+                 _openRandomDevices.ContainsKey(fd));
         }
 
         if (directory is null)
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+            var error = isKnownNonDirectory
+                ? OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT
+                : OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND;
+            LogIoTrace(
+                "getdents",
+                $"fd:{fd}",
+                $"result={(isKnownNonDirectory ? "not_directory" : "badfd")}");
+            return ctx.SetReturn(error);
         }
 
         var currentIndex = directory.NextIndex;
@@ -9076,9 +9088,14 @@ public static partial class KernelMemoryCompatExports
             if (basePointerAddress != 0 &&
                 !TryWriteUInt64Compat(ctx, basePointerAddress, (ulong)currentIndex))
             {
-                return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+                return ctx.SetReturn(
+                    OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
             }
 
+            LogIoTrace(
+                "getdents",
+                directory.Path,
+                $"fd={fd} result=eof entries={directory.Entries.Length}");
             ctx[CpuRegister.Rax] = 0;
             return (int)OrbisGen2Result.ORBIS_GEN2_OK;
         }
@@ -9101,13 +9118,15 @@ public static partial class KernelMemoryCompatExports
 
         if (!TryWriteCompat(ctx, bufferAddress, payload))
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            return ctx.SetReturn(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
         if (basePointerAddress != 0 &&
             !TryWriteUInt64Compat(ctx, basePointerAddress, (ulong)currentIndex))
         {
-            return (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT;
+            return ctx.SetReturn(
+                OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
         }
 
         directory.NextIndex = currentIndex + 1;
@@ -9117,11 +9136,15 @@ public static partial class KernelMemoryCompatExports
 
     private static string[] EnumerateDirectoryEntries(string hostPath)
     {
-        return Directory.EnumerateFileSystemEntries(hostPath)
+        // Host enumeration APIs omit the "." and ".." records returned by
+        // the guest kernel. Preserve them so an empty directory is not
+        // indistinguishable from EOF on its first getdents call.
+        var children = Directory.EnumerateFileSystemEntries(hostPath)
             .Select(Path.GetFileName)
             .Where(static name => !string.IsNullOrEmpty(name))
-            .OrderBy(static name => name, StringComparer.OrdinalIgnoreCase)
-            .ToArray()!;
+            .OrderBy(static name => name, StringComparer.OrdinalIgnoreCase);
+
+        return new[] { ".", ".." }.Concat(children).ToArray()!;
     }
 
     private static bool IsRandomDevicePath(string guestPath) =>
