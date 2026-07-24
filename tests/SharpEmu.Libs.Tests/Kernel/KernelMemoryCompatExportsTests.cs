@@ -3,6 +3,7 @@
 
 using SharpEmu.HLE;
 using SharpEmu.Libs.Kernel;
+using System.Buffers.Binary;
 using System.Globalization;
 using System.Text;
 using Xunit;
@@ -22,6 +23,10 @@ public sealed class KernelMemoryCompatExportsTests
     private const ulong AllocationOutAddress = GuestMemoryBase + 0x100;
     private const ulong SpanStartOutAddress = GuestMemoryBase + 0x108;
     private const ulong SpanSizeOutAddress = GuestMemoryBase + 0x110;
+    private const ulong TlsErrnoOffset = 0x40;
+    private const int Enoent = 2;
+    private const int Ebadf = 9;
+    private const int Efault = 14;
 
     [Fact]
     public void PosixStat_MissingFileReturnsMinusOne()
@@ -125,6 +130,129 @@ public sealed class KernelMemoryCompatExportsTests
         Assert.Equal(ulong.MaxValue, context[CpuRegister.Rax]);
     }
 
+    [Theory]
+    [InlineData("lseek")]
+    [InlineData("pread")]
+    [InlineData("pwrite")]
+    [InlineData("fsync")]
+    [InlineData("fdatasync")]
+    [InlineData("ftruncate")]
+    [InlineData("dup")]
+    [InlineData("dup2")]
+    [InlineData("fcntl")]
+    public void ExtendedPosixDescriptorOperations_BadDescriptorSetsEbadf(
+        string operation)
+    {
+        const ulong fsBase = GuestMemoryBase + 0x100;
+        const ulong bufferAddress = GuestMemoryBase + 0x200;
+        var memory = new FakeCpuMemory(GuestMemoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5)
+        {
+            FsBase = fsBase,
+        };
+        context[CpuRegister.Rdi] = 0x80020002;
+        context[CpuRegister.Rsi] = bufferAddress;
+        context[CpuRegister.Rdx] = 8;
+        context[CpuRegister.Rcx] = 0;
+
+        var result = operation switch
+        {
+            "lseek" => InvokeLseek(context),
+            "pread" => KernelMemoryCompatExports.PosixPread(context),
+            "pwrite" => KernelMemoryCompatExports.PosixPwrite(context),
+            "fsync" => KernelMemoryCompatExports.PosixFsync(context),
+            "fdatasync" => KernelMemoryCompatExports.PosixFdatasync(context),
+            "ftruncate" => InvokeFtruncate(context),
+            "dup" => KernelMemoryCompatExports.PosixDup(context),
+            "dup2" => KernelMemoryCompatExports.PosixDup2(context),
+            "fcntl" => InvokeFcntlDup(context),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation)),
+        };
+
+        Assert.Equal(-1, result);
+        Assert.Equal(ulong.MaxValue, context[CpuRegister.Rax]);
+        Assert.Equal(Ebadf, ReadErrno(memory, fsBase));
+    }
+
+    [Theory]
+    [InlineData("truncate")]
+    [InlineData("rename")]
+    public void ExtendedPosixPathOperations_MissingSourceSetsEnoent(
+        string operation)
+    {
+        const ulong fsBase = GuestMemoryBase + 0x100;
+        const ulong sourceAddress = GuestMemoryBase + 0x200;
+        const ulong destinationAddress = GuestMemoryBase + 0x300;
+        var memory = new FakeCpuMemory(GuestMemoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5)
+        {
+            FsBase = fsBase,
+        };
+        memory.WriteCString(
+            sourceAddress,
+            $"/__sharpemu_posix_missing__/{Guid.NewGuid():N}.bin");
+        memory.WriteCString(destinationAddress, "/download/replacement.bin");
+        context[CpuRegister.Rdi] = sourceAddress;
+        context[CpuRegister.Rsi] = operation == "rename" ? destinationAddress : 0;
+
+        var result = operation switch
+        {
+            "truncate" => KernelMemoryCompatExports.PosixTruncate(context),
+            "rename" => KernelMemoryCompatExports.PosixRename(context),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation)),
+        };
+
+        Assert.Equal(-1, result);
+        Assert.Equal(ulong.MaxValue, context[CpuRegister.Rax]);
+        Assert.Equal(Enoent, ReadErrno(memory, fsBase));
+    }
+
+    [Fact]
+    public void PosixRename_UnreadableSourceSetsEfault()
+    {
+        const ulong fsBase = GuestMemoryBase + 0x100;
+        var memory = new FakeCpuMemory(GuestMemoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5)
+        {
+            FsBase = fsBase,
+        };
+        context[CpuRegister.Rdi] = GuestMemoryBase + 0x2000;
+        context[CpuRegister.Rsi] = GuestMemoryBase + 0x3000;
+
+        var result = KernelMemoryCompatExports.PosixRename(context);
+
+        Assert.Equal(-1, result);
+        Assert.Equal(ulong.MaxValue, context[CpuRegister.Rax]);
+        Assert.Equal(Efault, ReadErrno(memory, fsBase));
+    }
+
+    [Fact]
+    public void RawKernelPread_BadDescriptorKeepsOrbisResult()
+    {
+        var memory = new FakeCpuMemory(GuestMemoryBase, 0x1000);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = 0x80020002;
+        context[CpuRegister.Rsi] = GuestMemoryBase + 0x200;
+        context[CpuRegister.Rdx] = 8;
+
+        var result = KernelMemoryCompatExports.KernelPread(context);
+
+        Assert.Equal((int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND, result);
+    }
+
+    [Fact]
+    public void OpenFailureMapping_DistinguishesPermissionFromMissingPath()
+    {
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_PERMISSION_DENIED,
+            KernelMemoryCompatExports.MapOpenExceptionToOrbisResult(
+                new UnauthorizedAccessException()));
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_NOT_FOUND,
+            KernelMemoryCompatExports.MapOpenExceptionToOrbisResult(
+                new IOException()));
+    }
+
     [Fact]
     public void Sprintf_ReadsVariadicDoubleFromXmmRegister()
     {
@@ -158,6 +286,33 @@ public sealed class KernelMemoryCompatExportsTests
         {
             CultureInfo.CurrentCulture = previousCulture;
         }
+    }
+
+    private static int InvokeLseek(CpuContext context)
+    {
+        context[CpuRegister.Rsi] = 0;
+        context[CpuRegister.Rdx] = 0;
+        return KernelMemoryCompatExports.PosixLseek(context);
+    }
+
+    private static int InvokeFtruncate(CpuContext context)
+    {
+        context[CpuRegister.Rsi] = 0;
+        return KernelMemoryCompatExports.PosixFtruncate(context);
+    }
+
+    private static int InvokeFcntlDup(CpuContext context)
+    {
+        context[CpuRegister.Rsi] = 0;
+        context[CpuRegister.Rdx] = 0;
+        return KernelMemoryCompatExports.PosixFcntl(context);
+    }
+
+    private static int ReadErrno(FakeCpuMemory memory, ulong fsBase)
+    {
+        Span<byte> bytes = stackalloc byte[sizeof(int)];
+        Assert.True(memory.TryRead(fsBase + TlsErrnoOffset, bytes));
+        return BinaryPrimitives.ReadInt32LittleEndian(bytes);
     }
 
     [Fact]
