@@ -96,6 +96,185 @@ public sealed class AprStreamingContractTests
     }
 
     [Fact]
+    public void ResolveFilepathsWithPrefix_ExportsExactMetadata()
+    {
+        ExportMetadataAssert.Exact(
+            "w5fcCG+t31g",
+            "sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes",
+            "libKernel",
+            Generation.Gen4 | Generation.Gen5);
+    }
+
+    [Fact]
+    public void ResolveFilepathsWithPrefix_CombinesAndRegistersRealFile()
+    {
+        const ulong memoryBase = 0x1_0000_0000;
+        const ulong prefixAddress = memoryBase + 0x80;
+        const ulong pathListAddress = memoryBase + 0x100;
+        const ulong pathAddress = memoryBase + 0x200;
+        const ulong idsAddress = memoryBase + 0x800;
+        const ulong sizesAddress = memoryBase + 0x880;
+        var directoryName = $"sharpemu-apr-prefix-{Guid.NewGuid():N}";
+        var fileName = "asset.bin";
+        var hostDirectory = Path.Combine(Path.GetTempPath(), directoryName);
+        var hostPath = Path.Combine(hostDirectory, fileName);
+        byte[] fileContents = [1, 2, 3, 4, 5, 6];
+        using var mount = new TemporaryGuestMount();
+
+        try
+        {
+            Directory.CreateDirectory(hostDirectory);
+            File.WriteAllBytes(hostPath, fileContents);
+            var memory = new FakeCpuMemory(memoryBase, 0x1000);
+            memory.WriteCString(prefixAddress, mount.PathFor(directoryName));
+            memory.WriteCString(pathAddress, fileName);
+            WriteUInt64(memory, pathListAddress, pathAddress);
+            var context = new CpuContext(memory, Generation.Gen5)
+            {
+                [CpuRegister.Rdi] = prefixAddress,
+                [CpuRegister.Rsi] = pathListAddress,
+                [CpuRegister.Rdx] = 1,
+                [CpuRegister.Rcx] = idsAddress,
+                [CpuRegister.R8] = sizesAddress,
+            };
+
+            Assert.Equal(
+                0,
+                KernelMemoryCompatExports
+                    .KernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(
+                        context));
+            var fileId = ReadUInt32(memory, idsAddress);
+            Assert.NotEqual(uint.MaxValue, fileId);
+            Assert.Equal(
+                (ulong)fileContents.Length,
+                ReadUInt64(memory, sizesAddress));
+
+            context[CpuRegister.Rdi] = fileId;
+            context[CpuRegister.Rsi] = memoryBase + 0x900;
+            Assert.Equal(
+                0,
+                KernelMemoryCompatExports.KernelAprGetFileStat(context));
+        }
+        finally
+        {
+            if (Directory.Exists(hostDirectory))
+            {
+                Directory.Delete(hostDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void ResolveFilepathsWithPrefix_UnreadablePrefixPreservesOutputs()
+    {
+        const ulong memoryBase = 0x1_0000_0000;
+        const ulong pathListAddress = memoryBase + 0x100;
+        const ulong pathAddress = memoryBase + 0x200;
+        const ulong idsAddress = memoryBase + 0x800;
+        const ulong sizesAddress = memoryBase + 0x880;
+        const ulong errorIndexAddress = memoryBase + 0x8F0;
+        var memory = new FakeCpuMemory(memoryBase, 0x1000);
+        memory.WriteCString(pathAddress, "asset.bin");
+        WriteUInt64(memory, pathListAddress, pathAddress);
+        WriteUInt32(memory, idsAddress, 0x1234_5678);
+        WriteUInt64(memory, sizesAddress, 0x1122_3344_5566_7788);
+        WriteUInt32(memory, errorIndexAddress, 0x8765_4321);
+        var context = new CpuContext(memory, Generation.Gen5)
+        {
+            [CpuRegister.Rdi] = memoryBase + 0x2000,
+            [CpuRegister.Rsi] = pathListAddress,
+            [CpuRegister.Rdx] = 1,
+            [CpuRegister.Rcx] = idsAddress,
+            [CpuRegister.R8] = sizesAddress,
+            [CpuRegister.R9] = errorIndexAddress,
+        };
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            KernelMemoryCompatExports
+                .KernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(
+                    context));
+        Assert.Equal(0x1234_5678u, ReadUInt32(memory, idsAddress));
+        Assert.Equal(
+            0x1122_3344_5566_7788UL,
+            ReadUInt64(memory, sizesAddress));
+        Assert.Equal(0x8765_4321u, ReadUInt32(memory, errorIndexAddress));
+    }
+
+    [Fact]
+    public void ResolveFilepathsWithPrefix_MissingFileReportsFailingEntry()
+    {
+        const ulong memoryBase = 0x1_0000_0000;
+        const ulong prefixAddress = memoryBase + 0x80;
+        const ulong pathListAddress = memoryBase + 0x100;
+        const ulong pathAddress = memoryBase + 0x200;
+        const ulong idsAddress = memoryBase + 0x800;
+        const ulong sizesAddress = memoryBase + 0x880;
+        const ulong errorIndexAddress = memoryBase + 0x8F0;
+        using var mount = new TemporaryGuestMount();
+        var memory = new FakeCpuMemory(memoryBase, 0x1000);
+        memory.WriteCString(
+            prefixAddress,
+            mount.PathFor($"missing-{Guid.NewGuid():N}"));
+        memory.WriteCString(pathAddress, "asset.bin");
+        WriteUInt64(memory, pathListAddress, pathAddress);
+        WriteUInt32(memory, idsAddress, 0x1234_5678);
+        WriteUInt64(memory, sizesAddress, 0x1122_3344_5566_7788);
+        WriteUInt32(memory, errorIndexAddress, 0x8765_4321);
+        var context = new CpuContext(memory, Generation.Gen5)
+        {
+            [CpuRegister.Rdi] = prefixAddress,
+            [CpuRegister.Rsi] = pathListAddress,
+            [CpuRegister.Rdx] = 1,
+            [CpuRegister.Rcx] = idsAddress,
+            [CpuRegister.R8] = sizesAddress,
+            [CpuRegister.R9] = errorIndexAddress,
+        };
+
+        Assert.Equal(
+            -1,
+            KernelMemoryCompatExports
+                .KernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(
+                    context));
+        Assert.Equal(ulong.MaxValue, context[CpuRegister.Rax]);
+        Assert.Equal(uint.MaxValue, ReadUInt32(memory, idsAddress));
+        Assert.Equal(0UL, ReadUInt64(memory, sizesAddress));
+        Assert.Equal(0u, ReadUInt32(memory, errorIndexAddress));
+    }
+
+    [Fact]
+    public void ResolveFilepathsWithPrefix_RejectsWrappedOutputSpan()
+    {
+        const ulong memoryBase = 0x1_0000_0000;
+        const ulong prefixAddress = memoryBase + 0x80;
+        const ulong pathListAddress = memoryBase + 0x100;
+        const ulong pathAddress = memoryBase + 0x200;
+        const ulong sizesAddress = memoryBase + 0x880;
+        var memory = new FakeCpuMemory(memoryBase, 0x1000);
+        memory.WriteCString(prefixAddress, "/app0");
+        memory.WriteCString(pathAddress, "asset.bin");
+        WriteUInt64(memory, pathListAddress, pathAddress);
+        WriteUInt64(memory, sizesAddress, 0x1122_3344_5566_7788);
+        var context = new CpuContext(memory, Generation.Gen5)
+        {
+            [CpuRegister.Rdi] = prefixAddress,
+            [CpuRegister.Rsi] = pathListAddress,
+            [CpuRegister.Rdx] = 1,
+            [CpuRegister.Rcx] = ulong.MaxValue - 2,
+            [CpuRegister.R8] = sizesAddress,
+        };
+
+        Assert.Equal(
+            (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT,
+            KernelMemoryCompatExports
+                .KernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(
+                    context));
+        Assert.Equal(
+            0x1122_3344_5566_7788UL,
+            ReadUInt64(memory, sizesAddress));
+    }
+
+    [Fact]
     public void ResolveFilepathsToIdsAndFileSizes_MissingFile_FailsFastWithErrorIndex()
     {
         const ulong memoryBase = 0x1_0000_0000;
