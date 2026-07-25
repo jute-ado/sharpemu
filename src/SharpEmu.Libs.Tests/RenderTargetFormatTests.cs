@@ -11,6 +11,28 @@ namespace SharpEmu.Libs.Tests;
 
 public sealed class RenderTargetFormatTests
 {
+    [Fact]
+    public void VulkanDecodesR16UnormTarget()
+    {
+        Assert.True(VulkanVideoPresenter.TryDecodeRenderTargetFormat(
+            dataFormat: 2,
+            numberType: 0,
+            out var result));
+        Assert.Equal(Format.R16Unorm, result.Format);
+        Assert.Equal(Gen5PixelOutputKind.Float, result.OutputKind);
+    }
+
+    [Fact]
+    public void MetalDecodesR16UnormTarget()
+    {
+        Assert.True(MetalGuestFormats.TryDecodeRenderTargetFormat(
+            dataFormat: 2,
+            numberType: 0,
+            out var result));
+        Assert.Equal(MtlPixelFormat.R16Unorm, result.Format);
+        Assert.Equal(Gen5PixelOutputKind.Float, result.OutputKind);
+    }
+
     [Theory]
     [InlineData(2u, 4u, Format.R16Uint, Gen5PixelOutputKind.Uint)]
     [InlineData(2u, 5u, Format.R16Sint, Gen5PixelOutputKind.Sint)]

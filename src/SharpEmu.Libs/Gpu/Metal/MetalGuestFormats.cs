@@ -218,6 +218,7 @@ internal static class MetalGuestFormats
     {
         var format = (dataFormat, numberType) switch
         {
+            (2, 0) => MtlPixelFormat.R16Unorm,
             (2, 4) => MtlPixelFormat.R16Uint,
             (2, 5) => MtlPixelFormat.R16Sint,
             (4, 4) => MtlPixelFormat.R32Uint,

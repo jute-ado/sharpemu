@@ -2494,6 +2494,7 @@ internal static unsafe class VulkanVideoPresenter
     {
         var format = (dataFormat, numberType) switch
         {
+            (2, 0) => Format.R16Unorm,
             (2, 4) => Format.R16Uint,
             (2, 5) => Format.R16Sint,
             (4, 4) => Format.R32Uint,
