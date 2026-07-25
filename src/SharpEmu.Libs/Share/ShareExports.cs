@@ -9,6 +9,7 @@ namespace SharpEmu.Libs.Share;
 public static class ShareExports
 {
     private const int MaxContentParamBytes = 4096;
+    private const int ShareErrorInvalidParameter = unchecked((int)0x8196_0002);
 
     private static int _initialized;
     private static string _contentParam = string.Empty;
@@ -34,6 +35,23 @@ public static class ShareExports
         Interlocked.Exchange(ref _initialized, 1);
 
         TraceShare($"initialize memory=0x{memorySize:X} priority={priority} affinity=0x{affinityMask:X}");
+        return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
+    }
+
+    [SysAbiExport(
+        Nid = "YBiIdcDPrxs",
+        ExportName = "sceShareFeaturePermit",
+        Target = Generation.Gen5,
+        LibraryName = "libSceShare")]
+    public static int ShareFeaturePermit(CpuContext ctx)
+    {
+        var featureFlags = (uint)ctx[CpuRegister.Rdi];
+        if (featureFlags == 0)
+        {
+            return ctx.SetReturn(ShareErrorInvalidParameter);
+        }
+
+        TraceShare($"feature_permit flags=0x{featureFlags:X8}");
         return ctx.SetReturn(OrbisGen2Result.ORBIS_GEN2_OK);
     }
 
