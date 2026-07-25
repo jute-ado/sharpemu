@@ -384,23 +384,27 @@ public sealed class KernelSyncPointerCompatibilityTests
         uint handle,
         ulong timeoutAddress,
         ulong threadHandle) =>
-        Task.Run(() =>
-        {
-            var context = new CpuContext(memory, Generation.Gen5);
-            context[CpuRegister.Rdi] = handle;
-            context[CpuRegister.Rsi] = 1;
-            context[CpuRegister.Rdx] = timeoutAddress;
-            var previousGuestThread =
-                GuestThreadExecution.EnterGuestThread(threadHandle);
-            try
+        Task.Factory.StartNew(
+            () =>
             {
-                return KernelSemaphoreCompatExports.KernelWaitSema(context);
-            }
-            finally
-            {
-                GuestThreadExecution.RestoreGuestThread(previousGuestThread);
-            }
-        });
+                var context = new CpuContext(memory, Generation.Gen5);
+                context[CpuRegister.Rdi] = handle;
+                context[CpuRegister.Rsi] = 1;
+                context[CpuRegister.Rdx] = timeoutAddress;
+                var previousGuestThread =
+                    GuestThreadExecution.EnterGuestThread(threadHandle);
+                try
+                {
+                    return KernelSemaphoreCompatExports.KernelWaitSema(context);
+                }
+                finally
+                {
+                    GuestThreadExecution.RestoreGuestThread(previousGuestThread);
+                }
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
 
     private static void AssertWaitBlocked(ulong threadHandle) =>
         Assert.True(SpinWait.SpinUntil(
