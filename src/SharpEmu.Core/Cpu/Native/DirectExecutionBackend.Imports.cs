@@ -986,6 +986,15 @@ public sealed partial class DirectExecutionBackend
 		var expectedDirectMemoryProbeMiss =
 			string.Equals(nid, "B+vc2AO2Zrc", StringComparison.Ordinal) &&
 			result == OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN;
+		var expectedAdaptiveMutexSelfLock =
+			string.Equals(nid, "9UK1vLZQft4", StringComparison.Ordinal) &&
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_DEADLOCK;
+		var expectedAprProbeMiss =
+			string.Equals(nid, "gEpBkcwxUjw", StringComparison.Ordinal) &&
+			resultValue == -1;
+		var expectedSaveDataMountMiss =
+			string.Equals(nid, "ZP4e7rlzOUk", StringComparison.Ordinal) &&
+			resultValue == unchecked((int)0x809F0008);
 		return expectedFileProbeMiss ||
 			expectedTimedWaitTimeout ||
 			expectedEqueueTimeout ||
@@ -995,7 +1004,10 @@ public sealed partial class DirectExecutionBackend
 			expectedUserServiceNoEvent ||
 			expectedPrivacyInvalidParameter ||
 			expectedPlayGoEnumerationEnd ||
-			expectedDirectMemoryProbeMiss;
+			expectedDirectMemoryProbeMiss ||
+			expectedAdaptiveMutexSelfLock ||
+			expectedAprProbeMiss ||
+			expectedSaveDataMountMiss;
 	}
 
 	private static bool ShouldLogExpectedImportResults() =>
