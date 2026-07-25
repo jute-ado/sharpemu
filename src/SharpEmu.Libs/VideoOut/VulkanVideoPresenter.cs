@@ -135,11 +135,20 @@ internal readonly record struct VulkanTextureImageShape(
     uint Depth,
     uint ArrayLayers);
 
+internal enum VulkanDetileSelfTestStatus
+{
+    NotRequested,
+    Running,
+    Passed,
+    Failed,
+}
+
 internal static unsafe class VulkanVideoPresenter
 {
     internal const long MaxPersistentPipelineCacheBytes = 64L * 1024 * 1024;
 
     private static long _presentedGuestFrameCount;
+    private static int _detileSelfTestStatus;
     private static readonly PresentedFrameTimingTrace?
         _presentedFrameTimingTrace =
             PresentedFrameTimingTrace.TryCreateFromEnvironment();
@@ -339,6 +348,10 @@ internal static unsafe class VulkanVideoPresenter
 
     internal static long PresentedGuestFrameCount =>
         Volatile.Read(ref _presentedGuestFrameCount);
+
+    internal static VulkanDetileSelfTestStatus DetileSelfTestStatus =>
+        (VulkanDetileSelfTestStatus)Volatile.Read(
+            ref _detileSelfTestStatus);
 
     internal static bool ShouldForceSolidFragmentOverride(
         bool isTitleDraw,
@@ -1070,6 +1083,9 @@ internal static unsafe class VulkanVideoPresenter
 
             _windowWidth = width;
             _windowHeight = height;
+            Volatile.Write(
+                ref _detileSelfTestStatus,
+                (int)VulkanDetileSelfTestStatus.NotRequested);
             _latestPresentation ??= _splashHidden
                 ? new Presentation(
                     CreateBlackFrame(width, height),
@@ -4151,12 +4167,38 @@ internal static unsafe class VulkanVideoPresenter
                 CreateSwapchain();
                 CreateCommandResources();
                 CreateGuestDrawResources();
+                if (Environment.GetEnvironmentVariable(
+                        "SHARPEMU_DETILE_SELFTEST") == "1")
+                {
+                    Volatile.Write(
+                        ref _detileSelfTestStatus,
+                        (int)VulkanDetileSelfTestStatus.Running);
+                    VulkanDetilePass.RunSelfTest(
+                        _vk,
+                        _device,
+                        _queue,
+                        _physicalDevice,
+                        _queueFamilyIndex);
+                    Volatile.Write(
+                        ref _detileSelfTestStatus,
+                        (int)VulkanDetileSelfTestStatus.Passed);
+                    Console.Error.WriteLine(
+                        "[DETILE-SELFTEST] PASS: Vulkan output matches " +
+                        "the CPU model.");
+                }
                 _vulkanReady = true;
                 Console.Error.WriteLine(
                     $"[LOADER][INFO] Vulkan VideoOut ready: {_extent.Width}x{_extent.Height}, format={_swapchainFormat}");
             }
             catch (Exception exception)
             {
+                if (DetileSelfTestStatus ==
+                    VulkanDetileSelfTestStatus.Running)
+                {
+                    Volatile.Write(
+                        ref _detileSelfTestStatus,
+                        (int)VulkanDetileSelfTestStatus.Failed);
+                }
                 _vulkanReady = false;
                 Console.Error.WriteLine($"[LOADER][WARN] Vulkan VideoOut disabled: {exception.Message}");
             }

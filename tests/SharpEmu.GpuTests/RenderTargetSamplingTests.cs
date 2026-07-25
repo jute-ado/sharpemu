@@ -67,6 +67,9 @@ public sealed class RenderTargetSamplingTests
         Environment.SetEnvironmentVariable(
             "SHARPEMU_GUEST_IMAGE_DUMP_DIR",
             captureDirectory);
+        Environment.SetEnvironmentVariable(
+            "SHARPEMU_DETILE_SELFTEST",
+            "1");
 
         try
         {
@@ -75,6 +78,9 @@ public sealed class RenderTargetSamplingTests
                 DestinationHeight);
             VulkanVideoPresenter.HideSplashScreen();
             AssertComputeBufferWriteback();
+            Assert.Equal(
+                VulkanDetileSelfTestStatus.Passed,
+                VulkanVideoPresenter.DetileSelfTestStatus);
 
             SubmitSolid(SourceAddress, red: 1f, green: 0f, blue: 0f);
             ComposeSourceTo(FirstDisplayAddress);
@@ -221,6 +227,9 @@ public sealed class RenderTargetSamplingTests
                 null);
             Environment.SetEnvironmentVariable(
                 "SHARPEMU_GUEST_IMAGE_DUMP_DIR",
+                null);
+            Environment.SetEnvironmentVariable(
+                "SHARPEMU_DETILE_SELFTEST",
                 null);
             if (presenterClosed)
             {
