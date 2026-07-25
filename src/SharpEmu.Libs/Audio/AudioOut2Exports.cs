@@ -19,6 +19,7 @@ public static class AudioOut2Exports
     private const uint MaxAttributeCount = 1024;
     private const uint DefaultQueueDepth = 4;
     private const uint DefaultNumGrains = 512;
+    private const int AudioOut2SystemStateSize = 0x40;
     private const int AudioOut2SpeakerInfoSize = 0x50;
     private const int AudioOut2ErrorNotReady = unchecked((int)0x80268008);
     private static readonly ConcurrentDictionary<ulong, ContextState> Contexts = new();
@@ -336,6 +337,28 @@ public static class AudioOut2Exports
         return ctx.Memory.TryWrite(stateAddress, state)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    [SysAbiExport(
+        Nid = "bkBN+CMLwRc",
+        ExportName = "sceAudioOut2GetSystemState",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2GetSystemState(CpuContext ctx)
+    {
+        var stateAddress = ctx[CpuRegister.Rdi];
+        if (stateAddress == 0)
+        {
+            return ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+        }
+
+        Span<byte> state = stackalloc byte[AudioOut2SystemStateSize];
+        state.Clear();
+        return ctx.Memory.TryWrite(stateAddress, state)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
 
     [SysAbiExport(
