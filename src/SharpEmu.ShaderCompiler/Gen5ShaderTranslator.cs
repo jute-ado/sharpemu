@@ -1032,6 +1032,8 @@ public static class Gen5ShaderTranslator
         0x2F => "VCvtPkrtzF16F32",
         0x30 => "VCvtPkU16U32",
         0x31 => "VCvtPkI16I32",
+        0x32 => "VAddF16",
+        0x35 => "VMulF16",
         _ => string.Empty,
     };
 

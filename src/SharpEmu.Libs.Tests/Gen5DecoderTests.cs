@@ -5787,6 +5787,52 @@ public sealed class Gen5DecoderTests
     }
 
     [Fact]
+    public void CompilesCompactVectorFloat16ArithmeticToSpirv()
+    {
+        // RDNA2 VOP2 encodings from AMD ISA section 12.7. The result updates
+        // the low half of the destination VGPR and preserves its high half.
+        var ctx = CreateContext(
+        [
+            0x64000501u, // v_add_f16_e32 v0, v1, v2
+            0x6A060B04u, // v_mul_f16_e32 v3, v4, v5
+            SEndpgm,
+        ]);
+        Assert.True(
+            Gen5ShaderTranslator.TryDecodeProgram(
+                ctx,
+                CodeAddress,
+                out var program,
+                out var decodeError),
+            decodeError);
+        Assert.Equal(
+            ["VAddF16", "VMulF16", "SEndpgm"],
+            program.Instructions.Select(instruction => instruction.Opcode));
+
+        var state = new Gen5ShaderState(program, [], Metadata: null);
+        Assert.True(
+            Gen5ShaderScalarEvaluator.TryEvaluate(
+                ctx,
+                state,
+                out var evaluation,
+                out var evaluationError),
+            evaluationError);
+        Assert.True(
+            Gen5SpirvTranslator.TryCompileComputeShader(
+                state,
+                evaluation,
+                localSizeX: 32,
+                localSizeY: 1,
+                localSizeZ: 1,
+                out var shader,
+                out var compileError),
+            compileError);
+        Assert.False(ContainsSpirvCapability(shader.Spirv, SpirvCapability.Float16));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FAdd));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.FMul));
+        Assert.True(ContainsSpirvOpcode(shader.Spirv, (ushort)SpirvOp.BitFieldInsert));
+    }
+
+    [Fact]
     public void CompilesVectorFloat16IntegerConversionsToSpirv()
     {
         // Encodings assembled with LLVM 18 llvm-mc for gfx1030 and verified

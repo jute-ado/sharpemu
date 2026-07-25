@@ -588,6 +588,16 @@ public static partial class Gen5SpirvTranslator
                 case "VAddF32":
                     result = EmitFloatBinary(instruction, SpirvOp.FAdd);
                     break;
+                case "VAddF16":
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        _module.AddInstruction(
+                            SpirvOp.FAdd,
+                            _floatType,
+                            GetFloat16Source(instruction, 0),
+                            GetFloat16Source(instruction, 1)));
+                    break;
                 case "VSubF32":
                     result = EmitFloatBinary(instruction, SpirvOp.FSub);
                     break;
@@ -596,6 +606,16 @@ public static partial class Gen5SpirvTranslator
                     break;
                 case "VMulF32":
                     result = EmitFloatBinary(instruction, SpirvOp.FMul);
+                    break;
+                case "VMulF16":
+                    result = EmitFloat16Result(
+                        instruction,
+                        destination,
+                        _module.AddInstruction(
+                            SpirvOp.FMul,
+                            _floatType,
+                            GetFloat16Source(instruction, 0),
+                            GetFloat16Source(instruction, 1)));
                     break;
                 case "VMulLegacyF32":
                 case "VMullitF32":
@@ -1912,17 +1932,23 @@ public static partial class Gen5SpirvTranslator
         {
             value = BitwiseAnd(value, UInt(0xFFFF));
 
-            if (instruction.Control is not Gen5Vop3Control control ||
-                (control.OpSelectMask & 8) == 0)
+            if (instruction.Control is Gen5Vop3Control control &&
+                (control.OpSelectMask & 8) != 0)
             {
-                // RDNA2 clears the unused upper half when writing the low half.
-                return value;
+                // A high-half write preserves the destination's low 16 bits.
+                return BitwiseOr(
+                    BitwiseAnd(LoadV(destination), UInt(0xFFFF)),
+                    ShiftLeftLogical(value, UInt(16)));
             }
 
-            // A high-half write preserves the destination's low 16 bits.
-            return BitwiseOr(
-                BitwiseAnd(LoadV(destination), UInt(0xFFFF)),
-                ShiftLeftLogical(value, UInt(16)));
+            // GFX10 preserves the unused high half for all 16-bit instructions.
+            return _module.AddInstruction(
+                SpirvOp.BitFieldInsert,
+                _uintType,
+                LoadV(destination),
+                value,
+                UInt(0),
+                UInt(16));
         }
 
         private uint EmitDivisionFixupF16(

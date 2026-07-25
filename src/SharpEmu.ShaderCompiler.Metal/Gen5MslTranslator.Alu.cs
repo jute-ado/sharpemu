@@ -144,9 +144,17 @@ public static partial class Gen5MslTranslator
 
                 // ---- float arithmetic ----
                 "VAddF32" => FloatResult(instruction, $"{F(instruction, 0)} + {F(instruction, 1)}"),
+                "VAddF16" => Float16Result(
+                    instruction,
+                    destination,
+                    $"{F16(instruction, 0)} + {F16(instruction, 1)}"),
                 "VSubF32" => FloatResult(instruction, $"{F(instruction, 0)} - {F(instruction, 1)}"),
                 "VSubrevF32" => FloatResult(instruction, $"{F(instruction, 1)} - {F(instruction, 0)}"),
                 "VMulF32" => FloatResult(instruction, $"{F(instruction, 0)} * {F(instruction, 1)}"),
+                "VMulF16" => Float16Result(
+                    instruction,
+                    destination,
+                    $"{F16(instruction, 0)} * {F16(instruction, 1)}"),
                 "VMinF32" => FloatResult(instruction, $"fmin({F(instruction, 0)}, {F(instruction, 1)})"),
                 "VMaxF32" => FloatResult(instruction, $"fmax({F(instruction, 0)}, {F(instruction, 1)})"),
                 // The decoder normalizes mk/ak literal placement, so every MAD/FMA
@@ -1569,6 +1577,65 @@ public static partial class Gen5MslTranslator
             }
 
             return expression;
+        }
+
+        /// <summary>Half-float view of the selected 16-bit source with vector modifiers.</summary>
+        private string F16(Gen5ShaderInstruction instruction, int sourceIndex)
+        {
+            var raw = RawSource(instruction, sourceIndex, applySdwaIntegerModifiers: false);
+            var highHalf = instruction.Control is Gen5Vop3Control control &&
+                (control.OpSelectMask & (1u << sourceIndex)) != 0;
+            var shift = highHalf ? 16 : 0;
+            var expression =
+                $"(float)as_type<half>((ushort)((({raw}) >> {shift}) & 0xFFFFu))";
+            var (absoluteMask, negateMask) = instruction.Control switch
+            {
+                Gen5Vop3Control modifiers => (modifiers.AbsoluteMask, modifiers.NegateMask),
+                Gen5SdwaControl modifiers => (modifiers.AbsoluteMask, modifiers.NegateMask),
+                Gen5DppControl modifiers => (modifiers.AbsoluteMask, modifiers.NegateMask),
+                _ => (0u, 0u),
+            };
+            if ((absoluteMask & (1u << sourceIndex)) != 0)
+            {
+                expression = $"fabs({expression})";
+            }
+
+            if ((negateMask & (1u << sourceIndex)) != 0)
+            {
+                expression = $"(-{expression})";
+            }
+
+            return expression;
+        }
+
+        /// <summary>
+        /// Rounds a float expression to half and preserves the unselected GFX10 VGPR half.
+        /// </summary>
+        private string Float16Result(
+            Gen5ShaderInstruction instruction,
+            uint destination,
+            string expression)
+        {
+            var control = instruction.Control as Gen5Vop3Control;
+            expression = (control?.OutputModifier ?? 0) switch
+            {
+                1 => $"(({expression}) * 2.0f)",
+                2 => $"(({expression}) * 4.0f)",
+                3 => $"(({expression}) * 0.5f)",
+                _ => expression,
+            };
+            if (control?.Clamp == true)
+            {
+                expression = $"clamp({expression}, 0.0f, 1.0f)";
+            }
+
+            var packed = $"(uint)as_type<ushort>(half({expression}))";
+            if (((control?.OpSelectMask ?? 0) & 8) != 0)
+            {
+                return $"((v[{destination}] & 0x0000FFFFu) | (({packed}) << 16))";
+            }
+
+            return $"((v[{destination}] & 0xFFFF0000u) | ({packed}))";
         }
 
         /// <summary>
