@@ -4,6 +4,7 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
 using SharpEmu.HLE;
+using SharpEmu.Libs.Agc;
 using SharpEmu.Libs.Gpu;
 using SharpEmu.Libs.VideoOut;
 using SharpEmu.ShaderCompiler;
@@ -63,7 +64,7 @@ public sealed class RenderTargetSamplingTests
         Directory.CreateDirectory(captureDirectory);
         Environment.SetEnvironmentVariable(
             "SHARPEMU_CAPTURE_GUEST_IMAGE_WRITE",
-            $"0x{FirstDisplayAddress:X}@14");
+            $"0x{FirstDisplayAddress:X}@15");
         Environment.SetEnvironmentVariable(
             "SHARPEMU_GUEST_IMAGE_DUMP_DIR",
             captureDirectory);
@@ -150,6 +151,7 @@ public sealed class RenderTargetSamplingTests
             var capturePath = WaitForCapture(
                 captureDirectory,
                 FirstDisplayAddress);
+            Assert.Equal(2, VulkanVideoPresenter.GpuDetileUploadCount);
             var pixels = File.ReadAllBytes(capturePath);
             Assert.Equal(
                 checked((int)(DestinationWidth * DestinationHeight * 4)),
@@ -973,89 +975,152 @@ public sealed class RenderTargetSamplingTests
                 texturePixels[offset + 3] = 255;
             }
         }
+        var detile = GnmTiling.GetDetileParams(
+            swizzleMode: 27,
+            bytesPerElement: 4,
+            elementsWide: checked((int)textureWidth),
+            elementsHigh: checked((int)textureHeight));
+        var initialPixels = new byte[texturePixels.Length];
+        for (var offset = 0; offset < initialPixels.Length; offset += 4)
+        {
+            initialPixels[offset + 2] = 255;
+            initialPixels[offset + 3] = 255;
+        }
 
-        VulkanVideoPresenter.SubmitOffscreenTranslatedDraw(
-            fragmentSpirv,
-            [
-                new GuestDrawTexture(
-                    CpuTextureAddress,
-                    textureWidth,
-                    textureHeight,
-                    Rgba8TextureDataFormat,
-                    UnormNumberType,
-                    texturePixels,
-                    IsFallback: false,
-                    IsStorage: false,
-                    Pitch: textureWidth,
-                    Sampler: new GuestSampler(
-                        Word0: 0,
-                        Word1: 0x00FF_F000,
-                        Word2: 0x0900_0000,
-                        Word3: 0)),
-            ],
-            globalMemoryBuffers,
-            attributeCount: 1,
-            new GuestRenderTarget(
-                destinationAddress,
-                DestinationWidth,
-                DestinationHeight,
-                Rgba8DataFormat,
-                UnormNumberType),
-            vertexSpirv,
-            vertexCount: 6,
-            primitiveType: 4,
-            indexBuffer: new GuestIndexBuffer(
+        foreach (var linearPixels in new[] { initialPixels, texturePixels })
+        {
+            var tiledPixels = CreateTiledPixels(linearPixels, detile);
+            VulkanVideoPresenter.SubmitOffscreenTranslatedDraw(
+                fragmentSpirv,
                 [
-                    0, 0, 0, 0,
-                    1, 0, 0, 0,
-                    2, 0, 0, 0,
-                    1, 0, 0, 0,
-                    2, 0, 0, 0,
-                    3, 0, 0, 0,
+                    new GuestDrawTexture(
+                        CpuTextureAddress,
+                        textureWidth,
+                        textureHeight,
+                        Rgba8TextureDataFormat,
+                        UnormNumberType,
+                        [],
+                        IsFallback: false,
+                        IsStorage: false,
+                        Pitch: textureWidth,
+                        Sampler: new GuestSampler(
+                            Word0: 0,
+                            Word1: 0x00FF_F000,
+                            Word2: 0x0900_0000,
+                            Word3: 0),
+                        TiledSource: tiledPixels,
+                        Detile: detile),
                 ],
-                Length: 24,
-                Is32Bit: true,
-                Pooled: false),
-            vertexBuffers:
-            [
-                CreateVertexBuffer(
-                    location: 0,
-                    baseAddress: 0x0043_0000,
-                    (0f, 1f),
-                    (1f, 1f),
-                    (0f, -1f),
-                    (1f, -1f)),
-                CreateVertexBuffer(
-                    location: 1,
-                    baseAddress: 0x0044_0000,
-                    (0f, 0f),
-                    (1f, 0f),
-                    (0f, 1f),
-                    (1f, 1f)),
-            ],
-            renderState: new GuestRenderState(
-                [
-                    new GuestBlendState(
-                        Enable: true,
-                        ColorSrcFactor: 4,
-                        ColorDstFactor: 5,
-                        ColorFunc: 0,
-                        AlphaSrcFactor: 4,
-                        AlphaDstFactor: 5,
-                        AlphaFunc: 0,
-                        SeparateAlphaBlend: true,
-                        WriteMask: 0xF),
-                ],
-                Scissor: null,
-                new GuestViewport(
-                    0,
-                    DestinationHeight,
+                globalMemoryBuffers,
+                attributeCount: 1,
+                new GuestRenderTarget(
+                    destinationAddress,
                     DestinationWidth,
-                    -DestinationHeight,
-                    0,
-                    1),
-                GuestRasterState.Default,
-                GuestDepthState.Default));
+                    DestinationHeight,
+                    Rgba8DataFormat,
+                    UnormNumberType),
+                vertexSpirv,
+                vertexCount: 6,
+                primitiveType: 4,
+                indexBuffer: new GuestIndexBuffer(
+                    [
+                        0, 0, 0, 0,
+                        1, 0, 0, 0,
+                        2, 0, 0, 0,
+                        1, 0, 0, 0,
+                        2, 0, 0, 0,
+                        3, 0, 0, 0,
+                    ],
+                    Length: 24,
+                    Is32Bit: true,
+                    Pooled: false),
+                vertexBuffers:
+                [
+                    CreateVertexBuffer(
+                        location: 0,
+                        baseAddress: 0x0043_0000,
+                        (0f, 1f),
+                        (1f, 1f),
+                        (0f, -1f),
+                        (1f, -1f)),
+                    CreateVertexBuffer(
+                        location: 1,
+                        baseAddress: 0x0044_0000,
+                        (0f, 0f),
+                        (1f, 0f),
+                        (0f, 1f),
+                        (1f, 1f)),
+                ],
+                renderState: new GuestRenderState(
+                    [
+                        new GuestBlendState(
+                            Enable: true,
+                            ColorSrcFactor: 4,
+                            ColorDstFactor: 5,
+                            ColorFunc: 0,
+                            AlphaSrcFactor: 4,
+                            AlphaDstFactor: 5,
+                            AlphaFunc: 0,
+                            SeparateAlphaBlend: true,
+                            WriteMask: 0xF),
+                    ],
+                    Scissor: null,
+                    new GuestViewport(
+                        0,
+                        DestinationHeight,
+                        DestinationWidth,
+                        -DestinationHeight,
+                        0,
+                        1),
+                    GuestRasterState.Default,
+                    GuestDepthState.Default));
+        }
+    }
+
+    private static byte[] CreateTiledPixels(
+        ReadOnlySpan<byte> linear,
+        in DetileParams parameters)
+    {
+        var blocksHigh =
+            (parameters.ElementsHigh + parameters.BlockHeight - 1) /
+            parameters.BlockHeight;
+        var tiled = new byte[checked(
+            parameters.BlocksPerRow *
+            blocksHigh *
+            parameters.BlockBytes)];
+        var exactXor = parameters.Equation == DetileEquation.ExactXor;
+        for (var y = 0; y < parameters.ElementsHigh; y++)
+        {
+            var blockY = y / parameters.BlockHeight;
+            var inBlockY = y % parameters.BlockHeight;
+            var yTerm = exactXor
+                ? parameters.YByteTerm[y & parameters.YMask]
+                : 0;
+            for (var x = 0; x < parameters.ElementsWide; x++)
+            {
+                var blockX = x / parameters.BlockWidth;
+                var inBlockByte = exactXor
+                    ? parameters.XByteTerm[x & parameters.XMask] ^ yTerm
+                    : parameters.BlockTable[
+                        inBlockY * parameters.BlockWidth +
+                        (x % parameters.BlockWidth)] *
+                      parameters.BytesPerElement;
+                var tiledOffset = checked(
+                    ((blockY * parameters.BlocksPerRow + blockX) *
+                     parameters.BlockBytes) +
+                    inBlockByte);
+                var linearOffset = checked(
+                    (y * parameters.ElementsWide + x) *
+                    parameters.BytesPerElement);
+                linear.Slice(linearOffset, parameters.BytesPerElement)
+                    .CopyTo(
+                        tiled.AsSpan(
+                            tiledOffset,
+                            parameters.BytesPerElement));
+            }
+        }
+
+        return tiled;
     }
 
     private static byte[] CreateTranslatedColorTransformFragment(

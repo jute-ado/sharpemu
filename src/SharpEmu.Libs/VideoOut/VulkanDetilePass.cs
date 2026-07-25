@@ -273,7 +273,7 @@ internal static unsafe class VulkanDetilePass
             (27, 16),
         ];
 
-        using var context = new SelfTestContext(
+        using var context = new Context(
             vk,
             device,
             queue,
@@ -361,7 +361,25 @@ internal static unsafe class VulkanDetilePass
         return imageRoundTrips;
     }
 
-    private sealed class SelfTestContext : IDisposable
+    internal struct TransientResources
+    {
+        public VkBuffer Tiled;
+        public DeviceMemory TiledMemory;
+        public VkBuffer XTerms;
+        public DeviceMemory XTermsMemory;
+        public VkBuffer YTerms;
+        public DeviceMemory YTermsMemory;
+        public VkBuffer Output;
+        public DeviceMemory OutputMemory;
+        public VkBuffer Readback;
+        public DeviceMemory ReadbackMemory;
+        public Image Image;
+        public DeviceMemory ImageMemory;
+        public DescriptorPool DescriptorPool;
+        public DescriptorSet DescriptorSet;
+    }
+
+    internal sealed class Context : IDisposable
     {
         private readonly Vk _vk;
         private readonly Device _device;
@@ -373,7 +391,7 @@ internal static unsafe class VulkanDetilePass
         private Pipeline _pipeline;
         private CommandPool _commandPool;
 
-        public SelfTestContext(
+        public Context(
             Vk vk,
             Device device,
             Queue queue,
@@ -401,12 +419,47 @@ internal static unsafe class VulkanDetilePass
                 "vkCreateCommandPool(detile self-test)");
         }
 
+        public TransientResources RecordImageUpload(
+            CommandBuffer commandBuffer,
+            Image image,
+            ReadOnlySpan<byte> tiled,
+            in DetileParams parameters,
+            in VulkanDetileDispatch dispatch,
+            PipelineStageFlags shaderStage)
+        {
+            var resources = default(TransientResources);
+            try
+            {
+                PrepareComputeResources(
+                    tiled,
+                    parameters,
+                    dispatch,
+                    ref resources);
+                RecordComputeDispatch(
+                    commandBuffer,
+                    resources,
+                    dispatch);
+                RecordOutputToImage(
+                    commandBuffer,
+                    resources.Output,
+                    image,
+                    dispatch,
+                    shaderStage);
+                return resources;
+            }
+            catch
+            {
+                DestroyTransientResources(resources);
+                throw;
+            }
+        }
+
         public byte[] ExecuteImageRoundTrip(
             ReadOnlySpan<byte> tiled,
             in DetileParams parameters,
             in VulkanDetileDispatch dispatch)
         {
-            var resources = default(SelfTestResources);
+            var resources = default(TransientResources);
             CommandBuffer commandBuffer = default;
             Fence fence = default;
             try
@@ -426,51 +479,10 @@ internal static unsafe class VulkanDetilePass
                     _vk.BeginCommandBuffer(commandBuffer, &beginInfo),
                     "vkBeginCommandBuffer(detile self-test)");
 
-                var descriptorSet = resources.DescriptorSet;
-                _vk.CmdBindPipeline(
+                RecordComputeDispatch(
                     commandBuffer,
-                    PipelineBindPoint.Compute,
-                    _pipeline);
-                _vk.CmdBindDescriptorSets(
-                    commandBuffer,
-                    PipelineBindPoint.Compute,
-                    _pipelineLayout,
-                    0,
-                    1,
-                    &descriptorSet,
-                    0,
-                    null);
-
-                Span<uint> pushConstants =
-                [
-                    dispatch.ElementsWide,
-                    dispatch.ElementsHigh,
-                    dispatch.BlockWidth,
-                    dispatch.BlockHeight,
-                    dispatch.BlockElements,
-                    dispatch.BlocksPerRow,
-                    dispatch.XMask,
-                    dispatch.YMask,
-                    dispatch.SourceSliceElements,
-                    dispatch.Equation,
-                    dispatch.UintsPerElement,
-                ];
-                fixed (uint* push = pushConstants)
-                {
-                    _vk.CmdPushConstants(
-                        commandBuffer,
-                        _pipelineLayout,
-                        ShaderStageFlags.ComputeBit,
-                        0,
-                        PushConstantBytes,
-                        push);
-                }
-
-                _vk.CmdDispatch(
-                    commandBuffer,
-                    dispatch.GroupCountX,
-                    dispatch.GroupCountY,
-                    dispatch.GroupCountZ);
+                    resources,
+                    dispatch);
 
                 RecordImageRoundTrip(
                     commandBuffer,
@@ -532,106 +544,71 @@ internal static unsafe class VulkanDetilePass
             }
         }
 
-        private void RecordImageRoundTrip(
+        private void RecordComputeDispatch(
             CommandBuffer commandBuffer,
-            in SelfTestResources resources,
+            in TransientResources resources,
             in VulkanDetileDispatch dispatch)
         {
-            var outputToTransfer = new BufferMemoryBarrier
-            {
-                SType = StructureType.BufferMemoryBarrier,
-                SrcAccessMask = AccessFlags.ShaderWriteBit,
-                DstAccessMask = AccessFlags.TransferReadBit,
-                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                Buffer = resources.Output,
-                Offset = 0,
-                Size = dispatch.OutputBytes,
-            };
-            _vk.CmdPipelineBarrier(
+            var descriptorSet = resources.DescriptorSet;
+            _vk.CmdBindPipeline(
                 commandBuffer,
-                PipelineStageFlags.ComputeShaderBit,
-                PipelineStageFlags.TransferBit,
+                PipelineBindPoint.Compute,
+                _pipeline);
+            _vk.CmdBindDescriptorSets(
+                commandBuffer,
+                PipelineBindPoint.Compute,
+                _pipelineLayout,
                 0,
-                0,
-                null,
                 1,
-                &outputToTransfer,
+                &descriptorSet,
                 0,
                 null);
 
-            var colorRange = new ImageSubresourceRange(
-                ImageAspectFlags.ColorBit,
-                0,
-                1,
-                0,
-                dispatch.GroupCountZ);
-            var imageToTransferDestination = new ImageMemoryBarrier
+            Span<uint> pushConstants =
+            [
+                dispatch.ElementsWide,
+                dispatch.ElementsHigh,
+                dispatch.BlockWidth,
+                dispatch.BlockHeight,
+                dispatch.BlockElements,
+                dispatch.BlocksPerRow,
+                dispatch.XMask,
+                dispatch.YMask,
+                dispatch.SourceSliceElements,
+                dispatch.Equation,
+                dispatch.UintsPerElement,
+            ];
+            fixed (uint* push = pushConstants)
             {
-                SType = StructureType.ImageMemoryBarrier,
-                DstAccessMask = AccessFlags.TransferWriteBit,
-                OldLayout = ImageLayout.Undefined,
-                NewLayout = ImageLayout.TransferDstOptimal,
-                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                Image = resources.Image,
-                SubresourceRange = colorRange,
-            };
-            _vk.CmdPipelineBarrier(
-                commandBuffer,
-                PipelineStageFlags.TopOfPipeBit,
-                PipelineStageFlags.TransferBit,
-                0,
-                0,
-                null,
-                0,
-                null,
-                1,
-                &imageToTransferDestination);
+                _vk.CmdPushConstants(
+                    commandBuffer,
+                    _pipelineLayout,
+                    ShaderStageFlags.ComputeBit,
+                    0,
+                    PushConstantBytes,
+                    push);
+            }
 
-            var copy = new BufferImageCopy
-            {
-                ImageSubresource = new ImageSubresourceLayers(
-                    ImageAspectFlags.ColorBit,
-                    0,
-                    0,
-                    dispatch.GroupCountZ),
-                ImageExtent = new Extent3D(
-                    dispatch.TexelWidth,
-                    dispatch.TexelHeight,
-                    1),
-            };
-            _vk.CmdCopyBufferToImage(
+            _vk.CmdDispatch(
+                commandBuffer,
+                dispatch.GroupCountX,
+                dispatch.GroupCountY,
+                dispatch.GroupCountZ);
+        }
+
+        private void RecordImageRoundTrip(
+            CommandBuffer commandBuffer,
+            in TransientResources resources,
+            in VulkanDetileDispatch dispatch)
+        {
+            RecordOutputToImage(
                 commandBuffer,
                 resources.Output,
                 resources.Image,
-                ImageLayout.TransferDstOptimal,
-                1,
-                &copy);
-
-            var imageToShaderRead = new ImageMemoryBarrier
-            {
-                SType = StructureType.ImageMemoryBarrier,
-                SrcAccessMask = AccessFlags.TransferWriteBit,
-                DstAccessMask = AccessFlags.ShaderReadBit,
-                OldLayout = ImageLayout.TransferDstOptimal,
-                NewLayout = ImageLayout.ShaderReadOnlyOptimal,
-                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                Image = resources.Image,
-                SubresourceRange = colorRange,
-            };
-            _vk.CmdPipelineBarrier(
-                commandBuffer,
-                PipelineStageFlags.TransferBit,
+                dispatch,
                 PipelineStageFlags.FragmentShaderBit,
-                0,
-                0,
-                null,
-                0,
-                null,
-                1,
-                &imageToShaderRead);
+                out var copy,
+                out var colorRange);
 
             var imageToTransferSource = new ImageMemoryBarrier
             {
@@ -688,11 +665,135 @@ internal static unsafe class VulkanDetilePass
                 null);
         }
 
+        private void RecordOutputToImage(
+            CommandBuffer commandBuffer,
+            VkBuffer output,
+            Image image,
+            in VulkanDetileDispatch dispatch,
+            PipelineStageFlags shaderStage)
+        {
+            RecordOutputToImage(
+                commandBuffer,
+                output,
+                image,
+                dispatch,
+                shaderStage,
+                out _,
+                out _);
+        }
+
+        private void RecordOutputToImage(
+            CommandBuffer commandBuffer,
+            VkBuffer output,
+            Image image,
+            in VulkanDetileDispatch dispatch,
+            PipelineStageFlags shaderStage,
+            out BufferImageCopy copy,
+            out ImageSubresourceRange colorRange)
+        {
+            var outputToTransfer = new BufferMemoryBarrier
+            {
+                SType = StructureType.BufferMemoryBarrier,
+                SrcAccessMask = AccessFlags.ShaderWriteBit,
+                DstAccessMask = AccessFlags.TransferReadBit,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Buffer = output,
+                Offset = 0,
+                Size = dispatch.OutputBytes,
+            };
+            _vk.CmdPipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.ComputeShaderBit,
+                PipelineStageFlags.TransferBit,
+                0,
+                0,
+                null,
+                1,
+                &outputToTransfer,
+                0,
+                null);
+
+            colorRange = new ImageSubresourceRange(
+                ImageAspectFlags.ColorBit,
+                0,
+                1,
+                0,
+                dispatch.GroupCountZ);
+            var imageToTransferDestination = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                DstAccessMask = AccessFlags.TransferWriteBit,
+                OldLayout = ImageLayout.Undefined,
+                NewLayout = ImageLayout.TransferDstOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = image,
+                SubresourceRange = colorRange,
+            };
+            _vk.CmdPipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.TopOfPipeBit,
+                PipelineStageFlags.TransferBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &imageToTransferDestination);
+
+            var copyRegion = new BufferImageCopy
+            {
+                ImageSubresource = new ImageSubresourceLayers(
+                    ImageAspectFlags.ColorBit,
+                    0,
+                    0,
+                    dispatch.GroupCountZ),
+                ImageExtent = new Extent3D(
+                    dispatch.TexelWidth,
+                    dispatch.TexelHeight,
+                    1),
+            };
+            _vk.CmdCopyBufferToImage(
+                commandBuffer,
+                output,
+                image,
+                ImageLayout.TransferDstOptimal,
+                1,
+                &copyRegion);
+            copy = copyRegion;
+
+            var imageToShaderRead = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.TransferWriteBit,
+                DstAccessMask = AccessFlags.ShaderReadBit,
+                OldLayout = ImageLayout.TransferDstOptimal,
+                NewLayout = ImageLayout.ShaderReadOnlyOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = image,
+                SubresourceRange = colorRange,
+            };
+            _vk.CmdPipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.TransferBit,
+                shaderStage,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &imageToShaderRead);
+        }
+
         private void PrepareResources(
             ReadOnlySpan<byte> tiled,
             in DetileParams parameters,
             in VulkanDetileDispatch dispatch,
-            ref SelfTestResources resources)
+            ref TransientResources resources)
         {
             if (dispatch.TexelWidth != dispatch.ElementsWide ||
                 dispatch.TexelHeight != dispatch.ElementsHigh)
@@ -701,6 +802,28 @@ internal static unsafe class VulkanDetilePass
                     "Detile image self-test requires one element per texel.");
             }
 
+            PrepareComputeResources(
+                tiled,
+                parameters,
+                dispatch,
+                ref resources);
+            resources.Readback = CreateBuffer(
+                dispatch.OutputBytes,
+                out resources.ReadbackMemory,
+                BufferUsageFlags.TransferDstBit,
+                MemoryPropertyFlags.HostVisibleBit |
+                MemoryPropertyFlags.HostCoherentBit);
+            resources.Image = CreateImage(
+                dispatch,
+                out resources.ImageMemory);
+        }
+
+        private void PrepareComputeResources(
+            ReadOnlySpan<byte> tiled,
+            in DetileParams parameters,
+            in VulkanDetileDispatch dispatch,
+            ref TransientResources resources)
+        {
             uint[] xTerms;
             uint[] yTerms;
             if (parameters.Equation == DetileEquation.BlockTable)
@@ -736,15 +859,6 @@ internal static unsafe class VulkanDetilePass
                 BufferUsageFlags.StorageBufferBit |
                 BufferUsageFlags.TransferSrcBit,
                 MemoryPropertyFlags.DeviceLocalBit);
-            resources.Readback = CreateBuffer(
-                dispatch.OutputBytes,
-                out resources.ReadbackMemory,
-                BufferUsageFlags.TransferDstBit,
-                MemoryPropertyFlags.HostVisibleBit |
-                MemoryPropertyFlags.HostCoherentBit);
-            resources.Image = CreateImage(
-                dispatch,
-                out resources.ImageMemory);
 
             var poolSize = new DescriptorPoolSize
             {
@@ -1136,7 +1250,7 @@ internal static unsafe class VulkanDetilePass
         }
 
         private void WriteDescriptors(
-            in SelfTestResources resources,
+            in TransientResources resources,
             ulong tiledBytes,
             ulong xTermBytes,
             ulong yTermBytes,
@@ -1200,16 +1314,8 @@ internal static unsafe class VulkanDetilePass
             return commandBuffer;
         }
 
-        private void DestroyResources(in SelfTestResources resources)
+        private void DestroyResources(in TransientResources resources)
         {
-            if (resources.DescriptorPool.Handle != 0)
-            {
-                _vk.DestroyDescriptorPool(
-                    _device,
-                    resources.DescriptorPool,
-                    null);
-            }
-
             if (resources.Image.Handle != 0)
             {
                 _vk.DestroyImage(_device, resources.Image, null);
@@ -1222,6 +1328,19 @@ internal static unsafe class VulkanDetilePass
             DestroyBuffer(
                 resources.Readback,
                 resources.ReadbackMemory);
+            DestroyTransientResources(resources);
+        }
+
+        public void DestroyTransientResources(in TransientResources resources)
+        {
+            if (resources.DescriptorPool.Handle != 0)
+            {
+                _vk.DestroyDescriptorPool(
+                    _device,
+                    resources.DescriptorPool,
+                    null);
+            }
+
             DestroyBuffer(resources.Output, resources.OutputMemory);
             DestroyBuffer(resources.YTerms, resources.YTermsMemory);
             DestroyBuffer(resources.XTerms, resources.XTermsMemory);
@@ -1286,23 +1405,6 @@ internal static unsafe class VulkanDetilePass
             }
         }
 
-        private struct SelfTestResources
-        {
-            public VkBuffer Tiled;
-            public DeviceMemory TiledMemory;
-            public VkBuffer XTerms;
-            public DeviceMemory XTermsMemory;
-            public VkBuffer YTerms;
-            public DeviceMemory YTermsMemory;
-            public VkBuffer Output;
-            public DeviceMemory OutputMemory;
-            public VkBuffer Readback;
-            public DeviceMemory ReadbackMemory;
-            public Image Image;
-            public DeviceMemory ImageMemory;
-            public DescriptorPool DescriptorPool;
-            public DescriptorSet DescriptorSet;
-        }
     }
 
     private static uint[] ToElementTerms(int[] byteTerms, int shift)
