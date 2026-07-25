@@ -11,6 +11,11 @@ public sealed class SystemServiceExportsTests
 {
     private const ulong MemoryBase = 0x1_0000_0000;
 
+    public SystemServiceExportsTests()
+    {
+        SystemServiceExports.ResetForTests();
+    }
+
     [Fact]
     public void GetNoticeScreenSkipFlagWritesOneByteAtMemoryBoundary()
     {
@@ -36,5 +41,46 @@ public sealed class SystemServiceExportsTests
             0,
             SystemServiceExports.SystemServiceDisableNoticeScreenSkipFlagAutoSet(context));
         Assert.Equal(0UL, context[CpuRegister.Rax]);
+    }
+
+    [Theory]
+    [InlineData(1UL)]
+    [InlineData(ulong.MaxValue)]
+    public void SetNoticeScreenSkipFlagPersistsNormalizedTrueValue(ulong value)
+    {
+        var memory = new FakeCpuMemory(MemoryBase, 1);
+        var context = new CpuContext(memory, Generation.Gen5)
+        {
+            [CpuRegister.Rdi] = value,
+        };
+
+        Assert.Equal(0, SystemServiceExports.SystemServiceSetNoticeScreenSkipFlag(context));
+
+        context[CpuRegister.Rdi] = MemoryBase;
+        Assert.Equal(0, SystemServiceExports.SystemServiceGetNoticeScreenSkipFlag(context));
+
+        Span<byte> flag = stackalloc byte[1];
+        Assert.True(memory.TryRead(MemoryBase, flag));
+        Assert.Equal(1, flag[0]);
+    }
+
+    [Fact]
+    public void SetNoticeScreenSkipFlagCanClearPersistedValue()
+    {
+        var memory = new FakeCpuMemory(MemoryBase, 1);
+        var context = new CpuContext(memory, Generation.Gen5)
+        {
+            [CpuRegister.Rdi] = 1,
+        };
+        Assert.Equal(0, SystemServiceExports.SystemServiceSetNoticeScreenSkipFlag(context));
+
+        context[CpuRegister.Rdi] = 0;
+        Assert.Equal(0, SystemServiceExports.SystemServiceSetNoticeScreenSkipFlag(context));
+
+        context[CpuRegister.Rdi] = MemoryBase;
+        Assert.Equal(0, SystemServiceExports.SystemServiceGetNoticeScreenSkipFlag(context));
+        Span<byte> flag = stackalloc byte[1];
+        Assert.True(memory.TryRead(MemoryBase, flag));
+        Assert.Equal(0, flag[0]);
     }
 }

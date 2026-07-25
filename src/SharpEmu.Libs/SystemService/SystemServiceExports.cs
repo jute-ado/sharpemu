@@ -18,6 +18,7 @@ public static class SystemServiceExports
     private const int TitleIdFieldSize = 0x10;
 
     private static string? _mainAppTitleId;
+    private static int _noticeScreenSkipFlag;
 
     public static void ConfigureApplicationInfo(string? titleId)
     {
@@ -37,9 +38,10 @@ public static class SystemServiceExports
             return ctx.SetReturn(OrbisSystemServiceErrorParameter);
         }
 
-        // No system notice screen to skip in the emulator; report "do not skip".
+        // SharpEmu does not display the system notice screen, but titles use
+        // this API as a process-local preference and expect set/get symmetry.
         Span<byte> flagBytes = stackalloc byte[1];
-        flagBytes[0] = 0;
+        flagBytes[0] = unchecked((byte)Volatile.Read(ref _noticeScreenSkipFlag));
         return ctx.Memory.TryWrite(flagAddress, flagBytes)
             ? ctx.SetReturn(0)
             : ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
@@ -67,8 +69,13 @@ public static class SystemServiceExports
         ExportName = "sceSystemServiceSetNoticeScreenSkipFlag",
         Target = Generation.Gen5,
         LibraryName = "libSceSystemService")]
-    public static int SystemServiceSetNoticeScreenSkipFlag(CpuContext ctx) =>
-        ctx.SetReturn(0);
+    public static int SystemServiceSetNoticeScreenSkipFlag(CpuContext ctx)
+    {
+        Volatile.Write(
+            ref _noticeScreenSkipFlag,
+            ctx[CpuRegister.Rdi] == 0 ? 0 : 1);
+        return ctx.SetReturn(0);
+    }
 
     [SysAbiExport(
         Nid = "4veE0XiIugA",
@@ -237,4 +244,7 @@ public static class SystemServiceExports
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libSceSystemService")]
     public static int SystemServiceReportAbnormalTermination(CpuContext ctx) => ctx.SetReturn(0);
+
+    internal static void ResetForTests() =>
+        Volatile.Write(ref _noticeScreenSkipFlag, 0);
 }
