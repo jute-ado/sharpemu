@@ -12,7 +12,7 @@ namespace SharpEmu.Core.Tests;
 public sealed class GuestCallbackIntegrationTests
 {
     private const ulong CodeAddress = 0x0000_0008_3000_0000;
-    private const ulong CallbackStackAddress = 0x0000_7FFE_1000_0000;
+    private const ulong CallbackStackAddress = 0x0000_0008_3100_0000;
     private const ulong CallbackStackSize = 0x1_0000;
 
     [HostX64Fact]

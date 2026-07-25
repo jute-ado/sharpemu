@@ -945,7 +945,7 @@ public sealed class NativeImportBridgeTests
             return;
         }
 
-        const ulong alternateStackStart = 0x0000_7FFE_0000_0000;
+        const ulong alternateStackStart = 0x0000_0008_1100_0000;
         const ulong alternateStackSize = 0x1_0000;
         var alternateRsp = alternateStackStart + alternateStackSize - 0x10;
         SyntheticExports.RegisteredStackObserved = false;
