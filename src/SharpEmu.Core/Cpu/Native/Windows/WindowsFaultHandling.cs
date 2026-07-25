@@ -83,15 +83,13 @@ internal sealed unsafe partial class WindowsFaultHandling : IHostFaultHandling
         int belowStackJump = offset;
         EmitUInt32(code, ref offset, 0u);
 
-        EmitByte(code, ref offset, 0x48); EmitByte(code, ref offset, 0x83); EmitByte(code, ref offset, 0xEC); EmitByte(code, ref offset, 0x28);
-        EmitByte(code, ref offset, 0x4C); EmitByte(code, ref offset, 0x89); EmitByte(code, ref offset, 0xE9); // mov rcx, r13
-        EmitByte(code, ref offset, 0x48); EmitByte(code, ref offset, 0xB8);
-        *(nint*)(code + offset) = managedCallback;
-        offset += sizeof(nint);
-        EmitByte(code, ref offset, 0xFF); EmitByte(code, ref offset, 0xD0);
-        EmitByte(code, ref offset, 0x48); EmitByte(code, ref offset, 0x83); EmitByte(code, ref offset, 0xC4); EmitByte(code, ref offset, 0x28);
+        // An exception raised while RSP is inside the native thread's normal OS
+        // stack belongs to the CLR, driver, or host code. Calling our managed VEH
+        // callback from that already-managed stack is an illegal reverse-P/Invoke
+        // transition and fail-fasts the process. Guest execution uses its separate
+        // emulated stack, so host-stack faults must continue the handler search.
         EmitByte(code, ref offset, 0xE9);
-        int hostRestoreJump = offset;
+        int hostPassThroughJump = offset;
         EmitUInt32(code, ref offset, 0u);
 
         int guestStackOffset = offset;
@@ -134,7 +132,8 @@ internal sealed unsafe partial class WindowsFaultHandling : IHostFaultHandling
 
         *(int*)(code + aboveStackJump) = guestStackOffset - (aboveStackJump + sizeof(int));
         *(int*)(code + belowStackJump) = guestStackOffset - (belowStackJump + sizeof(int));
-        *(int*)(code + hostRestoreJump) = restoreOffset - (hostRestoreJump + sizeof(int));
+        *(int*)(code + hostPassThroughJump) =
+            passThroughOffset - (hostPassThroughJump + sizeof(int));
         *(int*)(code + missingTlsJump) = passThroughOffset - (missingTlsJump + sizeof(int));
         *(int*)(code + missingHostStackJump) = passThroughOffset - (missingHostStackJump + sizeof(int));
         *(int*)(code + guestRestoreJump) = restoreOffset - (guestRestoreJump + sizeof(int));
