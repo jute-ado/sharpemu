@@ -45,7 +45,9 @@ accepted game expectations.
 - ELF object definitions and imports remain separate from callable symbols:
   object relocations never receive executable trap stubs, module and global
   `dlsym` still see data definitions, and unresolved weak objects apply the ELF
-  `S=0` signed-addend rule while required unresolved objects fail closed
+  `S=0` signed-addend rule while required unresolved objects fail closed;
+  deferred data-import addends are not misreported as invalid low-address
+  patches before the post-load data-rebinding pass resolves them
 - dimension-correct RDNA image translation and Vulkan resource aliasing,
   including three-coordinate 3D sampling and storage writes, 3D image/view
   creation, and path-sensitive scalar image and buffer descriptor evaluation

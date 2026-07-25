@@ -1275,18 +1275,20 @@ public sealed class SelfLoader : ISelfLoader
 
             var targetValue = AddSigned(symbolValue, descriptor.Addend);
 
-            if (targetValue < 0x1000)
+            var isTlsRelocation =
+                descriptor.ValueKind is RelocationValueKind.TlsModuleId or RelocationValueKind.TlsOffset;
+            if (IsSuspiciousSmallRelocationValue(
+                    targetValue,
+                    descriptor.IsDataImport,
+                    isTlsRelocation))
             {
-                if (descriptor.ValueKind is RelocationValueKind.TlsModuleId or RelocationValueKind.TlsOffset)
-                {
-                    Log.Debug(
-                        $"Patching TLS relocation at 0x{descriptor.TargetAddress:X} with 0x{targetValue:X}");
-                }
-                else
-                {
-                    Log.Warning($"!!! CRITICAL !!! Patching address 0x{descriptor.TargetAddress:X} with INVALID value 0x{targetValue:X} for NID {descriptor.ImportNid ?? "(null)"}");
-                    Log.Warning($"  SymbolValue=0x{descriptor.SymbolValue:X}, Addend=0x{descriptor.Addend:X}, StubAddress=0x{(addressesByNid.TryGetValue(descriptor.ImportNid ?? "", out var sa) ? sa : 0):X}");
-                }
+                Log.Warning($"!!! CRITICAL !!! Patching address 0x{descriptor.TargetAddress:X} with INVALID value 0x{targetValue:X} for NID {descriptor.ImportNid ?? "(null)"}");
+                Log.Warning($"  SymbolValue=0x{descriptor.SymbolValue:X}, Addend=0x{descriptor.Addend:X}, StubAddress=0x{(addressesByNid.TryGetValue(descriptor.ImportNid ?? "", out var sa) ? sa : 0):X}");
+            }
+            else if (targetValue < 0x1000 && isTlsRelocation)
+            {
+                Log.Debug(
+                    $"Patching TLS relocation at 0x{descriptor.TargetAddress:X} with 0x{targetValue:X}");
             }
 
             if (!TryWriteUInt64(virtualMemory, descriptor.TargetAddress, targetValue))
@@ -1304,6 +1306,14 @@ public sealed class SelfLoader : ISelfLoader
 
         return stubsByAddress;
     }
+
+    internal static bool IsSuspiciousSmallRelocationValue(
+        ulong targetValue,
+        bool isDataImport,
+        bool isTlsRelocation) =>
+        targetValue < 0x1000 &&
+        !isDataImport &&
+        !isTlsRelocation;
 
     private static int AppendSectionRelocationDescriptors(
         ReadOnlySpan<byte> imageData,

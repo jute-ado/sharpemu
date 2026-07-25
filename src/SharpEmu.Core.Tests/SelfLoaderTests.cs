@@ -1055,6 +1055,25 @@ public sealed class SelfLoaderTests
         Assert.Equal($"{nid}#libSceSynthetic", importedRelocation.SymbolName);
     }
 
+    [Theory]
+    [InlineData(0x20UL, false, false, true)]
+    [InlineData(0x20UL, true, false, false)]
+    [InlineData(0x20UL, false, true, false)]
+    [InlineData(0x1000UL, false, false, false)]
+    public void SmallRelocationWarningExcludesDeferredDataAndTlsValues(
+        ulong value,
+        bool isDataImport,
+        bool isTlsRelocation,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            SelfLoader.IsSuspiciousSmallRelocationValue(
+                value,
+                isDataImport,
+                isTlsRelocation));
+    }
+
     [Fact]
     public void ResolvesPs5EncodedImportLibraryAndModuleNames()
     {
