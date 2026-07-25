@@ -1390,6 +1390,77 @@ public static partial class AgcExports
         (modifier & 0xA038u) | 0x41u;
 
     [SysAbiExport(
+        Nid = "w1KFAHVqpaU",
+        ExportName = "sceAgcCbBranch",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int CbBranch(CpuContext ctx)
+    {
+        var commandBufferAddress = ctx[CpuRegister.Rdi];
+        var mode = (uint)ctx[CpuRegister.Rsi] & 0x3u;
+        var compareFunction = (uint)ctx[CpuRegister.Rdx] & 0x7u;
+        var compareAddress = ctx[CpuRegister.Rcx];
+        var mask = ctx[CpuRegister.R8];
+        var reference = ctx[CpuRegister.R9];
+        var stackAddress = ctx[CpuRegister.Rsp];
+        if (!TryReadUInt64(ctx, stackAddress + sizeof(ulong), out var cachePolicy1Raw) ||
+            !TryReadUInt64(ctx, stackAddress + (2 * sizeof(ulong)), out var thenAddress) ||
+            !TryReadUInt64(ctx, stackAddress + (3 * sizeof(ulong)), out var thenDwordsRaw) ||
+            !TryReadUInt64(ctx, stackAddress + (4 * sizeof(ulong)), out var cachePolicy2Raw) ||
+            !TryReadUInt64(ctx, stackAddress + (5 * sizeof(ulong)), out var elseAddress) ||
+            !TryReadUInt64(ctx, stackAddress + (6 * sizeof(ulong)), out var elseDwordsRaw) ||
+            commandBufferAddress == 0 ||
+            !TryAllocateCommandDwords(ctx, commandBufferAddress, 14, out var commandAddress))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        var cachePolicy1 = (uint)cachePolicy1Raw & 0x3u;
+        var cachePolicy2 = (uint)cachePolicy2Raw & 0x3u;
+        var thenDwords = (uint)thenDwordsRaw & 0xF_FFFFu;
+        var elseDwords = (uint)elseDwordsRaw & 0xF_FFFFu;
+        if (!TryWriteUInt32(ctx, commandAddress, Pm4(14, ItIndirectBuffer, RZero)) ||
+            !TryWriteUInt32(
+                ctx,
+                commandAddress + 4,
+                mode | (compareFunction << 8)) ||
+            !TryWriteUInt32(ctx, commandAddress + 8, (uint)compareAddress & ~7u) ||
+            !TryWriteUInt32(ctx, commandAddress + 12, (uint)(compareAddress >> 32)) ||
+            !TryWriteUInt32(ctx, commandAddress + 16, (uint)mask) ||
+            !TryWriteUInt32(ctx, commandAddress + 20, (uint)(mask >> 32)) ||
+            !TryWriteUInt32(ctx, commandAddress + 24, (uint)reference) ||
+            !TryWriteUInt32(ctx, commandAddress + 28, (uint)(reference >> 32)) ||
+            !TryWriteUInt32(ctx, commandAddress + 32, (uint)thenAddress & ~3u) ||
+            !TryWriteUInt32(ctx, commandAddress + 36, (uint)(thenAddress >> 32)) ||
+            !TryWriteUInt32(
+                ctx,
+                commandAddress + 40,
+                thenDwords | (cachePolicy1 << 28)) ||
+            !TryWriteUInt32(ctx, commandAddress + 44, (uint)elseAddress & ~3u) ||
+            !TryWriteUInt32(ctx, commandAddress + 48, (uint)(elseAddress >> 32)) ||
+            !TryWriteUInt32(
+                ctx,
+                commandAddress + 52,
+                elseDwords | (cachePolicy2 << 28)))
+        {
+            return ReturnPointer(ctx, 0);
+        }
+
+        return ReturnPointer(ctx, commandAddress);
+    }
+
+    [SysAbiExport(
+        Nid = "uZW-mqsxkrM",
+        ExportName = "sceAgcCbBranchGetSize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAgc")]
+    public static int CbBranchGetSize(CpuContext ctx)
+    {
+        ctx[CpuRegister.Rax] = 14u * sizeof(uint);
+        return (int)ctx[CpuRegister.Rax];
+    }
+
+    [SysAbiExport(
         Nid = "UZbQjYAwwXM",
         ExportName = "sceAgcCbSetShRegistersDirect",
         Target = Generation.Gen5,
@@ -3968,6 +4039,78 @@ public static partial class AgcExports
             }
 
             if (op == ItIndirectBuffer &&
+                length == 14)
+            {
+                if (depth < MaxIndirectCommandBufferDepth &&
+                    TryDecodeSubmittedConditionalBranch(
+                        ctx,
+                        currentAddress,
+                        out var mode,
+                        out var compareFunction,
+                        out var compareAddress,
+                        out var mask,
+                        out var reference,
+                        out var thenAddress,
+                        out var thenDwordCount,
+                        out var elseAddress,
+                        out var elseDwordCount) &&
+                    TryReadUInt64(ctx, compareAddress, out var compareValue))
+                {
+                    var takeThen = EvaluateBranchCondition(
+                        compareValue,
+                        mask,
+                        reference,
+                        compareFunction);
+                    var childAddress = takeThen ? thenAddress : elseAddress;
+                    var childDwordCount = takeThen ? thenDwordCount : elseDwordCount;
+                    var executeChild = takeThen || mode == 2;
+                    if (tracePackets)
+                    {
+                        TraceAgc(
+                            $"agc.dcb.branch depth={depth + 1} " +
+                            $"take={(takeThen ? "then" : "else")} " +
+                            $"addr=0x{childAddress:X16} dwords={childDwordCount}");
+                    }
+
+                    if (executeChild &&
+                        childAddress != 0 &&
+                        childDwordCount != 0 &&
+                        GuestAddress.TryAdd(
+                            commandAddress,
+                            (ulong)(offset + length) * sizeof(uint),
+                            out var branchNextAddress))
+                    {
+                        var childContinuation = new SubmittedDcbContinuation(
+                            branchNextAddress,
+                            dwordCount - (offset + length),
+                            depth,
+                            continuation);
+                        if (ParseSubmittedDcb(
+                                ctx,
+                                gpuState,
+                                state,
+                                childAddress,
+                                childDwordCount,
+                                tracePackets,
+                                depth + 1,
+                                childContinuation))
+                        {
+                            return true;
+                        }
+                    }
+                }
+                else if (tracePackets)
+                {
+                    TraceAgc(
+                        $"agc.dcb.branch_reject packet=0x{currentAddress:X16} " +
+                        $"depth={depth} reason=invalid-or-unreadable");
+                }
+
+                offset += length;
+                continue;
+            }
+
+            if (op == ItIndirectBuffer &&
                 length >= 4 &&
                 depth < MaxIndirectCommandBufferDepth &&
                 TryReadUInt32(ctx, currentAddress + 4, out var indirectAddressLow) &&
@@ -4420,6 +4563,83 @@ public static partial class AgcExports
         }
 
         return false;
+    }
+
+    private static bool TryDecodeSubmittedConditionalBranch(
+        CpuContext ctx,
+        ulong packetAddress,
+        out uint mode,
+        out uint compareFunction,
+        out ulong compareAddress,
+        out ulong mask,
+        out ulong reference,
+        out ulong thenAddress,
+        out uint thenDwordCount,
+        out ulong elseAddress,
+        out uint elseDwordCount)
+    {
+        mode = 0;
+        compareFunction = 0;
+        compareAddress = 0;
+        mask = 0;
+        reference = 0;
+        thenAddress = 0;
+        thenDwordCount = 0;
+        elseAddress = 0;
+        elseDwordCount = 0;
+        if (!TryReadUInt32(ctx, packetAddress + 4, out var control) ||
+            !TryReadUInt32(ctx, packetAddress + 8, out var compareAddressLow) ||
+            !TryReadUInt32(ctx, packetAddress + 12, out var compareAddressHigh) ||
+            !TryReadUInt64(ctx, packetAddress + 16, out mask) ||
+            !TryReadUInt64(ctx, packetAddress + 24, out reference) ||
+            !TryReadUInt32(ctx, packetAddress + 32, out var thenAddressLow) ||
+            !TryReadUInt32(ctx, packetAddress + 36, out var thenAddressHigh) ||
+            !TryReadUInt32(ctx, packetAddress + 40, out var thenControl) ||
+            !TryReadUInt32(ctx, packetAddress + 44, out var elseAddressLow) ||
+            !TryReadUInt32(ctx, packetAddress + 48, out var elseAddressHigh) ||
+            !TryReadUInt32(ctx, packetAddress + 52, out var elseControl))
+        {
+            return false;
+        }
+
+        mode = control & 0x3u;
+        compareFunction = (control >> 8) & 0x7u;
+        compareAddress =
+            (compareAddressLow & ~7u) |
+            ((ulong)(compareAddressHigh & 0xFFFFu) << 32);
+        thenAddress =
+            (thenAddressLow & ~3u) |
+            ((ulong)(thenAddressHigh & 0xFFFFu) << 32);
+        thenDwordCount = thenControl & 0xF_FFFFu;
+        elseAddress =
+            (elseAddressLow & ~3u) |
+            ((ulong)(elseAddressHigh & 0xFFFFu) << 32);
+        elseDwordCount = elseControl & 0xF_FFFFu;
+        return mode is 1 or 2 &&
+            compareFunction <= 6 &&
+            compareAddress != 0 &&
+            thenAddress != 0 &&
+            thenDwordCount != 0;
+    }
+
+    private static bool EvaluateBranchCondition(
+        ulong value,
+        ulong mask,
+        ulong reference,
+        uint compareFunction)
+    {
+        var maskedValue = value & mask;
+        return compareFunction switch
+        {
+            0 => true,
+            1 => maskedValue < reference,
+            2 => maskedValue <= reference,
+            3 => maskedValue == reference,
+            4 => maskedValue != reference,
+            5 => maskedValue >= reference,
+            6 => maskedValue > reference,
+            _ => true,
+        };
     }
 
     private static void TraceFramePacketSummary(SubmittedDcbState state)

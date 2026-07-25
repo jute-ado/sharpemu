@@ -36,6 +36,82 @@ public sealed class AgcIndirectCommandBufferTests
         Assert.Equal(0x1122_3344u, value);
     }
 
+    [Theory]
+    [InlineData(1UL, 2u, 0x1111_1111u)]
+    [InlineData(0UL, 2u, 0x2222_2222u)]
+    [InlineData(0UL, 1u, 0u)]
+    public void DriverSubmitDcb_ExecutesSelectedConditionalBranch(
+        ulong compareValue,
+        uint mode,
+        uint expectedValue)
+    {
+        const ulong elseDcbAddress = 0x5000;
+        const ulong compareAddress = 0x6000;
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(SubmitPacketAddress, CreateSubmitPacket(ParentDcbAddress, 14));
+        memory.AddRegion(
+            ParentDcbAddress,
+            CreateConditionalBranchPacket(
+                mode,
+                compareFunction: 3,
+                compareAddress,
+                mask: ulong.MaxValue,
+                reference: 1,
+                ChildDcbAddress,
+                thenDwordCount: 5,
+                elseDcbAddress,
+                elseDwordCount: 5));
+        memory.AddRegion(
+            ChildDcbAddress,
+            CreateWriteDataPacket(DestinationAddress, 0x1111_1111));
+        memory.AddRegion(
+            elseDcbAddress,
+            CreateWriteDataPacket(DestinationAddress, 0x2222_2222));
+        memory.AddRegion(compareAddress, BitConverter.GetBytes(compareValue));
+        memory.AddRegion(DestinationAddress, new byte[sizeof(uint)]);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = SubmitPacketAddress;
+
+        Assert.Equal(0, AgcExports.DriverSubmitDcb(context));
+        Assert.True(context.TryReadUInt32(DestinationAddress, out var value));
+        Assert.Equal(expectedValue, value);
+    }
+
+    [Fact]
+    public void DriverSubmitDcb_BranchComparesMaskedValueToUnmaskedReference()
+    {
+        const ulong elseDcbAddress = 0x5000;
+        const ulong compareAddress = 0x6000;
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(SubmitPacketAddress, CreateSubmitPacket(ParentDcbAddress, 14));
+        memory.AddRegion(
+            ParentDcbAddress,
+            CreateConditionalBranchPacket(
+                mode: 2,
+                compareFunction: 1,
+                compareAddress,
+                mask: 0x0F,
+                reference: 0x10,
+                ChildDcbAddress,
+                thenDwordCount: 5,
+                elseDcbAddress,
+                elseDwordCount: 5));
+        memory.AddRegion(
+            ChildDcbAddress,
+            CreateWriteDataPacket(DestinationAddress, 0x1111_1111));
+        memory.AddRegion(
+            elseDcbAddress,
+            CreateWriteDataPacket(DestinationAddress, 0x2222_2222));
+        memory.AddRegion(compareAddress, BitConverter.GetBytes(0xF0UL));
+        memory.AddRegion(DestinationAddress, new byte[sizeof(uint)]);
+        var context = new CpuContext(memory, Generation.Gen5);
+        context[CpuRegister.Rdi] = SubmitPacketAddress;
+
+        Assert.Equal(0, AgcExports.DriverSubmitDcb(context));
+        Assert.True(context.TryReadUInt32(DestinationAddress, out var value));
+        Assert.Equal(0x1111_1111u, value);
+    }
+
     [Fact]
     public void DriverSubmitDcb_StopsSelfReferentialIndirectBufferAtDepthLimit()
     {
@@ -205,6 +281,32 @@ public sealed class AgcIndirectCommandBufferTests
             packet.AsSpan(8),
             (uint)(address >> 32) & 0xFFFFu);
         BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(12), dwordCount & 0xF_FFFFu);
+        return packet;
+    }
+
+    private static byte[] CreateConditionalBranchPacket(
+        uint mode,
+        uint compareFunction,
+        ulong compareAddress,
+        ulong mask,
+        ulong reference,
+        ulong thenAddress,
+        uint thenDwordCount,
+        ulong elseAddress,
+        uint elseDwordCount)
+    {
+        var packet = new byte[14 * sizeof(uint)];
+        BinaryPrimitives.WriteUInt32LittleEndian(packet, Pm4(14, 0x3F));
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            packet.AsSpan(4),
+            (mode & 0x3u) | ((compareFunction & 0x7u) << 8));
+        BinaryPrimitives.WriteUInt64LittleEndian(packet.AsSpan(8), compareAddress & ~7UL);
+        BinaryPrimitives.WriteUInt64LittleEndian(packet.AsSpan(16), mask);
+        BinaryPrimitives.WriteUInt64LittleEndian(packet.AsSpan(24), reference);
+        BinaryPrimitives.WriteUInt64LittleEndian(packet.AsSpan(32), thenAddress & ~3UL);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(40), thenDwordCount & 0xF_FFFFu);
+        BinaryPrimitives.WriteUInt64LittleEndian(packet.AsSpan(44), elseAddress & ~3UL);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(52), elseDwordCount & 0xF_FFFFu);
         return packet;
     }
 
