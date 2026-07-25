@@ -238,7 +238,7 @@ public sealed class KernelSyncPointerCompatibilityTests
     }
 
     [Fact]
-    public async Task TimedSemaphoreWaitExpiresAndDoesNotConsumeLateSignal()
+    public void TimedSemaphoreWaitExpiresAndDoesNotConsumeLateSignal()
     {
         GuestThreadBlocking.BeginExecution();
         var context = new CpuContext(new FakeGuestMemory(), Generation.Gen5);
@@ -262,14 +262,30 @@ public sealed class KernelSyncPointerCompatibilityTests
             handle = unchecked((uint)Marshal.ReadInt32((nint)handleAddress));
 
             Marshal.WriteInt32((nint)timeoutAddress, 1_000);
+            var waitContext = new CpuContext(
+                context.Memory,
+                Generation.Gen5);
+            waitContext[CpuRegister.Rdi] = handle;
+            waitContext[CpuRegister.Rsi] = 1;
+            waitContext[CpuRegister.Rdx] = timeoutAddress;
+            var previousGuestThread =
+                GuestThreadExecution.EnterGuestThread(0x5678);
+            int waitResult;
+            try
+            {
+                waitResult =
+                    KernelSemaphoreCompatExports.KernelWaitSema(
+                        waitContext);
+            }
+            finally
+            {
+                GuestThreadExecution.RestoreGuestThread(
+                    previousGuestThread);
+            }
+
             Assert.Equal(
                 (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT,
-                await StartSemaphoreWait(
-                        context.Memory,
-                        handle,
-                        timeoutAddress,
-                        0x5678)
-                    .WaitAsync(TimeSpan.FromSeconds(1)));
+                waitResult);
             Assert.Equal(0, Marshal.ReadInt32((nint)timeoutAddress));
 
             context[CpuRegister.Rdi] = handle;
