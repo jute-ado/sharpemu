@@ -8798,21 +8798,7 @@ internal static unsafe class VulkanVideoPresenter
                 return CreateTextureResource(texture);
             }
 
-            var key = new TextureContentIdentity(
-                texture.Address,
-                texture.Width,
-                texture.Height,
-                texture.Format,
-                texture.NumberType,
-                texture.DstSelect,
-                texture.TileMode,
-                texture.Pitch,
-                texture.Sampler,
-                texture.ArrayedView,
-                Math.Max(texture.ArrayLayers, 1),
-                Math.Max(texture.Depth, 1),
-                texture.ThreeDimensionalView,
-                texture.CubeView);
+            var key = TextureContentIdentity.FromGuestTexture(texture);
             if (_textureCache.TryGetValue(key, out var cached))
             {
                 return cached;

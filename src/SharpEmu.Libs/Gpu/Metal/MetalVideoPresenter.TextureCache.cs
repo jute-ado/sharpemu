@@ -34,20 +34,9 @@ internal static partial class MetalVideoPresenter
     /// <summary>Builds the same identity the AGC layer checks before skipping
     /// a texel copy; the two must agree field-for-field or skips and cache
     /// entries would never line up.</summary>
-    private static TextureContentIdentity GetDrawTextureIdentity(GuestDrawTexture texture) => new(
-        texture.Address,
-        texture.Width,
-        texture.Height,
-        texture.Format,
-        texture.NumberType,
-        texture.DstSelect,
-        texture.TileMode,
-        texture.Pitch,
-        texture.Sampler,
-        texture.ArrayedView,
-        Math.Max(texture.ArrayLayers, 1),
-        Math.Max(texture.Depth, 1),
-        texture.ThreeDimensionalView);
+    private static TextureContentIdentity GetDrawTextureIdentity(
+        GuestDrawTexture texture) =>
+        TextureContentIdentity.FromGuestTexture(texture);
 
     /// <summary>Caching requires the write tracker: without page protection a
     /// guest CPU write would never evict the entry and draws would sample
