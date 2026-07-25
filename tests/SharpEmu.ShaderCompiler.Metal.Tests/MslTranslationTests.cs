@@ -180,4 +180,24 @@ public sealed class MslTranslationTests
         Assert.Contains("as_type<ushort>", shader.Source, StringComparison.Ordinal);
         Assert.Contains("& 0xFFFF0000u", shader.Source, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void CompactFloat16SubtractionSupportsNormalAndReverseOperands()
+    {
+        var fixture = new Gen5ComputeFixture(
+            "compact-f16-subtraction",
+            [
+                0x66000501, // v_sub_f16_e32 v0, v1, v2
+                0x68060B04, // v_subrev_f16_e32 v3, v4, v5
+                0xBF810000, // s_endpgm
+            ],
+            StoreScalarResourceBase: 0,
+            StoreBackingBytes: 0);
+
+        var shader = Gen5ComputeFixtures.CompileOrThrow(fixture);
+
+        Assert.Contains("as_type<half>", shader.Source, StringComparison.Ordinal);
+        Assert.Contains("-", shader.Source, StringComparison.Ordinal);
+        Assert.Contains("& 0xFFFF0000u", shader.Source, StringComparison.Ordinal);
+    }
 }

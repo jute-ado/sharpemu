@@ -589,14 +589,7 @@ public static partial class Gen5SpirvTranslator
                     result = EmitFloatBinary(instruction, SpirvOp.FAdd);
                     break;
                 case "VAddF16":
-                    result = EmitFloat16Result(
-                        instruction,
-                        destination,
-                        _module.AddInstruction(
-                            SpirvOp.FAdd,
-                            _floatType,
-                            GetFloat16Source(instruction, 0),
-                            GetFloat16Source(instruction, 1)));
+                    result = EmitFloat16Binary(instruction, destination, SpirvOp.FAdd);
                     break;
                 case "VSubF32":
                     result = EmitFloatBinary(instruction, SpirvOp.FSub);
@@ -608,14 +601,17 @@ public static partial class Gen5SpirvTranslator
                     result = EmitFloatBinary(instruction, SpirvOp.FMul);
                     break;
                 case "VMulF16":
-                    result = EmitFloat16Result(
+                    result = EmitFloat16Binary(instruction, destination, SpirvOp.FMul);
+                    break;
+                case "VSubF16":
+                    result = EmitFloat16Binary(instruction, destination, SpirvOp.FSub);
+                    break;
+                case "VSubrevF16":
+                    result = EmitFloat16Binary(
                         instruction,
                         destination,
-                        _module.AddInstruction(
-                            SpirvOp.FMul,
-                            _floatType,
-                            GetFloat16Source(instruction, 0),
-                            GetFloat16Source(instruction, 1)));
+                        SpirvOp.FSub,
+                        reverse: true);
                     break;
                 case "VMulLegacyF32":
                 case "VMullitF32":
@@ -1506,6 +1502,20 @@ public static partial class Gen5SpirvTranslator
                 GetFloat16Source(instruction, 1),
                 GetFloat16Source(instruction, 2));
             return EmitFloat16Result(instruction, destination, value);
+        }
+
+        private uint EmitFloat16Binary(
+            Gen5ShaderInstruction instruction,
+            uint destination,
+            SpirvOp operation,
+            bool reverse = false)
+        {
+            var left = GetFloat16Source(instruction, reverse ? 1 : 0);
+            var right = GetFloat16Source(instruction, reverse ? 0 : 1);
+            return EmitFloat16Result(
+                instruction,
+                destination,
+                _module.AddInstruction(operation, _floatType, left, right));
         }
 
         private uint EmitLegacyFloatFma(Gen5ShaderInstruction instruction)

@@ -150,6 +150,14 @@ public static partial class Gen5MslTranslator
                     $"{F16(instruction, 0)} + {F16(instruction, 1)}"),
                 "VSubF32" => FloatResult(instruction, $"{F(instruction, 0)} - {F(instruction, 1)}"),
                 "VSubrevF32" => FloatResult(instruction, $"{F(instruction, 1)} - {F(instruction, 0)}"),
+                "VSubF16" => Float16Result(
+                    instruction,
+                    destination,
+                    $"{F16(instruction, 0)} - {F16(instruction, 1)}"),
+                "VSubrevF16" => Float16Result(
+                    instruction,
+                    destination,
+                    $"{F16(instruction, 1)} - {F16(instruction, 0)}"),
                 "VMulF32" => FloatResult(instruction, $"{F(instruction, 0)} * {F(instruction, 1)}"),
                 "VMulF16" => Float16Result(
                     instruction,
