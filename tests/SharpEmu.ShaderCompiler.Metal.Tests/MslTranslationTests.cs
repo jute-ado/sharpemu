@@ -200,4 +200,25 @@ public sealed class MslTranslationTests
         Assert.Contains("-", shader.Source, StringComparison.Ordinal);
         Assert.Contains("& 0xFFFF0000u", shader.Source, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void CompactFloat16MinMaxUsesHalfSources()
+    {
+        var fixture = new Gen5ComputeFixture(
+            "compact-f16-minmax",
+            [
+                0x72000501, // v_max_f16_e32 v0, v1, v2
+                0x74060B04, // v_min_f16_e32 v3, v4, v5
+                0xBF810000, // s_endpgm
+            ],
+            StoreScalarResourceBase: 0,
+            StoreBackingBytes: 0);
+
+        var shader = Gen5ComputeFixtures.CompileOrThrow(fixture);
+
+        Assert.Contains("fmax(", shader.Source, StringComparison.Ordinal);
+        Assert.Contains("fmin(", shader.Source, StringComparison.Ordinal);
+        Assert.Contains("as_type<half>", shader.Source, StringComparison.Ordinal);
+        Assert.Contains("& 0xFFFF0000u", shader.Source, StringComparison.Ordinal);
+    }
 }

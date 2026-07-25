@@ -165,6 +165,14 @@ public static partial class Gen5MslTranslator
                     $"{F16(instruction, 0)} * {F16(instruction, 1)}"),
                 "VMinF32" => FloatResult(instruction, $"fmin({F(instruction, 0)}, {F(instruction, 1)})"),
                 "VMaxF32" => FloatResult(instruction, $"fmax({F(instruction, 0)}, {F(instruction, 1)})"),
+                "VMinF16" => Float16Result(
+                    instruction,
+                    destination,
+                    $"fmin({F16(instruction, 0)}, {F16(instruction, 1)})"),
+                "VMaxF16" => Float16Result(
+                    instruction,
+                    destination,
+                    $"fmax({F16(instruction, 0)}, {F16(instruction, 1)})"),
                 // The decoder normalizes mk/ak literal placement, so every MAD/FMA
                 // form is fma(src0, src1, src2) exactly like the SPIR-V translator.
                 "VFmaF32" or "VMadF32" or "VMadAkF32" or "VMadMkF32" or
