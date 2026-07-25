@@ -379,4 +379,431 @@ public static class SpirvFixedShaders
         module.AddExecutionMode(main, SpirvExecutionMode.OriginUpperLeft);
         return module.Build();
     }
+
+    /// <summary>
+    /// Creates a compute kernel that deswizzles RDNA2 tiled surfaces into a
+    /// layer-major linear buffer. The kernel supports the exact-XOR and block-table
+    /// equations exposed by <c>GnmTiling.GetDetileParams</c>.
+    ///
+    /// Width and height are element dimensions. Each element occupies
+    /// <c>uintsPerElement</c> 32-bit words, allowing the same kernel to copy
+    /// 4-, 8-, and 16-byte elements without interpreting their contents.
+    ///
+    /// Descriptor set 0 uses binding 0 for tiled input, binding 1 for the X-term
+    /// table or block table, binding 2 for the Y-term table, and binding 3 for
+    /// linear output. Push constants are eleven consecutive uints:
+    /// width, height, blockWidth, blockHeight, blockElements, blocksPerRow,
+    /// xMask, yMask, srcSliceElements, equation, and uintsPerElement.
+    /// </summary>
+    public static byte[] CreateDetileCompute()
+    {
+        var module = new SpirvModuleBuilder();
+        module.AddCapability(SpirvCapability.Shader);
+
+        var voidType = module.TypeVoid();
+        var boolType = module.TypeBool();
+        var uintType = module.TypeInt(32, signed: false);
+        var uvec3Type = module.TypeVector(uintType, 3);
+
+        var runtimeArray = module.TypeRuntimeArray(uintType);
+        module.AddDecoration(runtimeArray, SpirvDecoration.ArrayStride, 4);
+        var bufferStruct = module.TypeStruct(runtimeArray);
+        module.AddDecoration(bufferStruct, SpirvDecoration.Block);
+        module.AddMemberDecoration(bufferStruct, 0, SpirvDecoration.Offset, 0);
+        var bufferPointer = module.TypePointer(
+            SpirvStorageClass.StorageBuffer,
+            bufferStruct);
+        var uintStoragePointer = module.TypePointer(
+            SpirvStorageClass.StorageBuffer,
+            uintType);
+
+        uint MakeBuffer(uint binding, string name)
+        {
+            var variable = module.AddGlobalVariable(
+                bufferPointer,
+                SpirvStorageClass.StorageBuffer);
+            module.AddName(variable, name);
+            module.AddDecoration(variable, SpirvDecoration.DescriptorSet, 0);
+            module.AddDecoration(variable, SpirvDecoration.Binding, binding);
+            return variable;
+        }
+
+        var tiled = MakeBuffer(0, "tiled");
+        var xTerm = MakeBuffer(1, "xTerm");
+        var yTerm = MakeBuffer(2, "yTerm");
+        var linear = MakeBuffer(3, "outLinear");
+
+        var pushStruct = module.TypeStruct(
+            uintType,
+            uintType,
+            uintType,
+            uintType,
+            uintType,
+            uintType,
+            uintType,
+            uintType,
+            uintType,
+            uintType,
+            uintType);
+        module.AddDecoration(pushStruct, SpirvDecoration.Block);
+        for (uint member = 0; member < 11; member++)
+        {
+            module.AddMemberDecoration(
+                pushStruct,
+                member,
+                SpirvDecoration.Offset,
+                member * 4);
+        }
+
+        var pushPointer = module.TypePointer(
+            SpirvStorageClass.PushConstant,
+            pushStruct);
+        var pushMemberPointer = module.TypePointer(
+            SpirvStorageClass.PushConstant,
+            uintType);
+        var pushConstants = module.AddGlobalVariable(
+            pushPointer,
+            SpirvStorageClass.PushConstant);
+        module.AddName(pushConstants, "pc");
+
+        var inputUvec3Pointer = module.TypePointer(
+            SpirvStorageClass.Input,
+            uvec3Type);
+        var globalInvocationId = module.AddGlobalVariable(
+            inputUvec3Pointer,
+            SpirvStorageClass.Input);
+        module.AddName(globalInvocationId, "gid");
+        module.AddDecoration(
+            globalInvocationId,
+            SpirvDecoration.BuiltIn,
+            (uint)SpirvBuiltIn.GlobalInvocationId);
+
+        var uintConstants = new uint[11];
+        for (uint value = 0; value < uintConstants.Length; value++)
+        {
+            uintConstants[value] = module.Constant(uintType, value);
+        }
+
+        var functionType = module.TypeFunction(voidType);
+        var main = module.BeginFunction(voidType, functionType);
+        module.AddName(main, "main");
+        module.AddLabel();
+
+        var invocation = module.AddInstruction(
+            SpirvOp.Load,
+            uvec3Type,
+            globalInvocationId);
+        var invocationX = module.AddInstruction(
+            SpirvOp.CompositeExtract,
+            uintType,
+            invocation,
+            0);
+        var y = module.AddInstruction(
+            SpirvOp.CompositeExtract,
+            uintType,
+            invocation,
+            1);
+        var layer = module.AddInstruction(
+            SpirvOp.CompositeExtract,
+            uintType,
+            invocation,
+            2);
+
+        uint PushField(uint index)
+        {
+            var pointer = module.AddInstruction(
+                SpirvOp.AccessChain,
+                pushMemberPointer,
+                pushConstants,
+                uintConstants[index]);
+            return module.AddInstruction(SpirvOp.Load, uintType, pointer);
+        }
+
+        var width = PushField(0);
+        var height = PushField(1);
+        var blockWidth = PushField(2);
+        var blockHeight = PushField(3);
+        var blockElements = PushField(4);
+        var blocksPerRow = PushField(5);
+        var xMask = PushField(6);
+        var yMask = PushField(7);
+        var sourceSliceElements = PushField(8);
+        var equation = PushField(9);
+        var uintsPerElement = PushField(10);
+
+        var x = module.AddInstruction(
+            SpirvOp.UDiv,
+            uintType,
+            invocationX,
+            uintsPerElement);
+        var xWordBase = module.AddInstruction(
+            SpirvOp.IMul,
+            uintType,
+            x,
+            uintsPerElement);
+        var wordInElement = module.AddInstruction(
+            SpirvOp.ISub,
+            uintType,
+            invocationX,
+            xWordBase);
+
+        var xInRange = module.AddInstruction(
+            SpirvOp.ULessThan,
+            boolType,
+            x,
+            width);
+        var yInRange = module.AddInstruction(
+            SpirvOp.ULessThan,
+            boolType,
+            y,
+            height);
+        var inRange = module.AddInstruction(
+            SpirvOp.LogicalAnd,
+            boolType,
+            xInRange,
+            yInRange);
+
+        var bodyLabel = module.AllocateId();
+        var mergeLabel = module.AllocateId();
+        module.AddStatement(SpirvOp.SelectionMerge, mergeLabel, 0);
+        module.AddStatement(
+            SpirvOp.BranchConditional,
+            inRange,
+            bodyLabel,
+            mergeLabel);
+        module.AddLabel(bodyLabel);
+
+        var blockY = module.AddInstruction(
+            SpirvOp.UDiv,
+            uintType,
+            y,
+            blockHeight);
+        var blockRow = module.AddInstruction(
+            SpirvOp.IMul,
+            uintType,
+            blockY,
+            blocksPerRow);
+        var blockX = module.AddInstruction(
+            SpirvOp.UDiv,
+            uintType,
+            x,
+            blockWidth);
+        var blockIndex = module.AddInstruction(
+            SpirvOp.IAdd,
+            uintType,
+            blockRow,
+            blockX);
+
+        var isBlockTable = module.AddInstruction(
+            SpirvOp.INotEqual,
+            boolType,
+            equation,
+            uintConstants[0]);
+        var exactXorLabel = module.AllocateId();
+        var blockTableLabel = module.AllocateId();
+        var equationMergeLabel = module.AllocateId();
+        module.AddStatement(
+            SpirvOp.SelectionMerge,
+            equationMergeLabel,
+            0);
+        module.AddStatement(
+            SpirvOp.BranchConditional,
+            isBlockTable,
+            blockTableLabel,
+            exactXorLabel);
+
+        module.AddLabel(exactXorLabel);
+        var xIndex = module.AddInstruction(
+            SpirvOp.BitwiseAnd,
+            uintType,
+            x,
+            xMask);
+        var xPointer = module.AddInstruction(
+            SpirvOp.AccessChain,
+            uintStoragePointer,
+            xTerm,
+            uintConstants[0],
+            xIndex);
+        var xOffset = module.AddInstruction(
+            SpirvOp.Load,
+            uintType,
+            xPointer);
+        var yIndex = module.AddInstruction(
+            SpirvOp.BitwiseAnd,
+            uintType,
+            y,
+            yMask);
+        var yPointer = module.AddInstruction(
+            SpirvOp.AccessChain,
+            uintStoragePointer,
+            yTerm,
+            uintConstants[0],
+            yIndex);
+        var yOffset = module.AddInstruction(
+            SpirvOp.Load,
+            uintType,
+            yPointer);
+        var exactXorOffset = module.AddInstruction(
+            SpirvOp.BitwiseXor,
+            uintType,
+            xOffset,
+            yOffset);
+        module.AddStatement(SpirvOp.Branch, equationMergeLabel);
+
+        module.AddLabel(blockTableLabel);
+        var blockXBase = module.AddInstruction(
+            SpirvOp.IMul,
+            uintType,
+            blockX,
+            blockWidth);
+        var xInBlock = module.AddInstruction(
+            SpirvOp.ISub,
+            uintType,
+            x,
+            blockXBase);
+        var blockYBase = module.AddInstruction(
+            SpirvOp.IMul,
+            uintType,
+            blockY,
+            blockHeight);
+        var yInBlock = module.AddInstruction(
+            SpirvOp.ISub,
+            uintType,
+            y,
+            blockYBase);
+        var rowInBlock = module.AddInstruction(
+            SpirvOp.IMul,
+            uintType,
+            yInBlock,
+            blockWidth);
+        var tableIndex = module.AddInstruction(
+            SpirvOp.IAdd,
+            uintType,
+            rowInBlock,
+            xInBlock);
+        var tablePointer = module.AddInstruction(
+            SpirvOp.AccessChain,
+            uintStoragePointer,
+            xTerm,
+            uintConstants[0],
+            tableIndex);
+        var blockTableOffset = module.AddInstruction(
+            SpirvOp.Load,
+            uintType,
+            tablePointer);
+        module.AddStatement(SpirvOp.Branch, equationMergeLabel);
+
+        module.AddLabel(equationMergeLabel);
+        var elementOffset = module.AddInstruction(
+            SpirvOp.Phi,
+            uintType,
+            exactXorOffset,
+            exactXorLabel,
+            blockTableOffset,
+            blockTableLabel);
+
+        var sourceSliceBase = module.AddInstruction(
+            SpirvOp.IMul,
+            uintType,
+            layer,
+            sourceSliceElements);
+        var sourceBlockBase = module.AddInstruction(
+            SpirvOp.IMul,
+            uintType,
+            blockIndex,
+            blockElements);
+        var sourceInSlice = module.AddInstruction(
+            SpirvOp.IAdd,
+            uintType,
+            sourceBlockBase,
+            elementOffset);
+        var sourceElement = module.AddInstruction(
+            SpirvOp.IAdd,
+            uintType,
+            sourceSliceBase,
+            sourceInSlice);
+        var sourceWordBase = module.AddInstruction(
+            SpirvOp.IMul,
+            uintType,
+            sourceElement,
+            uintsPerElement);
+        var sourceWord = module.AddInstruction(
+            SpirvOp.IAdd,
+            uintType,
+            sourceWordBase,
+            wordInElement);
+        var sourcePointer = module.AddInstruction(
+            SpirvOp.AccessChain,
+            uintStoragePointer,
+            tiled,
+            uintConstants[0],
+            sourceWord);
+        var word = module.AddInstruction(
+            SpirvOp.Load,
+            uintType,
+            sourcePointer);
+
+        var sliceElements = module.AddInstruction(
+            SpirvOp.IMul,
+            uintType,
+            width,
+            height);
+        var destinationSliceBase = module.AddInstruction(
+            SpirvOp.IMul,
+            uintType,
+            layer,
+            sliceElements);
+        var destinationRowBase = module.AddInstruction(
+            SpirvOp.IMul,
+            uintType,
+            y,
+            width);
+        var destinationInSlice = module.AddInstruction(
+            SpirvOp.IAdd,
+            uintType,
+            destinationRowBase,
+            x);
+        var destinationElement = module.AddInstruction(
+            SpirvOp.IAdd,
+            uintType,
+            destinationSliceBase,
+            destinationInSlice);
+        var destinationWordBase = module.AddInstruction(
+            SpirvOp.IMul,
+            uintType,
+            destinationElement,
+            uintsPerElement);
+        var destinationWord = module.AddInstruction(
+            SpirvOp.IAdd,
+            uintType,
+            destinationWordBase,
+            wordInElement);
+        var destinationPointer = module.AddInstruction(
+            SpirvOp.AccessChain,
+            uintStoragePointer,
+            linear,
+            uintConstants[0],
+            destinationWord);
+        module.AddStatement(SpirvOp.Store, destinationPointer, word);
+
+        module.AddStatement(SpirvOp.Branch, mergeLabel);
+        module.AddLabel(mergeLabel);
+        module.AddStatement(SpirvOp.Return);
+        module.EndFunction();
+
+        module.AddExecutionMode(main, SpirvExecutionMode.LocalSize, 8, 8, 1);
+        module.AddEntryPoint(
+            SpirvExecutionModel.GLCompute,
+            main,
+            "main",
+            [
+                globalInvocationId,
+                tiled,
+                xTerm,
+                yTerm,
+                linear,
+                pushConstants,
+            ]);
+        return module.Build();
+    }
 }
