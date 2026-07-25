@@ -77,6 +77,34 @@ public sealed class ImportResultLoggingTests
                 (OrbisGen2Result)result));
     }
 
+    [Theory]
+    [InlineData("1-LFLmRFxxM", unchecked((int)0x80020011))]
+    [InlineData("u1GRHp+oWoY", unchecked((int)0x80920007))]
+    public void FilesystemAndControllerProbeResultsAreExpected(
+        string nid,
+        int result)
+    {
+        Assert.True(
+            DirectExecutionBackend.IsExpectedImportResult(
+                nid,
+                (OrbisGen2Result)result));
+    }
+
+    [Theory]
+    [InlineData("different-nid", unchecked((int)0x80020011))]
+    [InlineData("1-LFLmRFxxM", unchecked((int)0x80020002))]
+    [InlineData("different-nid", unchecked((int)0x80920007))]
+    [InlineData("u1GRHp+oWoY", unchecked((int)0x80920008))]
+    public void FilesystemAndControllerProbeExpectationsRequireMatchingNidAndResult(
+        string nid,
+        int result)
+    {
+        Assert.False(
+            DirectExecutionBackend.IsExpectedImportResult(
+                nid,
+                (OrbisGen2Result)result));
+    }
+
     [Fact]
     public void PthreadSemaphoreTryAgainIsExpectedControlFlow()
     {

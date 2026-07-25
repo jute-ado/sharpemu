@@ -995,6 +995,12 @@ public sealed partial class DirectExecutionBackend
 		var expectedSaveDataMountMiss =
 			string.Equals(nid, "ZP4e7rlzOUk", StringComparison.Ordinal) &&
 			resultValue == unchecked((int)0x809F0008);
+		var expectedExistingDirectory =
+			string.Equals(nid, "1-LFLmRFxxM", StringComparison.Ordinal) &&
+			result == OrbisGen2Result.ORBIS_GEN2_ERROR_ALREADY_EXISTS;
+		var expectedPadHandleProbeMiss =
+			string.Equals(nid, "u1GRHp+oWoY", StringComparison.Ordinal) &&
+			resultValue == unchecked((int)0x80920007);
 		return expectedFileProbeMiss ||
 			expectedTimedWaitTimeout ||
 			expectedEqueueTimeout ||
@@ -1007,7 +1013,9 @@ public sealed partial class DirectExecutionBackend
 			expectedDirectMemoryProbeMiss ||
 			expectedAdaptiveMutexSelfLock ||
 			expectedAprProbeMiss ||
-			expectedSaveDataMountMiss;
+			expectedSaveDataMountMiss ||
+			expectedExistingDirectory ||
+			expectedPadHandleProbeMiss;
 	}
 
 	private static bool ShouldLogExpectedImportResults() =>
