@@ -12804,7 +12804,10 @@ public static partial class AgcExports
         }
 
         var nextCursor = cursorUp + ((ulong)sizeDwords * sizeof(uint));
-        if (!ctx.TryWriteUInt64(commandBufferAddress + CommandBufferCursorUpOffset, nextCursor))
+        if (!TryWriteUInt64(
+                ctx,
+                commandBufferAddress + CommandBufferCursorUpOffset,
+                nextCursor))
         {
             return false;
         }
@@ -13149,6 +13152,8 @@ public static partial class AgcExports
         }
     }
 
+    // A guest mapping can become host-inaccessible between range validation and
+    // the native copy. Reject that command instead of tearing down the process.
     private static bool TryReadUInt32(CpuContext ctx, ulong address, out uint value)
     {
         if (_dcbWindowBuffer is { } window &&
@@ -13161,7 +13166,15 @@ public static partial class AgcExports
         }
 
         Span<byte> buffer = stackalloc byte[sizeof(uint)];
-        if (!ctx.Memory.TryRead(address, buffer))
+        try
+        {
+            if (!ctx.Memory.TryRead(address, buffer))
+            {
+                value = 0;
+                return false;
+            }
+        }
+        catch (AccessViolationException)
         {
             value = 0;
             return false;
@@ -13175,7 +13188,28 @@ public static partial class AgcExports
     {
         Span<byte> buffer = stackalloc byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32LittleEndian(buffer, value);
-        return ctx.Memory.TryWrite(address, buffer);
+        try
+        {
+            return ctx.Memory.TryWrite(address, buffer);
+        }
+        catch (AccessViolationException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryWriteUInt64(CpuContext ctx, ulong address, ulong value)
+    {
+        Span<byte> buffer = stackalloc byte[sizeof(ulong)];
+        BinaryPrimitives.WriteUInt64LittleEndian(buffer, value);
+        try
+        {
+            return ctx.Memory.TryWrite(address, buffer);
+        }
+        catch (AccessViolationException)
+        {
+            return false;
+        }
     }
 
     private static bool TryReadUInt64(CpuContext ctx, ulong address, out ulong value)
@@ -13190,7 +13224,15 @@ public static partial class AgcExports
         }
 
         Span<byte> buffer = stackalloc byte[sizeof(ulong)];
-        if (!ctx.Memory.TryRead(address, buffer))
+        try
+        {
+            if (!ctx.Memory.TryRead(address, buffer))
+            {
+                value = 0;
+                return false;
+            }
+        }
+        catch (AccessViolationException)
         {
             value = 0;
             return false;
