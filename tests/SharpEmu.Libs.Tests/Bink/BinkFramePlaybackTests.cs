@@ -11,14 +11,19 @@ public sealed class BinkFramePlaybackTests
     [Fact]
     public void FramesAdvanceAccordingToMovieClock()
     {
-        using var playback = new BinkFramePlayback(new SequenceDecoder(1, 2, 3));
+        var clock = new ManualTimeProvider();
+        using var playback = new BinkFramePlayback(
+            new SequenceDecoder(1, 2, 3),
+            clock);
 
         Assert.Equal(1, WaitForAdvancedFrame(playback)[0]);
         Assert.True(playback.TryGetFrame(true, out var heldFrame, out var advanced));
         Assert.False(advanced);
         Assert.Equal(1, heldFrame[0]);
 
+        clock.Advance(TimeSpan.FromMilliseconds(50));
         Assert.Equal(2, WaitForAdvancedFrame(playback)[0]);
+        clock.Advance(TimeSpan.FromMilliseconds(50));
         Assert.Equal(3, WaitForAdvancedFrame(playback)[0]);
     }
 
@@ -41,11 +46,14 @@ public sealed class BinkFramePlaybackTests
     [Fact]
     public void FirstFrameWaitsUntilPresentationStarts()
     {
-        using var playback = new BinkFramePlayback(new SequenceDecoder(1, 2));
+        var clock = new ManualTimeProvider();
+        using var playback = new BinkFramePlayback(
+            new SequenceDecoder(1, 2),
+            clock);
 
         var first = WaitForFrame(playback, advanceClock: false);
         Assert.Equal(1, first[0]);
-        Thread.Sleep(100);
+        clock.Advance(TimeSpan.FromSeconds(10));
 
         Assert.True(playback.TryGetFrame(false, out var held, out var advanced));
         Assert.False(advanced);
@@ -54,20 +62,24 @@ public sealed class BinkFramePlaybackTests
         Assert.True(playback.TryGetFrame(true, out held, out advanced));
         Assert.False(advanced);
         Assert.Equal(1, held[0]);
+        clock.Advance(TimeSpan.FromMilliseconds(50));
         Assert.Equal(2, WaitForAdvancedFrame(playback)[0]);
     }
 
     [Fact]
     public void LatePresentationReturnsFinalFrameBeforeCompleting()
     {
-        using var playback = new BinkFramePlayback(new SequenceDecoder(1, 2));
+        var clock = new ManualTimeProvider();
+        using var playback = new BinkFramePlayback(
+            new SequenceDecoder(1, 2),
+            clock);
 
         Assert.Equal(1, WaitForFrame(playback, advanceClock: false)[0]);
         Assert.True(playback.TryGetFrame(true, out var held, out var advanced));
         Assert.False(advanced);
         Assert.Equal(1, held[0]);
 
-        Thread.Sleep(150);
+        clock.Advance(TimeSpan.FromMilliseconds(150));
 
         Assert.True(playback.TryGetFrame(true, out var final, out advanced));
         Assert.True(advanced);
@@ -122,5 +134,18 @@ public sealed class BinkFramePlaybackTests
         public void Dispose()
         {
         }
+    }
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private long _timestamp;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override long GetTimestamp() =>
+            Interlocked.Read(ref _timestamp);
+
+        public void Advance(TimeSpan elapsed) =>
+            Interlocked.Add(ref _timestamp, elapsed.Ticks);
     }
 }
