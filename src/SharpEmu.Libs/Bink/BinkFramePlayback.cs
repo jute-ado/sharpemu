@@ -1,8 +1,6 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-using System.Diagnostics;
-
 namespace SharpEmu.Libs.Bink;
 
 internal interface IBinkFrameDecoder : IDisposable
@@ -28,6 +26,7 @@ internal sealed class BinkFramePlayback : IDisposable
 
     private readonly object _gate = new();
     private readonly IBinkFrameDecoder _decoder;
+    private readonly TimeProvider _timeProvider;
     private readonly Queue<byte[]> _freeBuffers = new();
     private readonly Queue<DecodedFrame> _decodedFrames = new();
     private readonly Thread _decoderThread;
@@ -42,9 +41,12 @@ internal sealed class BinkFramePlayback : IDisposable
     private bool _finished;
     private int _disposed;
 
-    internal BinkFramePlayback(IBinkFrameDecoder decoder)
+    internal BinkFramePlayback(
+        IBinkFrameDecoder decoder,
+        TimeProvider? timeProvider = null)
     {
         _decoder = decoder;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         Width = decoder.Width;
         Height = decoder.Height;
         FramesPerSecondNumerator = decoder.FramesPerSecondNumerator;
@@ -117,12 +119,14 @@ internal sealed class BinkFramePlayback : IDisposable
 
             if (advanceClock && !_playbackClockStarted)
             {
-                _playbackStartTimestamp = Stopwatch.GetTimestamp();
+                _playbackStartTimestamp = _timeProvider.GetTimestamp();
                 _playbackClockStarted = true;
             }
 
             var elapsedSeconds = _playbackClockStarted
-                ? Stopwatch.GetElapsedTime(_playbackStartTimestamp).TotalSeconds
+                ? _timeProvider
+                    .GetElapsedTime(_playbackStartTimestamp)
+                    .TotalSeconds
                 : 0;
             var targetFrameIndex = (long)Math.Floor(
                 elapsedSeconds * FramesPerSecondNumerator / FramesPerSecondDenominator);
