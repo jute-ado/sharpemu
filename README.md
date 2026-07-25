@@ -74,7 +74,9 @@ accepted game expectations.
 - formatted buffer loads in vertex stages retain resolved global-buffer
   bindings when they are structured-resource reads rather than vertex inputs;
   8-bit and 16-bit SNORM formatted buffer loads and stores use valid signed
-  integer/float conversion opcodes without redundant same-width conversions
+  integer/float conversion opcodes without redundant same-width conversions;
+  scalar evaluation also preserves exact one-, two-, and three-byte descriptor
+  extents instead of rejecting them before guest memory is consulted
 - Gen5 FLAT loads and stores recover their scalar allocation base from the
   defining address-pair instructions, fail closed when that provenance is
   unresolved, and lower the full vector address to a bounded binding offset

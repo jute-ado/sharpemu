@@ -173,6 +173,39 @@ public sealed class ComputeBufferWritebackTests
         Assert.False(Assert.Single(evaluation.GlobalMemoryBindings).Writable);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void SubDwordDescriptorCreatesAnExactReadOnlyBinding(uint size)
+    {
+        var control = new Gen5BufferMemoryControl(
+            DwordCount: 1,
+            VectorAddress: 0,
+            VectorData: 1,
+            ScalarResource: 0,
+            OffsetBytes: 0,
+            IndexEnabled: false,
+            OffsetEnabled: false,
+            Glc: false,
+            Slc: false);
+
+        var evaluation = Evaluate(
+            "BufferLoadUbyte",
+            control,
+            [
+                unchecked((uint)BufferAddress),
+                (uint)(BufferAddress >> 32),
+                size,
+                0,
+            ]);
+
+        var binding = Assert.Single(evaluation.GlobalMemoryBindings);
+        Assert.False(binding.Writable);
+        Assert.Equal(BufferAddress, binding.BaseAddress);
+        Assert.Equal(size, (uint)binding.Data.Length);
+    }
+
     [Fact]
     public void ReadOnlyBuffersDoNotMakeAComputeDispatchObservable()
     {
