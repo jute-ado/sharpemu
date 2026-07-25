@@ -136,6 +136,32 @@ public sealed class ImportResultLoggingTests
                 (OrbisGen2Result)result));
     }
 
+    [Fact]
+    public void KernelWaitSemaphoreTimeoutIsExpectedControlFlow()
+    {
+        Assert.True(
+            DirectExecutionBackend.IsExpectedImportResult(
+                "Zxa0VhQVTsk",
+                OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT));
+    }
+
+    [Theory]
+    [InlineData(
+        "different-nid",
+        (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT)]
+    [InlineData(
+        "Zxa0VhQVTsk",
+        (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY)]
+    public void KernelWaitSemaphoreExpectationRequiresMatchingNidAndResult(
+        string nid,
+        int result)
+    {
+        Assert.False(
+            DirectExecutionBackend.IsExpectedImportResult(
+                nid,
+                (OrbisGen2Result)result));
+    }
+
     [Theory]
     [InlineData("BmMjYxmew1w", (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT)]
     [InlineData("upoVrzMHFeE", (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY)]
