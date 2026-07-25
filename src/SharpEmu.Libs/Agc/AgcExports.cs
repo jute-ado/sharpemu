@@ -9885,13 +9885,40 @@ public static partial class AgcExports
                 : volumeUploadDepth;
             var layerBytes = checked((int)sourceByteCount);
             var totalBytes = (long)layerBytes * sliceCount;
-            if (totalBytes <= int.MaxValue)
+            var tiledBytesPerLayer = checked((int)physicalSourceByteCount);
+            var tiledTotalBytes = (long)tiledBytesPerLayer * sliceCount;
+            var gpuArrayDetileParameters = default(DetileParams);
+            var usesGpuArrayDetile =
+                tiledTotalBytes <= int.MaxValue &&
+                AgcGpuDetilePolicy.TryCreateArrayLayerParameters(
+                    _gpuDetileEnabled,
+                    GuestGpu.Current.SupportsTiledTextureUploads,
+                    hasElementLayout,
+                    baseMipInTail,
+                    isStorage,
+                    wantsArrayUpload,
+                    isThreeDimensional,
+                    isCube,
+                    sliceCount,
+                    descriptor.TileMode,
+                    bytesPerElement,
+                    elementsWide,
+                    elementsHigh,
+                    tiledBytesPerLayer,
+                    checked((int)tiledTotalBytes),
+                    out gpuArrayDetileParameters);
+            if (usesGpuArrayDetile || totalBytes <= int.MaxValue)
             {
-                var layered = new byte[totalBytes];
+                var layered = usesGpuArrayDetile
+                    ? []
+                    : new byte[totalBytes];
+                var tiledLayers = usesGpuArrayDetile
+                    ? new byte[tiledTotalBytes]
+                    : null;
                 var uploadedLayers = 0u;
                 for (var layer = 0u; layer < sliceCount; layer++)
                 {
-                    var sliceSource = new byte[(int)physicalSourceByteCount];
+                    var sliceSource = new byte[tiledBytesPerLayer];
                     if (!ctx.Memory.TryRead(
                             descriptor.Address + layer * chainSliceBytes + baseMipByteOffset,
                             sliceSource))
@@ -9899,16 +9926,25 @@ public static partial class AgcExports
                         break;
                     }
 
-                    var sliceLinear = TryDetileTextureSource(
-                        descriptor,
-                        sourceWidth,
-                        layerBytes,
-                        sliceSource,
-                        baseMipInTail,
-                        mipTailElementX,
-                        mipTailElementY) ?? sliceSource.AsSpan(0, layerBytes).ToArray();
-                    sliceLinear.AsSpan(0, layerBytes)
-                        .CopyTo(layered.AsSpan(checked((int)(layer * layerBytes))));
+                    if (usesGpuArrayDetile)
+                    {
+                        sliceSource.CopyTo(
+                            tiledLayers!,
+                            checked((int)(layer * tiledBytesPerLayer)));
+                    }
+                    else
+                    {
+                        var sliceLinear = TryDetileTextureSource(
+                            descriptor,
+                            sourceWidth,
+                            layerBytes,
+                            sliceSource,
+                            baseMipInTail,
+                            mipTailElementX,
+                            mipTailElementY) ?? sliceSource.AsSpan(0, layerBytes).ToArray();
+                        sliceLinear.AsSpan(0, layerBytes)
+                            .CopyTo(layered.AsSpan(checked((int)(layer * layerBytes))));
+                    }
                     uploadedLayers++;
                 }
 
@@ -9936,7 +9972,11 @@ public static partial class AgcExports
                         ArrayLayers: wantsArrayUpload || wantsCubeUpload ? sliceCount : 1,
                         Depth: wantsArrayUpload || wantsCubeUpload ? 1 : sliceCount,
                         ThreeDimensionalView: isThreeDimensional,
-                        CubeView: isCube);
+                        CubeView: isCube,
+                        TiledSource: tiledLayers,
+                        Detile: usesGpuArrayDetile
+                            ? gpuArrayDetileParameters
+                            : null);
                     return true;
                 }
             }

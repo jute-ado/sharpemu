@@ -157,4 +157,74 @@ public sealed class AgcGpuDetilePolicyTests
         Assert.False(accepted);
         Assert.Equal(default, parameters);
     }
+
+    [Fact]
+    public void TryCreateArrayLayerParametersAcceptsCompleteLayerSet()
+    {
+        var accepted = AgcGpuDetilePolicy.TryCreateArrayLayerParameters(
+            enabled: true,
+            backendSupportsTiledUploads: true,
+            hasElementLayout: true,
+            baseMipInTail: false,
+            isStorage: false,
+            isArrayed: true,
+            isThreeDimensional: false,
+            isCube: false,
+            layers: 3,
+            tileMode: 27,
+            bytesPerElement: 4,
+            elementsWide: 128,
+            elementsHigh: 128,
+            tiledBytesPerLayer: 65536,
+            tiledSourceByteCount: 196608,
+            out var parameters);
+
+        Assert.True(accepted);
+        Assert.Equal(DetileEquation.ExactXor, parameters.Equation);
+    }
+
+    [Theory]
+    [InlineData(false, true, true, false, false, true, false, false, 3, 196608)]
+    [InlineData(true, false, true, false, false, true, false, false, 3, 196608)]
+    [InlineData(true, true, false, false, false, true, false, false, 3, 196608)]
+    [InlineData(true, true, true, true, false, true, false, false, 3, 196608)]
+    [InlineData(true, true, true, false, true, true, false, false, 3, 196608)]
+    [InlineData(true, true, true, false, false, false, false, false, 3, 196608)]
+    [InlineData(true, true, true, false, false, true, true, false, 3, 196608)]
+    [InlineData(true, true, true, false, false, true, false, true, 3, 196608)]
+    [InlineData(true, true, true, false, false, true, false, false, 1, 65536)]
+    [InlineData(true, true, true, false, false, true, false, false, 3, 196607)]
+    public void TryCreateArrayLayerParametersRejectsIncompleteOrUnsafeSet(
+        bool enabled,
+        bool backendSupportsTiledUploads,
+        bool hasElementLayout,
+        bool baseMipInTail,
+        bool isStorage,
+        bool isArrayed,
+        bool isThreeDimensional,
+        bool isCube,
+        uint layers,
+        int tiledSourceByteCount)
+    {
+        var accepted = AgcGpuDetilePolicy.TryCreateArrayLayerParameters(
+            enabled,
+            backendSupportsTiledUploads,
+            hasElementLayout,
+            baseMipInTail,
+            isStorage,
+            isArrayed,
+            isThreeDimensional,
+            isCube,
+            layers,
+            tileMode: 27,
+            bytesPerElement: 4,
+            elementsWide: 128,
+            elementsHigh: 128,
+            tiledBytesPerLayer: 65536,
+            tiledSourceByteCount,
+            out var parameters);
+
+        Assert.False(accepted);
+        Assert.Equal(default, parameters);
+    }
 }

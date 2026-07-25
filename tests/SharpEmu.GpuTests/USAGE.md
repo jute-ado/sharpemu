@@ -31,7 +31,7 @@ Vulkan records each verified compute detile and buffer-to-image copy in the
 draw command buffer, retains the transient buffers until that submission
 completes, and must report two GPU-detile uploads with the second version in
 the capture. This covers both initial creation and refresh of an existing
-CPU-backed guest image. AGC can select that boundary for validated
-single-layer sampled 2D textures when `SHARPEMU_GPU_DETILE=1`; it remains off
-by default, and this synthetic test continues to exercise the backend seam
-directly.
+CPU-backed guest image. AGC can select that boundary for validated sampled 2D
+textures, including complete 2D arrays, when `SHARPEMU_GPU_DETILE=1`; it
+remains off by default, and this synthetic test continues to exercise the
+backend seam directly.
