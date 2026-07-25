@@ -81,6 +81,9 @@ public sealed class RenderTargetSamplingTests
             Assert.Equal(
                 VulkanDetileSelfTestStatus.Passed,
                 VulkanVideoPresenter.DetileSelfTestStatus);
+            Assert.Equal(
+                4,
+                VulkanVideoPresenter.DetileSelfTestImageRoundTrips);
 
             SubmitSolid(SourceAddress, red: 1f, green: 0f, blue: 0f);
             ComposeSourceTo(FirstDisplayAddress);
