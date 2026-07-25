@@ -68,6 +68,11 @@ accepted game expectations.
   flow and reset the host GPU; Vulkan and Metal render-target decoding accepts
   Gen5 R16 UNORM plus R16 and RGBA32 unsigned and signed integer formats with
   matching shader output types instead of dropping those passes
+- backend-neutral RDNA2 detile parameters reuse the fork's exact-XOR and
+  block-table address models across element widths and array layers, matching
+  the optimized CPU path byte-for-byte while preserving all-or-nothing tiled
+  input and linear output bounds; future Vulkan and Metal compute paths can
+  consume one tested address model instead of independently reimplementing it
 - graphics-stage Gen5 ADD_TID LDS transfers lowered to per-invocation storage
   with guest lane and M0 addressing, while compute shaders retain shared
   workgroup LDS semantics

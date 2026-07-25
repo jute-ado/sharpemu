@@ -6,6 +6,36 @@ using System.Runtime.CompilerServices;
 
 namespace SharpEmu.Libs.Agc;
 
+internal enum DetileEquation
+{
+    None,
+    ExactXor,
+    BlockTable,
+}
+
+/// <summary>
+/// Backend-neutral addressing data for one tiled surface. Graphics backends can
+/// consume this model without reimplementing the CPU detiler's AddrLib choices.
+/// </summary>
+internal readonly record struct DetileParams(
+    DetileEquation Equation,
+    int ElementsWide,
+    int ElementsHigh,
+    int BytesPerElement,
+    int BlockWidth,
+    int BlockHeight,
+    int BlockElements,
+    int BlockBytes,
+    int BlocksPerRow,
+    int[] XByteTerm,
+    int XMask,
+    int[] YByteTerm,
+    int YMask,
+    int[] BlockTable)
+{
+    public bool IsSupported => Equation != DetileEquation.None;
+}
+
 /// <summary>
 /// Deswizzles RDNA2 (GFX10) tiled texture surfaces into linear layout so they
 /// can be uploaded to Vulkan. PS5 stores most textures in a swizzled layout
@@ -531,6 +561,198 @@ internal static unsafe class GnmTiling
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Resolves the exact addressing model used by <see cref="TryDetile"/> into
+    /// backend-neutral integers and lookup tables suitable for a compute kernel.
+    /// </summary>
+    public static DetileParams GetDetileParams(
+        uint swizzleMode,
+        int bytesPerElement,
+        int elementsWide,
+        int elementsHigh)
+    {
+        if (!ShouldDetile(swizzleMode) ||
+            bytesPerElement <= 0 ||
+            elementsWide <= 0 ||
+            elementsHigh <= 0 ||
+            !TryGetSwizzleKind(swizzleMode, out var kind, out var blockBytes))
+        {
+            return default;
+        }
+
+        var bppLog2 = BitLog2((uint)bytesPerElement);
+        if (bppLog2 < 0)
+        {
+            return default;
+        }
+
+        var blockElements = blockBytes >> bppLog2;
+        var (blockWidth, blockHeight) = SquareBlockDimensions(blockElements);
+        if (blockWidth == 0 || blockHeight == 0)
+        {
+            return default;
+        }
+
+        int blocksPerRow;
+        try
+        {
+            blocksPerRow = checked(
+                (int)(((long)elementsWide + blockWidth - 1) / blockWidth));
+        }
+        catch (OverflowException)
+        {
+            return default;
+        }
+
+        if (TryGetExactXorPattern(swizzleMode, bppLog2, out var pattern))
+        {
+            var terms = _patternTermCache.GetOrAdd(
+                (swizzleMode, bppLog2),
+                _ => CreatePatternTerms(pattern));
+            return new DetileParams(
+                DetileEquation.ExactXor,
+                elementsWide,
+                elementsHigh,
+                bytesPerElement,
+                blockWidth,
+                blockHeight,
+                blockElements,
+                blockBytes,
+                blocksPerRow,
+                terms.X,
+                terms.XMask,
+                terms.Y,
+                terms.YMask,
+                []);
+        }
+
+        var blockTable = _blockTableCache.GetOrAdd(
+            (kind, blockWidth, blockHeight),
+            static key => CreateBlockTable(key.Kind, key.Width, key.Height));
+        return new DetileParams(
+            DetileEquation.BlockTable,
+            elementsWide,
+            elementsHigh,
+            bytesPerElement,
+            blockWidth,
+            blockHeight,
+            blockElements,
+            blockBytes,
+            blocksPerRow,
+            [],
+            0,
+            [],
+            0,
+            blockTable);
+    }
+
+    /// <summary>
+    /// Executes the backend-neutral detile model. This is the reference fallback
+    /// for future compute backends and intentionally preserves the optimized CPU
+    /// path's all-or-nothing storage validation.
+    /// </summary>
+    public static bool DetileWithParams(
+        in DetileParams parameters,
+        ReadOnlySpan<byte> tiled,
+        Span<byte> linear)
+    {
+        if (!HasValidDetileParams(parameters))
+        {
+            return false;
+        }
+
+        long requiredTiled;
+        long requiredLinear;
+        try
+        {
+            var blocksHigh =
+                ((long)parameters.ElementsHigh + parameters.BlockHeight - 1) /
+                parameters.BlockHeight;
+            requiredTiled = checked(
+                (long)parameters.BlocksPerRow *
+                blocksHigh *
+                parameters.BlockBytes);
+            requiredLinear = checked(
+                (long)parameters.ElementsWide *
+                parameters.ElementsHigh *
+                parameters.BytesPerElement);
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+
+        if (requiredTiled > tiled.Length || requiredLinear > linear.Length)
+        {
+            return false;
+        }
+
+        var exactXor = parameters.Equation == DetileEquation.ExactXor;
+        for (var y = 0; y < parameters.ElementsHigh; y++)
+        {
+            var blockY = y / parameters.BlockHeight;
+            var inBlockY = y % parameters.BlockHeight;
+            var yTerm = exactXor
+                ? parameters.YByteTerm[y & parameters.YMask]
+                : 0;
+            for (var x = 0; x < parameters.ElementsWide; x++)
+            {
+                var blockX = x / parameters.BlockWidth;
+                var inBlockByte = exactXor
+                    ? parameters.XByteTerm[x & parameters.XMask] ^ yTerm
+                    : parameters.BlockTable[
+                        inBlockY * parameters.BlockWidth +
+                        (x % parameters.BlockWidth)] *
+                      parameters.BytesPerElement;
+                var sourceByte =
+                    ((long)blockY * parameters.BlocksPerRow + blockX) *
+                    parameters.BlockBytes +
+                    inBlockByte;
+                var destinationByte =
+                    ((long)y * parameters.ElementsWide + x) *
+                    parameters.BytesPerElement;
+                tiled.Slice(
+                        checked((int)sourceByte),
+                        parameters.BytesPerElement)
+                    .CopyTo(
+                        linear.Slice(
+                            checked((int)destinationByte),
+                            parameters.BytesPerElement));
+            }
+        }
+
+        return true;
+    }
+
+    private static bool HasValidDetileParams(in DetileParams parameters)
+    {
+        if (!parameters.IsSupported ||
+            parameters.ElementsWide <= 0 ||
+            parameters.ElementsHigh <= 0 ||
+            parameters.BytesPerElement <= 0 ||
+            parameters.BlockWidth <= 0 ||
+            parameters.BlockHeight <= 0 ||
+            parameters.BlockElements <= 0 ||
+            parameters.BlockBytes <= 0 ||
+            parameters.BlocksPerRow <= 0)
+        {
+            return false;
+        }
+
+        return parameters.Equation switch
+        {
+            DetileEquation.ExactXor =>
+                parameters.XByteTerm.Length > parameters.XMask &&
+                parameters.YByteTerm.Length > parameters.YMask &&
+                parameters.XMask >= 0 &&
+                parameters.YMask >= 0,
+            DetileEquation.BlockTable =>
+                parameters.BlockTable.Length >=
+                (long)parameters.BlockWidth * parameters.BlockHeight,
+            _ => false,
+        };
     }
 
     private enum SwizzleKind
