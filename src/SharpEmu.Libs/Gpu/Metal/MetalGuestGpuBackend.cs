@@ -16,6 +16,8 @@ internal sealed class MetalGuestGpuBackend : IGuestGpuBackend
 {
     public string BackendName => "Metal";
 
+    public bool SupportsTiledTextureUploads => false;
+
     private static readonly IGuestCompiledShader DepthOnlyFragmentShader =
         new MetalCompiledGuestShader(new Gen5MslShader(
             MslFixedShaders.CreateDepthOnlyFragment(),

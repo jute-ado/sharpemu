@@ -78,8 +78,10 @@ accepted game expectations.
   overflow, and non-exact per-layer tiled extents before allocating GPU
   resources; the opt-in Vulkan conformance path executes exact-XOR and
   block-table surfaces across two array layers and compares every output byte
-  with the CPU model, while presenter texture-upload integration remains
-  deliberately separate
+  with the CPU model; `SHARPEMU_GPU_DETILE=1` also lets AGC pass validated
+  single-layer sampled 2D tiled sources through this Vulkan upload seam,
+  while the default and unsupported storage, array, cube, 3D, mip-tail, or
+  element-size cases retain the CPU detiler
 - graphics-stage Gen5 ADD_TID LDS transfers lowered to per-invocation storage
   with guest lane and M0 addressing, while compute shaders retain shared
   workgroup LDS semantics

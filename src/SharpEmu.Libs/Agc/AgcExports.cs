@@ -291,6 +291,11 @@ public static partial class AgcExports
         Environment.GetEnvironmentVariable("SHARPEMU_NO_TEXTURE_SKIP"),
         "1",
         StringComparison.Ordinal);
+    // Raw tiled bytes cross the backend seam only under an explicit opt-in.
+    // Backends that do not implement this seam continue to receive the
+    // established CPU-detiled bytes.
+    private static readonly bool _gpuDetileEnabled = AgcGpuDetilePolicy.IsEnabled(
+        Environment.GetEnvironmentVariable("SHARPEMU_GPU_DETILE"));
     private static long _dcbWriteDataTraceCount;
     private static int _tracedVertexRangeCount;
     private static long _dcbWaitRegMemTraceCount;
@@ -9973,6 +9978,45 @@ public static partial class AgcExports
                 $"bytes={source.Length} logical_bytes={sourceByteCount} nonzero64={nonZero}");
         }
         DumpTextureSourceIfRequested(descriptor, sourceWidth, source);
+
+        if (AgcGpuDetilePolicy.TryCreateSingleLayerParameters(
+                _gpuDetileEnabled,
+                GuestGpu.Current.SupportsTiledTextureUploads,
+                hasElementLayout,
+                baseMipInTail,
+                isStorage,
+                isArrayed,
+                isThreeDimensional,
+                isCube,
+                descriptor.TileMode,
+                bytesPerElement,
+                elementsWide,
+                elementsHigh,
+                source.Length,
+                out var gpuDetileParameters))
+        {
+            texture = new GuestDrawTexture(
+                descriptor.Address,
+                descriptor.Width,
+                descriptor.Height,
+                descriptor.Format,
+                descriptor.NumberType,
+                [],
+                IsFallback: false,
+                IsStorage: false,
+                MipLevels: descriptor.MipLevels,
+                MipLevel: mipLevel,
+                BaseMipLevel: descriptor.ViewBaseLevel,
+                ResourceMipLevels: descriptor.ResourceMipLevels,
+                Pitch: sourceWidth,
+                TileMode: descriptor.TileMode,
+                DstSelect: descriptor.DstSelect,
+                Sampler: sampler,
+                WriteGeneration: hasWriteGeneration ? writeGeneration : -1,
+                TiledSource: source,
+                Detile: gpuDetileParameters);
+            return true;
+        }
 
         var rgba = TryDetileTextureSource(
             descriptor,

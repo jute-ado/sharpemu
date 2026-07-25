@@ -17,6 +17,8 @@ internal sealed class VulkanGuestGpuBackend : IGuestGpuBackend
 {
     public string BackendName => "Vulkan";
 
+    public bool SupportsTiledTextureUploads => true;
+
     private static readonly IGuestCompiledShader DepthOnlyFragmentShader =
         new VulkanCompiledGuestShader(SpirvFixedShaders.CreateDepthOnlyFragment());
 
