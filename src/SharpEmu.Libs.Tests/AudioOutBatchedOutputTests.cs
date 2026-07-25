@@ -21,6 +21,7 @@ public sealed class AudioOutBatchedOutputTests : IDisposable
     private readonly FakeGuestMemory _memory = new();
     private readonly CpuContext _context;
     private readonly List<RecordingAudioStream> _streams = [];
+    private readonly List<string> _progressMessages = [];
 
     public AudioOutBatchedOutputTests()
     {
@@ -31,6 +32,7 @@ public sealed class AudioOutBatchedOutputTests : IDisposable
             _streams.Add(stream);
             return stream;
         });
+        AudioOutExports.SetProgressLoggerForTests(_progressMessages.Add);
         _memory.AddRegion(ParametersAddress, new byte[25 * 16]);
         _memory.AddRegion(FirstSamplesAddress, new byte[StereoPcm16ByteLength]);
         _memory.AddRegion(SecondSamplesAddress, new byte[StereoPcm16ByteLength]);
@@ -66,6 +68,29 @@ public sealed class AudioOutBatchedOutputTests : IDisposable
 
         Assert.Equal(AudioOutExports.AudioOutErrorInvalidPointer, Submit(2));
         Assert.All(_streams, stream => Assert.Empty(stream.Submissions));
+    }
+
+    [Fact]
+    public void OutputsReportsNonSilentSamplesOnlyAfterWholeBatchIsReadable()
+    {
+        var firstHandle = OpenPort();
+        var secondHandle = OpenPort();
+        Assert.True(_memory.TryWrite(FirstSamplesAddress, CreateSamples(1)));
+        WriteDescriptor(0, firstHandle, FirstSamplesAddress);
+        WriteDescriptor(1, secondHandle, 0xDEAD_0000);
+
+        Assert.Equal(AudioOutExports.AudioOutErrorInvalidPointer, Submit(2));
+        Assert.Empty(_progressMessages);
+
+        Assert.True(_memory.TryWrite(
+            SecondSamplesAddress,
+            new byte[StereoPcm16ByteLength]));
+        WriteDescriptor(1, secondHandle, SecondSamplesAddress);
+        Assert.Equal(BufferFrames, Submit(2));
+
+        Assert.Equal(
+            ["[LOADER][INFO] AudioOut non-silent samples submitted: handle=1 backend=host"],
+            _progressMessages);
     }
 
     [Fact]
@@ -128,6 +153,7 @@ public sealed class AudioOutBatchedOutputTests : IDisposable
 
     public void Dispose()
     {
+        AudioOutExports.SetProgressLoggerForTests(null);
         AudioOutExports.SetStreamFactoryForTests(null);
         AudioOutLifecycle.ResetRuntimeState();
     }
