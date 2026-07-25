@@ -114,6 +114,28 @@ public sealed class ImportResultLoggingTests
                 OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN));
     }
 
+    [Fact]
+    public void KernelPollSemaphoreBusyIsExpectedControlFlow()
+    {
+        Assert.True(
+            DirectExecutionBackend.IsExpectedImportResult(
+                "12wOHk8ywb0",
+                OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY));
+    }
+
+    [Theory]
+    [InlineData("different-nid", (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY)]
+    [InlineData("12wOHk8ywb0", (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TRY_AGAIN)]
+    public void KernelPollSemaphoreExpectationRequiresMatchingNidAndResult(
+        string nid,
+        int result)
+    {
+        Assert.False(
+            DirectExecutionBackend.IsExpectedImportResult(
+                nid,
+                (OrbisGen2Result)result));
+    }
+
     [Theory]
     [InlineData("BmMjYxmew1w", (int)OrbisGen2Result.ORBIS_GEN2_ERROR_TIMED_OUT)]
     [InlineData("upoVrzMHFeE", (int)OrbisGen2Result.ORBIS_GEN2_ERROR_BUSY)]
