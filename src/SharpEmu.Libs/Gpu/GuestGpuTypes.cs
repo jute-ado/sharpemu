@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 using SharpEmu.HLE;
+using SharpEmu.Libs.Agc;
 
 namespace SharpEmu.Libs.Gpu;
 
@@ -53,7 +54,9 @@ internal sealed record GuestDrawTexture(
     uint ArrayLayers = 1,
     uint Depth = 1,
     bool ThreeDimensionalView = false,
-    bool CubeView = false);
+    bool CubeView = false,
+    byte[]? TiledSource = null,
+    DetileParams? Detile = null);
 
 /// <summary>Raw guest sampler descriptor dwords, copied verbatim from guest memory.</summary>
 internal readonly record struct GuestSampler(

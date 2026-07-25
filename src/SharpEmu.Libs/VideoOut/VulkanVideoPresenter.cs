@@ -150,6 +150,7 @@ internal static unsafe class VulkanVideoPresenter
     private static long _presentedGuestFrameCount;
     private static int _detileSelfTestStatus;
     private static int _detileSelfTestImageRoundTrips;
+    private static int _gpuDetileUploadCount;
     private static readonly PresentedFrameTimingTrace?
         _presentedFrameTimingTrace =
             PresentedFrameTimingTrace.TryCreateFromEnvironment();
@@ -356,6 +357,9 @@ internal static unsafe class VulkanVideoPresenter
 
     internal static int DetileSelfTestImageRoundTrips =>
         Volatile.Read(ref _detileSelfTestImageRoundTrips);
+
+    internal static int GpuDetileUploadCount =>
+        Volatile.Read(ref _gpuDetileUploadCount);
 
     internal static bool ShouldForceSolidFragmentOverride(
         bool isTitleDraw,
@@ -1091,6 +1095,7 @@ internal static unsafe class VulkanVideoPresenter
                 ref _detileSelfTestStatus,
                 (int)VulkanDetileSelfTestStatus.NotRequested);
             Volatile.Write(ref _detileSelfTestImageRoundTrips, 0);
+            Volatile.Write(ref _gpuDetileUploadCount, 0);
             _latestPresentation ??= _splashHidden
                 ? new Presentation(
                     CreateBlackFrame(width, height),
@@ -3632,6 +3637,7 @@ internal static unsafe class VulkanVideoPresenter
         private uint _maxColorAttachments;
         private Device _device;
         private PipelineCache _pipelineCache;
+        private VulkanDetilePass.Context? _detileContext;
         private string? _pipelineCachePath;
         private bool _pipelineCacheDirty;
         private long _lastPipelineCacheSaveTick;
@@ -3876,6 +3882,8 @@ internal static unsafe class VulkanVideoPresenter
             public DescriptorPool DescriptorPool;
             public DescriptorSet DescriptorSet;
             public TextureResource[] Textures = [];
+            public List<VulkanDetilePass.TransientResources>
+                DetileResources { get; } = [];
             public GlobalBufferResource[] GlobalMemoryBuffers = [];
             public VertexBufferResource[] VertexBuffers = [];
             public VkBuffer IndexBuffer;
@@ -3911,6 +3919,9 @@ internal static unsafe class VulkanVideoPresenter
             public ulong Address;
             public VkBuffer StagingBuffer;
             public DeviceMemory StagingMemory;
+            public byte[]? TiledSource;
+            public DetileParams? Detile;
+            public VulkanDetileDispatch DetileDispatch;
             public Image Image;
             public DeviceMemory ImageMemory;
             public ImageView View;
@@ -8474,8 +8485,7 @@ internal static unsafe class VulkanVideoPresenter
             if (!guestImage.IsCpuBacked ||
                 guestImage.Width != texture.Width ||
                 guestImage.Height != texture.Height ||
-                guestImage.MipLevels != 1 ||
-                texture.RgbaPixels.Length == 0)
+                guestImage.MipLevels != 1)
             {
                 return false;
             }
@@ -8489,10 +8499,36 @@ internal static unsafe class VulkanVideoPresenter
                 return false;
             }
 
-            var pixels = texture.RgbaPixels.Length == (int)expectedSize
+            var shape = ResolveTextureImageShape(texture);
+            var forceWhite = AddressListContains(
+                "SHARPEMU_FORCE_WHITE_TEXTURE_TARGETS",
+                texture.Address);
+            var detileDispatch = default(VulkanDetileDispatch);
+            var usesGpuDetile =
+                !forceWhite &&
+                TryCreateGpuDetileDispatch(
+                    texture,
+                    shape,
+                    rowLength,
+                    texture.Width,
+                    texture.Height,
+                    shape.ArrayLayers,
+                    expectedSize,
+                    out detileDispatch);
+            if (!usesGpuDetile && texture.RgbaPixels.Length == 0)
+            {
+                return false;
+            }
+
+            var pixels = usesGpuDetile
+                ? []
+                : texture.RgbaPixels.Length == (int)expectedSize
                 ? texture.RgbaPixels
                 : CreateFallbackTexturePixels(texture.Format, rowLength, texture.Height, expectedSize);
-            var fingerprint = ComputeTextureContentFingerprint(pixels);
+            var fingerprint = ComputeTextureContentFingerprint(
+                usesGpuDetile
+                    ? texture.TiledSource!
+                    : pixels);
             if ((guestImage.Initialized || guestImage.InitialUploadPending) &&
                 guestImage.CpuContentFingerprint == fingerprint)
             {
@@ -8508,21 +8544,35 @@ internal static unsafe class VulkanVideoPresenter
                 return false;
             }
 
-            var uploadPixels = texture.Format == 13
-                ? ExpandRgb32Pixels(pixels)
-                : pixels;
             var debugName = TextureDebugName(texture, guestImage.Format);
-            var (stagingBuffer, stagingMemory) = CreateTextureStagingBuffer(
-                uploadPixels,
-                $"{debugName} refresh staging");
+            VkBuffer stagingBuffer = default;
+            DeviceMemory stagingMemory = default;
+            if (!usesGpuDetile)
+            {
+                var uploadPixels = texture.Format == 13
+                    ? ExpandRgb32Pixels(pixels)
+                    : pixels;
+                (stagingBuffer, stagingMemory) = CreateTextureStagingBuffer(
+                    uploadPixels,
+                    $"{debugName} refresh staging");
+            }
             TraceVulkanShader(
                 $"vk.texture_refresh addr=0x{texture.Address:X16} " +
-                $"size={texture.Width}x{texture.Height} bytes={uploadPixels.Length}");
+                $"size={texture.Width}x{texture.Height} " +
+                $"bytes={(usesGpuDetile ? texture.TiledSource!.Length : pixels.Length)} " +
+                $"detile={(usesGpuDetile ? "gpu" : "cpu")}");
             resource = new TextureResource
             {
                 Address = texture.Address,
                 StagingBuffer = stagingBuffer,
                 StagingMemory = stagingMemory,
+                TiledSource = usesGpuDetile
+                    ? texture.TiledSource
+                    : null,
+                Detile = usesGpuDetile
+                    ? texture.Detile
+                    : null,
+                DetileDispatch = detileDispatch,
                 Image = guestImage.Image,
                 View = view,
                 Width = guestImage.Width,
@@ -8761,7 +8811,8 @@ internal static unsafe class VulkanVideoPresenter
             // copy because this identity was marked cached; a miss here is
             // an invalidation race (eviction, cache clear). Self-heal by
             // reading the texels directly rather than rendering a fallback.
-            if (texture.RgbaPixels.Length == 0)
+            if (texture.RgbaPixels.Length == 0 &&
+                texture.TiledSource is null)
             {
                 var refreshed = TryReadGuestTexturePixels(texture);
                 if (refreshed is null)
@@ -8780,7 +8831,8 @@ internal static unsafe class VulkanVideoPresenter
                 MarkTextureContentCached(key);
                 SharpEmu.HLE.GuestImageWriteTracker.Track(
                     texture.Address,
-                    (ulong)texture.RgbaPixels.Length,
+                    (ulong)(texture.TiledSource?.Length ??
+                        texture.RgbaPixels.Length),
                     CurrentGuestWorkSequenceForDiagnostics,
                     "vulkan.texture-cache");
             }
@@ -9157,6 +9209,36 @@ internal static unsafe class VulkanVideoPresenter
             return (uint)selectedMipLevel;
         }
 
+        private static bool TryCreateGpuDetileDispatch(
+            GuestDrawTexture texture,
+            VulkanTextureImageShape shape,
+            uint rowLength,
+            uint width,
+            uint height,
+            uint layers,
+            ulong expectedSize,
+            out VulkanDetileDispatch dispatch)
+        {
+            dispatch = default;
+            var texelCopies = shape.IsThreeDimensional
+                ? shape.Depth
+                : layers;
+            return !shape.IsThreeDimensional &&
+                !shape.IsCube &&
+                rowLength == width &&
+                texture.TiledSource is { Length: > 0 } tiledSource &&
+                texture.Detile is { } detile &&
+                VulkanDetilePass.TryCreateDispatch(
+                    tiledSource.Length,
+                    checked((int)width),
+                    checked((int)height),
+                    layers,
+                    detile,
+                    out dispatch) &&
+                dispatch.OutputBytes ==
+                    checked(expectedSize * texelCopies);
+        }
+
         private TextureResource CreateTextureResource(GuestDrawTexture texture)
         {
             var width = Math.Max(texture.Width, 1);
@@ -9170,6 +9252,23 @@ internal static unsafe class VulkanVideoPresenter
             var layers = shape.ArrayLayers;
             var depth = shape.Depth;
             var expectedSize = GetTextureByteCount(texture.Format, rowLength, height);
+            var texelCopies = shape.IsThreeDimensional ? depth : layers;
+            var forceWhite =
+                AddressListContains(
+                    "SHARPEMU_FORCE_WHITE_TEXTURE_TARGETS",
+                    texture.Address);
+            var detileDispatch = default(VulkanDetileDispatch);
+            var usesGpuDetile =
+                !forceWhite &&
+                TryCreateGpuDetileDispatch(
+                    texture,
+                    shape,
+                    rowLength,
+                    width,
+                    height,
+                    layers,
+                    expectedSize,
+                    out detileDispatch);
             if (ShouldTraceVulkanResources() &&
                 _tracedTextureUploads.Add((texture.Address, width, height, vkFormat)))
             {
@@ -9180,11 +9279,14 @@ internal static unsafe class VulkanVideoPresenter
                     $"depth={depth} layers={layers} dst=0x{texture.DstSelect:X3} " +
                     $"bytes={texture.RgbaPixels.Length} expected={expectedSize}");
             }
-            var texelCopies = shape.IsThreeDimensional ? depth : layers;
-            var pixels = texture.RgbaPixels.Length == (int)(expectedSize * texelCopies)
+            var pixels = usesGpuDetile
+                ? []
+                : texture.RgbaPixels.Length ==
+                    (int)(expectedSize * texelCopies)
                 ? texture.RgbaPixels
                 : CreateFallbackTexturePixels(texture.Format, rowLength, height, expectedSize);
-            if (!ReferenceEquals(pixels, texture.RgbaPixels))
+            if (!usesGpuDetile &&
+                !ReferenceEquals(pixels, texture.RgbaPixels))
             {
                 if (shape.IsCube)
                 {
@@ -9201,7 +9303,7 @@ internal static unsafe class VulkanVideoPresenter
                 }
                 depth = 1;
             }
-            if (AddressListContains("SHARPEMU_FORCE_WHITE_TEXTURE_TARGETS", texture.Address))
+            if (forceWhite)
             {
                 pixels = pixels.ToArray();
                 pixels.AsSpan().Fill(0xFF);
@@ -9209,16 +9311,33 @@ internal static unsafe class VulkanVideoPresenter
                     $"[LOADER][TRACE] vk.texture_force_white addr=0x{texture.Address:X16} " +
                     $"size={width}x{height} bytes={pixels.Length}");
             }
-            DumpTextureUpload(texture, pixels, rowLength, width, height);
-            TraceTextureUploadContents(texture, pixels, rowLength, width, height, vkFormat);
+            if (!usesGpuDetile)
+            {
+                DumpTextureUpload(texture, pixels, rowLength, width, height);
+                TraceTextureUploadContents(
+                    texture,
+                    pixels,
+                    rowLength,
+                    width,
+                    height,
+                    vkFormat);
+            }
             var uploadPixels = texture.Format == 13
                 ? ExpandRgb32Pixels(pixels)
                 : pixels;
-            var contentFingerprint = ComputeTextureContentFingerprint(pixels);
+            var contentFingerprint = ComputeTextureContentFingerprint(
+                usesGpuDetile
+                    ? texture.TiledSource!
+                    : pixels);
 
-            var (stagingBuffer, stagingMemory) = CreateTextureStagingBuffer(
-                uploadPixels,
-                $"{TextureDebugName(texture, vkFormat)} staging");
+            VkBuffer stagingBuffer = default;
+            DeviceMemory stagingMemory = default;
+            if (!usesGpuDetile)
+            {
+                (stagingBuffer, stagingMemory) = CreateTextureStagingBuffer(
+                    uploadPixels,
+                    $"{TextureDebugName(texture, vkFormat)} staging");
+            }
 
             var supportsAttachmentUsage = !shape.IsThreeDimensional &&
                 !IsBlockCompressedFormat(vkFormat);
@@ -9282,6 +9401,13 @@ internal static unsafe class VulkanVideoPresenter
                 Address = texture.Address,
                 StagingBuffer = stagingBuffer,
                 StagingMemory = stagingMemory,
+                TiledSource = usesGpuDetile
+                    ? texture.TiledSource
+                    : null,
+                Detile = usesGpuDetile
+                    ? texture.Detile
+                    : null,
+                DetileDispatch = detileDispatch,
                 Image = image,
                 ImageMemory = imageMemory,
                 View = view,
@@ -15154,6 +15280,34 @@ internal static unsafe class VulkanVideoPresenter
                     continue;
                 }
 
+                if (texture.TiledSource is { } tiledSource &&
+                    texture.Detile is { } detile)
+                {
+                    _detileContext ??= new VulkanDetilePass.Context(
+                        _vk,
+                        _device,
+                        _queue,
+                        _physicalDevice,
+                        _queueFamilyIndex);
+                    resources.DetileResources.Add(
+                        _detileContext.RecordImageUpload(
+                            _commandBuffer,
+                            texture.Image,
+                            tiledSource,
+                            detile,
+                            texture.DetileDispatch,
+                            shaderStage));
+                    texture.TiledSource = null;
+                    texture.Detile = null;
+                    Interlocked.Increment(ref _gpuDetileUploadCount);
+                    if (texture.Cached)
+                    {
+                        texture.NeedsUpload = false;
+                    }
+
+                    continue;
+                }
+
                 var hostMovieImageInitialized = texture.HostMoviePlane switch
                 {
                     0 => _hostMovieImageInitialized,
@@ -16593,6 +16747,14 @@ internal static unsafe class VulkanVideoPresenter
 
         private void DestroyTranslatedDrawResources(TranslatedDrawResources resources)
         {
+            if (_detileContext is { } detileContext)
+            {
+                foreach (var detileResources in resources.DetileResources)
+                {
+                    detileContext.DestroyTransientResources(detileResources);
+                }
+            }
+
             if (resources.DepthUpload is { Initialized: true } uploadedDepth)
             {
                 DestroyDepthStaging(uploadedDepth);
@@ -17698,6 +17860,8 @@ internal static unsafe class VulkanVideoPresenter
                 _lastOrderedGuestFlipVersions.Clear();
             }
             DestroySwapchainResources();
+            _detileContext?.Dispose();
+            _detileContext = null;
             if (_device.Handle != 0)
             {
                 if (_pipelineCache.Handle != 0)

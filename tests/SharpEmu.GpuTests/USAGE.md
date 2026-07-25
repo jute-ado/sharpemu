@@ -24,3 +24,12 @@ cases cover exact-XOR and block-table addressing, 4-, 8-, and 16-byte texels,
 and two array layers. Each result must survive a device-local
 compute-buffer-to-sampled-image-to-readback round-trip before it is compared
 byte-for-byte with the CPU detiler.
+
+The same regression also sends its 1280x720 four-quadrant sampled texture
+through the backend-neutral tiled-source seam twice at the same guest address.
+Vulkan records each verified compute detile and buffer-to-image copy in the
+draw command buffer, retains the transient buffers until that submission
+completes, and must report two GPU-detile uploads with the second version in
+the capture. This covers both initial creation and refresh of an existing
+CPU-backed guest image. AGC texture selection remains separate from this
+backend conformance boundary.
