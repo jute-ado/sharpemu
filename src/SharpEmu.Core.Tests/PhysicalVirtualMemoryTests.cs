@@ -685,6 +685,104 @@ public sealed class PhysicalVirtualMemoryTests
             inner.FlushInstructionCache(address, size);
     }
 
+    private sealed class RecordingExactHostMemory : IHostMemory
+    {
+        public int AllocateCalls { get; private set; }
+
+        public int ReserveCalls { get; private set; }
+
+        public int CommitCalls { get; private set; }
+
+        public ulong ResultOffset { get; set; }
+
+        public bool FailReserve { get; set; }
+
+        public List<ulong> FreedAddresses { get; } = [];
+
+        public List<ulong> CommittedSizes { get; } = [];
+
+        public ulong Allocate(
+            ulong desiredAddress,
+            ulong size,
+            HostPageProtection protection)
+        {
+            _ = size;
+            _ = protection;
+            AllocateCalls++;
+            return checked(desiredAddress + ResultOffset);
+        }
+
+        public ulong Reserve(
+            ulong desiredAddress,
+            ulong size,
+            HostPageProtection protection)
+        {
+            _ = size;
+            _ = protection;
+            ReserveCalls++;
+            return FailReserve
+                ? 0
+                : checked(desiredAddress + ResultOffset);
+        }
+
+        public bool Commit(
+            ulong address,
+            ulong size,
+            HostPageProtection protection)
+        {
+            _ = address;
+            _ = protection;
+            CommitCalls++;
+            CommittedSizes.Add(size);
+            return true;
+        }
+
+        public bool Free(ulong address)
+        {
+            FreedAddresses.Add(address);
+            return true;
+        }
+
+        public bool Protect(
+            ulong address,
+            ulong size,
+            HostPageProtection protection,
+            out uint rawOldProtection)
+        {
+            _ = address;
+            _ = size;
+            _ = protection;
+            rawOldProtection = 0;
+            return true;
+        }
+
+        public bool ProtectRaw(
+            ulong address,
+            ulong size,
+            uint rawProtection,
+            out uint rawOldProtection)
+        {
+            _ = address;
+            _ = size;
+            _ = rawProtection;
+            rawOldProtection = 0;
+            return true;
+        }
+
+        public bool Query(ulong address, out HostRegionInfo info)
+        {
+            _ = address;
+            info = default;
+            return false;
+        }
+
+        public void FlushInstructionCache(ulong address, ulong size)
+        {
+            _ = address;
+            _ = size;
+        }
+    }
+
     [Theory]
     [InlineData(OneGibibyte - 0x1000, false, false)]
     [InlineData(OneGibibyte, false, true)]
@@ -700,6 +798,107 @@ public sealed class PhysicalVirtualMemoryTests
         Assert.Equal(
             expected,
             PhysicalVirtualMemory.ShouldReserveWithoutCommit(alignedSize, executable));
+    }
+
+    [Theory]
+    [InlineData(OneGibibyte - 0x1000, false, 1, 0)]
+    [InlineData(OneGibibyte, false, 0, 1)]
+    [InlineData(OneGibibyte, true, 1, 0)]
+    public void ExactAllocationUsesSharedLazyReservationPolicy(
+        ulong size,
+        bool executable,
+        int expectedAllocateCalls,
+        int expectedReserveCalls)
+    {
+        const ulong desiredAddress = 0x0000_0008_0000_0000;
+        var hostMemory = new RecordingExactHostMemory();
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+
+        Assert.True(memory.TryAllocateAtExact(
+            desiredAddress,
+            size,
+            executable,
+            out var actualAddress));
+
+        Assert.Equal(desiredAddress, actualAddress);
+        Assert.Equal(expectedAllocateCalls, hostMemory.AllocateCalls);
+        Assert.Equal(expectedReserveCalls, hostMemory.ReserveCalls);
+        Assert.Single(memory.SnapshotRegions());
+    }
+
+    [Fact]
+    public void ExactLazyReservationRejectsAndReleasesAlternativeAddress()
+    {
+        const ulong desiredAddress = 0x0000_0008_0000_0000;
+        var hostMemory = new RecordingExactHostMemory
+        {
+            ResultOffset = 0x1000,
+        };
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+
+        Assert.False(memory.TryAllocateAtExact(
+            desiredAddress,
+            OneGibibyte,
+            executable: false,
+            out var actualAddress));
+
+        Assert.Equal(0UL, actualAddress);
+        Assert.Equal(0, hostMemory.AllocateCalls);
+        Assert.Equal(1, hostMemory.ReserveCalls);
+        Assert.Equal(
+            new[] { desiredAddress + 0x1000 },
+            hostMemory.FreedAddresses);
+        Assert.Empty(memory.SnapshotRegions());
+    }
+
+    [Fact]
+    public void ExactLazyReservationDoesNotFallBackToEagerCommit()
+    {
+        const ulong desiredAddress = 0x0000_0008_0000_0000;
+        var hostMemory = new RecordingExactHostMemory
+        {
+            FailReserve = true,
+        };
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+
+        Assert.False(memory.TryAllocateAtExact(
+            desiredAddress,
+            OneGibibyte,
+            executable: false,
+            out _));
+
+        Assert.Equal(0, hostMemory.AllocateCalls);
+        Assert.Equal(1, hostMemory.ReserveCalls);
+        Assert.Empty(hostMemory.FreedAddresses);
+        Assert.Empty(memory.SnapshotRegions());
+    }
+
+    [Fact]
+    public void ExactAndFlexibleLazyReservationsUseSamePrimeSchedule()
+    {
+        const ulong exactAddress = 0x0000_0008_0000_0000;
+        const ulong flexibleAddress = 0x0000_0009_0000_0000;
+        var exactHostMemory = new RecordingExactHostMemory();
+        var flexibleHostMemory = new RecordingExactHostMemory();
+        using var exactMemory = new PhysicalVirtualMemory(exactHostMemory);
+        using var flexibleMemory = new PhysicalVirtualMemory(flexibleHostMemory);
+
+        Assert.True(exactMemory.TryAllocateAtExact(
+            exactAddress,
+            OneGibibyte,
+            executable: false,
+            out _));
+        Assert.Equal(
+            flexibleAddress,
+            flexibleMemory.AllocateAt(
+                flexibleAddress,
+                OneGibibyte,
+                executable: false,
+                allowAlternative: false));
+
+        Assert.Equal(
+            flexibleHostMemory.CommittedSizes,
+            exactHostMemory.CommittedSizes);
     }
 
     [Fact]
