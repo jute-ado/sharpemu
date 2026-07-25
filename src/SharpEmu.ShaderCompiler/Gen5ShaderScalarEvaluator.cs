@@ -949,7 +949,8 @@ public static class Gen5ShaderScalarEvaluator
         }
 
         var candidateSize = (int)cappedSize;
-        while (candidateSize >= sizeof(uint))
+        var minimumCandidateSize = Math.Min(candidateSize, sizeof(uint));
+        while (candidateSize >= minimumCandidateSize)
         {
             data = GC.AllocateUninitializedArray<byte>(candidateSize);
             var readFromPvm = ctx.Memory.TryRead(baseAddress, data);
@@ -992,12 +993,12 @@ public static class Gen5ShaderScalarEvaluator
                 return true;
             }
 
-            if (candidateSize == sizeof(uint))
+            if (candidateSize == minimumCandidateSize)
             {
                 break;
             }
 
-            candidateSize = Math.Max(candidateSize / 2, sizeof(uint));
+            candidateSize = Math.Max(candidateSize / 2, minimumCandidateSize);
         }
 
         data = [];
