@@ -163,9 +163,11 @@ accepted game expectations.
   with matching pointer and length errors plus successful zero/unmapped no-ops,
   explicit anonymous naming for four-argument and batch mappings, primary
   process stack and page-aligned static TLS/TCB startup accounting, and
-  idempotent fixed-range reservations; process reset also releases tracked libc
-  heap allocations, discards stale mappings and names, and restarts direct and
-  flexible-memory accounting for the next title
+  idempotent fixed-range reservations; large non-executable mappings use the
+  same bounded-prime lazy reservation policy for exact and flexible placement
+  instead of eagerly committing gigabyte-scale fixed ranges; process reset also
+  releases tracked libc heap allocations, discards stale mappings and names,
+  and restarts direct and flexible-memory accounting for the next title
 - sandboxed guest filesystem handling with virtual `/dev/random` and
   `/dev/urandom` descriptors that support entropy-read, stat, and close
   lifecycles, plus a consistent virtual `/devlog` container for stat, directory
