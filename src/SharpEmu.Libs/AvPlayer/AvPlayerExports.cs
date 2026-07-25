@@ -25,6 +25,12 @@ public static class AvPlayerExports
     private static readonly Dictionary<ulong, PlayerState> Players = new();
     private static int _traceCount;
 
+    internal readonly record struct VideoFrameLayout(
+        int Width,
+        int Height,
+        int Pitch,
+        int BufferSize);
+
     internal static void ResetRuntimeState()
     {
         PlayerState[] players;
@@ -627,6 +633,33 @@ public static class AvPlayerExports
         player?.Dispose();
     }
 
+    internal static bool WriteVideoFrameForTest(
+        CpuContext ctx,
+        ulong handle,
+        ulong infoAddress,
+        ulong bufferAddress,
+        byte[] rawFrame,
+        bool extended)
+    {
+        lock (StateGate)
+        {
+            if (!Players.TryGetValue(handle, out var player))
+            {
+                return false;
+            }
+
+            player.RawFrame = rawFrame;
+            Array.Fill(player.GuestBuffers, bufferAddress);
+            player.NextGuestBuffer = 0;
+            return WriteVideoFrame(
+                ctx,
+                player,
+                infoAddress,
+                timestamp: 1234,
+                extended);
+        }
+    }
+
     [SysAbiExport(
         Nid = "d8FcbzfAdQw",
         ExportName = "sceAvPlayerGetStreamInfo",
@@ -652,8 +685,9 @@ public static class AvPlayerExports
             BinaryPrimitives.WriteUInt32LittleEndian(info[0..], streamIndex); // 0=video, 1=audio
             if (streamIndex == 0)
             {
-                BinaryPrimitives.WriteUInt32LittleEndian(info[8..], checked((uint)player.Width));
-                BinaryPrimitives.WriteUInt32LittleEndian(info[12..], checked((uint)player.Height));
+                var layout = GetVideoFrameLayout(player.Width, player.Height);
+                BinaryPrimitives.WriteUInt32LittleEndian(info[8..], checked((uint)layout.Width));
+                BinaryPrimitives.WriteUInt32LittleEndian(info[12..], checked((uint)layout.Height));
                 BinaryPrimitives.WriteSingleLittleEndian(info[16..], (float)player.Width / player.Height);
             }
             else
@@ -953,9 +987,8 @@ public static class AvPlayerExports
             return false;
         }
 
-        var alignedWidth = AlignUp(player.Width, 16);
-        var alignedHeight = AlignUp(player.Height, 16);
-        var bufferStride = checked(alignedWidth * alignedHeight * 3 / 2);
+        var layout = GetVideoFrameLayout(player.Width, player.Height);
+        var bufferStride = layout.BufferSize;
         if (player.GuestBuffers[0] == 0)
         {
             if (!AllocateGuestVideoBuffers(ctx, player, bufferStride))
@@ -965,30 +998,25 @@ public static class AvPlayerExports
             player.GuestBufferStride = bufferStride;
         }
 
-        var frameData = player.RawFrame;
-        if (!extended && (alignedWidth != player.Width || alignedHeight != player.Height))
+        if (player.PaddedFrame is null ||
+            player.PaddedFrame.Length != layout.BufferSize)
         {
-            player.PaddedFrame ??= new byte[bufferStride];
-            player.PaddedFrame.AsSpan().Clear();
-            for (var row = 0; row < player.Height; row++)
-            {
-                player.RawFrame.AsSpan(row * player.Width, player.Width)
-                    .CopyTo(player.PaddedFrame.AsSpan(row * alignedWidth, player.Width));
-            }
-            var rawChromaOffset = player.Width * player.Height;
-            var paddedChromaOffset = alignedWidth * alignedHeight;
-            for (var row = 0; row < player.Height / 2; row++)
-            {
-                player.RawFrame.AsSpan(rawChromaOffset + (row * player.Width), player.Width)
-                    .CopyTo(player.PaddedFrame.AsSpan(paddedChromaOffset + (row * alignedWidth), player.Width));
-            }
-            frameData = player.PaddedFrame;
+            player.PaddedFrame = new byte[layout.BufferSize];
+        }
+
+        if (!TryCopyNv12Frame(
+                player.RawFrame,
+                player.PaddedFrame,
+                player.Width,
+                player.Height))
+        {
+            return false;
         }
 
         var bufferAddress = player.GuestBuffers[player.NextGuestBuffer];
         player.NextGuestBuffer = (player.NextGuestBuffer + 1) % FrameBufferCount;
         player.LastGuestBuffer = bufferAddress;
-        if (!ctx.Memory.TryWrite(bufferAddress, frameData))
+        if (!ctx.Memory.TryWrite(bufferAddress, player.PaddedFrame))
         {
             return false;
         }
@@ -999,16 +1027,106 @@ public static class AvPlayerExports
         info.Clear();
         BinaryPrimitives.WriteUInt64LittleEndian(info[0..], bufferAddress);
         BinaryPrimitives.WriteUInt64LittleEndian(info[16..], timestamp);
-        BinaryPrimitives.WriteUInt32LittleEndian(info[24..], checked((uint)(extended ? player.Width : alignedWidth)));
-        BinaryPrimitives.WriteUInt32LittleEndian(info[28..], checked((uint)(extended ? player.Height : alignedHeight)));
+        BinaryPrimitives.WriteUInt32LittleEndian(info[24..], checked((uint)layout.Width));
+        BinaryPrimitives.WriteUInt32LittleEndian(info[28..], checked((uint)layout.Height));
         BinaryPrimitives.WriteSingleLittleEndian(info[32..], 1.0f);
         if (extended)
         {
-            BinaryPrimitives.WriteUInt32LittleEndian(info[60..], checked((uint)player.Width));
+            BinaryPrimitives.WriteUInt32LittleEndian(
+                info[48..],
+                checked((uint)(layout.Pitch - player.Width)));
+            BinaryPrimitives.WriteUInt32LittleEndian(
+                info[56..],
+                checked((uint)(layout.Height - player.Height)));
+            BinaryPrimitives.WriteUInt32LittleEndian(info[60..], checked((uint)layout.Pitch));
             info[64] = 8;
             info[65] = 8;
         }
         return ctx.Memory.TryWrite(infoAddress, info);
+    }
+
+    internal static VideoFrameLayout GetVideoFrameLayout(int width, int height)
+    {
+        if (width <= 0 || height <= 0)
+        {
+            return default;
+        }
+
+        var alignedWidth = AlignUp(width, 16);
+        var alignedHeight = AlignUp(height, 16);
+        var pitch = AlignUp(width, 64);
+        var bufferSize = checked(pitch * alignedHeight * 3 / 2);
+        return new VideoFrameLayout(
+            alignedWidth,
+            alignedHeight,
+            pitch,
+            bufferSize);
+    }
+
+    internal static bool TryCopyNv12Frame(
+        ReadOnlySpan<byte> source,
+        Span<byte> destination,
+        int width,
+        int height)
+    {
+        if (width <= 0 || height <= 0 || (width & 1) != 0 || (height & 1) != 0)
+        {
+            return false;
+        }
+
+        VideoFrameLayout layout;
+        int sourceSize;
+        try
+        {
+            layout = GetVideoFrameLayout(width, height);
+            sourceSize = checked(width * height * 3 / 2);
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
+
+        if (source.Length < sourceSize ||
+            destination.Length < layout.BufferSize)
+        {
+            return false;
+        }
+
+        var output = destination[..layout.BufferSize];
+        output.Clear();
+        for (var row = 0; row < height; row++)
+        {
+            source.Slice(row * width, width)
+                .CopyTo(output.Slice(row * layout.Pitch, width));
+        }
+
+        var lastLumaRow = source.Slice((height - 1) * width, width);
+        for (var row = height; row < layout.Height; row++)
+        {
+            lastLumaRow.CopyTo(output.Slice(row * layout.Pitch, width));
+        }
+
+        var sourceChromaOffset = width * height;
+        var destinationChromaOffset = layout.Pitch * layout.Height;
+        for (var row = 0; row < height / 2; row++)
+        {
+            source.Slice(sourceChromaOffset + (row * width), width)
+                .CopyTo(output.Slice(
+                    destinationChromaOffset + (row * layout.Pitch),
+                    width));
+        }
+
+        var lastChromaRow = source.Slice(
+            sourceChromaOffset + (((height / 2) - 1) * width),
+            width);
+        for (var row = height / 2; row < layout.Height / 2; row++)
+        {
+            lastChromaRow.CopyTo(output.Slice(
+                destinationChromaOffset + (row * layout.Pitch),
+                width));
+        }
+
+        return true;
     }
 
     private static bool AllocateGuestVideoBuffers(CpuContext ctx, PlayerState player, int bufferSize)

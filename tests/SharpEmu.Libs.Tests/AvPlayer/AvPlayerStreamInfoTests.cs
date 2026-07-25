@@ -102,6 +102,41 @@ public sealed class AvPlayerStreamInfoTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void VideoStreamInfoReportsSixteenPixelAlignedDimensions(
+        bool useExtendedFunction)
+    {
+        var memory = new FakeCpuMemory(BaseAddress, MemorySize);
+        var context = new CpuContext(memory, Generation.Gen5);
+        AvPlayerExports.RegisterPlayerForTest(
+            Handle,
+            width: 1919,
+            height: 1079,
+            DurationMilliseconds);
+
+        try
+        {
+            context[CpuRegister.Rdi] = Handle;
+            context[CpuRegister.Rsi] = 0;
+            context[CpuRegister.Rdx] = InfoAddress;
+            Assert.Equal(0, InvokeGetStreamInfo(context, useExtendedFunction));
+
+            Span<byte> result = stackalloc byte[32];
+            Assert.True(memory.TryRead(InfoAddress, result));
+            Assert.Equal(1920u, BinaryPrimitives.ReadUInt32LittleEndian(result[8..]));
+            Assert.Equal(1088u, BinaryPrimitives.ReadUInt32LittleEndian(result[12..]));
+            Assert.Equal(
+                1919f / 1079f,
+                BinaryPrimitives.ReadSingleLittleEndian(result[16..]));
+        }
+        finally
+        {
+            AvPlayerExports.RemovePlayerForTest(Handle);
+        }
+    }
+
     [Fact]
     public void StreamInfoExExportIsRegisteredForGen5Only()
     {
