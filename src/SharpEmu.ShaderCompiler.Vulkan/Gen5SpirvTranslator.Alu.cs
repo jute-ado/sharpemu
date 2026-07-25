@@ -613,6 +613,12 @@ public static partial class Gen5SpirvTranslator
                         SpirvOp.FSub,
                         reverse: true);
                     break;
+                case "VMinF16":
+                    result = EmitFloat16ExtBinary(instruction, destination, 37);
+                    break;
+                case "VMaxF16":
+                    result = EmitFloat16ExtBinary(instruction, destination, 40);
+                    break;
                 case "VMulLegacyF32":
                 case "VMullitF32":
                 {
@@ -1517,6 +1523,19 @@ public static partial class Gen5SpirvTranslator
                 destination,
                 _module.AddInstruction(operation, _floatType, left, right));
         }
+
+        private uint EmitFloat16ExtBinary(
+            Gen5ShaderInstruction instruction,
+            uint destination,
+            uint operation) =>
+            EmitFloat16Result(
+                instruction,
+                destination,
+                Ext(
+                    operation,
+                    _floatType,
+                    GetFloat16Source(instruction, 0),
+                    GetFloat16Source(instruction, 1)));
 
         private uint EmitLegacyFloatFma(Gen5ShaderInstruction instruction)
         {
