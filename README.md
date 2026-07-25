@@ -206,7 +206,9 @@ accepted game expectations.
   NGS2 system and rack buffer queries validate option sizes and initialize the
   complete context-buffer output prefix without overwriting caller user data
 - media-player session teardown that terminates retained FFmpeg decoder processes,
-  closes their streams, and invalidates stale AvPlayer handles between titles
+  closes their streams, and invalidates stale AvPlayer handles between titles;
+  decoded NV12 frames use 16-pixel visible dimensions, a 64-byte pitch, and
+  pitch-sized luma/chroma planes consistently across legacy and extended APIs
 - host-assisted Bink 2 playback through a source-built FFmpeg bridge, with
   frame-paced decoding, guest-file completion shims, Vulkan presentation, and
   graceful fallback when the native bridge is unavailable
