@@ -149,6 +149,7 @@ internal static unsafe class VulkanVideoPresenter
 
     private static long _presentedGuestFrameCount;
     private static int _detileSelfTestStatus;
+    private static int _detileSelfTestImageRoundTrips;
     private static readonly PresentedFrameTimingTrace?
         _presentedFrameTimingTrace =
             PresentedFrameTimingTrace.TryCreateFromEnvironment();
@@ -352,6 +353,9 @@ internal static unsafe class VulkanVideoPresenter
     internal static VulkanDetileSelfTestStatus DetileSelfTestStatus =>
         (VulkanDetileSelfTestStatus)Volatile.Read(
             ref _detileSelfTestStatus);
+
+    internal static int DetileSelfTestImageRoundTrips =>
+        Volatile.Read(ref _detileSelfTestImageRoundTrips);
 
     internal static bool ShouldForceSolidFragmentOverride(
         bool isTitleDraw,
@@ -1086,6 +1090,7 @@ internal static unsafe class VulkanVideoPresenter
             Volatile.Write(
                 ref _detileSelfTestStatus,
                 (int)VulkanDetileSelfTestStatus.NotRequested);
+            Volatile.Write(ref _detileSelfTestImageRoundTrips, 0);
             _latestPresentation ??= _splashHidden
                 ? new Presentation(
                     CreateBlackFrame(width, height),
@@ -4173,18 +4178,20 @@ internal static unsafe class VulkanVideoPresenter
                     Volatile.Write(
                         ref _detileSelfTestStatus,
                         (int)VulkanDetileSelfTestStatus.Running);
-                    VulkanDetilePass.RunSelfTest(
-                        _vk,
-                        _device,
-                        _queue,
-                        _physicalDevice,
-                        _queueFamilyIndex);
+                    Volatile.Write(
+                        ref _detileSelfTestImageRoundTrips,
+                        VulkanDetilePass.RunSelfTest(
+                            _vk,
+                            _device,
+                            _queue,
+                            _physicalDevice,
+                            _queueFamilyIndex));
                     Volatile.Write(
                         ref _detileSelfTestStatus,
                         (int)VulkanDetileSelfTestStatus.Passed);
                     Console.Error.WriteLine(
-                        "[DETILE-SELFTEST] PASS: Vulkan output matches " +
-                        "the CPU model.");
+                        "[DETILE-SELFTEST] PASS: Vulkan image round-trips " +
+                        "match the CPU model.");
                 }
                 _vulkanReady = true;
                 Console.Error.WriteLine(

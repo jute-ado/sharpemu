@@ -255,7 +255,7 @@ internal static unsafe class VulkanDetilePass
     /// real Vulkan kernel and requires byte-for-byte parity with the CPU model.
     /// Intended for the opt-in conformance path, not normal presentation.
     /// </summary>
-    public static void RunSelfTest(
+    public static int RunSelfTest(
         Vk vk,
         Device device,
         Queue queue,
@@ -279,6 +279,7 @@ internal static unsafe class VulkanDetilePass
             queue,
             physicalDevice,
             queueFamilyIndex);
+        var imageRoundTrips = 0;
         foreach (var (mode, bytesPerElement) in cases)
         {
             var parameters = GnmTiling.GetDetileParams(
@@ -336,7 +337,10 @@ internal static unsafe class VulkanDetilePass
                     $"{bytesPerElement}-byte elements.");
             }
 
-            var actual = context.Execute(tiled, parameters, dispatch);
+            var actual = context.ExecuteImageRoundTrip(
+                tiled,
+                parameters,
+                dispatch);
             if (!actual.AsSpan().SequenceEqual(expected))
             {
                 var mismatch = actual
@@ -350,7 +354,11 @@ internal static unsafe class VulkanDetilePass
                     $"{mismatch.Index}: GPU={mismatch.First}, " +
                     $"CPU={mismatch.Second}.");
             }
+
+            imageRoundTrips++;
         }
+
+        return imageRoundTrips;
     }
 
     private sealed class SelfTestContext : IDisposable
@@ -393,7 +401,7 @@ internal static unsafe class VulkanDetilePass
                 "vkCreateCommandPool(detile self-test)");
         }
 
-        public byte[] Execute(
+        public byte[] ExecuteImageRoundTrip(
             ReadOnlySpan<byte> tiled,
             in DetileParams parameters,
             in VulkanDetileDispatch dispatch)
@@ -464,28 +472,10 @@ internal static unsafe class VulkanDetilePass
                     dispatch.GroupCountY,
                     dispatch.GroupCountZ);
 
-                var barrier = new BufferMemoryBarrier
-                {
-                    SType = StructureType.BufferMemoryBarrier,
-                    SrcAccessMask = AccessFlags.ShaderWriteBit,
-                    DstAccessMask = AccessFlags.HostReadBit,
-                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                    Buffer = resources.Output,
-                    Offset = 0,
-                    Size = dispatch.OutputBytes,
-                };
-                _vk.CmdPipelineBarrier(
+                RecordImageRoundTrip(
                     commandBuffer,
-                    PipelineStageFlags.ComputeShaderBit,
-                    PipelineStageFlags.HostBit,
-                    0,
-                    0,
-                    null,
-                    1,
-                    &barrier,
-                    0,
-                    null);
+                    resources,
+                    dispatch);
                 Check(
                     _vk.EndCommandBuffer(commandBuffer),
                     "vkEndCommandBuffer(detile self-test)");
@@ -518,7 +508,9 @@ internal static unsafe class VulkanDetilePass
                         true,
                         ulong.MaxValue),
                     "vkWaitForFences(detile self-test)");
-                return ReadBytes(resources.OutputMemory, dispatch.OutputBytes);
+                return ReadBytes(
+                    resources.ReadbackMemory,
+                    dispatch.OutputBytes);
             }
             finally
             {
@@ -540,12 +532,175 @@ internal static unsafe class VulkanDetilePass
             }
         }
 
+        private void RecordImageRoundTrip(
+            CommandBuffer commandBuffer,
+            in SelfTestResources resources,
+            in VulkanDetileDispatch dispatch)
+        {
+            var outputToTransfer = new BufferMemoryBarrier
+            {
+                SType = StructureType.BufferMemoryBarrier,
+                SrcAccessMask = AccessFlags.ShaderWriteBit,
+                DstAccessMask = AccessFlags.TransferReadBit,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Buffer = resources.Output,
+                Offset = 0,
+                Size = dispatch.OutputBytes,
+            };
+            _vk.CmdPipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.ComputeShaderBit,
+                PipelineStageFlags.TransferBit,
+                0,
+                0,
+                null,
+                1,
+                &outputToTransfer,
+                0,
+                null);
+
+            var colorRange = new ImageSubresourceRange(
+                ImageAspectFlags.ColorBit,
+                0,
+                1,
+                0,
+                dispatch.GroupCountZ);
+            var imageToTransferDestination = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                DstAccessMask = AccessFlags.TransferWriteBit,
+                OldLayout = ImageLayout.Undefined,
+                NewLayout = ImageLayout.TransferDstOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = resources.Image,
+                SubresourceRange = colorRange,
+            };
+            _vk.CmdPipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.TopOfPipeBit,
+                PipelineStageFlags.TransferBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &imageToTransferDestination);
+
+            var copy = new BufferImageCopy
+            {
+                ImageSubresource = new ImageSubresourceLayers(
+                    ImageAspectFlags.ColorBit,
+                    0,
+                    0,
+                    dispatch.GroupCountZ),
+                ImageExtent = new Extent3D(
+                    dispatch.TexelWidth,
+                    dispatch.TexelHeight,
+                    1),
+            };
+            _vk.CmdCopyBufferToImage(
+                commandBuffer,
+                resources.Output,
+                resources.Image,
+                ImageLayout.TransferDstOptimal,
+                1,
+                &copy);
+
+            var imageToShaderRead = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.TransferWriteBit,
+                DstAccessMask = AccessFlags.ShaderReadBit,
+                OldLayout = ImageLayout.TransferDstOptimal,
+                NewLayout = ImageLayout.ShaderReadOnlyOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = resources.Image,
+                SubresourceRange = colorRange,
+            };
+            _vk.CmdPipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.TransferBit,
+                PipelineStageFlags.FragmentShaderBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &imageToShaderRead);
+
+            var imageToTransferSource = new ImageMemoryBarrier
+            {
+                SType = StructureType.ImageMemoryBarrier,
+                SrcAccessMask = AccessFlags.ShaderReadBit,
+                DstAccessMask = AccessFlags.TransferReadBit,
+                OldLayout = ImageLayout.ShaderReadOnlyOptimal,
+                NewLayout = ImageLayout.TransferSrcOptimal,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Image = resources.Image,
+                SubresourceRange = colorRange,
+            };
+            _vk.CmdPipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.FragmentShaderBit,
+                PipelineStageFlags.TransferBit,
+                0,
+                0,
+                null,
+                0,
+                null,
+                1,
+                &imageToTransferSource);
+            _vk.CmdCopyImageToBuffer(
+                commandBuffer,
+                resources.Image,
+                ImageLayout.TransferSrcOptimal,
+                resources.Readback,
+                1,
+                &copy);
+
+            var readbackToHost = new BufferMemoryBarrier
+            {
+                SType = StructureType.BufferMemoryBarrier,
+                SrcAccessMask = AccessFlags.TransferWriteBit,
+                DstAccessMask = AccessFlags.HostReadBit,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Buffer = resources.Readback,
+                Offset = 0,
+                Size = dispatch.OutputBytes,
+            };
+            _vk.CmdPipelineBarrier(
+                commandBuffer,
+                PipelineStageFlags.TransferBit,
+                PipelineStageFlags.HostBit,
+                0,
+                0,
+                null,
+                1,
+                &readbackToHost,
+                0,
+                null);
+        }
+
         private void PrepareResources(
             ReadOnlySpan<byte> tiled,
             in DetileParams parameters,
             in VulkanDetileDispatch dispatch,
             ref SelfTestResources resources)
         {
+            if (dispatch.TexelWidth != dispatch.ElementsWide ||
+                dispatch.TexelHeight != dispatch.ElementsHigh)
+            {
+                throw new InvalidOperationException(
+                    "Detile image self-test requires one element per texel.");
+            }
+
             uint[] xTerms;
             uint[] yTerms;
             if (parameters.Equation == DetileEquation.BlockTable)
@@ -577,7 +732,19 @@ internal static unsafe class VulkanDetilePass
             UploadUInts(resources.YTermsMemory, yTerms);
             resources.Output = CreateBuffer(
                 dispatch.OutputBytes,
-                out resources.OutputMemory);
+                out resources.OutputMemory,
+                BufferUsageFlags.StorageBufferBit |
+                BufferUsageFlags.TransferSrcBit,
+                MemoryPropertyFlags.DeviceLocalBit);
+            resources.Readback = CreateBuffer(
+                dispatch.OutputBytes,
+                out resources.ReadbackMemory,
+                BufferUsageFlags.TransferDstBit,
+                MemoryPropertyFlags.HostVisibleBit |
+                MemoryPropertyFlags.HostCoherentBit);
+            resources.Image = CreateImage(
+                dispatch,
+                out resources.ImageMemory);
 
             var poolSize = new DescriptorPoolSize
             {
@@ -719,13 +886,18 @@ internal static unsafe class VulkanDetilePass
 
         private VkBuffer CreateBuffer(
             ulong size,
-            out DeviceMemory memory)
+            out DeviceMemory memory,
+            BufferUsageFlags usage = BufferUsageFlags.StorageBufferBit,
+            MemoryPropertyFlags requiredMemory =
+                MemoryPropertyFlags.HostVisibleBit |
+                MemoryPropertyFlags.HostCoherentBit)
         {
+            memory = default;
             var bufferInfo = new BufferCreateInfo
             {
                 SType = StructureType.BufferCreateInfo,
                 Size = size,
-                Usage = BufferUsageFlags.StorageBufferBit,
+                Usage = usage,
                 SharingMode = SharingMode.Exclusive,
             };
             Check(
@@ -735,38 +907,143 @@ internal static unsafe class VulkanDetilePass
                     null,
                     out var buffer),
                 "vkCreateBuffer(detile self-test)");
-            _vk.GetBufferMemoryRequirements(
-                _device,
-                buffer,
-                out var requirements);
-            var allocateInfo = new MemoryAllocateInfo
+            try
             {
-                SType = StructureType.MemoryAllocateInfo,
-                AllocationSize = requirements.Size,
-                MemoryTypeIndex = FindMemoryType(
-                    requirements.MemoryTypeBits),
-            };
-            Check(
-                _vk.AllocateMemory(
+                _vk.GetBufferMemoryRequirements(
                     _device,
-                    &allocateInfo,
-                    null,
-                    out memory),
-                "vkAllocateMemory(detile self-test)");
-            Check(
-                _vk.BindBufferMemory(_device, buffer, memory, 0),
-                "vkBindBufferMemory(detile self-test)");
-            return buffer;
+                    buffer,
+                    out var requirements);
+                var allocateInfo = new MemoryAllocateInfo
+                {
+                    SType = StructureType.MemoryAllocateInfo,
+                    AllocationSize = requirements.Size,
+                    MemoryTypeIndex = FindMemoryType(
+                        requirements.MemoryTypeBits,
+                        requiredMemory),
+                };
+                Check(
+                    _vk.AllocateMemory(
+                        _device,
+                        &allocateInfo,
+                        null,
+                        out memory),
+                    "vkAllocateMemory(detile self-test)");
+                Check(
+                    _vk.BindBufferMemory(_device, buffer, memory, 0),
+                    "vkBindBufferMemory(detile self-test)");
+                return buffer;
+            }
+            catch
+            {
+                if (memory.Handle != 0)
+                {
+                    _vk.FreeMemory(_device, memory, null);
+                    memory = default;
+                }
+
+                _vk.DestroyBuffer(_device, buffer, null);
+                throw;
+            }
         }
 
-        private uint FindMemoryType(uint typeBits)
+        private Image CreateImage(
+            in VulkanDetileDispatch dispatch,
+            out DeviceMemory memory)
+        {
+            var bytesPerTexel = checked(dispatch.UintsPerElement * sizeof(uint));
+            var format = bytesPerTexel switch
+            {
+                4 => Format.R32Uint,
+                8 => Format.R32G32Uint,
+                16 => Format.R32G32B32A32Uint,
+                _ => throw new InvalidOperationException(
+                    $"Unsupported detile self-test texel width {bytesPerTexel}."),
+            };
+            var expectedBytes = checked(
+                (ulong)dispatch.TexelWidth *
+                dispatch.TexelHeight *
+                bytesPerTexel *
+                dispatch.GroupCountZ);
+            if (expectedBytes != dispatch.OutputBytes)
+            {
+                throw new InvalidOperationException(
+                    "Detile output extent does not match its image format.");
+            }
+
+            memory = default;
+            var imageInfo = new ImageCreateInfo
+            {
+                SType = StructureType.ImageCreateInfo,
+                ImageType = ImageType.Type2D,
+                Format = format,
+                Extent = new Extent3D(
+                    dispatch.TexelWidth,
+                    dispatch.TexelHeight,
+                    1),
+                MipLevels = 1,
+                ArrayLayers = dispatch.GroupCountZ,
+                Samples = SampleCountFlags.Count1Bit,
+                Tiling = ImageTiling.Optimal,
+                Usage = ImageUsageFlags.TransferDstBit |
+                    ImageUsageFlags.TransferSrcBit |
+                    ImageUsageFlags.SampledBit,
+                SharingMode = SharingMode.Exclusive,
+                InitialLayout = ImageLayout.Undefined,
+            };
+            Check(
+                _vk.CreateImage(
+                    _device,
+                    &imageInfo,
+                    null,
+                    out var image),
+                "vkCreateImage(detile self-test)");
+            try
+            {
+                _vk.GetImageMemoryRequirements(
+                    _device,
+                    image,
+                    out var requirements);
+                var allocateInfo = new MemoryAllocateInfo
+                {
+                    SType = StructureType.MemoryAllocateInfo,
+                    AllocationSize = requirements.Size,
+                    MemoryTypeIndex = FindMemoryType(
+                        requirements.MemoryTypeBits,
+                        MemoryPropertyFlags.DeviceLocalBit),
+                };
+                Check(
+                    _vk.AllocateMemory(
+                        _device,
+                        &allocateInfo,
+                        null,
+                        out memory),
+                    "vkAllocateMemory(detile image)");
+                Check(
+                    _vk.BindImageMemory(_device, image, memory, 0),
+                    "vkBindImageMemory(detile self-test)");
+                return image;
+            }
+            catch
+            {
+                if (memory.Handle != 0)
+                {
+                    _vk.FreeMemory(_device, memory, null);
+                    memory = default;
+                }
+
+                _vk.DestroyImage(_device, image, null);
+                throw;
+            }
+        }
+
+        private uint FindMemoryType(
+            uint typeBits,
+            MemoryPropertyFlags required)
         {
             _vk.GetPhysicalDeviceMemoryProperties(
                 _physicalDevice,
                 out var properties);
             var memoryTypes = &properties.MemoryTypes.Element0;
-            var required = MemoryPropertyFlags.HostVisibleBit |
-                MemoryPropertyFlags.HostCoherentBit;
             for (uint index = 0; index < properties.MemoryTypeCount; index++)
             {
                 if ((typeBits & (1u << (int)index)) != 0 &&
@@ -777,7 +1054,7 @@ internal static unsafe class VulkanDetilePass
             }
 
             throw new InvalidOperationException(
-                "No host-visible coherent Vulkan memory for detile self-test.");
+                $"No Vulkan memory type with {required} for detile self-test.");
         }
 
         private void UploadBytes(
@@ -933,6 +1210,18 @@ internal static unsafe class VulkanDetilePass
                     null);
             }
 
+            if (resources.Image.Handle != 0)
+            {
+                _vk.DestroyImage(_device, resources.Image, null);
+            }
+            if (resources.ImageMemory.Handle != 0)
+            {
+                _vk.FreeMemory(_device, resources.ImageMemory, null);
+            }
+
+            DestroyBuffer(
+                resources.Readback,
+                resources.ReadbackMemory);
             DestroyBuffer(resources.Output, resources.OutputMemory);
             DestroyBuffer(resources.YTerms, resources.YTermsMemory);
             DestroyBuffer(resources.XTerms, resources.XTermsMemory);
@@ -1007,6 +1296,10 @@ internal static unsafe class VulkanDetilePass
             public DeviceMemory YTermsMemory;
             public VkBuffer Output;
             public DeviceMemory OutputMemory;
+            public VkBuffer Readback;
+            public DeviceMemory ReadbackMemory;
+            public Image Image;
+            public DeviceMemory ImageMemory;
             public DescriptorPool DescriptorPool;
             public DescriptorSet DescriptorSet;
         }
