@@ -82,7 +82,28 @@ internal readonly record struct TextureContentIdentity(
     uint ArrayLayers = 1,
     uint Depth = 1,
     bool ThreeDimensional = false,
-    bool Cube = false);
+    bool Cube = false)
+{
+    /// <summary>Builds the canonical presenter cache key for a decoded guest
+    /// texture. Every backend must use this factory so descriptor-shape fields
+    /// cannot drift between the AGC copy-skip check and backend caches.</summary>
+    public static TextureContentIdentity FromGuestTexture(
+        GuestDrawTexture texture) => new(
+        texture.Address,
+        texture.Width,
+        texture.Height,
+        texture.Format,
+        texture.NumberType,
+        texture.DstSelect,
+        texture.TileMode,
+        texture.Pitch,
+        texture.Sampler,
+        texture.ArrayedView,
+        Math.Max(texture.ArrayLayers, 1),
+        Math.Max(texture.Depth, 1),
+        texture.ThreeDimensionalView,
+        texture.CubeView);
+}
 
 internal sealed record GuestMemoryBuffer(
     ulong BaseAddress,
