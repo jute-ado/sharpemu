@@ -160,4 +160,24 @@ public sealed class MslTranslationTests
             () => Gen5ComputeFixtures.CompileOrThrow(fixture));
         Assert.Contains("pc=0x", exception.Message, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void CompactFloat16ArithmeticPreservesDestinationHighHalf()
+    {
+        var fixture = new Gen5ComputeFixture(
+            "compact-f16-arithmetic",
+            [
+                0x64000501, // v_add_f16_e32 v0, v1, v2
+                0x6A060B04, // v_mul_f16_e32 v3, v4, v5
+                0xBF810000, // s_endpgm
+            ],
+            StoreScalarResourceBase: 0,
+            StoreBackingBytes: 0);
+
+        var shader = Gen5ComputeFixtures.CompileOrThrow(fixture);
+
+        Assert.Contains("as_type<half>", shader.Source, StringComparison.Ordinal);
+        Assert.Contains("as_type<ushort>", shader.Source, StringComparison.Ordinal);
+        Assert.Contains("& 0xFFFF0000u", shader.Source, StringComparison.Ordinal);
+    }
 }
