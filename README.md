@@ -76,7 +76,10 @@ accepted game expectations.
   eleven-word push-constant ABI for 4-, 8-, and 16-byte elements; its pure
   dispatch planner rejects malformed address tables, inconsistent geometry,
   overflow, and non-exact per-layer tiled extents before allocating GPU
-  resources, while presenter integration remains deliberately separate
+  resources; the opt-in Vulkan conformance path executes exact-XOR and
+  block-table surfaces across two array layers and compares every output byte
+  with the CPU model, while presenter texture-upload integration remains
+  deliberately separate
 - graphics-stage Gen5 ADD_TID LDS transfers lowered to per-invocation storage
   with guest lane and M0 addressing, while compute shaders retain shared
   workgroup LDS semantics
