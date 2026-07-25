@@ -269,7 +269,9 @@ accepted game expectations.
   when host execution speed varies
 - complete six-register and first-stack-argument SysV diagnostics for resolved
   native-import failures, matching unresolved-import and structured-trace
-  evidence
+  evidence; expected adaptive-mutex self-lock, APR missing-file, and first-run
+  save-data mount results stay out of warning budgets while mismatched
+  NID/result pairs remain visible
 - queue-ordered `WAIT_REG_MEM` visibility points that publish completed shader
   buffer writes across logical GPU queues and latch transient completion values
   without fabricating or mutating guest labels
