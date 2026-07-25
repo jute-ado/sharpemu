@@ -73,8 +73,10 @@ accepted game expectations.
   the optimized CPU path byte-for-byte while preserving all-or-nothing tiled
   input and linear output bounds; a structurally validated Vulkan compute
   kernel now exposes that shared model through an explicit four-buffer,
-  eleven-word push-constant ABI for 4-, 8-, and 16-byte elements, while
-  presenter integration remains deliberately separate
+  eleven-word push-constant ABI for 4-, 8-, and 16-byte elements; its pure
+  dispatch planner rejects malformed address tables, inconsistent geometry,
+  overflow, and non-exact per-layer tiled extents before allocating GPU
+  resources, while presenter integration remains deliberately separate
 - graphics-stage Gen5 ADD_TID LDS transfers lowered to per-invocation storage
   with guest lane and M0 addressing, while compute shaders retain shared
   workgroup LDS semantics
