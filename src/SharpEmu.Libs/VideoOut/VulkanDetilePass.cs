@@ -260,17 +260,18 @@ internal static unsafe class VulkanDetilePass
         Device device,
         Queue queue,
         PhysicalDevice physicalDevice,
-        uint queueFamilyIndex)
+        uint queueFamilyIndex,
+        out int transientResourceReuses)
     {
         const int width = 64;
         const int height = 33;
         const uint layers = 2;
         (uint Mode, int BytesPerElement)[] cases =
         [
-            (27, 4),
-            (8, 4),
-            (27, 8),
             (27, 16),
+            (27, 8),
+            (8, 4),
+            (27, 4),
         ];
 
         using var context = new Context(
@@ -358,6 +359,7 @@ internal static unsafe class VulkanDetilePass
             imageRoundTrips++;
         }
 
+        transientResourceReuses = context.TransientResourceReuseCount;
         return imageRoundTrips;
     }
 
@@ -377,6 +379,7 @@ internal static unsafe class VulkanDetilePass
         public DeviceMemory ImageMemory;
         public DescriptorPool DescriptorPool;
         public DescriptorSet DescriptorSet;
+        public VulkanDetileResourceCapacity Capacity;
     }
 
     internal sealed class Context : IDisposable
@@ -390,6 +393,10 @@ internal static unsafe class VulkanDetilePass
         private PipelineLayout _pipelineLayout;
         private Pipeline _pipeline;
         private CommandPool _commandPool;
+        private readonly BoundedVulkanDetileResourcePool<TransientResources>
+            _transientResourcePool;
+
+        internal int TransientResourceReuseCount { get; private set; }
 
         public Context(
             Vk vk,
@@ -402,6 +409,10 @@ internal static unsafe class VulkanDetilePass
             _device = device;
             _queue = queue;
             _physicalDevice = physicalDevice;
+            _transientResourcePool = new(
+                maxEntries: 8,
+                maxRetainedBytes: 128ul * 1024 * 1024,
+                DestroyTransientResourcesImmediately);
             CreatePipeline();
 
             var poolInfo = new CommandPoolCreateInfo
@@ -449,7 +460,7 @@ internal static unsafe class VulkanDetilePass
             }
             catch
             {
-                DestroyTransientResources(resources);
+                DestroyTransientResourcesImmediately(resources);
                 throw;
             }
         }
@@ -841,25 +852,59 @@ internal static unsafe class VulkanDetilePass
                 yTerms = ToElementTerms(parameters.YByteTerm, shift);
             }
 
-            resources.Tiled = CreateBuffer(
+            var required = new VulkanDetileResourceCapacity(
                 (ulong)tiled.Length,
-                out resources.TiledMemory);
-            UploadBytes(resources.TiledMemory, tiled);
-            resources.XTerms = CreateBuffer(
                 checked((ulong)xTerms.Length * sizeof(uint)),
-                out resources.XTermsMemory);
-            UploadUInts(resources.XTermsMemory, xTerms);
-            resources.YTerms = CreateBuffer(
                 checked((ulong)yTerms.Length * sizeof(uint)),
-                out resources.YTermsMemory);
+                dispatch.OutputBytes);
+            if (_transientResourcePool.TryRent(
+                    required,
+                    out resources,
+                    out var rentedCapacity))
+            {
+                resources.Capacity = rentedCapacity;
+                TransientResourceReuseCount++;
+            }
+            else
+            {
+                resources.Capacity =
+                    VulkanDetileResourceCapacity.ForRequirements(
+                        required.TiledBytes,
+                        required.XTermsBytes,
+                        required.YTermsBytes,
+                        required.OutputBytes);
+                AllocateComputeResources(ref resources);
+            }
+
+            UploadBytes(resources.TiledMemory, tiled);
+            UploadUInts(resources.XTermsMemory, xTerms);
             UploadUInts(resources.YTermsMemory, yTerms);
+            WriteDescriptors(
+                resources,
+                required.TiledBytes,
+                required.XTermsBytes,
+                required.YTermsBytes,
+                required.OutputBytes);
+        }
+
+        private void AllocateComputeResources(
+            ref TransientResources resources)
+        {
+            resources.Tiled = CreateBuffer(
+                resources.Capacity.TiledBytes,
+                out resources.TiledMemory);
+            resources.XTerms = CreateBuffer(
+                resources.Capacity.XTermsBytes,
+                out resources.XTermsMemory);
+            resources.YTerms = CreateBuffer(
+                resources.Capacity.YTermsBytes,
+                out resources.YTermsMemory);
             resources.Output = CreateBuffer(
-                dispatch.OutputBytes,
+                resources.Capacity.OutputBytes,
                 out resources.OutputMemory,
                 BufferUsageFlags.StorageBufferBit |
                 BufferUsageFlags.TransferSrcBit,
                 MemoryPropertyFlags.DeviceLocalBit);
-
             var poolSize = new DescriptorPoolSize
             {
                 Type = DescriptorType.StorageBuffer,
@@ -894,12 +939,6 @@ internal static unsafe class VulkanDetilePass
                     &allocateInfo,
                     out resources.DescriptorSet),
                 "vkAllocateDescriptorSets(detile self-test)");
-            WriteDescriptors(
-                resources,
-                (ulong)tiled.Length,
-                checked((ulong)xTerms.Length * sizeof(uint)),
-                checked((ulong)yTerms.Length * sizeof(uint)),
-                dispatch.OutputBytes);
         }
 
         private void CreatePipeline()
@@ -1328,10 +1367,41 @@ internal static unsafe class VulkanDetilePass
             DestroyBuffer(
                 resources.Readback,
                 resources.ReadbackMemory);
-            DestroyTransientResources(resources);
+            RetireTransientResources(resources);
         }
 
-        public void DestroyTransientResources(in TransientResources resources)
+        public void RetireTransientResources(
+            in TransientResources resources)
+        {
+            if (!HasCompleteComputeResources(resources))
+            {
+                DestroyTransientResourcesImmediately(resources);
+                return;
+            }
+
+            var reusable = resources;
+            reusable.Readback = default;
+            reusable.ReadbackMemory = default;
+            reusable.Image = default;
+            reusable.ImageMemory = default;
+            _transientResourcePool.Return(reusable, reusable.Capacity);
+        }
+
+        private static bool HasCompleteComputeResources(
+            in TransientResources resources) =>
+            resources.Tiled.Handle != 0 &&
+            resources.TiledMemory.Handle != 0 &&
+            resources.XTerms.Handle != 0 &&
+            resources.XTermsMemory.Handle != 0 &&
+            resources.YTerms.Handle != 0 &&
+            resources.YTermsMemory.Handle != 0 &&
+            resources.Output.Handle != 0 &&
+            resources.OutputMemory.Handle != 0 &&
+            resources.DescriptorPool.Handle != 0 &&
+            resources.DescriptorSet.Handle != 0;
+
+        private void DestroyTransientResourcesImmediately(
+            TransientResources resources)
         {
             if (resources.DescriptorPool.Handle != 0)
             {
@@ -1373,6 +1443,8 @@ internal static unsafe class VulkanDetilePass
 
         public void Dispose()
         {
+            _transientResourcePool.Clear();
+
             if (_commandPool.Handle != 0)
             {
                 _vk.DestroyCommandPool(_device, _commandPool, null);

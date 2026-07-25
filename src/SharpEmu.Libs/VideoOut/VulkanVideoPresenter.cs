@@ -150,6 +150,7 @@ internal static unsafe class VulkanVideoPresenter
     private static long _presentedGuestFrameCount;
     private static int _detileSelfTestStatus;
     private static int _detileSelfTestImageRoundTrips;
+    private static int _detileSelfTestResourceReuses;
     private static int _gpuDetileUploadCount;
     private static readonly PresentedFrameTimingTrace?
         _presentedFrameTimingTrace =
@@ -357,6 +358,9 @@ internal static unsafe class VulkanVideoPresenter
 
     internal static int DetileSelfTestImageRoundTrips =>
         Volatile.Read(ref _detileSelfTestImageRoundTrips);
+
+    internal static int DetileSelfTestResourceReuses =>
+        Volatile.Read(ref _detileSelfTestResourceReuses);
 
     internal static int GpuDetileUploadCount =>
         Volatile.Read(ref _gpuDetileUploadCount);
@@ -1095,6 +1099,7 @@ internal static unsafe class VulkanVideoPresenter
                 ref _detileSelfTestStatus,
                 (int)VulkanDetileSelfTestStatus.NotRequested);
             Volatile.Write(ref _detileSelfTestImageRoundTrips, 0);
+            Volatile.Write(ref _detileSelfTestResourceReuses, 0);
             Volatile.Write(ref _gpuDetileUploadCount, 0);
             _latestPresentation ??= _splashHidden
                 ? new Presentation(
@@ -4189,14 +4194,20 @@ internal static unsafe class VulkanVideoPresenter
                     Volatile.Write(
                         ref _detileSelfTestStatus,
                         (int)VulkanDetileSelfTestStatus.Running);
-                    Volatile.Write(
-                        ref _detileSelfTestImageRoundTrips,
+                    var imageRoundTrips =
                         VulkanDetilePass.RunSelfTest(
                             _vk,
                             _device,
                             _queue,
                             _physicalDevice,
-                            _queueFamilyIndex));
+                            _queueFamilyIndex,
+                            out var resourceReuses);
+                    Volatile.Write(
+                        ref _detileSelfTestImageRoundTrips,
+                        imageRoundTrips);
+                    Volatile.Write(
+                        ref _detileSelfTestResourceReuses,
+                        resourceReuses);
                     Volatile.Write(
                         ref _detileSelfTestStatus,
                         (int)VulkanDetileSelfTestStatus.Passed);
@@ -16751,7 +16762,7 @@ internal static unsafe class VulkanVideoPresenter
             {
                 foreach (var detileResources in resources.DetileResources)
                 {
-                    detileContext.DestroyTransientResources(detileResources);
+                    detileContext.RetireTransientResources(detileResources);
                 }
             }
 
