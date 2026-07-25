@@ -332,6 +332,45 @@ public sealed class AudioOut2CompatibilityTests
     }
 
     [Fact]
+    public void GetSystemStateWritesExactZeroedStructureAndPreservesCanaries()
+    {
+        var memory = new FakeGuestMemory();
+        var allocation = FilledBuffer(0x50);
+        memory.AddRegion(BufferAddress, allocation);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = BufferAddress + 8;
+
+        AssertSuccess(AudioOut2Exports.AudioOut2GetSystemState(context), context);
+
+        Assert.All(
+            allocation.AsSpan(0, 8).ToArray(),
+            value => Assert.Equal(Canary, value));
+        Assert.All(
+            allocation.AsSpan(8, 0x40).ToArray(),
+            value => Assert.Equal(0, value));
+        Assert.All(
+            allocation.AsSpan(0x48).ToArray(),
+            value => Assert.Equal(Canary, value));
+    }
+
+    [Fact]
+    public void GetSystemStateReportsNullAndUnmappedOutputs()
+    {
+        var context = CreateContext(new FakeGuestMemory());
+
+        AssertError(
+            AudioOut2Exports.AudioOut2GetSystemState(context),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_INVALID_ARGUMENT);
+
+        context[CpuRegister.Rdi] = BufferAddress;
+        AssertError(
+            AudioOut2Exports.AudioOut2GetSystemState(context),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+    }
+
+    [Fact]
     public void PortSetAttributesReadsPcmDescriptor()
     {
         var memory = new FakeGuestMemory();
@@ -715,6 +754,7 @@ public sealed class AudioOut2CompatibilityTests
     [InlineData("JK2wamZPzwM", "sceAudioOut2PortCreate")]
     [InlineData("8XTArSPyWHk", "sceAudioOut2PortSetAttributes")]
     [InlineData("gatEUKG+Ea4", "sceAudioOut2PortGetState")]
+    [InlineData("bkBN+CMLwRc", "sceAudioOut2GetSystemState")]
     [InlineData("DImz2Ft9E2g", "sceAudioOut2GetSpeakerInfo")]
     [InlineData("xywYcRB7nbQ", "sceAudioOut2UserCreate")]
     [InlineData("XHl38ZNknbs", "sceAudioOut2MasteringInit")]
