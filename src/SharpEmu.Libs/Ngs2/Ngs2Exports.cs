@@ -12,11 +12,17 @@ namespace SharpEmu.Libs.Ngs2;
 public static class Ngs2Exports
 {
     private const int OrbisNgs2ErrorInvalidOutAddress = unchecked((int)0x804A0053);
+    private const int OrbisNgs2ErrorInvalidOptionSize = unchecked((int)0x804A0081);
+    private const int OrbisNgs2ErrorInvalidBufferAddress = unchecked((int)0x804A0207);
     private const int OrbisNgs2ErrorInvalidSystemHandle = unchecked((int)0x804A0230);
     private const int OrbisNgs2ErrorInvalidRackHandle = unchecked((int)0x804A0261);
     private const int OrbisNgs2ErrorInvalidVoiceHandle = unchecked((int)0x804A0300);
     private const ulong HandleStorageSize = 0x20;
     private const int RenderBufferInfoSize = 0x18;
+    private const int ContextBufferInfoWritableSize = 0x38;
+    private const ulong SystemOptionSize = 0x40;
+    private const ulong RackOptionMinimumSize = 0x80;
+    private const ulong RequiredContextBufferSize = 0x10000;
     private const ulong MaximumRenderBufferSize = 16 * 1024 * 1024;
 
     private static readonly object StateGate = new();
@@ -688,28 +694,66 @@ public static class Ngs2Exports
         ExportName = "sceNgs2SystemQueryBufferSize",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libSceNgs2")]
-    public static int Ngs2SystemQueryBufferSize(CpuContext ctx) => WriteBufferSize(ctx, ctx[CpuRegister.Rsi]);
+    public static int Ngs2SystemQueryBufferSize(CpuContext ctx) =>
+        QueryBufferSize(
+            ctx,
+            ctx[CpuRegister.Rdi],
+            ctx[CpuRegister.Rsi],
+            SystemOptionSize,
+            requireExactOptionSize: true,
+            OrbisNgs2ErrorInvalidOutAddress);
 
     [SysAbiExport(
         Nid = "0eFLVCfWVds",
         ExportName = "sceNgs2RackQueryBufferSize",
         Target = Generation.Gen4 | Generation.Gen5,
         LibraryName = "libSceNgs2")]
-    public static int Ngs2RackQueryBufferSize(CpuContext ctx) => WriteBufferSize(ctx, ctx[CpuRegister.Rdx]);
+    public static int Ngs2RackQueryBufferSize(CpuContext ctx) =>
+        QueryBufferSize(
+            ctx,
+            ctx[CpuRegister.Rsi],
+            ctx[CpuRegister.Rdx],
+            RackOptionMinimumSize,
+            requireExactOptionSize: false,
+            OrbisNgs2ErrorInvalidBufferAddress);
 
-    // Report a fixed working-memory footprint for the requested object. The
-    // out struct (SceNgs2BufferAllocator-style) begins with the size field.
-    private static int WriteBufferSize(CpuContext ctx, ulong outAddress)
+    // SceNgs2ContextBufferInfo is {hostBuffer, hostBufferSize, reserved[5],
+    // userData}. Query calls initialize the first seven words but deliberately
+    // retain caller-owned userData at +0x38.
+    private static int QueryBufferSize(
+        CpuContext ctx,
+        ulong optionAddress,
+        ulong outAddress,
+        ulong expectedOptionSize,
+        bool requireExactOptionSize,
+        int nullOutputError)
     {
         if (outAddress == 0)
         {
-            return SetReturn(ctx, OrbisNgs2ErrorInvalidOutAddress);
+            return SetReturn(ctx, nullOutputError);
         }
 
-        Span<byte> info = stackalloc byte[RenderBufferInfoSize];
+        if (optionAddress != 0)
+        {
+            if (!ctx.TryReadUInt64(optionAddress, out var optionSize))
+            {
+                return SetReturn(
+                    ctx,
+                    (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            if (optionSize < expectedOptionSize ||
+                (requireExactOptionSize && optionSize != expectedOptionSize))
+            {
+                return SetReturn(ctx, OrbisNgs2ErrorInvalidOptionSize);
+            }
+        }
+
+        Span<byte> info = stackalloc byte[ContextBufferInfoWritableSize];
         info.Clear();
-        BinaryPrimitives.WriteUInt64LittleEndian(info[0..8], 0x10000);
-        BinaryPrimitives.WriteUInt64LittleEndian(info[8..16], 0x100);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            info[8..16],
+            RequiredContextBufferSize);
         return ctx.Memory.TryWrite(outAddress, info)
             ? SetReturn(ctx, 0)
             : SetReturn(ctx, (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
