@@ -14,7 +14,7 @@ synthetic regression tests.
 The capability probe emitted by the build is authoritative. A test must fail
 its capability gate before launch when the current build cannot provide the
 requested controller, presented-frame, timing, diagnostic, configuration, or
-snapshot behavior.
+snapshot, or audio-capture behavior.
 
 ## Repository boundaries
 
@@ -86,7 +86,8 @@ Create a paired corpus worktree when reviewed test intent changes, including:
 - a visual or temporal candidate;
 - a performance reference;
 - a private save-data or future snapshot pin;
-- a guest-GPU diagnostic policy.
+- a guest-GPU diagnostic policy;
+- an audio health policy.
 
 The workflow is:
 
@@ -116,3 +117,12 @@ to make the branch pass.
 Git cannot atomically merge two repositories. Local development therefore uses
 a final clean paired run followed by consecutive merges. Cross-repository CI
 coordination is a separate future concern.
+
+## Audio capture contract
+
+When `EMULATOR_TEST_LAB_AUDIO_PCM16` contains an absolute output path,
+SharpEmu writes the normalized main AudioOut stream there as append-only
+48 kHz stereo signed PCM16. Capture occurs after guest-format conversion and
+before the host audio backend, so it is independent of the selected sound
+device, speaker volume, and host mixer. The file is private run evidence and
+must never be committed.
