@@ -42,6 +42,9 @@ accepted game expectations.
 - SELF loading translates nested program-header ranges through their blocked
   container payloads and fails closed when an enclosing payload is unavailable,
   encrypted, or compressed instead of bypassing it through raw file offsets
+- additional ELF/PRX fallback allocation preserves the canonical module-range
+  preference after exhaustive exact-placement probes fail instead of
+  accidentally retrying from address zero
 - ELF object definitions and imports remain separate from callable symbols:
   object relocations never receive executable trap stubs, module and global
   `dlsym` still see data definitions, and unresolved weak objects apply the ELF
