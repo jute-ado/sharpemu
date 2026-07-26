@@ -328,7 +328,7 @@ public static class AudioOutExports
                 TraceOutput(handle, port, source);
                 ReportNonSilentOutput(handle, port, source);
 
-                if (port.Backend is null)
+                if (port.Backend is null && !TestLabAudioCapture.IsEnabled)
                 {
                     port.PaceSilence();
                     return ctx.SetReturn(0);
@@ -347,7 +347,13 @@ public static class AudioOutExports
                         port.BytesPerSample,
                         port.IsFloat,
                         port.Volume);
-                    if (!port.Backend.Submit(output.AsSpan(0, outputLength)))
+                    if (port.Type == 0)
+                    {
+                        TestLabAudioCapture.Append(
+                            output.AsSpan(0, outputLength));
+                    }
+                    if (port.Backend is null ||
+                        !port.Backend.Submit(output.AsSpan(0, outputLength)))
                     {
                         port.PaceSilence();
                     }
@@ -486,6 +492,11 @@ public static class AudioOutExports
                     ReportNonSilentOutput(output.Handle, output.Port);
                 }
 
+                if (output.Port.Type == 0)
+                {
+                    TestLabAudioCapture.Append(
+                        output.HostBuffer.AsSpan(0, output.HostBufferLength));
+                }
                 if (output.Port.Backend is null ||
                     !output.Port.Backend.Submit(
                         output.HostBuffer.AsSpan(0, output.HostBufferLength)))

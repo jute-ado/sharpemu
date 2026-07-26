@@ -41,6 +41,7 @@ public sealed class TestLabProbeTests
                 "multi_presented_image_capture",
                 "presented_frame_timing_trace",
                 "render_resolution_scale",
+                "stereo_pcm16_audio_capture",
                 "strict_dynlib_resolution",
                 "structured_report",
                 "video_out_fingerprint",
