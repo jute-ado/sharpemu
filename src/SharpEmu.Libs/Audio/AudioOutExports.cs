@@ -23,6 +23,8 @@ public static class AudioOutExports
     private static readonly ConcurrentDictionary<int, PortState> Ports = new();
     private static int _nextPortHandle;
     private static Func<uint, IHostAudioStream?>? _streamFactoryForTests;
+    private static Action<string>? _progressLoggerForTests;
+    private static int _reportedNonSilentOutput;
 
     // Diagnostic: confirm sceAudioOutOutput is actually called and whether the
     // guest submits real samples or silence. Gated so it costs nothing when off.
@@ -113,6 +115,7 @@ public static class AudioOutExports
         public PortState Port;
         public byte[]? HostBuffer;
         public int HostBufferLength;
+        public bool HasNonSilentSamples;
     }
 
     [SysAbiExport(
@@ -323,6 +326,7 @@ public static class AudioOutExports
                 }
 
                 TraceOutput(handle, port, source);
+                ReportNonSilentOutput(handle, port, source);
 
                 if (port.Backend is null)
                 {
@@ -442,6 +446,12 @@ public static class AudioOutExports
                     }
 
                     TraceOutput(output.Handle, output.Port, source);
+                    output.HasNonSilentSamples =
+                        Volatile.Read(ref _reportedNonSilentOutput) == 0 &&
+                        PeakAmplitude(
+                            source,
+                            output.Port.IsFloat,
+                            output.Port.BytesPerSample) > 0;
                     output.HostBufferLength = checked(
                         (int)output.Port.BufferLength *
                         AudioPcmConversion.OutputFrameSize);
@@ -469,6 +479,11 @@ public static class AudioOutExports
                 if (output.HostBuffer is null)
                 {
                     continue;
+                }
+
+                if (output.HasNonSilentSamples)
+                {
+                    ReportNonSilentOutput(output.Handle, output.Port);
                 }
 
                 if (output.Port.Backend is null ||
@@ -552,6 +567,44 @@ public static class AudioOutExports
         }
     }
 
+    private static void ReportNonSilentOutput(
+        int handle,
+        PortState port,
+        ReadOnlySpan<byte> source)
+    {
+        if (Volatile.Read(ref _reportedNonSilentOutput) != 0 ||
+            PeakAmplitude(source, port.IsFloat, port.BytesPerSample) == 0)
+        {
+            return;
+        }
+
+        ReportNonSilentOutput(handle, port);
+    }
+
+    private static void ReportNonSilentOutput(int handle, PortState port)
+    {
+        if (Interlocked.CompareExchange(
+                ref _reportedNonSilentOutput,
+                value: 1,
+                comparand: 0) != 0)
+        {
+            return;
+        }
+
+        var message =
+            $"[LOADER][INFO] AudioOut non-silent samples submitted: " +
+            $"handle={handle} backend={(port.Backend is null ? "silent" : "host")}";
+        var progressLogger = Volatile.Read(ref _progressLoggerForTests);
+        if (progressLogger is null)
+        {
+            Console.Error.WriteLine(message);
+        }
+        else
+        {
+            progressLogger(message);
+        }
+    }
+
     [SysAbiExport(
         Nid = "b+uAV89IlxE",
         ExportName = "sceAudioOutSetVolume",
@@ -599,8 +652,8 @@ public static class AudioOutExports
         return ctx.SetReturn(0);
     }
 
-    // Peak normalized amplitude [0,1] of an interleaved PCM buffer, used only by
-    // the SHARPEMU_LOG_AUDIO_OUT diagnostic to distinguish real audio from silence.
+    // Peak normalized amplitude [0,1] of an interleaved PCM buffer. This supports
+    // both the optional per-buffer diagnostic and the one-shot progression marker.
     private static float PeakAmplitude(ReadOnlySpan<byte> source, bool isFloat, int bytesPerSample)
     {
         var peak = 0f;
@@ -642,13 +695,19 @@ public static class AudioOutExports
         DisposeAllPorts();
         Interlocked.Exchange(ref _nextPortHandle, 0);
         Interlocked.Exchange(ref _outputCount, 0);
+        Interlocked.Exchange(ref _reportedNonSilentOutput, 0);
         Volatile.Write(ref _streamFactoryForTests, null);
+        Volatile.Write(ref _progressLoggerForTests, null);
         Volatile.Write(ref _shutdown, false);
     }
 
     internal static void SetStreamFactoryForTests(
         Func<uint, IHostAudioStream?>? streamFactory) =>
         Volatile.Write(ref _streamFactoryForTests, streamFactory);
+
+    internal static void SetProgressLoggerForTests(
+        Action<string>? progressLogger) =>
+        Volatile.Write(ref _progressLoggerForTests, progressLogger);
 
     private static void DisposeAllPorts()
     {
