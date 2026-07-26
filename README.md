@@ -228,8 +228,10 @@ accepted game expectations.
   context and port attribute lists share capped, overflow-checked, exact-size
   descriptor reads, with context calls additionally validating live handles,
   while the system-state query returns its exact zero-initialized 64-byte
-  guest record; speaker-array sizing covers both 2D and 3D per-speaker layouts
-  with the fixed pointer-table header expected by current PS5 callers;
+  guest record; speaker-array sizing follows the firmware 12.70 standard,
+  object, and coefficient workspace layouts, while create/destroy consume the
+  bounded guest descriptor, publish only the exact handle qword, and track the
+  workspace-tail object without trusting stale argument registers;
   NGS2 system and rack buffer queries validate option sizes and initialize the
   complete context-buffer output prefix without overwriting caller user data
 - media-player session teardown that terminates retained FFmpeg decoder processes,

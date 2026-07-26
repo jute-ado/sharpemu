@@ -18,7 +18,14 @@ public sealed class AudioOut2CompatibilityTests
     private const ulong PortHandleAddress = 0x22000;
     private const ulong AttributeAddress = 0x23000;
     private const ulong AttributeValueAddress = 0x24000;
+    private const ulong SpeakerArrayHandleAddress = 0x25000;
+    private const ulong SpeakerArrayParameterAddress = 0x26000;
+    private const ulong SpeakerPositionAddress = 0x27000;
+    private const ulong SpeakerArrayMemoryAddress = 0x28000;
+    private const ulong SpeakerArrayAuxiliaryAddress = 0x39000;
+    private const ulong GtaSpeakerArrayMemorySize = 0xAD40;
     private const ulong ContextMemorySize = 0x11640;
+    private const int AudioOut2ErrorInvalidArgument = unchecked((int)0x80268001);
     private const int AudioOut2ErrorNotReady = unchecked((int)0x80268008);
     private const byte Canary = 0xA5;
 
@@ -636,24 +643,144 @@ public sealed class AudioOut2CompatibilityTests
     }
 
     [Theory]
-    [InlineData(0U, false, 0x20UL)]
-    [InlineData(1U, false, 0x40UL)]
-    [InlineData(8U, false, 0x120UL)]
-    [InlineData(1U, true, 0x60UL)]
-    [InlineData(8U, true, 0x220UL)]
-    public void GetSpeakerArrayMemorySizeMatchesSpeakerLayout(
+    [InlineData(8U, false, false, 0x2E0UL)]
+    [InlineData(8U, false, true, 0xAE00UL)]
+    [InlineData(8U, true, false, 0x860UL)]
+    [InlineData(8U, true, true, 0xB380UL)]
+    [InlineData(2U, false, true, GtaSpeakerArrayMemorySize)]
+    public void GetSpeakerArrayMemorySizeMatchesFirmware1270(
         uint speakerCount,
-        bool isThreeDimensional,
+        bool useObjectLayout,
+        bool includeCoefficients,
         ulong expectedSize)
     {
         var context = CreateContext(new FakeGuestMemory());
         context[CpuRegister.Rdi] = speakerCount;
-        context[CpuRegister.Rsi] = isThreeDimensional ? 1UL : 0UL;
+        context[CpuRegister.Rsi] = useObjectLayout ? 1UL : 0UL;
+        context[CpuRegister.Rdx] = includeCoefficients ? 1UL : 0UL;
 
         Assert.Equal(
-            unchecked((int)expectedSize),
+            0,
             AudioOut2Exports.AudioOut2GetSpeakerArrayMemorySize(context));
         Assert.Equal(expectedSize, context[CpuRegister.Rax]);
+    }
+
+    [Fact]
+    public void SpeakerArrayLifecycleUsesTheFirmware1270ParameterBlock()
+    {
+        var memory = new FakeGuestMemory();
+        var output = FilledBuffer(2 * sizeof(ulong));
+        var parameters = new byte[0x28];
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            parameters.AsSpan(0x00),
+            SpeakerPositionAddress);
+        BinaryPrimitives.WriteUInt32LittleEndian(parameters.AsSpan(0x08), 2);
+        parameters[0x0C] = 0;
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            parameters.AsSpan(0x10),
+            SpeakerArrayMemoryAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            parameters.AsSpan(0x18),
+            GtaSpeakerArrayMemorySize);
+        memory.AddRegion(SpeakerArrayHandleAddress, output);
+        memory.AddRegion(SpeakerArrayParameterAddress, parameters);
+        memory.AddRegion(SpeakerPositionAddress, new byte[2 * 12]);
+        memory.AddRegion(
+            SpeakerArrayMemoryAddress,
+            new byte[(int)GtaSpeakerArrayMemorySize]);
+        memory.AddRegion(SpeakerArrayAuxiliaryAddress, new byte[8]);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = SpeakerArrayHandleAddress;
+        context[CpuRegister.Rsi] = SpeakerArrayParameterAddress;
+        context[CpuRegister.Rdx] = SpeakerArrayAuxiliaryAddress;
+        context[CpuRegister.Rcx] = ulong.MaxValue;
+        context[CpuRegister.R8] = ulong.MaxValue;
+        context[CpuRegister.R9] = ulong.MaxValue;
+
+        AssertSuccess(AudioOut2Exports.AudioOut2SpeakerArrayCreate(context), context);
+        Assert.Equal(
+            SpeakerArrayMemoryAddress + GtaSpeakerArrayMemorySize - 0x18,
+            BinaryPrimitives.ReadUInt64LittleEndian(output));
+        Assert.Equal(
+            0xA5A5_A5A5_A5A5_A5A5UL,
+            BinaryPrimitives.ReadUInt64LittleEndian(output.AsSpan(sizeof(ulong))));
+
+        var handle = BinaryPrimitives.ReadUInt64LittleEndian(output);
+        context[CpuRegister.Rdi] = handle;
+        AssertSuccess(AudioOut2Exports.AudioOut2SpeakerArrayDestroy(context), context);
+        Assert.Equal(
+            AudioOut2ErrorInvalidArgument,
+            AudioOut2Exports.AudioOut2SpeakerArrayDestroy(context));
+        Assert.Equal(
+            unchecked((ulong)AudioOut2ErrorInvalidArgument),
+            context[CpuRegister.Rax]);
+    }
+
+    [Theory]
+    [InlineData(33U, GtaSpeakerArrayMemorySize, 0, 0U)]
+    [InlineData(2U, GtaSpeakerArrayMemorySize - 1, 0, 0U)]
+    [InlineData(2U, GtaSpeakerArrayMemorySize, 1, 0xBF800000U)]
+    [InlineData(2U, GtaSpeakerArrayMemorySize, 1, 0x7FC00000U)]
+    public void SpeakerArrayCreateRejectsInvalidDescriptorsWithoutPublishing(
+        uint speakerCount,
+        ulong workspaceSize,
+        int mode,
+        uint modeParameterBits)
+    {
+        var memory = new FakeGuestMemory();
+        var output = FilledBuffer(sizeof(ulong));
+        var parameters = new byte[0x28];
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            parameters.AsSpan(0x00),
+            SpeakerPositionAddress);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            parameters.AsSpan(0x08),
+            speakerCount);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            parameters.AsSpan(0x10),
+            SpeakerArrayMemoryAddress);
+        BinaryPrimitives.WriteUInt64LittleEndian(
+            parameters.AsSpan(0x18),
+            workspaceSize);
+        BinaryPrimitives.WriteInt32LittleEndian(parameters.AsSpan(0x20), mode);
+        BinaryPrimitives.WriteUInt32LittleEndian(
+            parameters.AsSpan(0x24),
+            modeParameterBits);
+        memory.AddRegion(SpeakerArrayHandleAddress, output);
+        memory.AddRegion(SpeakerArrayParameterAddress, parameters);
+        memory.AddRegion(
+            SpeakerPositionAddress,
+            new byte[checked((int)Math.Max(speakerCount, 2U) * 12)]);
+        memory.AddRegion(
+            SpeakerArrayMemoryAddress,
+            new byte[(int)GtaSpeakerArrayMemorySize]);
+        memory.AddRegion(SpeakerArrayAuxiliaryAddress, new byte[8]);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = SpeakerArrayHandleAddress;
+        context[CpuRegister.Rsi] = SpeakerArrayParameterAddress;
+        context[CpuRegister.Rdx] = SpeakerArrayAuxiliaryAddress;
+
+        Assert.Equal(
+            AudioOut2ErrorInvalidArgument,
+            AudioOut2Exports.AudioOut2SpeakerArrayCreate(context));
+        Assert.Equal(
+            0xA5A5_A5A5_A5A5_A5A5UL,
+            BinaryPrimitives.ReadUInt64LittleEndian(output));
+    }
+
+    [Fact]
+    public void SpeakerArrayCreateReportsUnmappedDescriptor()
+    {
+        var memory = new FakeGuestMemory();
+        memory.AddRegion(SpeakerArrayHandleAddress, new byte[sizeof(ulong)]);
+        var context = CreateContext(memory);
+        context[CpuRegister.Rdi] = SpeakerArrayHandleAddress;
+        context[CpuRegister.Rsi] = SpeakerArrayParameterAddress;
+
+        AssertError(
+            AudioOut2Exports.AudioOut2SpeakerArrayCreate(context),
+            context,
+            OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
     }
 
     [Theory]
@@ -778,6 +905,8 @@ public sealed class AudioOut2CompatibilityTests
     [InlineData("bkBN+CMLwRc", "sceAudioOut2GetSystemState")]
     [InlineData("DImz2Ft9E2g", "sceAudioOut2GetSpeakerInfo")]
     [InlineData("G1YOKDJYX2Y", "sceAudioOut2GetSpeakerArrayMemorySize")]
+    [InlineData("+k91hoTuoA8", "sceAudioOut2SpeakerArrayCreate")]
+    [InlineData("erCWQR5eKiQ", "sceAudioOut2SpeakerArrayDestroy")]
     [InlineData("xywYcRB7nbQ", "sceAudioOut2UserCreate")]
     [InlineData("XHl38ZNknbs", "sceAudioOut2MasteringInit")]
     [InlineData("v8iOE+j8a5o", "sceAudioOut2MasteringSetParam")]

@@ -21,9 +21,14 @@ public static class AudioOut2Exports
     private const uint DefaultNumGrains = 512;
     private const int AudioOut2SystemStateSize = 0x40;
     private const int AudioOut2SpeakerInfoSize = 0x50;
+    private const int AudioOut2SpeakerArrayDescriptorSize = 0x28;
+    private const int AudioOut2SpeakerArrayFooterSize = 0x18;
+    private const uint AudioOut2MaximumSpeakerCount = 0x20;
+    private const int AudioOut2ErrorInvalidArgument = unchecked((int)0x80268001);
     private const int AudioOut2ErrorNotReady = unchecked((int)0x80268008);
     private static readonly ConcurrentDictionary<ulong, ContextState> Contexts = new();
     private static readonly ConcurrentDictionary<ulong, PortState> Ports = new();
+    private static readonly ConcurrentDictionary<ulong, SpeakerArrayState> SpeakerArrays = new();
     private static long _nextContextHandle = 1;
     private static long _nextUserHandle = 1;
     private static int _nextPortId;
@@ -32,6 +37,7 @@ public static class AudioOut2Exports
     {
         Contexts.Clear();
         Ports.Clear();
+        SpeakerArrays.Clear();
         Interlocked.Exchange(ref _nextContextHandle, 1);
         Interlocked.Exchange(ref _nextUserHandle, 1);
         Interlocked.Exchange(ref _nextPortId, 0);
@@ -399,11 +405,148 @@ public static class AudioOut2Exports
     public static int AudioOut2GetSpeakerArrayMemorySize(CpuContext ctx)
     {
         var speakerCount = unchecked((uint)ctx[CpuRegister.Rdi]);
-        var isThreeDimensional = ctx[CpuRegister.Rsi] != 0;
-        var bytesPerSpeaker = isThreeDimensional ? 64UL : 32UL;
-        var size = 4UL * sizeof(ulong) + (speakerCount * bytesPerSpeaker);
+        var useObjectLayout = unchecked((uint)ctx[CpuRegister.Rsi]) != 0;
+        var includeCoefficients = unchecked((uint)ctx[CpuRegister.Rdx]) != 0;
+        var size = GetSpeakerArrayMemorySize(
+            speakerCount,
+            useObjectLayout,
+            includeCoefficients);
         ctx[CpuRegister.Rax] = size;
-        return unchecked((int)size);
+        return 0;
+    }
+
+    [SysAbiExport(
+        Nid = "+k91hoTuoA8",
+        ExportName = "sceAudioOut2SpeakerArrayCreate",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2SpeakerArrayCreate(CpuContext ctx)
+    {
+        // Firmware 12.70 exposes (outHandle, descriptor, auxiliary). RCX is
+        // provider-private and may contain stale caller state.
+        var outHandleAddress = ctx[CpuRegister.Rdi];
+        var descriptorAddress = ctx[CpuRegister.Rsi];
+        var auxiliaryAddress = ctx[CpuRegister.Rdx];
+        if (outHandleAddress == 0 || descriptorAddress == 0)
+        {
+            return ctx.SetReturn(AudioOut2ErrorInvalidArgument);
+        }
+
+        Span<byte> descriptor = stackalloc byte[AudioOut2SpeakerArrayDescriptorSize];
+        if (!ctx.Memory.TryRead(descriptorAddress, descriptor))
+        {
+            return ctx.SetReturn((int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var positionsAddress = BinaryPrimitives.ReadUInt64LittleEndian(descriptor[0x00..]);
+        var speakerCount = BinaryPrimitives.ReadUInt32LittleEndian(descriptor[0x08..]);
+        var layout = descriptor[0x0C];
+        var workspaceAddress = BinaryPrimitives.ReadUInt64LittleEndian(descriptor[0x10..]);
+        var workspaceSize = BinaryPrimitives.ReadUInt64LittleEndian(descriptor[0x18..]);
+        var mode = BinaryPrimitives.ReadInt32LittleEndian(descriptor[0x20..]);
+        var modeParameter = BitConverter.Int32BitsToSingle(
+            BinaryPrimitives.ReadInt32LittleEndian(descriptor[0x24..]));
+        if (positionsAddress == 0 ||
+            workspaceAddress == 0 ||
+            workspaceSize == 0 ||
+            speakerCount > AudioOut2MaximumSpeakerCount ||
+            (mode == 1 &&
+             (!float.IsFinite(modeParameter) || modeParameter < 0.0f)))
+        {
+            return ctx.SetReturn(AudioOut2ErrorInvalidArgument);
+        }
+
+        var coefficientConfiguration = uint.MaxValue;
+        var coefficientFeature = false;
+        if (auxiliaryAddress != 0)
+        {
+            if (!ctx.TryReadUInt32(
+                    auxiliaryAddress,
+                    out coefficientConfiguration))
+            {
+                return ctx.SetReturn(
+                    (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+            }
+
+            if (coefficientConfiguration < 2)
+            {
+                if (!GuestAddress.TryAdd(
+                        auxiliaryAddress,
+                        sizeof(uint),
+                        out var featureAddress))
+                {
+                    return ctx.SetReturn(
+                        (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
+                Span<byte> feature = stackalloc byte[1];
+                if (!ctx.Memory.TryRead(featureAddress, feature))
+                {
+                    return ctx.SetReturn(
+                        (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+                }
+
+                coefficientFeature = feature[0] != 0;
+            }
+        }
+
+        var includeCoefficients = coefficientConfiguration < 2;
+        var requiredSize = GetSpeakerArrayMemorySize(
+            speakerCount,
+            layout != 0,
+            includeCoefficients);
+        if (workspaceSize < requiredSize ||
+            workspaceSize < AudioOut2SpeakerArrayFooterSize ||
+            workspaceAddress >
+            ulong.MaxValue - (workspaceSize - AudioOut2SpeakerArrayFooterSize))
+        {
+            return ctx.SetReturn(AudioOut2ErrorInvalidArgument);
+        }
+
+        var positions = new byte[checked((int)(speakerCount * 3U * sizeof(float)))];
+        if (positions.Length != 0 &&
+            !ctx.Memory.TryRead(positionsAddress, positions))
+        {
+            return ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        var handle =
+            workspaceAddress + workspaceSize - AudioOut2SpeakerArrayFooterSize;
+        Span<byte> footer = stackalloc byte[AudioOut2SpeakerArrayFooterSize];
+        footer.Clear();
+        BinaryPrimitives.WriteInt32LittleEndian(footer[0x10..], mode);
+        footer[0x14] = layout;
+        if (!ctx.Memory.TryWrite(handle, footer) ||
+            !ctx.TryWriteUInt64(outHandleAddress, handle))
+        {
+            return ctx.SetReturn(
+                (int)OrbisGen2Result.ORBIS_GEN2_ERROR_MEMORY_FAULT);
+        }
+
+        SpeakerArrays[handle] = new SpeakerArrayState(
+            workspaceAddress,
+            workspaceSize,
+            speakerCount,
+            layout,
+            mode,
+            coefficientConfiguration,
+            coefficientFeature,
+            positions);
+        return ctx.SetReturn(0);
+    }
+
+    [SysAbiExport(
+        Nid = "erCWQR5eKiQ",
+        ExportName = "sceAudioOut2SpeakerArrayDestroy",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2SpeakerArrayDestroy(CpuContext ctx)
+    {
+        var handle = ctx[CpuRegister.Rdi];
+        return handle != 0 && SpeakerArrays.TryRemove(handle, out _)
+            ? ctx.SetReturn(0)
+            : ctx.SetReturn(AudioOut2ErrorInvalidArgument);
     }
 
     [SysAbiExport(
@@ -592,11 +735,103 @@ public static class AudioOut2Exports
     private static ulong RequiredContextMemorySize(uint queueDepth) =>
         AudioOut2ContextMemoryBaseSize + (queueDepth * AudioOut2QueueMemorySize);
 
+    private static ulong GetSpeakerArrayMemorySize(
+        uint speakerCount,
+        bool useObjectLayout,
+        bool includeCoefficients)
+    {
+        // Recovered from the firmware 12.70 shared speaker-array sizing path.
+        var size = useObjectLayout
+            ? GetObjectSpeakerArrayBaseSize(speakerCount) + 0xA0UL
+            : GetStandardSpeakerArrayBaseSize(speakerCount) + 0x80UL;
+        if (!includeCoefficients)
+        {
+            return size + 0x100UL;
+        }
+
+        var coefficientBytes =
+            GetAmbisonicsCoefficientBytes(speakerCount, 5, 0xF0);
+        return size + 0x1A0UL + AlignUp32(coefficientBytes + 0x100UL);
+    }
+
+    private static ulong GetStandardSpeakerArrayBaseSize(uint speakerCount)
+    {
+        var countPlusOne = (ulong)unchecked(speakerCount + 1U);
+        return AlignUp32(countPlusOne * 8UL) +
+               ((ulong)(unchecked(speakerCount + 8U) & ~7U) * 4UL) +
+               AlignUp32(countPlusOne * 2UL) +
+               AlignUp32(countPlusOne * 0x10UL);
+    }
+
+    private static ulong GetObjectSpeakerArrayBaseSize(uint speakerCount)
+    {
+        const uint objectCount = 3;
+        const uint objectStrideSelector = 7;
+        var totalCount = unchecked(speakerCount + objectCount);
+        var lowCount = totalCount & 0xFFFFU;
+        var expandedCount =
+            lowCount < 3U ? lowCount : unchecked((lowCount * 2U) - 4U);
+        var size = GetSpeakerMixWorkspaceSize(lowCount) +
+                   0x60UL +
+                   AlignUp32((ulong)totalCount * 0xCUL) +
+                   ((ulong)(unchecked(
+                       speakerCount + objectCount + 7U) & ~7U) * 4UL) +
+                   AlignUp32((ulong)expandedCount * 6UL) +
+                   AlignUp32((ulong)expandedCount * 0x30UL);
+        size +=
+            ((objectStrideSelector * 2UL) + 0x18UL) * objectCount;
+
+        var lastIndex = unchecked(totalCount - 1U);
+        if (lastIndex > 0x1FU)
+        {
+            size += ((lastIndex >> 3) & 0xFFFF_FFFCUL) + 4UL;
+        }
+
+        return AlignUp32(size);
+    }
+
+    private static ulong GetSpeakerMixWorkspaceSize(uint count)
+    {
+        var smallCount = count < 3U;
+        var doubled = smallCount ? count : unchecked((count * 2U) - 4U);
+        var tripled = smallCount ? count : unchecked((count * 3U) - 6U);
+        return AlignUp32((ulong)count * 2UL) +
+               AlignUp32((ulong)tripled * 4UL) +
+               AlignUp32((ulong)doubled * 6UL);
+    }
+
+    private static ulong GetAmbisonicsCoefficientBytes(
+        uint speakerCount,
+        uint order,
+        uint stride)
+    {
+        var alignedSpeakers = unchecked(speakerCount + 7U) & ~7U;
+        var alignedStride = unchecked(stride + 7U) & ~7U;
+        var coefficientCount = unchecked((order + 1U) * (order + 1U));
+        return ((ulong)stride * alignedSpeakers +
+                ((ulong)alignedStride + alignedSpeakers) *
+                coefficientCount) *
+               4UL;
+    }
+
+    private static ulong AlignUp32(ulong value) =>
+        unchecked(value + 0x1FUL) & ~0x1FUL;
+
     private static byte GetChannelCount(uint dataFormat)
     {
         var channels = (dataFormat >> 8) & 0xFF;
         return unchecked((byte)(channels == 0 ? 2 : Math.Min(channels, 16)));
     }
+
+    private sealed record SpeakerArrayState(
+        ulong WorkspaceAddress,
+        ulong WorkspaceSize,
+        uint SpeakerCount,
+        byte Layout,
+        int Mode,
+        uint CoefficientConfiguration,
+        bool CoefficientFeature,
+        byte[] Positions);
 
     private sealed class ContextState(uint queueDepth, uint numGrains)
     {
