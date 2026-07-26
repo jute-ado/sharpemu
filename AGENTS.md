@@ -20,11 +20,16 @@ possible.
 
 ## External game regression workflow
 
+SharpEmu development must use only `local.ps5-*` suites and must pass the
+explicit `ps5` scope guard to `emu-test suite run`. Never use a
+`cross_platform` aggregate as a routine SharpEmu gate: PS4 and PS5 development
+are independent, and a SharpEmu task must not launch or depend on shadPS4.
+
 Use the accepted external Emulator Test Lab corpus unchanged unless the
 emulator task changes game-test intent. When a change advances or alters a
 scenario, controller route, expectation, visual/performance baseline metadata,
-save-data pin, or GPU policy, create a separate corpus feature worktree paired
-with this emulator worktree.
+save-data pin, GPU policy, or audio policy, create a separate corpus feature
+worktree paired with this emulator worktree.
 
 Point the task-local emulator map at the executable built from this worktree
 and at this same worktree as its source repository. Run the exact emulator,
