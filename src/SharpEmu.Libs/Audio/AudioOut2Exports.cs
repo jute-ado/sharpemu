@@ -392,6 +392,21 @@ public static class AudioOut2Exports
     }
 
     [SysAbiExport(
+        Nid = "G1YOKDJYX2Y",
+        ExportName = "sceAudioOut2GetSpeakerArrayMemorySize",
+        Target = Generation.Gen5,
+        LibraryName = "libSceAudioOut2")]
+    public static int AudioOut2GetSpeakerArrayMemorySize(CpuContext ctx)
+    {
+        var speakerCount = unchecked((uint)ctx[CpuRegister.Rdi]);
+        var isThreeDimensional = ctx[CpuRegister.Rsi] != 0;
+        var bytesPerSpeaker = isThreeDimensional ? 64UL : 32UL;
+        var size = 4UL * sizeof(ulong) + (speakerCount * bytesPerSpeaker);
+        ctx[CpuRegister.Rax] = size;
+        return unchecked((int)size);
+    }
+
+    [SysAbiExport(
         Nid = "cd+Rtw+D1x8",
         ExportName = "sceAudioOut2PortDestroy",
         Target = Generation.Gen5,
