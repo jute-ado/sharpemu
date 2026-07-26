@@ -233,16 +233,30 @@ public sealed class SelfLoader : ISelfLoader
 
                 imageBase = allocatedBase;
             }
-            else if (!TryAllocateAdditionalImageAtExact(physicalVm, imageBase, totalImageSize, isNextGen, out imageBase))
+            else if (TryAllocateAdditionalImageAtExact(
+                physicalVm,
+                imageBase,
+                totalImageSize,
+                isNextGen,
+                out var exactImageBase))
             {
-                var allocatedBase = physicalVm.AllocateAt(imageBase, totalImageSize, executable: true);
-                if (allocatedBase != imageBase)
+                imageBase = exactImageBase;
+            }
+            else
+            {
+                var preferredBase = imageBase;
+                var fallbackBase = physicalVm.AllocateAt(
+                    preferredBase,
+                    totalImageSize,
+                    executable: true);
+                if (fallbackBase != preferredBase)
                 {
-                    Console.WriteLine($"[LOADER] Could not allocate module at preferred base 0x{imageBase:X16}");
-                    Console.WriteLine($"[LOADER] Allocated module at 0x{allocatedBase:X16} instead.");
+                    Console.WriteLine(
+                        $"[LOADER] Could not allocate module at preferred base 0x{preferredBase:X16}");
+                    Console.WriteLine($"[LOADER] Allocated module at 0x{fallbackBase:X16} instead.");
                 }
 
-                imageBase = allocatedBase;
+                imageBase = fallbackBase;
             }
         }
 

@@ -7,6 +7,7 @@ using SharpEmu.Core.Loader;
 using SharpEmu.Core.Memory;
 using SharpEmu.Core.Runtime;
 using SharpEmu.HLE;
+using SharpEmu.HLE.Host;
 using Xunit;
 
 namespace SharpEmu.Core.Tests;
@@ -655,6 +656,35 @@ public sealed class SelfLoaderTests
         Assert.Equal(
             moduleImage.ImageBase + 0x3000,
             moduleRegion.VirtualAddress);
+    }
+
+    [HostX64Fact]
+    public void AdditionalImageFallbackPreservesPreferredGuestRange()
+    {
+        var elf = CreateElfWithLoadSegment(
+            fileOffset: ElfHeaderSize + ProgramHeaderSize,
+            virtualAddress: 0,
+            fileSize: 1,
+            memorySize: 1,
+            payload: [0xC3]);
+        var hostMemory = new ExactAllocationFailureHostMemory(TestHostMemory.Create());
+        using var memory = new PhysicalVirtualMemory(hostMemory);
+        var loader = new SelfLoader();
+        var moduleManager = new ModuleManager();
+        _ = loader.Load(elf, memory, moduleManager);
+        hostMemory.FailNextAllocations = 256;
+
+        _ = loader.LoadAdditional(
+            elf,
+            memory,
+            moduleManager,
+            fs: null,
+            mountRoot: null);
+
+        Assert.InRange(
+            hostMemory.FallbackDesiredAddress,
+            0x0000_0008_0400_0000UL,
+            0x0000_0008_FFFF_FFFFUL);
     }
 
     [Fact]
@@ -2032,5 +2062,61 @@ public sealed class SelfLoaderTests
 
         public bool TryWrite(ulong virtualAddress, ReadOnlySpan<byte> source) =>
             _inner.TryWrite(virtualAddress, source);
+    }
+
+    private sealed class ExactAllocationFailureHostMemory(IHostMemory inner) : IHostMemory
+    {
+        public int FailNextAllocations { get; set; }
+
+        public ulong FallbackDesiredAddress { get; private set; }
+
+        public ulong Allocate(
+            ulong desiredAddress,
+            ulong size,
+            HostPageProtection protection)
+        {
+            if (FailNextAllocations > 0)
+            {
+                FailNextAllocations--;
+                return 0;
+            }
+
+            FallbackDesiredAddress = desiredAddress;
+            return inner.Allocate(desiredAddress, size, protection);
+        }
+
+        public ulong Reserve(
+            ulong desiredAddress,
+            ulong size,
+            HostPageProtection protection) =>
+            inner.Reserve(desiredAddress, size, protection);
+
+        public bool Commit(
+            ulong address,
+            ulong size,
+            HostPageProtection protection) =>
+            inner.Commit(address, size, protection);
+
+        public bool Free(ulong address) => inner.Free(address);
+
+        public bool Protect(
+            ulong address,
+            ulong size,
+            HostPageProtection protection,
+            out uint rawOldProtection) =>
+            inner.Protect(address, size, protection, out rawOldProtection);
+
+        public bool ProtectRaw(
+            ulong address,
+            ulong size,
+            uint rawProtection,
+            out uint rawOldProtection) =>
+            inner.ProtectRaw(address, size, rawProtection, out rawOldProtection);
+
+        public bool Query(ulong address, out HostRegionInfo info) =>
+            inner.Query(address, out info);
+
+        public void FlushInstructionCache(ulong address, ulong size) =>
+            inner.FlushInstructionCache(address, size);
     }
 }
