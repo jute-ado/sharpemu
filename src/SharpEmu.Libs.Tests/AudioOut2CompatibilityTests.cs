@@ -636,6 +636,27 @@ public sealed class AudioOut2CompatibilityTests
     }
 
     [Theory]
+    [InlineData(0U, false, 0x20UL)]
+    [InlineData(1U, false, 0x40UL)]
+    [InlineData(8U, false, 0x120UL)]
+    [InlineData(1U, true, 0x60UL)]
+    [InlineData(8U, true, 0x220UL)]
+    public void GetSpeakerArrayMemorySizeMatchesSpeakerLayout(
+        uint speakerCount,
+        bool isThreeDimensional,
+        ulong expectedSize)
+    {
+        var context = CreateContext(new FakeGuestMemory());
+        context[CpuRegister.Rdi] = speakerCount;
+        context[CpuRegister.Rsi] = isThreeDimensional ? 1UL : 0UL;
+
+        Assert.Equal(
+            unchecked((int)expectedSize),
+            AudioOut2Exports.AudioOut2GetSpeakerArrayMemorySize(context));
+        Assert.Equal(expectedSize, context[CpuRegister.Rax]);
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(1)]
     [InlineData(255)]
@@ -756,6 +777,7 @@ public sealed class AudioOut2CompatibilityTests
     [InlineData("gatEUKG+Ea4", "sceAudioOut2PortGetState")]
     [InlineData("bkBN+CMLwRc", "sceAudioOut2GetSystemState")]
     [InlineData("DImz2Ft9E2g", "sceAudioOut2GetSpeakerInfo")]
+    [InlineData("G1YOKDJYX2Y", "sceAudioOut2GetSpeakerArrayMemorySize")]
     [InlineData("xywYcRB7nbQ", "sceAudioOut2UserCreate")]
     [InlineData("XHl38ZNknbs", "sceAudioOut2MasteringInit")]
     [InlineData("v8iOE+j8a5o", "sceAudioOut2MasteringSetParam")]
