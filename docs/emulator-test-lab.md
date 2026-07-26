@@ -67,11 +67,20 @@ Run an accepted suite with explicit, portable arguments:
 
 ```text
 emu-test suite run <suite> <corpus-root> <machine-assets.json> \
-  <machine-emulators.json> <machine-profile-or-dash> <suite-runs-root>
+  <machine-emulators.json> <machine-profile-or-dash> <suite-runs-root> ps5
 ```
 
-The command's explicit corpus root is what isolates test intent. It does not
-search for or automatically use another task's corpus branch.
+Use `local.ps5-quick` while iterating and `local.ps5-regression` for the
+complete pre-merge game gate. Other `local.ps5-*` suites select a focused
+operation such as audio, visual, performance, settings, or GPU diagnostics.
+Do not use a `cross_platform` aggregate for routine SharpEmu development.
+
+The explicit `ps5` argument is a fail-closed platform guard. The runner checks
+it against the suite's declared scope before corpus resolution, run-directory
+creation, emulator-map loading, or process launch. The corpus also rejects a
+PS5 suite containing any shadPS4 scenario. The command's explicit corpus root
+isolates test intent; it does not search for or automatically use another
+task's corpus branch.
 
 ## When game progress changes
 
