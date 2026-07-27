@@ -14,7 +14,7 @@ synthetic regression tests.
 The capability probe emitted by the build is authoritative. A test must fail
 its capability gate before launch when the current build cannot provide the
 requested controller, presented-frame, timing, diagnostic, configuration, or
-snapshot, or audio-capture behavior.
+snapshot or audio-capture behavior.
 
 ## Repository boundaries
 
@@ -62,6 +62,14 @@ strict-dynlib setting. The current adapter supports base PS5 profiles but does
 not advertise PS5 Pro or complete emulator-state restoration; those scenarios
 must fail their capability gates before launch. Each run receives an isolated
 save-data root instead of mutating a developer profile.
+
+The maintained fork currently advertises controller recording, deterministic
+controller replay with a completion signal, single and multi-frame presented
+image capture, guest-image capture, presented-frame timing, base-PS5
+configuration controls, and normalized stereo PCM16 audio capture. GPU
+diagnostics use bounded guest-image and shader-trace evidence rather than
+RenderDoc. The capability probe remains authoritative; documentation must not
+be used to bypass a missing capability.
 
 Run an accepted suite with explicit, portable arguments:
 

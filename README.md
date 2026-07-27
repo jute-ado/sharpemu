@@ -33,7 +33,10 @@ Game compatibility work can also use an external, local-only regression
 framework without placing commercial games or game-derived artifacts in this
 repository. Contributors and AI agents should read
 [the Emulator Test Lab workflow](docs/emulator-test-lab.md) before changing
-accepted game expectations.
+accepted game expectations. The external corpus and immutable result history
+are authoritative for automated compatibility milestones; the table below is
+a human-readable summary of bounded observations, not a substitute for a
+recorded run.
 
 - broader regression coverage for CPU execution, memory, loading, HLE, shaders,
   Vulkan, and compatibility milestones
@@ -406,7 +409,7 @@ window; it does not imply the game is playable.
 
 | Game | Title ID | Current observed progress |
 | --- | --- | --- |
-| Dreaming Sarah | PPSA02929 | Loads and sustains execution for a 90-second automated input run. Vulkan presents a non-black, multi-color guest frame; gameplay is not yet validated. |
+| Dreaming Sarah | PPSA02929 | Deterministic controller routes now reach the accepted gameplay milestone and exercise a controlled gameplay window with guest-image evidence and a gameplay-audio marker. The new-game route also has visual, stereo-audio, performance, and bounded guest-GPU diagnostic policies in the external Test Lab. These are bounded regression milestones; a complete playthrough is not yet validated. |
 | Grand Theft Auto V | PPSA04264 | Loads three modules and starts its render, input, and control workers. AudioOut2 speaker-array sizing now resolves the observed eight-speaker 2D allocation instead of faulting the initiating worker; a fresh 45-second run presented the first 3840×2160 host frame and exceeded 90 million import dispatches without the former worker fault. Later unresolved imports remain, and frame content or gameplay is not yet validated. |
 | Jusant | PPSA10264 | Loads seven modules and sustains a 90-second UE5 execution run without a CPU trap. AGC indirect-draw and Cx indirect-register-count calls resolve and emit bounded command packets. Current-SDK fused-shader size and shader-half fusion calls now combine the observed type-4/type-6 pair into a bounded type-2 shader header, eliminating four invalid 64-byte copies seen during pipeline construction. DCB and ACB indirect-buffer jump writers now honor their distinct five- and four-argument ABIs, align targets, and encode complete 16-byte PM4 packets; a production-configuration 90-second control passed through import #369,538,703 without an indirect-buffer fault, command-allocation failure, or CPU stop. Vulkan's native-subgroup wave64 fallback now executes the title's large divergent UE5 compute family and subsequent dependent dispatches through the full 90-second window without the former device reset or fence timeout. Gen5 RGBA32-uint render-target support also submits the title's formerly rejected 64×64 and 512×512 integer passes, with no remaining format-14 integer-target rejection in the same window. Cross-backend R16 integer render-target decoding removes the title's later format-2 uint rejection. R16 UNORM color-target decoding now covers the layout-2/type-0 target observed later in the same run instead of rejecting shader construction. A fresh 90-second control passed with those rejections absent and without a Vulkan device loss, fence timeout, or presenter failure. The presenter reaches its first 3840×2160 frame, but image content and gameplay are not validated. |
 | Poppy Playtime: Chapter 1 | PPSA20591 | Loads seven modules, decodes AVPlayer audio, submits non-silent PCM through AudioOut, and sustains the execution-survival window without a CPU trap. Its one presented frame remains exact-black, so no visible gameplay is validated yet. |
