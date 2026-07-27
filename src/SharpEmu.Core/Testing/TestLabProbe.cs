@@ -23,12 +23,10 @@ public static class TestLabProbe
           "emulator": "sharpemu",
           "adapterVersion": "1.0.0",
           "capabilities": [
-            "bundle_fingerprint",
-            "controller_replay",
+            "console_profile_ps5",
             "guest_image_write_capture",
-            "presented_image_capture",
-            "structured_report",
-            "video_out_fingerprint"
+            "render_resolution_scale",
+            "strict_dynlib_resolution"
           ]
         }
         """;
