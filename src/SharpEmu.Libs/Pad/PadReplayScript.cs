@@ -65,9 +65,7 @@ internal sealed class PadReplayScript
         long elapsedMilliseconds,
         long presentedFrame)
     {
-        var position = _clock == ReplayClock.PresentedFrame
-            ? presentedFrame
-            : elapsedMilliseconds;
+        var position = Position(elapsedMilliseconds, presentedFrame);
         var low = 0;
         var high = _events.Length - 1;
         var matchedIndex = -1;
@@ -89,6 +87,19 @@ internal sealed class PadReplayScript
             ? _events[matchedIndex].State
             : NeutralState;
     }
+
+    internal bool HasReachedEnd(
+        long elapsedMilliseconds,
+        long presentedFrame) =>
+        Position(elapsedMilliseconds, presentedFrame) >=
+        _events[^1].Position;
+
+    private long Position(
+        long elapsedMilliseconds,
+        long presentedFrame) =>
+        _clock == ReplayClock.PresentedFrame
+            ? presentedFrame
+            : elapsedMilliseconds;
 
     internal static bool TryParse(
         string? json,

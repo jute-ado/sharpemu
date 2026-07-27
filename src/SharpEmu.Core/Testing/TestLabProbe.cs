@@ -27,6 +27,7 @@ public static class TestLabProbe
             "console_profile_ps5",
             "controller_recording",
             "controller_replay",
+            "controller_replay_completion_signal",
             "guest_image_write_capture",
             "presented_image_capture",
             "multi_presented_image_capture",

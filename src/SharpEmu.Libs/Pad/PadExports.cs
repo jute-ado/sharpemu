@@ -36,9 +36,12 @@ public static class PadExports
 
     private static bool _initialized;
     private static int _controlsAnnouncementLogged;
+    private static int _replayCompletionWarningLogged;
     private static long _replayStartTimestamp = Stopwatch.GetTimestamp();
     private static readonly PadReplayConfiguration? ReplayConfiguration =
         LoadReplayConfiguration();
+    private static readonly PadReplayCompletionSignal? ReplayCompletionSignal =
+        LoadReplayCompletionSignal();
     private static readonly PadInputTraceWriter? InputTraceWriter =
         LoadInputTraceWriter();
 
@@ -553,6 +556,21 @@ public static class PadExports
             _cachedInputState = replay.GetState(
                 elapsedMilliseconds,
                 VulkanVideoPresenter.PresentedGuestFrameCount);
+            if (replay.HasReachedEnd(
+                    elapsedMilliseconds,
+                    VulkanVideoPresenter.PresentedGuestFrameCount))
+            {
+                if (ReplayCompletionSignal is { } completion &&
+                    !completion.TryComplete() &&
+                    Interlocked.Exchange(
+                        ref _replayCompletionWarningLogged,
+                        1) == 0)
+                {
+                    Console.Error.WriteLine(
+                        "[LOADER][WARN] Replay completion signal is " +
+                        "unavailable; using timeout fallback.");
+                }
+            }
             _lastInputSampleTicks = now;
             InputTraceWriter?.Record(_cachedInputState, now);
             return _cachedInputState;
@@ -648,6 +666,31 @@ public static class PadExports
                 autoCross,
                 RestartAtPadInit: false)
             : null;
+    }
+
+    private static PadReplayCompletionSignal? LoadReplayCompletionSignal()
+    {
+        if (ReplayConfiguration is null)
+        {
+            return null;
+        }
+        var path = Environment.GetEnvironmentVariable(
+            "SHARPEMU_TEST_LAB_REPLAY_COMPLETE");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+        try
+        {
+            return PadReplayCompletionSignal.Create(path);
+        }
+        catch (ArgumentException exception)
+        {
+            Console.Error.WriteLine(
+                "[LOADER][WARN] Ignoring replay completion signal: " +
+                exception.Message);
+            return null;
+        }
     }
 
     private sealed record PadReplayConfiguration(
