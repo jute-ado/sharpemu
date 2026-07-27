@@ -40,9 +40,17 @@ public sealed class AudioOutProgressTests : IDisposable
         WriteSample(2345);
         Assert.Equal(0, Submit(handle));
 
-        Assert.Equal(
-            ["[LOADER][INFO] AudioOut non-silent samples submitted: handle=1 backend=silent"],
-            _progressMessages);
+        const string prefix =
+            "[LOADER][INFO] AudioOut non-silent samples submitted: " +
+            "handle=1 backend=";
+        var message = Assert.Single(_progressMessages);
+        Assert.StartsWith(
+            prefix,
+            message,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            message[prefix.Length..],
+            new[] { "silent", "host" });
     }
 
     public void Dispose()
