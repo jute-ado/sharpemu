@@ -32,12 +32,10 @@ public sealed class TestLabProbeTests
         Assert.Equal("1.0.0", root.GetProperty("adapterVersion").GetString());
         Assert.Equal(
             [
-                "bundle_fingerprint",
-                "controller_replay",
+                "console_profile_ps5",
                 "guest_image_write_capture",
-                "presented_image_capture",
-                "structured_report",
-                "video_out_fingerprint",
+                "render_resolution_scale",
+                "strict_dynlib_resolution",
             ],
             root.GetProperty("capabilities")
                 .EnumerateArray()
