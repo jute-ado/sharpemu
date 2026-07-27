@@ -8,6 +8,15 @@ SPDX-License-Identifier: GPL-2.0-or-later
 This opt-in test project runs SharpEmu against locally owned game dumps without
 placing game content or machine-specific paths in the repository.
 
+For routine fork development and AI-assisted compatibility work, use the
+external Emulator Test Lab described in
+[`docs/emulator-test-lab.md`](../../docs/emulator-test-lab.md). It provides the
+accepted corpus, platform-isolated suites, immutable provenance, repeated-run
+classification, audio/performance/GPU operations, and longitudinal results.
+This in-repository project remains useful for its focused harness contracts and
+legacy private manifests; it is not the authoritative cross-revision result
+store.
+
 1. Copy `games.example.json` to `games.local.json`.
 2. Point each case at a local `eboot.bin`, replace `expectedBundleSha256` with
    the bundle fingerprint from a load-only report, and define the compatibility
@@ -41,12 +50,12 @@ guest diagnostic cannot exhaust host memory or disk. Import counts, known and
 unexpected warning totals, configured output milestones, and requested image
 observations continue to be analyzed after a log reaches that cap.
 
-## External GPU and pull-request runners
+## Legacy external GPU and pull-request runners
 
-An external runner can keep licensed game archives, GPU scheduling, display
-capture, recordings, pull-request discovery, and result publication outside
-this repository while using this project as the single compatibility assertion
-engine:
+An external runner that has not adopted Emulator Test Lab can keep licensed
+game archives, GPU scheduling, display capture, recordings, pull-request
+discovery, and result publication outside this repository while using this
+project as the single compatibility assertion engine:
 
 1. Extract the runner-owned game archive into an isolated workspace.
 2. Generate a private schema-1 manifest whose `executablePath` points into that
