@@ -111,6 +111,26 @@ public sealed class PadReplayScriptTests
             replay.GetState(999_999, 600).Buttons);
     }
 
+    [Fact]
+    public void ReplayReportsCompletionOnItsOwnClock()
+    {
+        Assert.True(PadReplayScript.TryParse(
+            """
+            {
+              "events": [
+                { "atPresentedFrame": 500, "buttons": ["Cross"] },
+                { "atPresentedFrame": 600, "buttons": [] }
+              ]
+            }
+            """,
+            out var replay,
+            out var error), error);
+        Assert.NotNull(replay);
+
+        Assert.False(replay.HasReachedEnd(999_999, 599));
+        Assert.True(replay.HasReachedEnd(0, 600));
+    }
+
     [Theory]
     [InlineData("""{"events":[]}""", "at least one event")]
     [InlineData("""{"events":[null]}""", "event 0 is null")]
