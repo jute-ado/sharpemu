@@ -20,10 +20,21 @@ public sealed class PadReplayCompletionSignalTests : IDisposable
         var path = Path.Combine(_root, "route.complete");
         var signal = PadReplayCompletionSignal.Create(path);
 
-        signal.Complete();
-        signal.Complete();
+        Assert.True(signal.TryComplete());
+        Assert.True(signal.TryComplete());
 
         Assert.Equal("complete\n", File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void MissingParentFallsBackWithoutThrowing()
+    {
+        var path = Path.Combine(_root, "missing", "route.complete");
+        var signal = PadReplayCompletionSignal.Create(path);
+
+        Assert.False(signal.TryComplete());
+        Assert.False(signal.TryComplete());
+        Assert.False(File.Exists(path));
     }
 
     [Theory]

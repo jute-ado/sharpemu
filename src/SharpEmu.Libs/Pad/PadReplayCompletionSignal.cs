@@ -13,6 +13,7 @@ internal sealed class PadReplayCompletionSignal
     private readonly object _gate = new();
     private readonly string _path;
     private bool _completed;
+    private bool _failed;
 
     private PadReplayCompletionSignal(string path)
     {
@@ -31,25 +32,40 @@ internal sealed class PadReplayCompletionSignal
         return new PadReplayCompletionSignal(Path.GetFullPath(path));
     }
 
-    public void Complete()
+    public bool TryComplete()
     {
         lock (_gate)
         {
             if (_completed)
             {
-                return;
+                return true;
+            }
+            if (_failed)
+            {
+                return false;
             }
 
-            using var stream = new FileStream(
-                _path,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.Read,
-                bufferSize: 4096,
-                FileOptions.WriteThrough);
-            stream.Write(Contents);
-            stream.Flush(flushToDisk: true);
-            _completed = true;
+            try
+            {
+                using var stream = new FileStream(
+                    _path,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.Read,
+                    bufferSize: 4096,
+                    FileOptions.WriteThrough);
+                stream.Write(Contents);
+                stream.Flush(flushToDisk: true);
+                _completed = true;
+                return true;
+            }
+            catch (Exception exception)
+                when (exception is IOException or
+                      UnauthorizedAccessException)
+            {
+                _failed = true;
+                return false;
+            }
         }
     }
 }

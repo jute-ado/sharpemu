@@ -36,6 +36,7 @@ public static class PadExports
 
     private static bool _initialized;
     private static int _controlsAnnouncementLogged;
+    private static int _replayCompletionWarningLogged;
     private static long _replayStartTimestamp = Stopwatch.GetTimestamp();
     private static readonly PadReplayConfiguration? ReplayConfiguration =
         LoadReplayConfiguration();
@@ -559,7 +560,16 @@ public static class PadExports
                     elapsedMilliseconds,
                     VulkanVideoPresenter.PresentedGuestFrameCount))
             {
-                ReplayCompletionSignal?.Complete();
+                if (ReplayCompletionSignal is { } completion &&
+                    !completion.TryComplete() &&
+                    Interlocked.Exchange(
+                        ref _replayCompletionWarningLogged,
+                        1) == 0)
+                {
+                    Console.Error.WriteLine(
+                        "[LOADER][WARN] Replay completion signal is " +
+                        "unavailable; using timeout fallback.");
+                }
             }
             _lastInputSampleTicks = now;
             InputTraceWriter?.Record(_cachedInputState, now);
