@@ -3,6 +3,7 @@
 
 using SharpEmu.Libs.VideoOut;
 using SharpEmu.Libs.Gpu;
+using Silk.NET.Vulkan;
 using Xunit;
 
 namespace SharpEmu.Libs.Tests.VideoOut;
@@ -109,6 +110,24 @@ public sealed class VulkanGuestImageByteCountTests
         Assert.Equal(
             expected,
             VulkanVideoPresenter.GetGuestImageByteCount(format, width, height));
+    }
+
+    [Theory]
+    [InlineData(Format.R8SNorm, 91UL)]
+    [InlineData(Format.R16Sfloat, 182UL)]
+    [InlineData(Format.R16Unorm, 182UL)]
+    [InlineData(Format.R16SNorm, 182UL)]
+    [InlineData(Format.R16Uint, 182UL)]
+    [InlineData(Format.R16Sint, 182UL)]
+    [InlineData(Format.R8G8Unorm, 182UL)]
+    [InlineData(Format.R8G8SNorm, 182UL)]
+    [InlineData(Format.R8G8Uint, 182UL)]
+    [InlineData(Format.R8G8Sint, 182UL)]
+    public void UsesVulkanFormatTexelSize(Format format, ulong expected)
+    {
+        Assert.Equal(
+            expected,
+            VulkanVideoPresenter.GetVulkanImageByteCount(format, width: 13, height: 7));
     }
 
     [Theory]

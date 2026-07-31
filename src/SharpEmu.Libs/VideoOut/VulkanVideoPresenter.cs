@@ -2258,6 +2258,9 @@ internal static unsafe class VulkanVideoPresenter
         return TryMultiply(width, height, bytesPerPixel);
     }
 
+    internal static ulong GetVulkanImageByteCount(Format format, uint width, uint height) =>
+        Presenter.GetVulkanImageByteCount(format, width, height);
+
     private static ulong TryMultiply(ulong first, ulong second, ulong third)
     {
         if (first == 0 ||
@@ -11009,7 +11012,7 @@ internal static unsafe class VulkanVideoPresenter
         private static ulong GetTextureByteCount(uint format, uint width, uint height)
             => GetGuestImageByteCount(format, width, height);
 
-        private static ulong GetVulkanImageByteCount(Format format, uint width, uint height)
+        internal static ulong GetVulkanImageByteCount(Format format, uint width, uint height)
         {
             var blockBytes = format switch
             {
