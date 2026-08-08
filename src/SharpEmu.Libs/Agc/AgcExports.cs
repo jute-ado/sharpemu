@@ -11045,11 +11045,18 @@ public static partial class AgcExports
             }
         }
 
-        if (evaluationHandledByCpu)
+        if (ShouldReturnComputeEvaluationBuffers(
+                evaluationHandledByCpu,
+                gpuDispatch))
         {
             ReturnPooledEvaluationArrays(evaluation);
         }
     }
+
+    internal static bool ShouldReturnComputeEvaluationBuffers(
+        bool evaluationHandledByCpu,
+        bool backendSubmissionAttempted) =>
+        evaluationHandledByCpu || !backendSubmissionAttempted;
 
     /// <summary>
     /// Recognizes the SDK's masked-dword resource initialization kernel and

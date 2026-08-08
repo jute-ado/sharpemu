@@ -1,6 +1,7 @@
 // Copyright (C) 2026 SharpEmu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+using SharpEmu.Libs.Agc;
 using SharpEmu.Libs.VideoOut;
 using SharpEmu.Libs.Gpu.Vulkan;
 using SharpEmu.ShaderCompiler.Vulkan;
@@ -10,6 +11,23 @@ namespace SharpEmu.Libs.Tests;
 
 public sealed class ComputeDispatchDiagnosticsTests
 {
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    public void ComputeEvaluationBuffersReturnUnlessSubmissionOwnsThem(
+        bool evaluationHandledByCpu,
+        bool backendSubmissionAttempted,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            AgcExports.ShouldReturnComputeEvaluationBuffers(
+                evaluationHandledByCpu,
+                backendSubmissionAttempted));
+    }
+
     [Theory]
     [InlineData(1u, 1u, 16u, 8u)]
     [InlineData(4u, 4u, 8u, 4u)]
