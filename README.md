@@ -73,7 +73,9 @@ recorded run.
   workgroup-barrier bridge that can deadlock under divergent scalar control
   flow and reset the host GPU; Vulkan and Metal render-target decoding accepts
   Gen5 R16 UNORM plus R16 and RGBA32 unsigned and signed integer formats with
-  matching shader output types instead of dropping those passes
+  matching shader output types instead of dropping those passes; Vulkan
+  initial-image sizing recognizes single-channel 16-bit and two-channel 8-bit
+  formats instead of rejecting their uploads as zero-sized
 - backend-neutral RDNA2 detile parameters reuse the fork's exact-XOR and
   block-table address models across element widths and array layers, matching
   the optimized CPU path byte-for-byte while preserving all-or-nothing tiled

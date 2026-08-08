@@ -2258,6 +2258,9 @@ internal static unsafe class VulkanVideoPresenter
         return TryMultiply(width, height, bytesPerPixel);
     }
 
+    internal static ulong GetVulkanImageByteCount(Format format, uint width, uint height) =>
+        Presenter.GetVulkanImageByteCount(format, width, height);
+
     private static ulong TryMultiply(ulong first, ulong second, ulong third)
     {
         if (first == 0 ||
@@ -11009,7 +11012,7 @@ internal static unsafe class VulkanVideoPresenter
         private static ulong GetTextureByteCount(uint format, uint width, uint height)
             => GetGuestImageByteCount(format, width, height);
 
-        private static ulong GetVulkanImageByteCount(Format format, uint width, uint height)
+        internal static ulong GetVulkanImageByteCount(Format format, uint width, uint height)
         {
             var blockBytes = format switch
             {
@@ -14110,8 +14113,21 @@ internal static unsafe class VulkanVideoPresenter
             {
                 Format.R8Unorm or
                 Format.R8Uint or
-                Format.R8Sint => 8,
-                Format.R16Sfloat => 16,
+                Format.R8Sint or
+                Format.R8SNorm => 8,
+                // All single-channel 16-bit and two-channel 8-bit formats share
+                // Vulkan's 16-bit compatibility class. This class also supplies
+                // initial-image byte counts, so missing members reject valid
+                // uploads as zero-sized.
+                Format.R16Sfloat or
+                Format.R16Unorm or
+                Format.R16SNorm or
+                Format.R16Uint or
+                Format.R16Sint or
+                Format.R8G8Unorm or
+                Format.R8G8SNorm or
+                Format.R8G8Uint or
+                Format.R8G8Sint => 16,
                 Format.R32Uint or
                 Format.R32Sint or
                 Format.R32Sfloat or
