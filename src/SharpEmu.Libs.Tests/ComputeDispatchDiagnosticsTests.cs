@@ -12,20 +12,20 @@ namespace SharpEmu.Libs.Tests;
 public sealed class ComputeDispatchDiagnosticsTests
 {
     [Theory]
-    [InlineData(true, 0L, true)]
-    [InlineData(true, 17L, true)]
-    [InlineData(false, 0L, true)]
-    [InlineData(false, 17L, false)]
-    public void ComputeEvaluationBuffersReturnUnlessQueuedWorkOwnsThem(
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    public void ComputeEvaluationBuffersReturnUnlessSubmissionOwnsThem(
         bool evaluationHandledByCpu,
-        long submittedWorkSequence,
+        bool backendSubmissionAttempted,
         bool expected)
     {
         Assert.Equal(
             expected,
             AgcExports.ShouldReturnComputeEvaluationBuffers(
                 evaluationHandledByCpu,
-                submittedWorkSequence));
+                backendSubmissionAttempted));
     }
 
     [Theory]
