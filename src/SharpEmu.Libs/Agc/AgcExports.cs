@@ -10873,7 +10873,6 @@ public static partial class AgcExports
         var writesGlobalMemory = evaluation.GlobalMemoryBindings.Any(static binding =>
             binding.Writable);
         var gpuDispatch = false;
-        var submittedWorkSequence = 0L;
         var evaluationHandledByCpu = false;
         var computeError = string.Empty;
         if (!hasStorageBinding &&
@@ -10890,7 +10889,6 @@ public static partial class AgcExports
                 out var copyDescription))
         {
             gpuDispatch = true;
-            submittedWorkSequence = semanticCopySequence;
             evaluationHandledByCpu = true;
             TraceAgcShader(
                 $"agc.compute_semantic_fast_path cs=0x{shaderAddress:X16} " +
@@ -10965,7 +10963,7 @@ public static partial class AgcExports
                     out _);
                 var globalMemoryBuffers =
                     CreateTranslatedComputeGlobalBuffers(evaluation);
-                submittedWorkSequence = GuestGpu.Current.SubmitComputeDispatch(
+                GuestGpu.Current.SubmitComputeDispatch(
                     shaderAddress,
                     computeShader,
                     textures,
@@ -10986,7 +10984,7 @@ public static partial class AgcExports
                     dispatch.ThreadCountZ);
                 // Vulkan queue order keeps dependent dispatches coherent. CPU visibility is
                 // published by explicit PM4 release/write actions instead of per dispatch.
-                gpuDispatch = submittedWorkSequence > 0;
+                gpuDispatch = true;
             }
         }
 
@@ -11049,7 +11047,7 @@ public static partial class AgcExports
 
         if (ShouldReturnComputeEvaluationBuffers(
                 evaluationHandledByCpu,
-                submittedWorkSequence))
+                gpuDispatch))
         {
             ReturnPooledEvaluationArrays(evaluation);
         }
@@ -11057,8 +11055,8 @@ public static partial class AgcExports
 
     internal static bool ShouldReturnComputeEvaluationBuffers(
         bool evaluationHandledByCpu,
-        long submittedWorkSequence) =>
-        evaluationHandledByCpu || submittedWorkSequence <= 0;
+        bool backendSubmissionAttempted) =>
+        evaluationHandledByCpu || !backendSubmissionAttempted;
 
     /// <summary>
     /// Recognizes the SDK's masked-dword resource initialization kernel and
